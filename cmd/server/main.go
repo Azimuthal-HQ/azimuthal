@@ -44,7 +44,7 @@ func main() {
 	}
 	portNum, err := strconv.Atoi(portStr)
 	if err != nil || portNum < 1 || portNum > 65535 {
-		slog.Error("invalid APP_PORT value — must be 1-65535", "value_length", len(portStr))
+		slog.Error("APP_PORT must be an integer between 1 and 65535")
 		os.Exit(1)
 	}
 
