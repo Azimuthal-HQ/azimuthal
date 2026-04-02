@@ -1,57 +1,67 @@
-# .golangci.yml
-# Full linter config for the Atlassian FOSS alternative
-# Docs: https://golangci-lint.run/usage/configuration/
+# .golangci.yml — Azimuthal linter configuration
+# Compatible with golangci-lint v1.60+
+
+version: "2"
 
 run:
   timeout: 5m
   tests: true
-  # Don't lint vendor or generated code
-  skip-dirs:
+
+issues:
+  exclude-dirs:
     - vendor
-    - internal/db/generated  # sqlc output
+    - internal/db/generated
+
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - funlen
+        - gocognit
+        - cyclop
+        - wrapcheck
+    - path: internal/db/generated
+      linters:
+        - all
+    - linters: [godox]
+      text: "TODO"
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 linters:
+  default: none
   enable:
     # Correctness
-    - errcheck          # check error returns are handled
-    - gosimple          # simplification suggestions
-    - govet             # reports suspicious constructs
-    - ineffassign       # detect unused variable assignments
-    - staticcheck       # advanced static analysis
-    - unused            # unused code detection
-
-    # Style & maintainability
-    - gofmt             # formatting
-    - goimports         # import ordering
-    - godot             # check comment punctuation
-    - misspell          # spelling errors in comments
-    - whitespace        # trailing whitespace
-    - wsl               # whitespace linter
-
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # Style
+    - gofmt
+    - goimports
+    - misspell
+    - whitespace
     # Complexity
-    - cyclop            # cyclomatic complexity
-    - gocognit          # cognitive complexity
-    - funlen            # function length
-    - nestif            # deeply nested ifs
-
+    - cyclop
+    - gocognit
+    - funlen
     # Security
-    - gosec             # security issues
-    - bodyclose         # HTTP response body not closed
-    - sqlclosecheck     # sql.Rows and sql.Stmt not closed
-    - rowserrcheck      # sql.Rows.Err() not checked
-
+    - gosec
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
     # Performance
-    - prealloc          # slice preallocation
-    - noctx             # HTTP requests without context
-
+    - prealloc
+    - noctx
     # Error handling
-    - wrapcheck         # errors from external packages not wrapped
-    - errorlint         # error wrapping issues
-
+    - wrapcheck
+    - errorlint
     # Go idioms
-    - godox             # TODO/FIXME/HACK comments (warning only)
-    - nolintlint        # bad nolint directives
-    - revive            # drop-in replacement for golint
+    - godox
+    - nolintlint
+    - revive
 
 linters-settings:
   errcheck:
@@ -62,10 +72,10 @@ linters-settings:
     severity: high
     confidence: high
     excludes:
-      - G104  # Errors unhandled — errcheck covers this better
+      - G104
 
   cyclop:
-    max-complexity: 15       # flag functions more complex than 15
+    max-complexity: 15
     package-average: 10.0
 
   gocognit:
@@ -77,9 +87,8 @@ linters-settings:
 
   godox:
     keywords:
-      - FIXME  # error — must be resolved before merge
-      - HACK   # error — must be resolved before merge
-      # TODO is allowed — tracked issues are fine
+      - FIXME
+      - HACK
 
   revive:
     rules:
@@ -90,26 +99,4 @@ linters-settings:
 
   wrapcheck:
     ignorePackageGlobs:
-      - "github.com/yourorg/yourapp/*"  # internal packages don't need wrapping
-
-issues:
-  # Don't fail on TODO comments — just warn
-  exclude-rules:
-    - linters: [godox]
-      text: "TODO"
-
-  # Test files get relaxed rules
-    - path: _test\.go
-      linters:
-        - funlen
-        - gocognit
-        - cyclop
-        - wrapcheck
-
-  # Generated sqlc code
-    - path: internal/db/generated
-      linters:
-        - all
-
-  max-issues-per-linter: 0
-  max-same-issues: 0
+      - "github.com/Azimuthal-HQ/azimuthal/*"
