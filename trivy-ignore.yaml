@@ -1,0 +1,19 @@
+# trivy-ignore.yaml — Trivy vulnerability ignore policy
+# Referenced by trivy.yaml ignore-policy setting.
+#
+# Format: https://aquasecurity.github.io/trivy/latest/docs/configuration/filtering/#rego-custom-policy
+#
+# Purpose: Suppress known false positives. Every entry MUST include:
+#   1. The CVE / finding ID being suppressed
+#   2. The reason it is a false positive or accepted risk
+#   3. The expiry date for review (max 90 days)
+#
+# Example (uncomment and fill in when a real suppression is needed):
+#
+# suppress:
+#   - id: CVE-2024-00000
+#     reason: "Not exploitable in our deployment — we don't use X feature"
+#     expiry: "2025-12-31"
+#     target: "azimuthal:latest"
+#
+# No suppressions are active. All findings must be addressed or documented here.

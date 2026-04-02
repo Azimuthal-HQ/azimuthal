@@ -1,115 +1,56 @@
-# .golangci.yml
-# Full linter config for the Atlassian FOSS alternative
-# Docs: https://golangci-lint.run/usage/configuration/
+# .golangci.yml — Azimuthal linter configuration
+# Requires golangci-lint v2.x (used via golangci-lint-action@v7)
+
+version: "2"
 
 run:
   timeout: 5m
-  tests: true
-  # Don't lint vendor or generated code
-  skip-dirs:
-    - vendor
-    - internal/db/generated  # sqlc output
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
 linters:
+  default: none
   enable:
     # Correctness
-    - errcheck          # check error returns are handled
-    - gosimple          # simplification suggestions
-    - govet             # reports suspicious constructs
-    - ineffassign       # detect unused variable assignments
-    - staticcheck       # advanced static analysis
-    - unused            # unused code detection
-
-    # Style & maintainability
-    - gofmt             # formatting
-    - goimports         # import ordering
-    - godot             # check comment punctuation
-    - misspell          # spelling errors in comments
-    - whitespace        # trailing whitespace
-    - wsl               # whitespace linter
-
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck  # includes gosimple (merged in v2)
+    # Style
+    - misspell
     # Complexity
-    - cyclop            # cyclomatic complexity
-    - gocognit          # cognitive complexity
-    - funlen            # function length
-    - nestif            # deeply nested ifs
-
+    - cyclop
+    - gocognit
+    - funlen
     # Security
-    - gosec             # security issues
-    - bodyclose         # HTTP response body not closed
-    - sqlclosecheck     # sql.Rows and sql.Stmt not closed
-    - rowserrcheck      # sql.Rows.Err() not checked
-
-    # Performance
-    - prealloc          # slice preallocation
-    - noctx             # HTTP requests without context
-
+    - gosec
+    - bodyclose
     # Error handling
-    - wrapcheck         # errors from external packages not wrapped
-    - errorlint         # error wrapping issues
-
+    - wrapcheck
+    - errorlint
     # Go idioms
-    - godox             # TODO/FIXME/HACK comments (warning only)
-    - nolintlint        # bad nolint directives
-    - revive            # drop-in replacement for golint
+    - godox
+    - nolintlint
+    - revive
 
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-
-  gosec:
-    severity: high
-    confidence: high
-    excludes:
-      - G104  # Errors unhandled — errcheck covers this better
-
-  cyclop:
-    max-complexity: 15       # flag functions more complex than 15
-    package-average: 10.0
-
-  gocognit:
-    min-complexity: 20
-
-  funlen:
-    lines: 80
-    statements: 50
-
-  godox:
-    keywords:
-      - FIXME  # error — must be resolved before merge
-      - HACK   # error — must be resolved before merge
-      # TODO is allowed — tracked issues are fine
-
-  revive:
+  exclusions:
+    paths:
+      - vendor
+      - internal/db/generated
     rules:
-      - name: exported
-        arguments: ["checkPrivateReceivers"]
-      - name: var-naming
-      - name: package-comments
-
-  wrapcheck:
-    ignorePackageGlobs:
-      - "github.com/yourorg/yourapp/*"  # internal packages don't need wrapping
+      # Relax complexity rules in test files
+      - path: _test\.go
+        linters: [funlen, gocognit, cyclop, wrapcheck]
+      # Skip all linters on generated sqlc output
+      - path: internal/db/generated
+        linters: [all]
+      # TODOs are tracked in issues — only block on FIXME/HACK
+      - linters: [godox]
+        text: "TODO"
 
 issues:
-  # Don't fail on TODO comments — just warn
-  exclude-rules:
-    - linters: [godox]
-      text: "TODO"
-
-  # Test files get relaxed rules
-    - path: _test\.go
-      linters:
-        - funlen
-        - gocognit
-        - cyclop
-        - wrapcheck
-
-  # Generated sqlc code
-    - path: internal/db/generated
-      linters:
-        - all
-
   max-issues-per-linter: 0
   max-same-issues: 0

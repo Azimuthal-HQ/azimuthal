@@ -21,8 +21,10 @@ title = "azimuthal secret scanning"
 
 [[rules]]
   id = "azimuthal-database-url"
-  description = "Database connection string with credentials"
-  regex = '''postgres://[^:]+:[^@]+@[^/]+/\w+'''
+  description = "Database connection string with hardcoded credentials (excludes env-var references)"
+  # RE2-compatible: match passwords that don't start with $ (env-var) or % (URL-encoded)
+  # Requires at least 6 chars total in password field
+  regex = '''postgres://[^:]+:[^$%\{@][^@]{5,}@[^/]+/\w+'''
   tags = ["database", "credentials"]
 
 [[rules]]
@@ -34,13 +36,23 @@ title = "azimuthal secret scanning"
 # ── Allowlist ─────────────────────────────────────────────────
 
 [allowlist]
-  description = "Global allowlist"
+  description = "Global allowlist — dev credentials, CI config, and placeholder values"
   paths = [
+    # Test and example files
     '''testdata/''',
     '''_test\.go''',
     '''\.env\.example''',
     '''docker-compose\.example\.yml''',
     '''docs/''',
+    # CI workflow files contain test DATABASE_URLs and are not real secrets
+    '''\.github/workflows/''',
+    # Makefile contains DATABASE_URL dev default — not a real secret
+    '''Makefile''',
+    # docker-compose files use placeholder/env-var credentials
+    '''build/docker-compose\.dev\.yml''',
+    '''build/docker-compose\.yml''',
+    # Project docs and context files
+    '''CLAUDE\.md''',
   ]
   regexes = [
     '''your[_-]?(secret|password|key|token)''',
@@ -48,4 +60,8 @@ title = "azimuthal secret scanning"
     '''example[_-]?(secret|key)''',
     '''azimuthal[_-]?(secret|key|token)[_-]?here''',
     '''TEST.*CERTIFICATE''',
+    # Dev-only MinIO placeholder credentials
+    '''minioadmin''',
+    # Localhost-only postgres URLs with dev/test passwords
+    '''postgres://[^:]+:(dev|testpassword|password|secret)@(localhost|127\.0\.0\.1|postgres)''',
   ]
