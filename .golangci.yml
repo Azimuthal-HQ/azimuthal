@@ -16,10 +16,9 @@ linters:
   enable:
     # Correctness
     - errcheck
-    - gosimple
     - govet
     - ineffassign
-    - staticcheck
+    - staticcheck  # includes gosimple (merged in v2)
     # Style
     - misspell
     # Complexity
