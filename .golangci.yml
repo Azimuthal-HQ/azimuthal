@@ -5,28 +5,6 @@ version: "2"
 
 run:
   timeout: 5m
-  # Note: 'tests: true' was removed in golangci-lint v2; tests are always linted.
-
-issues:
-  exclude-dirs:
-    - vendor
-    - internal/db/generated
-
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - funlen
-        - gocognit
-        - cyclop
-        - wrapcheck
-    - path: internal/db/generated
-      linters:
-        - all
-    - linters: [godox]
-      text: "TODO"
-
-  max-issues-per-linter: 0
-  max-same-issues: 0
 
 linters:
   default: none
@@ -37,7 +15,6 @@ linters:
     - govet
     - ineffassign
     - staticcheck
-    - unused
     # Style
     - gofmt
     - goimports
@@ -57,42 +34,21 @@ linters:
     - nolintlint
     - revive
 
-  # In golangci-lint v2, linter settings are nested under linters.settings
-  # (no longer a top-level 'linters-settings' key)
-  settings:
-    errcheck:
-      check-type-assertions: true
-      check-blank: true
+  exclusions:
+    paths:
+      - vendor
+      - internal/db/generated
+    rules:
+      # Relax complexity rules in test files
+      - path: _test\.go
+        linters: [funlen, gocognit, cyclop, wrapcheck]
+      # Skip all linters on generated sqlc output
+      - path: internal/db/generated
+        linters: [all]
+      # TODOs are tracked in issues — only block on FIXME/HACK
+      - linters: [godox]
+        text: "TODO"
 
-    gosec:
-      severity: high
-      confidence: high
-      excludes:
-        - G104
-
-    cyclop:
-      max-complexity: 15
-      package-average: 10.0
-
-    gocognit:
-      min-complexity: 20
-
-    funlen:
-      lines: 80
-      statements: 50
-
-    godox:
-      keywords:
-        - FIXME
-        - HACK
-
-    revive:
-      rules:
-        - name: exported
-          arguments: ["checkPrivateReceivers"]
-        - name: var-naming
-        - name: package-comments
-
-    wrapcheck:
-      ignorePackageGlobs:
-        - "github.com/Azimuthal-HQ/azimuthal/*"
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

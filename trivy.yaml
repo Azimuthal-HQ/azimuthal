@@ -28,5 +28,5 @@ format: table  # human-readable in CI logs; CI also captures SARIF
 cache:
   dir: /tmp/trivy-cache
 
-# Skip known false positives (document each one)
-ignore-policy: trivy-ignore.yaml
+# Skip known false positives — add CVE suppressions to trivy-ignore.yaml when needed.
+# ignore-policy is only activated when trivy-ignore.yaml contains a valid Rego module.

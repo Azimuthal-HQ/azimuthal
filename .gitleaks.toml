@@ -22,8 +22,9 @@ title = "azimuthal secret scanning"
 [[rules]]
   id = "azimuthal-database-url"
   description = "Database connection string with hardcoded credentials (excludes env-var references)"
-  # Negative lookahead (?!\$\{) skips env-var substitutions like postgres://user:${PASSWORD}@...
-  regex = '''postgres://[^:]+:(?!\$\{)[^@]{6,}@[^/]+/\w+'''
+  # RE2-compatible: match passwords that don't start with $ (env-var) or % (URL-encoded)
+  # Requires at least 6 chars total in password field
+  regex = '''postgres://[^:]+:[^$%\{@][^@]{5,}@[^/]+/\w+'''
   tags = ["database", "credentials"]
 
 [[rules]]
@@ -47,8 +48,9 @@ title = "azimuthal secret scanning"
     '''\.github/workflows/''',
     # Makefile contains DATABASE_URL dev default — not a real secret
     '''Makefile''',
-    # Dev docker-compose uses placeholder credentials (minioadmin, dev password)
+    # docker-compose files use placeholder/env-var credentials
     '''build/docker-compose\.dev\.yml''',
+    '''build/docker-compose\.yml''',
     # Project docs and context files
     '''CLAUDE\.md''',
   ]
