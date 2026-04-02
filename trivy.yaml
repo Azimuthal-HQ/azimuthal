@@ -1,0 +1,32 @@
+# trivy.yaml
+# Container and filesystem scanning config
+# Docs: https://aquasecurity.github.io/trivy/latest/docs/references/configuration/
+
+scan:
+  security-checks:
+    - vuln        # CVE scanning
+    - config      # Dockerfile misconfiguration
+    - secret      # Secrets in container layers
+
+vulnerability:
+  type:
+    - os          # OS package vulnerabilities
+    - library     # Language-level dependencies (Go modules)
+  ignore-unfixed: true  # Skip CVEs with no available patch
+
+severity:
+  - HIGH
+  - CRITICAL
+
+# Exit code 1 on findings — enforced in CI
+exit-code: 1
+
+# Output format
+format: table  # human-readable in CI logs; CI also captures SARIF
+
+# Cache for faster repeated scans in CI
+cache:
+  dir: /tmp/trivy-cache
+
+# Skip known false positives (document each one)
+ignore-policy: trivy-ignore.yaml

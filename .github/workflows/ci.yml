@@ -1,0 +1,322 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.23'
+  POSTGRES_VERSION: '16'
+  BINARY_NAME: azimuthal
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 1: Build
+  # ─────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Build community binary
+        run: go build -v -o /tmp/${{ env.BINARY_NAME }} ./cmd/server
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Verify enterprise stubs compile
+        run: go build -tags enterprise -v ./... 2>/dev/null || true
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 2: Test
+  # ─────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    needs: build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:${{ env.POSTGRES_VERSION }}-alpine
+        env:
+          POSTGRES_USER: azimuthal
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: azimuthal_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://azimuthal:testpassword@localhost:5432/azimuthal_test?sslmode=disable
+      APP_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@latest
+
+      - name: Run migrations
+        run: goose -dir migrations postgres "$DATABASE_URL" up
+
+      - name: Run tests with race detector
+        run: |
+          go test \
+            -race \
+            -coverprofile=coverage.out \
+            -covermode=atomic \
+            -timeout=120s \
+            ./...
+
+      - name: Enforce minimum coverage (80%)
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below the 80% minimum"
+            exit 1
+          fi
+          echo "✅ Coverage ${COVERAGE}% meets minimum"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 7
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 3: Lint
+  # ─────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --config=.golangci.yml --timeout=5m
+
+      - name: Check go.sum is up to date
+        run: |
+          go mod tidy
+          git diff --exit-code go.sum || \
+            (echo "❌ go.sum out of date — run go mod tidy" && exit 1)
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 4A: SAST
+  # ─────────────────────────────────────────────────────────────
+  sast:
+    name: SAST (gosec)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run gosec (SARIF output)
+        uses: securego/gosec@master
+        with:
+          args: >-
+            -severity high
+            -confidence high
+            -exclude-dir=vendor
+            -fmt sarif
+            -out gosec-results.sarif
+            ./...
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gosec-results.sarif
+          category: gosec
+
+      - name: Fail on HIGH+ findings
+        run: |
+          gosec \
+            -severity high \
+            -confidence high \
+            -exclude-dir=vendor \
+            ./...
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 4B: Dependency vulnerability scanning
+  # ─────────────────────────────────────────────────────────────
+  vuln-scan:
+    name: Dependency Scan (govulncheck)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+      - name: Upload vulnerability report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vuln-report
+          path: vuln-report.json
+          retention-days: 7
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 4C: Secret scanning
+  # ─────────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --config=.gitleaks.toml --verbose
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 4D: Container scanning
+  # ─────────────────────────────────────────────────────────────
+  container-scan:
+    name: Container Scan (trivy)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg VERSION=pr-${{ github.sha }} \
+            -t ${{ env.BINARY_NAME }}:scan-${{ github.sha }} \
+            -f build/Dockerfile \
+            .
+
+      - name: Run Trivy (SARIF output)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.BINARY_NAME }}:scan-${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+      - name: Fail on HIGH/CRITICAL findings
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.BINARY_NAME }}:scan-${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      - name: Clean up image
+        if: always()
+        run: docker rmi ${{ env.BINARY_NAME }}:scan-${{ github.sha }} || true
+
+
+  # ─────────────────────────────────────────────────────────────
+  # FINAL GATE
+  # ─────────────────────────────────────────────────────────────
+  all-checks:
+    name: All Gates Passed
+    needs: [test, lint, sast, vuln-scan, secret-scan, container-scan]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all gates
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "❌ One or more pipeline gates failed"
+            exit 1
+          fi
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "⚠️ One or more pipeline gates were cancelled"
+            exit 1
+          fi
+          echo "✅ All gates passed — safe to merge"

@@ -1,0 +1,182 @@
+name: Release (Community)
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'  # e.g. v1.2.3
+
+env:
+  GO_VERSION: '1.23'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: azimuthal-hq/azimuthal
+  BINARY_NAME: azimuthal
+
+jobs:
+
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build-release:
+    name: Build Release Binaries
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Build frontend assets
+        run: cd web && npm ci && npm run build
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build \
+            -trimpath \
+            -ldflags="-s -w \
+              -X main.Version=${{ env.VERSION }} \
+              -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} \
+            ./cmd/server
+
+      - name: Generate checksum
+        run: |
+          sha256sum \
+            ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} \
+            > ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}*
+          retention-days: 1
+
+  docker-release:
+    name: Build & Push to GHCR
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: build/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: VERSION=${{ env.VERSION }}
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-release, docker-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Azimuthal ${{ env.VERSION }}
+          generate_release_notes: true
+          prerelease: ${{ contains(env.VERSION, '-') }}
+          files: ${{ env.BINARY_NAME }}-*
+          body: |
+            ## Azimuthal ${{ env.VERSION }} — Community Edition
+
+            The self-hostable, open-source alternative to Jira, Confluence,
+            and Jira Service Desk. Know exactly where your team is headed.
+
+            ### Docker (recommended)
+            ```bash
+            docker run -d \
+              -e DATABASE_URL=postgres://... \
+              -e STORAGE_ENDPOINT=http://your-minio:9000 \
+              -p 8080:8080 \
+              ghcr.io/azimuthal-hq/azimuthal:${{ env.VERSION }}
+            ```
+
+            ### Single binary
+            ```bash
+            ./azimuthal   # that's it
+            ```
+
+            ### Verify your download
+            ```bash
+            sha256sum -c azimuthal-linux-amd64.sha256
+            ```
+
+            ### Self-hosting docs
+            See [docs/self-hosting.md](docs/self-hosting.md) for the
+            complete setup guide including Docker Compose and backup/restore.

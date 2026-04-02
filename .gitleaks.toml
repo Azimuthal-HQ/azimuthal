@@ -1,0 +1,51 @@
+# .gitleaks.toml — Azimuthal secret scanning configuration
+
+title = "azimuthal secret scanning"
+
+[extend]
+  useDefault = true
+
+# ── Azimuthal-specific rules ──────────────────────────────────
+
+[[rules]]
+  id = "azimuthal-license-private-key"
+  description = "Azimuthal enterprise license private key"
+  regex = '''-----BEGIN (RSA |EC )?PRIVATE KEY-----'''
+  tags = ["key", "enterprise", "critical"]
+
+[[rules]]
+  id = "azimuthal-jwt-secret"
+  description = "Hardcoded JWT secret"
+  regex = '''(?i)(jwt[_\-]?secret|JWT_SECRET)\s*[=:]\s*["']?[A-Za-z0-9+/]{32,}'''
+  tags = ["jwt", "auth"]
+
+[[rules]]
+  id = "azimuthal-database-url"
+  description = "Database connection string with credentials"
+  regex = '''postgres://[^:]+:[^@]+@[^/]+/\w+'''
+  tags = ["database", "credentials"]
+
+[[rules]]
+  id = "azimuthal-storage-credentials"
+  description = "S3/MinIO access credentials"
+  regex = '''(?i)(aws_secret_access_key|minio_secret_key|STORAGE_SECRET)\s*[=:]\s*["']?[A-Za-z0-9/+=]{20,}'''
+  tags = ["storage", "credentials"]
+
+# ── Allowlist ─────────────────────────────────────────────────
+
+[allowlist]
+  description = "Global allowlist"
+  paths = [
+    '''testdata/''',
+    '''_test\.go''',
+    '''\.env\.example''',
+    '''docker-compose\.example\.yml''',
+    '''docs/''',
+  ]
+  regexes = [
+    '''your[_-]?(secret|password|key|token)''',
+    '''changeme''',
+    '''example[_-]?(secret|key)''',
+    '''azimuthal[_-]?(secret|key|token)[_-]?here''',
+    '''TEST.*CERTIFICATE''',
+  ]
