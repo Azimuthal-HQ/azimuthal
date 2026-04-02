@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(go mod:*)",
+      "Bash(export PATH=\"/c/Program Files/Go/bin:$PATH\")",
+      "Bash(go version:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
