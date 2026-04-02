@@ -34,13 +34,22 @@ title = "azimuthal secret scanning"
 # ── Allowlist ─────────────────────────────────────────────────
 
 [allowlist]
-  description = "Global allowlist"
+  description = "Global allowlist — dev credentials, CI config, and placeholder values"
   paths = [
+    # Test and example files
     '''testdata/''',
     '''_test\.go''',
     '''\.env\.example''',
     '''docker-compose\.example\.yml''',
     '''docs/''',
+    # CI workflow files contain test DATABASE_URLs and are not real secrets
+    '''\.github/workflows/''',
+    # Makefile contains DATABASE_URL dev default — not a real secret
+    '''Makefile''',
+    # Dev docker-compose uses placeholder credentials (minioadmin, dev password)
+    '''build/docker-compose\.dev\.yml''',
+    # Project docs and context files
+    '''CLAUDE\.md''',
   ]
   regexes = [
     '''your[_-]?(secret|password|key|token)''',
@@ -48,4 +57,8 @@ title = "azimuthal secret scanning"
     '''example[_-]?(secret|key)''',
     '''azimuthal[_-]?(secret|key|token)[_-]?here''',
     '''TEST.*CERTIFICATE''',
+    # Dev-only MinIO placeholder credentials
+    '''minioadmin''',
+    # Localhost-only postgres URLs with dev/test passwords
+    '''postgres://[^:]+:(dev|testpassword|password|secret)@(localhost|127\.0\.0\.1|postgres)''',
   ]

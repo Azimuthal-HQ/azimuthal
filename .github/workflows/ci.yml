@@ -87,7 +87,12 @@ jobs:
         run: go install github.com/pressly/goose/v3/cmd/goose@latest
 
       - name: Run migrations
-        run: goose -dir migrations postgres "$DATABASE_URL" up
+        run: |
+          if find migrations -name '*.sql' -quit 2>/dev/null | grep -q .; then
+            goose -dir migrations postgres "$DATABASE_URL" up
+          else
+            echo "No SQL migration files found — skipping (scaffold phase)"
+          fi
 
       - name: Run tests with race detector
         run: |
@@ -135,7 +140,7 @@ jobs:
           cache: true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
           args: --config=.golangci.yml --timeout=5m
