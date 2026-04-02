@@ -4,16 +4,17 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 )
 
-// Version and BuildTime are injected at build time via -ldflags.
+// Version, BuildTime, and Edition are injected at build time via -ldflags.
 var (
 	Version   = "dev"
 	BuildTime = "unknown"
@@ -33,8 +34,8 @@ func main() {
 	)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", handleHealth)
-	mux.HandleFunc("/ready", handleReady)
+	mux.HandleFunc("/health", api.HandleHealth)
+	mux.HandleFunc("/ready", api.HandleReady)
 
 	port := os.Getenv("APP_PORT")
 	if port == "" {
@@ -72,16 +73,4 @@ func main() {
 	}
 
 	slog.Info("shutdown complete")
-}
-
-// handleHealth responds to liveness probes.
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintln(w, `{"status":"ok"}`)
-}
-
-// handleReady responds to readiness probes.
-func handleReady(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintln(w, `{"status":"ready"}`)
 }

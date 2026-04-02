@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.24'
   POSTGRES_VERSION: '16'
   BINARY_NAME: azimuthal
 
@@ -95,6 +95,7 @@ jobs:
             -race \
             -coverprofile=coverage.out \
             -covermode=atomic \
+            -coverpkg=./internal/... \
             -timeout=120s \
             ./...
 
@@ -179,6 +180,7 @@ jobs:
       - name: Upload SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always()
+        continue-on-error: true  # requires GitHub Advanced Security; skip gracefully on free plans
         with:
           sarif_file: gosec-results.sarif
           category: gosec
@@ -282,6 +284,7 @@ jobs:
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
         if: always()
+        continue-on-error: true  # requires GitHub Advanced Security; skip gracefully on free plans
         with:
           sarif_file: trivy-results.sarif
           category: trivy

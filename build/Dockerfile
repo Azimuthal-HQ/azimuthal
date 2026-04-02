@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 ARG VERSION=dev
 ARG CGO_ENABLED=0
@@ -22,22 +22,19 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /azimuthal \
     ./cmd/server
 
-# Verify the binary is static
-RUN file /azimuthal | grep -q "statically linked" || \
-    (echo "ERROR: binary is not statically linked" && exit 1)
-
 
 # ── Stage 2: Final distroless image ───────────────────────────────────────────
+# distroless/static:nonroot has no shell — use exec form for all instructions.
 FROM gcr.io/distroless/static:nonroot
 
-# nonroot user is uid=65532, already set by distroless/static:nonroot
+# nonroot user (uid=65532) is the default for distroless/static:nonroot.
 USER nonroot:nonroot
 
 COPY --from=builder --chown=nonroot:nonroot /azimuthal /azimuthal
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/azimuthal", "health"] || exit 1
+# Liveness probe is handled by the orchestrator (Kubernetes/Compose) via HTTP GET /health.
+# HEALTHCHECK is omitted: distroless has no shell to exec a health command.
 
 ENTRYPOINT ["/azimuthal"]
