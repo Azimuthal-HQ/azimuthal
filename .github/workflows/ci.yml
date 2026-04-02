@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.24'
+  GO_VERSION: '1.26'
   POSTGRES_VERSION: '16'
   BINARY_NAME: azimuthal
 
@@ -137,7 +137,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.11.4
           args: --config=.golangci.yml --timeout=5m
 
       - name: Check go.sum is up to date
@@ -184,6 +184,9 @@ jobs:
         with:
           sarif_file: gosec-results.sarif
           category: gosec
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       - name: Fail on HIGH+ findings
         run: |
@@ -236,12 +239,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install gitleaks
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
+            | grep '"tag_name"' | cut -d'"' -f4)
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/${VERSION}/gitleaks_${VERSION#v}_linux_x64.tar.gz" \
+            | tar xz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+        run: gitleaks detect --config .gitleaks.toml --verbose
 
 
   # ─────────────────────────────────────────────────────────────
