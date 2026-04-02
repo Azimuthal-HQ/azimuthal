@@ -224,6 +224,10 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
+      - name: Generate JSON vulnerability report
+        if: always()
+        run: govulncheck -json ./... > vuln-report.json || true
+
       - name: Upload vulnerability report
         uses: actions/upload-artifact@v4
         if: always()

@@ -1,19 +1,43 @@
-# trivy-ignore.yaml — Trivy vulnerability ignore policy
-# Referenced by trivy.yaml ignore-policy setting.
+# trivy-ignore.yaml — Trivy vulnerability suppression policy
 #
-# Format: https://aquasecurity.github.io/trivy/latest/docs/configuration/filtering/#rego-custom-policy
+# Format: OPA Rego module — https://www.openpolicyagent.org/docs/latest/policy-language/
+# Trivy docs: https://trivy.dev/docs/configuration/filtering/#rego-custom-policy
 #
-# Purpose: Suppress known false positives. Every entry MUST include:
-#   1. The CVE / finding ID being suppressed
-#   2. The reason it is a false positive or accepted risk
-#   3. The expiry date for review (max 90 days)
+# ── How to activate ───────────────────────────────────────────────────────────
+# When you need to suppress a finding, do TWO things:
 #
-# Example (uncomment and fill in when a real suppression is needed):
+#   1. Uncomment the `ignore-policy` line in trivy.yaml:
+#        ignore-policy: trivy-ignore.yaml
 #
-# suppress:
-#   - id: CVE-2024-00000
-#     reason: "Not exploitable in our deployment — we don't use X feature"
-#     expiry: "2025-12-31"
-#     target: "azimuthal:latest"
+#   2. Add a valid Rego rule below (see the template).
 #
-# No suppressions are active. All findings must be addressed or documented here.
+# Once all rules are removed, also remove `ignore-policy` from trivy.yaml
+# to avoid a Rego parse error (empty Rego modules are invalid).
+#
+# ── Required documentation for every suppression ──────────────────────────────
+# Every ignore rule MUST include:
+#   - The CVE / finding ID being suppressed
+#   - Why it is a false positive or accepted risk in Azimuthal's deployment
+#   - A GitHub issue URL tracking the fix or permanent acceptance decision
+#   - An expiry date for review (maximum 90 days from the suppression date)
+#
+# Undocumented suppressions will be rejected in code review.
+#
+# ── Template (copy, uncomment, and fill in) ───────────────────────────────────
+#
+# package trivy
+#
+# import rego.v1
+#
+# default ignore := false
+#
+# ignore if {
+#   # CVE-YYYY-NNNNN: <one-line reason — why not exploitable in our deployment>
+#   # Tracking:  https://github.com/Azimuthal-HQ/azimuthal/issues/NNN
+#   # Review by: YYYY-MM-DD  (max 90 days from today)
+#   input.VulnerabilityID == "CVE-YYYY-NNNNN"
+#   input.PkgName == "affected-package"
+# }
+#
+# ── Active suppressions ───────────────────────────────────────────────────────
+# (none — all findings are currently addressed or do not require suppression)
