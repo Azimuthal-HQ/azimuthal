@@ -6,6 +6,11 @@ version: "2"
 run:
   timeout: 5m
 
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
 linters:
   default: none
   enable:
@@ -16,8 +21,6 @@ linters:
     - ineffassign
     - staticcheck
     # Style
-    - gofmt
-    - goimports
     - misspell
     # Complexity
     - cyclop
