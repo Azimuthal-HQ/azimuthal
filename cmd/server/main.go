@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -37,13 +38,18 @@ func main() {
 	mux.HandleFunc("/health", api.HandleHealth)
 	mux.HandleFunc("/ready", api.HandleReady)
 
-	port := os.Getenv("APP_PORT")
-	if port == "" {
-		port = "8080"
+	portStr := os.Getenv("APP_PORT")
+	if portStr == "" {
+		portStr = "8080"
+	}
+	portNum, err := strconv.Atoi(portStr)
+	if err != nil || portNum < 1 || portNum > 65535 {
+		slog.Error("invalid APP_PORT value — must be 1-65535", "value_length", len(portStr))
+		os.Exit(1)
 	}
 
 	srv := &http.Server{
-		Addr:         ":" + port,
+		Addr:         ":" + strconv.Itoa(portNum),
 		Handler:      mux,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
@@ -54,7 +60,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		slog.Info("http server listening", "port", port)
+		slog.Info("http server listening", "port", portNum)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server error", "error", err)
 			os.Exit(1)
