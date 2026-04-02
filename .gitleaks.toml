@@ -21,8 +21,9 @@ title = "azimuthal secret scanning"
 
 [[rules]]
   id = "azimuthal-database-url"
-  description = "Database connection string with credentials"
-  regex = '''postgres://[^:]+:[^@]+@[^/]+/\w+'''
+  description = "Database connection string with hardcoded credentials (excludes env-var references)"
+  # Negative lookahead (?!\$\{) skips env-var substitutions like postgres://user:${PASSWORD}@...
+  regex = '''postgres://[^:]+:(?!\$\{)[^@]{6,}@[^/]+/\w+'''
   tags = ["database", "credentials"]
 
 [[rules]]
