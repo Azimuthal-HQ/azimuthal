@@ -57,7 +57,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:${{ env.POSTGRES_VERSION }}-alpine
+        image: postgres:16-alpine
         env:
           POSTGRES_USER: azimuthal
           POSTGRES_PASSWORD: testpassword
