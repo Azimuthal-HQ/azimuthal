@@ -275,6 +275,21 @@ func TestExportedHashToken(t *testing.T) {
 	}
 }
 
+func TestNewUserAdapter(t *testing.T) {
+	orgID := uuid.New()
+	adapter := NewUserAdapter(nil, orgID)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+}
+
+func TestNewSessionAdapter(t *testing.T) {
+	adapter := NewSessionAdapter(nil)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+}
+
 // Verify interface compliance at compile time.
 var _ auth.UserRepository = (*UserAdapter)(nil)
 var _ auth.SessionRepository = (*SessionAdapter)(nil)

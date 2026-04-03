@@ -390,6 +390,34 @@ func TestSprintToCreateParamsNilDates(t *testing.T) {
 	}
 }
 
+func TestNewItemAdapter(t *testing.T) {
+	adapter := NewItemAdapter(nil)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+}
+
+func TestNewSprintAdapter(t *testing.T) {
+	adapter := NewSprintAdapter(nil)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+}
+
+func TestNewRelationAdapter(t *testing.T) {
+	adapter := NewRelationAdapter(nil)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+}
+
+func TestNewLabelAdapter(t *testing.T) {
+	adapter := NewLabelAdapter(nil)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+}
+
 // Verify interface compliance at compile time.
 var _ projects.ItemRepository = (*ItemAdapter)(nil)
 var _ projects.SprintRepository = (*SprintAdapter)(nil)

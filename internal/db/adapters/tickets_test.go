@@ -241,5 +241,12 @@ func TestTicketToUpdateParams(t *testing.T) {
 	}
 }
 
+func TestNewTicketAdapter(t *testing.T) {
+	adapter := NewTicketAdapter(nil)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+}
+
 // Verify interface compliance at compile time.
 var _ tickets.TicketRepository = (*TicketAdapter)(nil)
