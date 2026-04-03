@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -49,7 +50,7 @@ func TestParseInboundEmail(t *testing.T) {
 	t.Run("missing from", func(t *testing.T) {
 		raw := "Subject: No from\r\n\r\nBody text"
 		_, err := ParseInboundEmail(strings.NewReader(raw))
-		if err != ErrEmailParseFailure {
+		if !errors.Is(err, ErrEmailParseFailure) {
 			t.Errorf("expected ErrEmailParseFailure, got %v", err)
 		}
 	})
@@ -57,7 +58,7 @@ func TestParseInboundEmail(t *testing.T) {
 	t.Run("missing subject", func(t *testing.T) {
 		raw := "From: user@example.com\r\n\r\nBody text"
 		_, err := ParseInboundEmail(strings.NewReader(raw))
-		if err != ErrEmailParseFailure {
+		if !errors.Is(err, ErrEmailParseFailure) {
 			t.Errorf("expected ErrEmailParseFailure, got %v", err)
 		}
 	})
@@ -99,7 +100,7 @@ func TestCreateFromEmail(t *testing.T) {
 
 	t.Run("nil email", func(t *testing.T) {
 		_, err := svc.CreateFromEmail(context.Background(), nil, spaceID, reporterID)
-		if err != ErrEmailParseFailure {
+		if !errors.Is(err, ErrEmailParseFailure) {
 			t.Errorf("expected ErrEmailParseFailure, got %v", err)
 		}
 	})

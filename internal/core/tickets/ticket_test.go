@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -102,7 +103,7 @@ func (m *mockRepo) Search(_ context.Context, spaceID uuid.UUID, query string, li
 		if strings.Contains(strings.ToLower(t.Title), lower) ||
 			strings.Contains(strings.ToLower(t.Description), lower) {
 			result = append(result, t)
-			if int32(len(result)) >= limit {
+			if len(result) >= int(limit) {
 				break
 			}
 		}
@@ -194,7 +195,7 @@ func TestCreateTicket(t *testing.T) {
 			Priority:   PriorityMedium,
 			ReporterID: reporterID,
 		})
-		if err != ErrTitleRequired {
+		if !errors.Is(err, ErrTitleRequired) {
 			t.Errorf("expected ErrTitleRequired, got %v", err)
 		}
 	})
@@ -205,7 +206,7 @@ func TestCreateTicket(t *testing.T) {
 			Priority:   PriorityMedium,
 			ReporterID: reporterID,
 		})
-		if err != ErrSpaceRequired {
+		if !errors.Is(err, ErrSpaceRequired) {
 			t.Errorf("expected ErrSpaceRequired, got %v", err)
 		}
 	})
@@ -216,7 +217,7 @@ func TestCreateTicket(t *testing.T) {
 			Title:    "Test",
 			Priority: PriorityMedium,
 		})
-		if err != ErrReporterRequired {
+		if !errors.Is(err, ErrReporterRequired) {
 			t.Errorf("expected ErrReporterRequired, got %v", err)
 		}
 	})
@@ -281,7 +282,7 @@ func TestUpdateTicket(t *testing.T) {
 	t.Run("empty title", func(t *testing.T) {
 		ticket.Title = ""
 		err := svc.Update(context.Background(), ticket)
-		if err != ErrTitleRequired {
+		if !errors.Is(err, ErrTitleRequired) {
 			t.Errorf("expected ErrTitleRequired, got %v", err)
 		}
 		ticket.Title = "Updated title" // restore

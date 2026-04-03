@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,27 +15,33 @@ func TestSearch(t *testing.T) {
 	reporterID := uuid.New()
 
 	// Create tickets with different titles
-	svc.Create(ctx, CreateTicketParams{
+	if _, err := svc.Create(ctx, CreateTicketParams{
 		SpaceID:     spaceID,
 		Title:       "Login page not loading",
 		Description: "The login page shows a blank screen",
 		Priority:    PriorityHigh,
 		ReporterID:  reporterID,
-	})
-	svc.Create(ctx, CreateTicketParams{
+	}); err != nil {
+		t.Fatalf("creating test ticket: %v", err)
+	}
+	if _, err := svc.Create(ctx, CreateTicketParams{
 		SpaceID:     spaceID,
 		Title:       "Password reset broken",
 		Description: "Reset email never arrives",
 		Priority:    PriorityMedium,
 		ReporterID:  reporterID,
-	})
-	svc.Create(ctx, CreateTicketParams{
+	}); err != nil {
+		t.Fatalf("creating test ticket: %v", err)
+	}
+	if _, err := svc.Create(ctx, CreateTicketParams{
 		SpaceID:     spaceID,
 		Title:       "Dashboard performance",
 		Description: "Dashboard is slow to load",
 		Priority:    PriorityLow,
 		ReporterID:  reporterID,
-	})
+	}); err != nil {
+		t.Fatalf("creating test ticket: %v", err)
+	}
 
 	t.Run("finds matching tickets", func(t *testing.T) {
 		results, err := svc.Search(ctx, spaceID, "login", 10)
@@ -68,7 +75,7 @@ func TestSearch(t *testing.T) {
 
 	t.Run("empty query", func(t *testing.T) {
 		_, err := svc.Search(ctx, spaceID, "", 10)
-		if err != ErrEmptySearchQuery {
+		if !errors.Is(err, ErrEmptySearchQuery) {
 			t.Errorf("expected ErrEmptySearchQuery, got %v", err)
 		}
 	})

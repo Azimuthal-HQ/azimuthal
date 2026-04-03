@@ -100,7 +100,7 @@ func ValidateTransition(current, next Status) error {
 	return nil
 }
 
-// TransitionTicket validates and applies a status transition on the given ticket
+// TransitionStatus validates and applies a status transition on the given ticket
 // via the repository. Returns the updated ticket or an error if the transition
 // is invalid.
 func (s *TicketService) TransitionStatus(ctx context.Context, id uuid.UUID, newStatus Status) (*Ticket, error) {

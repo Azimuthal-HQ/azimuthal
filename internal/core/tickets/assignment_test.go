@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -33,7 +34,7 @@ func TestAssign(t *testing.T) {
 
 	t.Run("already assigned", func(t *testing.T) {
 		_, err := svc.Assign(context.Background(), ticket.ID, assigneeID, &mockNotifier{})
-		if err != ErrAlreadyAssigned {
+		if !errors.Is(err, ErrAlreadyAssigned) {
 			t.Errorf("expected ErrAlreadyAssigned, got %v", err)
 		}
 	})
