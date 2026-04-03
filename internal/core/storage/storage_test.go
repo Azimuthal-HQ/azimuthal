@@ -17,7 +17,6 @@ func TestMemoryStore_PutGetDelete(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()
 
-	// Put
 	content := "hello, azimuthal"
 	if err := store.Put(ctx, "test/key", strings.NewReader(content)); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -26,12 +25,15 @@ func TestMemoryStore_PutGetDelete(t *testing.T) {
 		t.Errorf("expected Len()=1, got %d", store.Len())
 	}
 
-	// Get
 	rc, err := store.Get(ctx, "test/key")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	defer rc.Close()
+	defer func() {
+		if cerr := rc.Close(); cerr != nil {
+			t.Errorf("rc.Close: %v", cerr)
+		}
+	}()
 
 	got, err := io.ReadAll(rc)
 	if err != nil {
@@ -41,7 +43,6 @@ func TestMemoryStore_PutGetDelete(t *testing.T) {
 		t.Errorf("expected %q, got %q", content, string(got))
 	}
 
-	// Delete
 	if err := store.Delete(ctx, "test/key"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
@@ -86,14 +87,18 @@ func TestMemoryStore_Overwrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rc.Close()
+	defer func() {
+		if cerr := rc.Close(); cerr != nil {
+			t.Errorf("rc.Close: %v", cerr)
+		}
+	}()
 	data, _ := io.ReadAll(rc)
 	if string(data) != "second" {
 		t.Errorf("expected %q after overwrite, got %q", "second", string(data))
 	}
 }
 
-// TestMemoryStore_IsolatesReads verifies that mutations to the returned bytes don't affect the store.
+// TestMemoryStore_IsolatesReads verifies that mutations to returned bytes don't affect the store.
 func TestMemoryStore_IsolatesReads(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()
@@ -104,23 +109,25 @@ func TestMemoryStore_IsolatesReads(t *testing.T) {
 
 	rc, _ := store.Get(ctx, "key")
 	data, _ := io.ReadAll(rc)
-	rc.Close()
-	// Mutate the returned data.
+	if err := rc.Close(); err != nil {
+		t.Fatalf("rc.Close: %v", err)
+	}
 	for i := range data {
 		data[i] = 'X'
 	}
 
-	// The stored copy should be unchanged.
 	rc2, _ := store.Get(ctx, "key")
 	data2, _ := io.ReadAll(rc2)
-	rc2.Close()
+	if err := rc2.Close(); err != nil {
+		t.Fatalf("rc2.Close: %v", err)
+	}
 	if string(data2) != "original" {
 		t.Errorf("stored data was mutated; got %q", string(data2))
 	}
 }
 
 // TestMemoryStore_Concurrent exercises the store under concurrent access.
-func TestMemoryStore_Concurrent(t *testing.T) {
+func TestMemoryStore_Concurrent(_ *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()
 	const goroutines = 20
@@ -140,6 +147,6 @@ func TestMemoryStore_Concurrent(t *testing.T) {
 }
 
 // TestObjectStoreInterface verifies that *MemoryStore satisfies ObjectStore at compile time.
-func TestObjectStoreInterface(t *testing.T) {
+func TestObjectStoreInterface(_ *testing.T) {
 	var _ storage.ObjectStore = storage.NewMemoryStore()
 }

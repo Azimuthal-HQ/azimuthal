@@ -22,7 +22,7 @@ func TestNoopSender(t *testing.T) {
 }
 
 // TestSMTPSender_InterfaceCompliance verifies *SMTPSender satisfies Sender at compile time.
-func TestSMTPSender_InterfaceCompliance(t *testing.T) {
+func TestSMTPSender_InterfaceCompliance(_ *testing.T) {
 	var _ email.Sender = email.NewSMTPSender("localhost", 1025, "test@localhost")
 }
 
