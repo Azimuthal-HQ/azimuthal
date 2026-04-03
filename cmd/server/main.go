@@ -12,6 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 )
 
@@ -27,38 +30,23 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	slog.Info("starting azimuthal",
-		"version", Version,
-		"build_time", BuildTime,
-	)
+	slog.Info("starting azimuthal", "version", Version, "build_time", BuildTime)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", api.HandleHealth)
-	mux.HandleFunc("/ready", api.HandleReady)
-
-	portStr := os.Getenv("APP_PORT")
-	if portStr == "" {
-		portStr = "8080"
-	}
-	portNum, err := strconv.Atoi(portStr)
-	if err != nil || portNum < 1 || portNum > 65535 {
-		slog.Error("APP_PORT must be an integer between 1 and 65535")
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 
-	srv := &http.Server{
-		Addr:         ":" + strconv.Itoa(portNum),
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
+	slog.Info("configuration loaded", "env", cfg.AppEnv, "port", cfg.AppPort)
+
+	srv := newServer(cfg.AppPort)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	go func() {
-		slog.Info("http server listening", "port", portNum)
+		slog.Info("http server listening", "port", cfg.AppPort)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server error", "error", err)
 			os.Exit(1)
@@ -77,4 +65,25 @@ func main() {
 	}
 
 	slog.Info("shutdown complete")
+}
+
+// newServer builds an http.Server with the chi router, middleware stack, and
+// public endpoints. The full API router (api.NewRouter) requires DB-backed
+// repository adapters; see docs/known-issues.md.
+func newServer(port int) *http.Server {
+	r := chi.NewRouter()
+	r.Use(api.Recoverer)
+	r.Use(api.RequestID)
+	r.Use(api.Logging)
+	r.Use(api.CORS)
+	r.Get("/health", api.HandleHealth)
+	r.Get("/ready", api.HandleReady)
+
+	return &http.Server{
+		Addr:         ":" + strconv.Itoa(port),
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 }

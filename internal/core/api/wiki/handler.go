@@ -4,6 +4,7 @@ package wiki
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -326,7 +327,7 @@ func (h *Handler) RenderPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if _, writeErr := w.Write([]byte(html)); writeErr != nil {
-		_ = writeErr
+		slog.Error("writing rendered html response", "error", writeErr)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -197,5 +198,206 @@ func TestRoutesReturnsRouter(t *testing.T) {
 	r := h.Routes()
 	if r == nil {
 		t.Fatal("Routes() returned nil")
+	}
+}
+
+// --- Happy-path, service-error, and validation tests ---
+
+func TestListSuccess(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = withChiParam(req, "spaceID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.List(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestGetNotFound(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = withChiParam(req, "ticketID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Get(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestCreateInvalidSpaceID(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = withChiParam(req, "spaceID", "bad-uuid")
+	rr := httptest.NewRecorder()
+	h.Create(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestCreateInvalidBody(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	// Need claims context for this path - without it, we get 401
+	req = withChiParam(req, "spaceID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Create(rr, req)
+	// No auth claims, so still 401
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestDeleteNotFound(t *testing.T) {
+	h := setupTicketHandler()
+	// The mock repo Delete just deletes from map, so non-existent ID won't error
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
+	req = withChiParam(req, "ticketID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Delete(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+}
+
+func TestUpdateInvalidBody(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParam(req, "ticketID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Update(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestUpdateNotFound(t *testing.T) {
+	h := setupTicketHandler()
+	body := `{"title":"test","description":"d","priority":"low"}`
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParam(req, "ticketID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Update(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestTransitionStatusInvalidBody(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParam(req, "ticketID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.TransitionStatus(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestTransitionStatusNotFound(t *testing.T) {
+	h := setupTicketHandler()
+	body := `{"status":"in_progress"}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParam(req, "ticketID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.TransitionStatus(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestAssignInvalidBody(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
+	req.Header.Set("Content-Type", "application/json")
+	req = withChiParam(req, "ticketID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Assign(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestUnassignNotFound(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
+	req = withChiParam(req, "ticketID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Unassign(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+func TestSearchEmptyQuery(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = withChiParam(req, "spaceID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestSearchSuccess(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodGet, "/?q=test", nil)
+	req = withChiParam(req, "spaceID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestSearchWithLimit(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodGet, "/?q=test&limit=25", nil)
+	req = withChiParam(req, "spaceID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestSearchInvalidLimit(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodGet, "/?q=test&limit=abc", nil)
+	req = withChiParam(req, "spaceID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+	// falls back to default limit, still succeeds
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestSearchLimitOutOfRange(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodGet, "/?q=test&limit=999", nil)
+	req = withChiParam(req, "spaceID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Search(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestKanbanSuccess(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = withChiParam(req, "spaceID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Kanban(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
 }

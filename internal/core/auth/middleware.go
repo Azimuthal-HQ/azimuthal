@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -35,7 +37,17 @@ func (a *Authenticator) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := a.extractClaims(r)
 		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			body := map[string]any{
+				"error": map[string]any{
+					"code":    "UNAUTHORIZED",
+					"message": "missing or invalid authentication",
+				},
+			}
+			if encErr := json.NewEncoder(w).Encode(body); encErr != nil {
+				slog.Error("writing auth error response", "error", encErr)
+			}
 			return
 		}
 		ctx := context.WithValue(r.Context(), contextKeyClaims, claims)
