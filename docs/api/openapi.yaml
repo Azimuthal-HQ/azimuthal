@@ -1,0 +1,976 @@
+openapi: 3.1.0
+info:
+  title: Azimuthal API
+  description: REST API for Azimuthal — self-hostable project management suite
+  version: 1.0.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: health
+    description: Liveness and readiness probes
+  - name: auth
+    description: Authentication (login, register, token refresh)
+  - name: spaces
+    description: Space management
+  - name: tickets
+    description: Service desk tickets
+  - name: wiki
+    description: Wiki pages and revisions
+  - name: projects
+    description: Project items, sprints, backlog, roadmap
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /ready:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      operationId: getReady
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Login with email and password
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      summary: Register a new user account
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Refresh access token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Tokens refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Logout (invalidate all sessions)
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Logged out
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/orgs/{orgID}/spaces:
+    parameters:
+      - $ref: "#/components/parameters/OrgID"
+    get:
+      tags: [spaces]
+      summary: List spaces in an organization
+      operationId: listSpaces
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of spaces
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Space"
+    post:
+      tags: [spaces]
+      summary: Create a new space
+      operationId: createSpace
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSpaceRequest"
+      responses:
+        "201":
+          description: Space created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Space"
+
+  /api/v1/orgs/{orgID}/spaces/{spaceID}:
+    parameters:
+      - $ref: "#/components/parameters/OrgID"
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [spaces]
+      summary: Get a space by ID
+      operationId: getSpace
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Space details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Space"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [spaces]
+      summary: Update a space
+      operationId: updateSpace
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSpaceRequest"
+      responses:
+        "200":
+          description: Space updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Space"
+    delete:
+      tags: [spaces]
+      summary: Delete a space (soft delete)
+      operationId: deleteSpace
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Space deleted
+
+  /api/v1/spaces/{spaceID}/tickets:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [tickets]
+      summary: List tickets in a space
+      operationId: listTickets
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of tickets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ticket"
+    post:
+      tags: [tickets]
+      summary: Create a ticket
+      operationId: createTicket
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTicketRequest"
+      responses:
+        "201":
+          description: Ticket created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+
+  /api/v1/spaces/{spaceID}/tickets/{ticketID}:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+      - $ref: "#/components/parameters/TicketID"
+    get:
+      tags: [tickets]
+      summary: Get a ticket by ID
+      operationId: getTicket
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Ticket details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [tickets]
+      summary: Update a ticket
+      operationId: updateTicket
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTicketRequest"
+      responses:
+        "200":
+          description: Ticket updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+    delete:
+      tags: [tickets]
+      summary: Delete a ticket (soft delete)
+      operationId: deleteTicket
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Ticket deleted
+
+  /api/v1/spaces/{spaceID}/tickets/{ticketID}/status:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+      - $ref: "#/components/parameters/TicketID"
+    post:
+      tags: [tickets]
+      summary: Transition ticket status
+      operationId: transitionTicketStatus
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [open, in_progress, resolved, closed]
+      responses:
+        "200":
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/spaces/{spaceID}/tickets/search:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [tickets]
+      summary: Search tickets
+      operationId: searchTickets
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ticket"
+
+  /api/v1/spaces/{spaceID}/tickets/kanban:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [tickets]
+      summary: Get kanban board view
+      operationId: getKanbanBoard
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Kanban columns with tickets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KanbanColumn"
+
+  /api/v1/spaces/{spaceID}/wiki:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [wiki]
+      summary: List wiki pages in a space
+      operationId: listWikiPages
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of pages
+    post:
+      tags: [wiki]
+      summary: Create a wiki page
+      operationId: createWikiPage
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePageRequest"
+      responses:
+        "201":
+          description: Page created
+
+  /api/v1/spaces/{spaceID}/wiki/{pageID}:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+      - $ref: "#/components/parameters/PageID"
+    get:
+      tags: [wiki]
+      summary: Get a wiki page
+      operationId: getWikiPage
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Page details
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [wiki]
+      summary: Update a wiki page (with optimistic locking)
+      operationId: updateWikiPage
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePageRequest"
+      responses:
+        "200":
+          description: Page updated
+        "409":
+          description: Version conflict
+    delete:
+      tags: [wiki]
+      summary: Delete a wiki page
+      operationId: deleteWikiPage
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Page deleted
+
+  /api/v1/spaces/{spaceID}/wiki/tree:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [wiki]
+      summary: Get full page tree
+      operationId: getWikiTree
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Page tree
+
+  /api/v1/spaces/{spaceID}/wiki/search:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [wiki]
+      summary: Search wiki pages
+      operationId: searchWikiPages
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Search results
+
+  /api/v1/spaces/{spaceID}/projects/items:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [projects]
+      summary: List project items
+      operationId: listProjectItems
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectItem"
+    post:
+      tags: [projects]
+      summary: Create a project item
+      operationId: createProjectItem
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateItemRequest"
+      responses:
+        "201":
+          description: Item created
+
+  /api/v1/spaces/{spaceID}/projects/sprints:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [projects]
+      summary: List sprints
+      operationId: listSprints
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of sprints
+    post:
+      tags: [projects]
+      summary: Create a sprint
+      operationId: createSprint
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSprintRequest"
+      responses:
+        "201":
+          description: Sprint created
+
+  /api/v1/spaces/{spaceID}/projects/backlog:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [projects]
+      summary: Get backlog items
+      operationId: getBacklog
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Backlog items
+
+  /api/v1/spaces/{spaceID}/projects/roadmap:
+    parameters:
+      - $ref: "#/components/parameters/SpaceID"
+    get:
+      tags: [projects]
+      summary: Get roadmap items in date range
+      operationId: getRoadmap
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Roadmap items
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    OrgID:
+      name: orgID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SpaceID:
+      name: spaceID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TicketID:
+      name: ticketID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PageID:
+      name: pageID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Authentication required or invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Conflict (duplicate, version mismatch, invalid transition)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - NOT_FOUND
+                - VALIDATION_ERROR
+                - UNAUTHORIZED
+                - FORBIDDEN
+                - CONFLICT
+                - INTERNAL_ERROR
+                - BAD_REQUEST
+                - INVALID_TRANSITION
+            message:
+              type: string
+            request_id:
+              type: string
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+        password:
+          type: string
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        user:
+          $ref: "#/components/schemas/UserSummary"
+
+    RefreshResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        display_name:
+          type: string
+        is_active:
+          type: boolean
+
+    Space:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+        icon:
+          type: string
+        is_private:
+          type: boolean
+        created_by:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    CreateSpaceRequest:
+      type: object
+      required: [slug, name, type]
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+        icon:
+          type: string
+        is_private:
+          type: boolean
+
+    UpdateSpaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        icon:
+          type: string
+        is_private:
+          type: boolean
+
+    Ticket:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        space_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        priority:
+          type: string
+          enum: [urgent, high, medium, low]
+        reporter_id:
+          type: string
+          format: uuid
+        assignee_id:
+          type: string
+          format: uuid
+        labels:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreateTicketRequest:
+      type: object
+      required: [title, priority]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+          enum: [urgent, high, medium, low]
+        assignee_id:
+          type: string
+          format: uuid
+        labels:
+          type: array
+          items:
+            type: string
+
+    UpdateTicketRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          type: string
+          enum: [urgent, high, medium, low]
+        labels:
+          type: array
+          items:
+            type: string
+
+    KanbanColumn:
+      type: object
+      properties:
+        status:
+          type: string
+        tickets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ticket"
+
+    CreatePageRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        parent_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+
+    UpdatePageRequest:
+      type: object
+      required: [title, content, expected_version]
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        expected_version:
+          type: integer
+
+    ProjectItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        space_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [ticket, task, story, epic, bug]
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        priority:
+          type: string
+          enum: [urgent, high, medium, low]
+        reporter_id:
+          type: string
+          format: uuid
+        assignee_id:
+          type: string
+          format: uuid
+        sprint_id:
+          type: string
+          format: uuid
+        labels:
+          type: array
+          items:
+            type: string
+
+    CreateItemRequest:
+      type: object
+      required: [title, kind, priority]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        kind:
+          type: string
+          enum: [ticket, task, story, epic, bug]
+        priority:
+          type: string
+          enum: [urgent, high, medium, low]
+        assignee_id:
+          type: string
+          format: uuid
+        sprint_id:
+          type: string
+          format: uuid
+        labels:
+          type: array
+          items:
+            type: string
+        due_at:
+          type: string
+          format: date-time
+
+    CreateSprintRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        goal:
+          type: string
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
