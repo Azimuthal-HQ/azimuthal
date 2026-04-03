@@ -6,6 +6,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/pressly/goose/v3 v3.27.0
+	github.com/sergi/go-diff v1.4.0
+	github.com/yuin/goldmark v1.8.2
 )
 
 require (
@@ -13,16 +15,15 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
+	github.com/minio/minio-go/v7 v7.0.100
+	github.com/riverqueue/river v0.32.0
+	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.32.0
 	github.com/sethvargo/go-retry v0.3.0 // indirect
+	github.com/spf13/viper v1.21.0
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
-	github.com/jackc/pgx/v5 v5.9.1
-	github.com/minio/minio-go/v7 v7.0.100
-	github.com/riverqueue/river v0.32.0
-	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.32.0
-	github.com/spf13/viper v1.21.0
 )
 
 require (
@@ -31,10 +32,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
-	github.com/jackc/pgpassfile v1.0.0 // indirect
-	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/klauspost/compress v1.18.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.11 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
@@ -61,13 +59,7 @@ require (
 	github.com/tinylib/msgp v1.6.1 // indirect
 	go.uber.org/goleak v1.3.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.49.0 // indirect
-	golang.org/x/net v0.51.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/google/uuid v1.6.0
 	golang.org/x/crypto v0.49.0
+	golang.org/x/net v0.51.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
