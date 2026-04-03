@@ -33,5 +33,5 @@ func TestDefaultLogger_Log_IsNoOp(t *testing.T) {
 }
 
 func TestDefaultLogger_ImplementsInterface(_ *testing.T) {
-	var _ audit.Logger = audit.NewLogger()
+	var _ = audit.NewLogger()
 }

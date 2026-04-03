@@ -47,5 +47,5 @@ func TestDefaultReporter_UserActivity_ReturnsNotImplemented(t *testing.T) {
 }
 
 func TestDefaultReporter_ImplementsInterface(_ *testing.T) {
-	var _ analytics.Reporter = analytics.NewReporter()
+	var _ = analytics.NewReporter()
 }

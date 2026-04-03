@@ -38,5 +38,5 @@ func TestDefaultProvider_CompleteAuth(t *testing.T) {
 }
 
 func TestDefaultProvider_ImplementsInterface(_ *testing.T) {
-	var _ sso.Provider = sso.NewProvider()
+	var _ = sso.NewProvider()
 }

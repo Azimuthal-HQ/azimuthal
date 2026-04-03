@@ -122,5 +122,5 @@ func TestChecker_UserRole(t *testing.T) {
 }
 
 func TestChecker_ImplementsInterface(_ *testing.T) {
-	var _ rbac.Checker = rbac.NewChecker()
+	var _ = rbac.NewChecker()
 }
