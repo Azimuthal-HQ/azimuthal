@@ -21,9 +21,9 @@ type stubChecker struct {
 	roleFunc func(ctx context.Context, userID, orgID string) (Role, error)
 }
 
-// NewChecker returns the community stub RBACChecker using a no-op role resolver.
+// NewChecker returns the community stub Checker using a no-op role resolver.
 // Use NewCheckerWithRoleFunc to wire in the real role-lookup once the auth layer exists.
-func NewChecker() RBACChecker {
+func NewChecker() Checker {
 	return &stubChecker{
 		roleFunc: func(_ context.Context, _, _ string) (Role, error) {
 			return "", ErrNotMember
@@ -33,7 +33,7 @@ func NewChecker() RBACChecker {
 
 // NewCheckerWithRoleFunc returns a community stub that resolves roles via fn.
 // Wire this into the HTTP layer with a function that queries the memberships table.
-func NewCheckerWithRoleFunc(fn func(ctx context.Context, userID, orgID string) (Role, error)) RBACChecker {
+func NewCheckerWithRoleFunc(fn func(ctx context.Context, userID, orgID string) (Role, error)) Checker {
 	return &stubChecker{roleFunc: fn}
 }
 

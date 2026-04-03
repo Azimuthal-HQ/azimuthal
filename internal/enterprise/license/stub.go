@@ -6,10 +6,10 @@ package license
 // It never performs RSA verification — there is no enterprise license key on a community install.
 type communityValidator struct{}
 
-// NewValidator returns the community LicenseValidator.
+// NewValidator returns the community Validator.
 // In enterprise builds this function is replaced by an RSAValidator wired with
 // the embedded production public key.
-func NewValidator() LicenseValidator {
+func NewValidator() Validator {
 	return &communityValidator{}
 }
 

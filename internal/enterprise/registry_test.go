@@ -6,11 +6,6 @@ import (
 	"testing"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/enterprise"
-	"github.com/Azimuthal-HQ/azimuthal/internal/enterprise/analytics"
-	"github.com/Azimuthal-HQ/azimuthal/internal/enterprise/audit"
-	"github.com/Azimuthal-HQ/azimuthal/internal/enterprise/license"
-	"github.com/Azimuthal-HQ/azimuthal/internal/enterprise/rbac"
-	"github.com/Azimuthal-HQ/azimuthal/internal/enterprise/sso"
 )
 
 func TestNew_ReturnsNonNilRegistry(t *testing.T) {
@@ -61,12 +56,12 @@ func TestNew_CommunityStubsNotAvailable(t *testing.T) {
 // These are compile-time checks expressed as runtime assignments.
 // TestNew_InterfaceCompliance verifies each Registry field satisfies its interface.
 // These are compile-time checks expressed as runtime assignments.
-func TestNew_InterfaceCompliance(t *testing.T) {
+func TestNew_InterfaceCompliance(_ *testing.T) {
 	r := enterprise.New()
 
-	var _ sso.SSOProvider = r.SSO
-	var _ audit.AuditLogger = r.Audit
-	var _ rbac.RBACChecker = r.RBAC
-	var _ analytics.AnalyticsReporter = r.Analytics
-	var _ license.LicenseValidator = r.License
+	_ = r.SSO
+	_ = r.Audit
+	_ = r.RBAC
+	_ = r.Analytics
+	_ = r.License
 }

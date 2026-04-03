@@ -37,8 +37,8 @@ func TestCommunityProvider_CompleteAuth(t *testing.T) {
 	}
 }
 
-func TestCommunityProvider_ImplementsInterface(t *testing.T) {
+func TestCommunityProvider_ImplementsInterface(_ *testing.T) {
 	// Compile-time assertion — if communityProvider does not implement
 	// SSOProvider the test file will not compile.
-	var _ SSOProvider = &communityProvider{}
+	var _ Provider = &communityProvider{}
 }

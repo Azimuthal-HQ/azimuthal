@@ -53,10 +53,10 @@ type OrgSummary struct {
 	TotalPageViews int64
 }
 
-// AnalyticsReporter produces usage and performance reports for an organisation.
+// Reporter produces usage and performance reports for an organisation.
 // The community edition returns ErrEnterpriseRequired for all methods.
 // The real implementation lives in github.com/Azimuthal-HQ/azimuthal-ee.
-type AnalyticsReporter interface {
+type Reporter interface {
 	// OrgSummary returns aggregated metrics for orgID over the given time window.
 	OrgSummary(ctx context.Context, orgID string, from, to time.Time) (*OrgSummary, error)
 

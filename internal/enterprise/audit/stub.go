@@ -8,14 +8,14 @@ import "context"
 // All events are silently discarded.
 type stubLogger struct{}
 
-// NewLogger returns the community no-op AuditLogger.
+// NewLogger returns the community no-op Logger.
 // In enterprise builds this function is replaced by the real append-only implementation.
-func NewLogger() AuditLogger {
+func NewLogger() Logger {
 	return &stubLogger{}
 }
 
 // Log is a no-op in the community edition. Events are silently discarded.
-func (s *stubLogger) Log(_ context.Context, _ AuditEvent) error {
+func (s *stubLogger) Log(_ context.Context, _ Event) error {
 	return nil
 }
 

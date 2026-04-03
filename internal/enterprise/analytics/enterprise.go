@@ -10,13 +10,13 @@ import (
 	"time"
 )
 
-// enterpriseReporter is a compile-time placeholder that satisfies AnalyticsReporter
+// enterpriseReporter is a compile-time placeholder that satisfies Reporter
 // when building with the enterprise tag in the community repository.
 type enterpriseReporter struct{}
 
 // NewReporter returns a placeholder AnalyticsReporter for enterprise builds in the
 // community repository. The azimuthal-ee private repo provides the real implementation.
-func NewReporter() AnalyticsReporter {
+func NewReporter() Reporter {
 	return &enterpriseReporter{}
 }
 

@@ -4,6 +4,7 @@ package analytics_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestStubReporter_OrgSummary_ReturnsEnterpriseRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected ErrEnterpriseRequired, got nil")
 	}
-	if err != analytics.ErrEnterpriseRequired {
+	if !errors.Is(err, analytics.ErrEnterpriseRequired) {
 		t.Errorf("expected ErrEnterpriseRequired, got %v", err)
 	}
 	if summary != nil {
@@ -39,7 +40,7 @@ func TestStubReporter_UserActivity_ReturnsEnterpriseRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected ErrEnterpriseRequired, got nil")
 	}
-	if err != analytics.ErrEnterpriseRequired {
+	if !errors.Is(err, analytics.ErrEnterpriseRequired) {
 		t.Errorf("expected ErrEnterpriseRequired, got %v", err)
 	}
 	if activity != nil {
@@ -47,6 +48,6 @@ func TestStubReporter_UserActivity_ReturnsEnterpriseRequired(t *testing.T) {
 	}
 }
 
-func TestStubReporter_ImplementsInterface(t *testing.T) {
-	var _ analytics.AnalyticsReporter = analytics.NewReporter()
+func TestStubReporter_ImplementsInterface(_ *testing.T) {
+	var _ = analytics.NewReporter()
 }

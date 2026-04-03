@@ -10,7 +10,7 @@ import (
 )
 
 // makeCheckerWithRole returns a checker that always resolves to the given role.
-func makeCheckerWithRole(role rbac.Role) rbac.RBACChecker {
+func makeCheckerWithRole(role rbac.Role) rbac.Checker {
 	return rbac.NewCheckerWithRoleFunc(func(_ context.Context, _, _ string) (rbac.Role, error) {
 		return role, nil
 	})
@@ -123,6 +123,6 @@ func TestStubChecker_UserRole(t *testing.T) {
 	}
 }
 
-func TestStubChecker_ImplementsInterface(t *testing.T) {
-	var _ rbac.RBACChecker = rbac.NewChecker()
+func TestStubChecker_ImplementsInterface(_ *testing.T) {
+	var _ = rbac.NewChecker()
 }

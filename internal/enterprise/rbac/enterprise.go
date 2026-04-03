@@ -10,19 +10,19 @@ import (
 	"fmt"
 )
 
-// enterpriseChecker is a compile-time placeholder that satisfies RBACChecker
+// enterpriseChecker is a compile-time placeholder that satisfies Checker
 // when building with the enterprise tag in the community repository.
 type enterpriseChecker struct{}
 
 // NewChecker returns a placeholder RBACChecker for enterprise builds in the
 // community repository. The azimuthal-ee private repo provides the real implementation.
-func NewChecker() RBACChecker {
+func NewChecker() Checker {
 	return &enterpriseChecker{}
 }
 
 // NewCheckerWithRoleFunc returns a placeholder RBACChecker. The azimuthal-ee
 // private repo replaces this with the attribute-based policy engine.
-func NewCheckerWithRoleFunc(_ func(ctx context.Context, userID, orgID string) (Role, error)) RBACChecker {
+func NewCheckerWithRoleFunc(_ func(ctx context.Context, userID, orgID string) (Role, error)) Checker {
 	return &enterpriseChecker{}
 }
 

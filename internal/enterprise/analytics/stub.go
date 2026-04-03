@@ -10,9 +10,9 @@ import (
 // stubReporter is the community-edition stub. Every method returns ErrEnterpriseRequired.
 type stubReporter struct{}
 
-// NewReporter returns the community stub AnalyticsReporter.
+// NewReporter returns the community stub Reporter.
 // In enterprise builds this function is replaced by the real reporting engine.
-func NewReporter() AnalyticsReporter {
+func NewReporter() Reporter {
 	return &stubReporter{}
 }
 

@@ -89,9 +89,9 @@ type licensePayload struct {
 	Features  []string `json:"features"`
 }
 
-// LicenseValidator verifies license keys and reports which features are active.
+// Validator verifies license keys and reports which features are active.
 // Use NewRSAValidator to construct an instance with a PEM-encoded RSA public key.
-type LicenseValidator interface {
+type Validator interface {
 	// Validate parses and cryptographically verifies a license key.
 	// Returns the decoded License on success, or ErrInvalidLicense if the key
 	// is malformed, tampered with, or expired.
@@ -143,12 +143,12 @@ func (v *RSAValidator) Validate(key string) (*License, error) {
 
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadB64)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decoding payload: %v", ErrInvalidLicense, err)
+		return nil, fmt.Errorf("%w: decoding payload: %w", ErrInvalidLicense, err)
 	}
 
 	sigBytes, err := base64.RawURLEncoding.DecodeString(sigB64)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decoding signature: %v", ErrInvalidLicense, err)
+		return nil, fmt.Errorf("%w: decoding signature: %w", ErrInvalidLicense, err)
 	}
 
 	// Verify the signature covers the raw encoded payload bytes.
@@ -166,7 +166,7 @@ func (v *RSAValidator) Validate(key string) (*License, error) {
 
 	var payload licensePayload
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return nil, fmt.Errorf("%w: decoding license payload: %v", ErrInvalidLicense, err)
+		return nil, fmt.Errorf("%w: decoding license payload: %w", ErrInvalidLicense, err)
 	}
 
 	lic := &License{

@@ -16,15 +16,15 @@ import (
 // depending on the build tag in effect.
 type Registry struct {
 	// SSO is the active single sign-on provider.
-	SSO sso.SSOProvider
+	SSO sso.Provider
 	// Audit is the active audit logger.
-	Audit audit.AuditLogger
+	Audit audit.Logger
 	// RBAC is the active permissions checker.
-	RBAC rbac.RBACChecker
+	RBAC rbac.Checker
 	// Analytics is the active analytics reporter.
-	Analytics analytics.AnalyticsReporter
+	Analytics analytics.Reporter
 	// License is the active license validator.
-	License license.LicenseValidator
+	License license.Validator
 }
 
 // New constructs a Registry populated with the implementations selected by the

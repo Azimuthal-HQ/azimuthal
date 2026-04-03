@@ -50,8 +50,8 @@ func TestCommunityValidator_HasFeature_AlwaysFalse(t *testing.T) {
 	}
 }
 
-func TestCommunityValidator_ImplementsInterface(t *testing.T) {
-	var _ license.LicenseValidator = license.NewValidator()
+func TestCommunityValidator_ImplementsInterface(_ *testing.T) {
+	var _ = license.NewValidator()
 }
 
 // ── RSAValidator tests ────────────────────────────────────────────────────────

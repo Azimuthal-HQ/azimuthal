@@ -34,11 +34,11 @@ const (
 	ActionManage Action = "manage"
 )
 
-// RBACChecker evaluates whether a user may perform an action on a resource.
+// Checker evaluates whether a user may perform an action on a resource.
 // The community stub applies simple, hard-coded role rules. The enterprise
 // implementation supports custom roles, attribute-based policies, and space-level
 // overrides — all configured via the admin UI.
-type RBACChecker interface {
+type Checker interface {
 	// CanPerform returns true when the user identified by userID is allowed to
 	// perform action on resourceType within the given organisation.
 	// The orgID scopes the check to a specific organisation.

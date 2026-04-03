@@ -1,6 +1,6 @@
 //go:build enterprise
 
-// Package sso defines the SSOProvider interface and its community stub.
+// Package sso defines the Provider interface and its community stub.
 // The real SAML/OIDC implementation lives in the enterprise repository.
 // This file is a compile-time placeholder; the azimuthal-ee private repo
 // replaces NewProvider with the real SAML/OIDC implementation.
@@ -8,14 +8,14 @@ package sso
 
 import "net/http"
 
-// enterpriseProvider is a placeholder that satisfies the SSOProvider interface
+// enterpriseProvider is a placeholder that satisfies the Provider interface
 // when building with the enterprise tag in the community repository.
 // The azimuthal-ee private repo replaces this file entirely.
 type enterpriseProvider struct{}
 
-// NewProvider returns a placeholder SSOProvider for enterprise builds in the
+// NewProvider returns a placeholder Provider for enterprise builds in the
 // community repository. The azimuthal-ee private repo provides the real implementation.
-func NewProvider() SSOProvider {
+func NewProvider() Provider {
 	return &enterpriseProvider{}
 }
 
@@ -26,7 +26,7 @@ func (e *enterpriseProvider) BeginAuth(_ http.ResponseWriter, _ *http.Request) e
 }
 
 // CompleteAuth returns ErrEnterpriseRequired — see BeginAuth.
-func (e *enterpriseProvider) CompleteAuth(_ *http.Request) (*SSOUser, error) {
+func (e *enterpriseProvider) CompleteAuth(_ *http.Request) (*User, error) {
 	return nil, ErrEnterpriseRequired
 }
 

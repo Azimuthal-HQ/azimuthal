@@ -19,7 +19,7 @@ func TestStubLogger_IsAvailable(t *testing.T) {
 
 func TestStubLogger_Log_IsNoOp(t *testing.T) {
 	l := audit.NewLogger()
-	event := audit.AuditEvent{
+	event := audit.Event{
 		Type:         audit.EventTypeUserLogin,
 		ActorID:      "user-123",
 		OrgID:        "org-456",
@@ -35,6 +35,6 @@ func TestStubLogger_Log_IsNoOp(t *testing.T) {
 	}
 }
 
-func TestStubLogger_ImplementsInterface(t *testing.T) {
-	var _ audit.AuditLogger = audit.NewLogger()
+func TestStubLogger_ImplementsInterface(_ *testing.T) {
+	var _ = audit.NewLogger()
 }

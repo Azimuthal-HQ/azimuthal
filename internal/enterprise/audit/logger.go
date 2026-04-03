@@ -27,8 +27,8 @@ const (
 	EventTypeSettingsChanged EventType = "settings.changed"
 )
 
-// AuditEvent is the structured record written to the audit log.
-type AuditEvent struct {
+// Event is the structured record written to the audit log.
+type Event struct {
 	// Type is the category of action that occurred.
 	Type EventType
 	// ActorID is the ID of the user who performed the action.
@@ -45,12 +45,12 @@ type AuditEvent struct {
 	OccurredAt time.Time
 }
 
-// AuditLogger writes structured, append-only audit events.
+// Logger writes structured, append-only audit events.
 // The community edition is a no-op. The real implementation lives in the enterprise repo.
-type AuditLogger interface {
+type Logger interface {
 	// Log records an audit event. Implementations must never return an error that
 	// would interrupt normal application flow — log and discard on failure.
-	Log(ctx context.Context, event AuditEvent) error
+	Log(ctx context.Context, event Event) error
 
 	// IsAvailable reports whether the audit log is active and accepting events.
 	IsAvailable() bool

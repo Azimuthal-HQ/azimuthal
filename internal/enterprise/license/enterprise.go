@@ -5,7 +5,7 @@
 // NewValidator with an RSAValidator wired to the production public key.
 package license
 
-// enterpriseValidator is a compile-time placeholder that satisfies LicenseValidator
+// enterpriseValidator is a compile-time placeholder that satisfies Validator
 // when building with the enterprise tag in the community repository.
 // The azimuthal-ee private repo replaces NewValidator with a real RSAValidator.
 type enterpriseValidator struct{}
@@ -13,7 +13,7 @@ type enterpriseValidator struct{}
 // NewValidator returns a placeholder LicenseValidator for enterprise builds in the
 // community repository. The azimuthal-ee private repo provides an RSAValidator
 // pre-configured with the production signing public key.
-func NewValidator() LicenseValidator {
+func NewValidator() Validator {
 	return &enterpriseValidator{}
 }
 
