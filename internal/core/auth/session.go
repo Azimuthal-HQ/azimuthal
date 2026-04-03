@@ -12,7 +12,7 @@ import (
 type Session struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
-	Token     string    // opaque random token used as a lookup key
+	Token     string // opaque random token used as a lookup key
 	ExpiresAt time.Time
 	CreatedAt time.Time
 	// UserAgent and IPAddress are stored for audit purposes only.

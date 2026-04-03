@@ -37,7 +37,7 @@ func TestCommunityProvider_CompleteAuth(t *testing.T) {
 	}
 }
 
-func TestCommunityProvider_ImplementsInterface(t *testing.T) {
+func TestCommunityProvider_ImplementsInterface(_ *testing.T) {
 	// Compile-time assertion.
-	var _ SSOProvider = &communityProvider{}
+	var _ Provider = &communityProvider{}
 }

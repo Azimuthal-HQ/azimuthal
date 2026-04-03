@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -51,13 +52,13 @@ func TestComparePassword_Mismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ComparePassword(hash, "wrong"); err != ErrInvalidCredentials {
+	if err := ComparePassword(hash, "wrong"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Errorf("expected ErrInvalidCredentials, got: %v", err)
 	}
 }
 
 func TestComparePassword_InvalidHash(t *testing.T) {
-	if err := ComparePassword("not-a-bcrypt-hash", "password"); err != ErrInvalidCredentials {
+	if err := ComparePassword("not-a-bcrypt-hash", "password"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Errorf("expected ErrInvalidCredentials for invalid hash, got: %v", err)
 	}
 }
