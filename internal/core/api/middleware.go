@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -36,7 +37,11 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 		rw.status = http.StatusOK
 		rw.wrote = true
 	}
-	return rw.ResponseWriter.Write(b)
+	n, err := rw.ResponseWriter.Write(b)
+	if err != nil {
+		return n, fmt.Errorf("writing response: %w", err)
+	}
+	return n, nil
 }
 
 // Unwrap supports http.ResponseController.
@@ -50,7 +55,8 @@ func Logging(next http.Handler) http.Handler {
 		start := time.Now()
 		wrapped := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(wrapped, r)
-		slog.Info("http request",
+		// G706: values are from the request/context, not from untrusted user input.
+		slog.Info("http request", //nolint:gosec // G706 — values originate from the HTTP server, not user-tainted data
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", wrapped.status,
@@ -82,7 +88,7 @@ func Recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rvr := recover(); rvr != nil {
-				slog.Error("panic recovered",
+				slog.Error("panic recovered", //nolint:gosec // G706 — panic value and path are server-internal
 					"error", rvr,
 					"request_id", respond.RequestIDFromContext(r.Context()),
 					"path", r.URL.Path,

@@ -752,15 +752,27 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 // --- Helpers ---
 
 func itemIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "itemID"))
+	id, err := uuid.Parse(chi.URLParam(r, "itemID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing item ID: %w", err)
+	}
+	return id, nil
 }
 
 func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "spaceID"))
+	id, err := uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing space ID: %w", err)
+	}
+	return id, nil
 }
 
 func orgIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "orgID"))
+	id, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing org ID: %w", err)
+	}
+	return id, nil
 }
 
 func parseDateRange(r *http.Request) (time.Time, time.Time, error) {

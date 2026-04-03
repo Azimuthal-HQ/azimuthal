@@ -286,11 +286,19 @@ func (h *Handler) Kanban(w http.ResponseWriter, r *http.Request) {
 }
 
 func ticketIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "ticketID"))
+	id, err := uuid.Parse(chi.URLParam(r, "ticketID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing ticket ID: %w", err)
+	}
+	return id, nil
 }
 
 func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "spaceID"))
+	id, err := uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing space ID: %w", err)
+	}
+	return id, nil
 }
 
 func handleTicketError(w http.ResponseWriter, r *http.Request, err error) {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -95,7 +96,10 @@ func DecodeJSON(r *http.Request, dst any) error {
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(dst)
+	if err := dec.Decode(dst); err != nil {
+		return fmt.Errorf("decoding request body: %w", err)
+	}
+	return nil
 }
 
 // RequestID is middleware that assigns a unique request ID to each request and

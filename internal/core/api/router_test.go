@@ -296,7 +296,7 @@ func (m *mockPageStore) GetPageRevision(_ context.Context, arg generated.GetPage
 	return generated.PageRevision{}, wiki.ErrRevisionNotFound
 }
 
-func (m *mockPageStore) ListPageRevisions(_ context.Context, pageID uuid.UUID) ([]generated.ListPageRevisionsRow, error) {
+func (m *mockPageStore) ListPageRevisions(_ context.Context, _ uuid.UUID) ([]generated.ListPageRevisionsRow, error) {
 	return nil, nil
 }
 
@@ -946,5 +946,1258 @@ func TestConsistentErrorFormat(t *testing.T) {
 	}
 	if errBody.Error.Message == "" {
 		t.Error("expected error.message")
+	}
+}
+
+// ---- Additional integration tests ----
+
+func TestAuthLogoutUnauthenticated(t *testing.T) {
+	router, _ := setupRouter(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	// Logout route is under public auth routes, but handler checks claims
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuthRegisterDuplicateEmail(t *testing.T) {
+	router, _ := setupRouter(t)
+
+	body := map[string]string{
+		"email":        "dup@example.com",
+		"display_name": "First User",
+		"password":     "securepassword123",
+	}
+
+	// First register should succeed
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("first register status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	// Second register with same email should fail
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", jsonBody(t, body))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("duplicate register status = %d, want %d", rr.Code, http.StatusConflict)
+	}
+}
+
+func TestAuthLoginMissingFields(t *testing.T) {
+	router, _ := setupRouter(t)
+
+	tests := []struct {
+		name string
+		body map[string]string
+	}{
+		{"missing email", map[string]string{"password": "test123"}},
+		{"missing password", map[string]string{"email": "test@example.com"}},
+		{"both empty", map[string]string{"email": "", "password": ""}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", jsonBody(t, tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			router.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
+func TestAuthRefreshInvalidToken(t *testing.T) {
+	router, _ := setupRouter(t)
+
+	body := jsonBody(t, map[string]string{
+		"refresh_token": "totally-invalid-token",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuthRefreshMissingToken(t *testing.T) {
+	router, _ := setupRouter(t)
+
+	body := jsonBody(t, map[string]string{
+		"refresh_token": "",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestTicketUpdate(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+
+	// Create ticket first
+	createBody := jsonBody(t, map[string]string{
+		"title":       "Original Title",
+		"description": "Original description",
+		"priority":    "low",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/", createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+
+	var created struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &created)
+
+	// Update ticket
+	updateBody := jsonBody(t, map[string]string{
+		"title":       "Updated Title",
+		"description": "Updated description",
+		"priority":    "high",
+	})
+	req = httptest.NewRequest(http.MethodPut, baseURL+"/"+created.ID.String(), updateBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("update status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var updated struct {
+		Title string `json:"Title"`
+	}
+	decodeBody(t, rr.Body, &updated)
+	if updated.Title != "Updated Title" {
+		t.Errorf("title = %q, want %q", updated.Title, "Updated Title")
+	}
+}
+
+func TestTicketAssignAndUnassign(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+
+	// Create ticket
+	createBody := jsonBody(t, map[string]string{
+		"title":       "Assign Test",
+		"description": "Testing assign",
+		"priority":    "medium",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/", createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var created struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &created)
+
+	assigneeID := uuid.New()
+
+	// Assign ticket
+	assignBody := jsonBody(t, map[string]string{
+		"assignee_id": assigneeID.String(),
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/"+created.ID.String()+"/assign", assignBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("assign status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	// Unassign ticket
+	req = httptest.NewRequest(http.MethodDelete, baseURL+"/"+created.ID.String()+"/assign", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("unassign status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestTicketSearch(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+
+	// Search with query
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/search?q=test", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("search status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestTicketSearchMissingQuery(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/search", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestTicketKanban(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/kanban", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("kanban status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestWikiTree(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/tree", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("tree status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestWikiSearch(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/search?q=hello", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("search status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestWikiSearchMissingQuery(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/search", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestWikiMovePage(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+
+	// Create a page first
+	createBody := jsonBody(t, map[string]interface{}{
+		"title":   "Movable Page",
+		"content": "# Move me",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/", createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var created struct {
+		ID uuid.UUID `json:"id"`
+	}
+	decodeBody(t, rr.Body, &created)
+
+	// Move page
+	moveBody := jsonBody(t, map[string]interface{}{
+		"position": 5,
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/"+created.ID.String()+"/move", moveBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("move status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestWikiListRevisions(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+
+	// Create page
+	createBody := jsonBody(t, map[string]interface{}{
+		"title":   "Revision Page",
+		"content": "# v1",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/", createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var created struct {
+		ID uuid.UUID `json:"id"`
+	}
+	decodeBody(t, rr.Body, &created)
+
+	// List revisions
+	req = httptest.NewRequest(http.MethodGet, baseURL+"/"+created.ID.String()+"/revisions", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("list revisions status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestWikiRenderPage(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+
+	// Create page with markdown
+	createBody := jsonBody(t, map[string]interface{}{
+		"title":   "Render Page",
+		"content": "# Hello World\n\nSome **bold** text.",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/", createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var created struct {
+		ID uuid.UUID `json:"id"`
+	}
+	decodeBody(t, rr.Body, &created)
+
+	// Render page
+	req = httptest.NewRequest(http.MethodGet, baseURL+"/"+created.ID.String()+"/render", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("render status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	ct := rr.Header().Get("Content-Type")
+	if ct != "text/html; charset=utf-8" {
+		t.Errorf("content-type = %q, want %q", ct, "text/html; charset=utf-8")
+	}
+}
+
+func TestWikiDiffRevisions(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+
+	// Create page
+	createBody := jsonBody(t, map[string]interface{}{
+		"title":   "Diff Page",
+		"content": "# Version 1",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/", createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var created struct {
+		ID uuid.UUID `json:"id"`
+	}
+	decodeBody(t, rr.Body, &created)
+
+	// Update page to get a second version
+	updateBody := jsonBody(t, map[string]interface{}{
+		"title":            "Diff Page Updated",
+		"content":          "# Version 2",
+		"expected_version": 1,
+	})
+	req = httptest.NewRequest(http.MethodPut, baseURL+"/"+created.ID.String(), updateBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	// Diff between version 1 and 2
+	req = httptest.NewRequest(http.MethodGet, baseURL+"/"+created.ID.String()+"/diff?from=1&to=2", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	// The mock doesn't store revisions on create, so this may return 404 for revisions.
+	// We accept either 200 (if revisions populated) or 404 (revision not found).
+	if rr.Code != http.StatusOK && rr.Code != http.StatusNotFound {
+		t.Errorf("diff status = %d, want 200 or 404, body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestWikiDiffMissingParams(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	pageID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+
+	// Missing both from and to
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/"+pageID.String()+"/diff", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestWikiVersionConflictOnUpdate(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+
+	// Create page (version 1)
+	createBody := jsonBody(t, map[string]interface{}{
+		"title":   "Conflict Page",
+		"content": "# Original",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/", createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var created struct {
+		ID uuid.UUID `json:"id"`
+	}
+	decodeBody(t, rr.Body, &created)
+
+	// Update with correct version
+	updateBody := jsonBody(t, map[string]interface{}{
+		"title":            "Updated",
+		"content":          "# Updated",
+		"expected_version": 1,
+	})
+	req = httptest.NewRequest(http.MethodPut, baseURL+"/"+created.ID.String(), updateBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("first update status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Update with stale version (1 instead of 2) should conflict
+	staleBody := jsonBody(t, map[string]interface{}{
+		"title":            "Stale Update",
+		"content":          "# Stale",
+		"expected_version": 1,
+	})
+	req = httptest.NewRequest(http.MethodPut, baseURL+"/"+created.ID.String(), staleBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("stale update status = %d, want %d, body: %s", rr.Code, http.StatusConflict, rr.Body.String())
+	}
+}
+
+func TestProjectItemUpdate(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+
+	// Create item
+	createBody := jsonBody(t, map[string]string{
+		"title":       "Original Item",
+		"description": "Original desc",
+		"kind":        "task",
+		"priority":    "medium",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL, createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d, body: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+
+	var created struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &created)
+
+	// Update item
+	updateBody := jsonBody(t, map[string]string{
+		"title":       "Updated Item",
+		"description": "Updated desc",
+		"priority":    "high",
+	})
+	req = httptest.NewRequest(http.MethodPut, baseURL+"/"+created.ID.String(), updateBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("update status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectItemUpdateStatus(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+
+	// Create item
+	createBody := jsonBody(t, map[string]string{
+		"title":       "Status Item",
+		"description": "Testing status",
+		"kind":        "task",
+		"priority":    "low",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL, createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var created struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &created)
+
+	// Update status
+	statusBody := jsonBody(t, map[string]string{"status": "in_progress"})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/"+created.ID.String()+"/status", statusBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("update status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectItemAssignToSprint(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects"
+
+	// Create sprint first
+	sprintBody := jsonBody(t, map[string]string{
+		"name": "Sprint 1",
+		"goal": "Test sprint",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/sprints", sprintBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create sprint status = %d, want %d, body: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+
+	var sprint struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &sprint)
+
+	// Create item
+	itemBody := jsonBody(t, map[string]string{
+		"title":       "Sprint Item",
+		"description": "For sprint assign",
+		"kind":        "task",
+		"priority":    "medium",
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/items", itemBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create item status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var item struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &item)
+
+	// Assign item to sprint
+	assignBody := jsonBody(t, map[string]interface{}{
+		"sprint_id": sprint.ID.String(),
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/items/"+item.ID.String()+"/sprint", assignBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("assign to sprint status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectSearchItems(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/search?q=test", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("search status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectSearchItemsMissingQuery(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/search", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestProjectListItems(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("list items status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestProjectSprintCRUD(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/sprints"
+
+	// Create sprint
+	createBody := jsonBody(t, map[string]string{
+		"name": "Sprint Alpha",
+		"goal": "Complete all tasks",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL, createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create sprint status = %d, want %d, body: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+
+	var created struct {
+		ID   uuid.UUID `json:"ID"`
+		Name string    `json:"Name"`
+	}
+	decodeBody(t, rr.Body, &created)
+	if created.Name != "Sprint Alpha" {
+		t.Errorf("name = %q, want %q", created.Name, "Sprint Alpha")
+	}
+
+	// Get sprint
+	req = httptest.NewRequest(http.MethodGet, baseURL+"/"+created.ID.String(), nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("get sprint status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Update sprint
+	updateBody := jsonBody(t, map[string]string{
+		"name": "Sprint Alpha Updated",
+		"goal": "Updated goal",
+	})
+	req = httptest.NewRequest(http.MethodPut, baseURL+"/"+created.ID.String(), updateBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("update sprint status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	// Start sprint
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/"+created.ID.String()+"/start", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("start sprint status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	// Complete sprint
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/"+created.ID.String()+"/complete", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("complete sprint status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectListSprints(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/sprints"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("list sprints status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestProjectGetActiveSprint(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/sprints"
+
+	// No active sprint should return 404
+	req := httptest.NewRequest(http.MethodGet, baseURL+"/active", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("no active sprint status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+
+	// Create and start a sprint to make it active
+	createBody := jsonBody(t, map[string]string{
+		"name": "Active Sprint",
+		"goal": "Be active",
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL, createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create sprint status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var sprint struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &sprint)
+
+	// Start the sprint
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/"+sprint.ID.String()+"/start", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("start sprint status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Now active sprint should be found
+	req = httptest.NewRequest(http.MethodGet, baseURL+"/active", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("active sprint status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectSprintItems(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/sprints"
+
+	// Create sprint
+	createBody := jsonBody(t, map[string]string{
+		"name": "Items Sprint",
+		"goal": "Test items listing",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL, createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create sprint status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var sprint struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &sprint)
+
+	// List sprint items
+	req = httptest.NewRequest(http.MethodGet, baseURL+"/"+sprint.ID.String()+"/items", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("sprint items status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectBacklog(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/backlog"
+
+	// Get backlog
+	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("backlog status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestProjectBacklogMoveToSprint(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects"
+
+	// Create sprint
+	sprintBody := jsonBody(t, map[string]string{
+		"name": "Move Sprint",
+		"goal": "Move items here",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/sprints", sprintBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create sprint status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var sprint struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &sprint)
+
+	// Create item
+	itemBody := jsonBody(t, map[string]string{
+		"title":       "Backlog Item",
+		"description": "Move me",
+		"kind":        "task",
+		"priority":    "low",
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/items", itemBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create item status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var item struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &item)
+
+	// Move to sprint
+	moveBody := jsonBody(t, map[string]interface{}{
+		"item_id":   item.ID.String(),
+		"sprint_id": sprint.ID.String(),
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/backlog/move-to-sprint", moveBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("move to sprint status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	// Move back to backlog
+	backlogBody := jsonBody(t, map[string]interface{}{
+		"item_id": item.ID.String(),
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/backlog/move-to-backlog", backlogBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("move to backlog status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectRoadmap(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/roadmap"
+
+	// Get roadmap with date range
+	req := httptest.NewRequest(http.MethodGet, baseURL+"?from=2026-01-01&to=2026-12-31", nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("roadmap status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectRoadmapMissingDates(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/roadmap"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestProjectOverdueItems(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/roadmap/overdue"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("overdue status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectSprintRoadmap(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/roadmap/sprints"
+
+	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
+	req.Header.Set("Authorization", token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("sprint roadmap status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestProjectRelationsCRUD(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	userID := uuid.New()
+	token := authHeader(t, jwtSvc, userID)
+	spaceID := uuid.New()
+	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects"
+
+	// Create two items
+	item1Body := jsonBody(t, map[string]string{
+		"title":       "Item A",
+		"description": "First item",
+		"kind":        "task",
+		"priority":    "medium",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL+"/items", item1Body)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create item A status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var itemA struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &itemA)
+
+	item2Body := jsonBody(t, map[string]string{
+		"title":       "Item B",
+		"description": "Second item",
+		"kind":        "task",
+		"priority":    "low",
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/items", item2Body)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create item B status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	var itemB struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &itemB)
+
+	// Create relation
+	relBody := jsonBody(t, map[string]interface{}{
+		"to_id": itemB.ID.String(),
+		"kind":  "blocks",
+	})
+	req = httptest.NewRequest(http.MethodPost, baseURL+"/items/"+itemA.ID.String()+"/relations", relBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create relation status = %d, want %d, body: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+
+	var rel struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &rel)
+
+	// List relations
+	req = httptest.NewRequest(http.MethodGet, baseURL+"/items/"+itemA.ID.String()+"/relations", nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("list relations status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Delete relation
+	req = httptest.NewRequest(http.MethodDelete, baseURL+"/relations/"+rel.ID.String(), nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("delete relation status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+}
+
+func TestProjectLabelsCRUD(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
+	token := authHeader(t, jwtSvc, uuid.New())
+	orgID := uuid.New()
+	baseURL := "/api/v1/orgs/" + orgID.String() + "/labels"
+
+	// Create label
+	createBody := jsonBody(t, map[string]string{
+		"name":  "bug",
+		"color": "#ff0000",
+	})
+	req := httptest.NewRequest(http.MethodPost, baseURL, createBody)
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create label status = %d, want %d, body: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+
+	var label struct {
+		ID uuid.UUID `json:"ID"`
+	}
+	decodeBody(t, rr.Body, &label)
+
+	// List labels
+	req = httptest.NewRequest(http.MethodGet, baseURL, nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("list labels status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Delete label
+	req = httptest.NewRequest(http.MethodDelete, baseURL+"/"+label.ID.String(), nil)
+	req.Header.Set("Authorization", token)
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("delete label status = %d, want %d", rr.Code, http.StatusNoContent)
 	}
 }

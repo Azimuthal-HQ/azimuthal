@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
@@ -30,5 +31,8 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 
 // DecodeJSON reads the request body into dst.
 func DecodeJSON(r *http.Request, dst any) error {
-	return respond.DecodeJSON(r, dst)
+	if err := respond.DecodeJSON(r, dst); err != nil {
+		return fmt.Errorf("decoding json: %w", err)
+	}
+	return nil
 }

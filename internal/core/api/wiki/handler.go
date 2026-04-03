@@ -365,11 +365,19 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 func pageIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "pageID"))
+	id, err := uuid.Parse(chi.URLParam(r, "pageID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing page ID: %w", err)
+	}
+	return id, nil
 }
 
 func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "spaceID"))
+	id, err := uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing space ID: %w", err)
+	}
+	return id, nil
 }
 
 func handleWikiError(w http.ResponseWriter, r *http.Request, err error) {

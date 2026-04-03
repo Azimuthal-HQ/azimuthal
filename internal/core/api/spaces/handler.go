@@ -2,6 +2,7 @@
 package spaces
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -253,9 +254,17 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "spaceID"))
+	id, err := uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing space ID: %w", err)
+	}
+	return id, nil
 }
 
 func orgIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "orgID"))
+	id, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing org ID: %w", err)
+	}
+	return id, nil
 }
