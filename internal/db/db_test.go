@@ -60,8 +60,9 @@ func TestConnect_InvalidURL(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	invalidURL := "postgres://invalid:badpass@localhost:5499/notexist" //nolint:gosec
 	_, err := db.Connect(ctx, db.Config{
-		URL:           "postgres://invalid:badpass@localhost:5499/notexist", //nolint:gosec
+		URL:           invalidURL,
 		HealthTimeout: 1 * time.Second,
 	})
 	if err == nil {

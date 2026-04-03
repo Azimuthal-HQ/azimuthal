@@ -75,7 +75,7 @@ func TestUserPasswordHashAndLastLogin(t *testing.T) {
 	ctx := context.Background()
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "pwupdate@example.com")
-	newHash := "new-bcrypt-hash" //nolint:gosec
+	newHash := "new-bcrypt-hash"
 	if err := q.UpdateUserPasswordHash(ctx, generated.UpdateUserPasswordHashParams{
 		ID: user.ID, PasswordHash: &newHash,
 	}); err != nil {
