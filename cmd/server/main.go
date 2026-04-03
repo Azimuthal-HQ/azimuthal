@@ -12,6 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 )
 
@@ -32,23 +35,36 @@ func main() {
 		"build_time", BuildTime,
 	)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", api.HandleHealth)
-	mux.HandleFunc("/ready", api.HandleReady)
-
-	portStr := os.Getenv("APP_PORT")
-	if portStr == "" {
-		portStr = "8080"
-	}
-	portNum, err := strconv.Atoi(portStr)
-	if err != nil || portNum < 1 || portNum > 65535 {
-		slog.Error("APP_PORT must be an integer between 1 and 65535")
+	// Load and validate configuration (fails fast on missing required vars).
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 
+	slog.Info("configuration loaded",
+		"env", cfg.AppEnv,
+		"port", cfg.AppPort,
+	)
+
+	// Build a chi router with the global middleware stack and public endpoints.
+	// The full API router (NewRouter) requires DB-backed repository adapters
+	// that bridge domain service interfaces to sqlc-generated queries.
+	// Until those adapters are implemented (see docs/known-issues.md), this
+	// router serves the health/ready endpoints with proper middleware.
+	r := chi.NewRouter()
+	r.Use(api.Recoverer)
+	r.Use(api.RequestID)
+	r.Use(api.Logging)
+	r.Use(api.CORS)
+	r.Get("/health", api.HandleHealth)
+	r.Get("/ready", api.HandleReady)
+
+	portStr := strconv.Itoa(cfg.AppPort)
+
 	srv := &http.Server{
-		Addr:         ":" + strconv.Itoa(portNum),
-		Handler:      mux,
+		Addr:         ":" + portStr,
+		Handler:      r,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -58,7 +74,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		slog.Info("http server listening", "port", portNum)
+		slog.Info("http server listening", "port", cfg.AppPort)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server error", "error", err)
 			os.Exit(1)

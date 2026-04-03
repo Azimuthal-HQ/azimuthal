@@ -252,3 +252,98 @@ func TestRoutesReturnsRouter(t *testing.T) {
 		t.Fatal("Routes() returned nil")
 	}
 }
+
+func TestRegisterAndLoginSuccess(t *testing.T) {
+	h, _ := setupHandler(t)
+
+	// Register a user
+	regBody, _ := json.Marshal(map[string]string{
+		"email":        "newuser@test.com",
+		"display_name": "New User",
+		"password":     "secure-password-123",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewReader(regBody))
+	rr := httptest.NewRecorder()
+	h.Register(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d, body: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+
+	// Login with the same credentials
+	loginBody, _ := json.Marshal(map[string]string{
+		"email":    "newuser@test.com",
+		"password": "secure-password-123",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(loginBody))
+	rr = httptest.NewRecorder()
+	h.Login(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if resp["access_token"] == nil || resp["access_token"] == "" {
+		t.Error("expected access_token in response")
+	}
+}
+
+func TestRegisterDuplicateEmail(t *testing.T) {
+	h, _ := setupHandler(t)
+
+	body, _ := json.Marshal(map[string]string{
+		"email":    "dup@test.com",
+		"password": "password123",
+	})
+
+	// First registration succeeds
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.Register(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("first register = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	// Second registration with same email returns 409
+	body2, _ := json.Marshal(map[string]string{
+		"email":    "dup@test.com",
+		"password": "different-password",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/register", bytes.NewReader(body2))
+	rr = httptest.NewRecorder()
+	h.Register(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("duplicate register = %d, want %d", rr.Code, http.StatusConflict)
+	}
+}
+
+func TestLogoutNoAuth(t *testing.T) {
+	h, _ := setupHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	rr := httptest.NewRecorder()
+	h.Logout(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestRefreshWithValidToken(t *testing.T) {
+	h, jwtSvc := setupHandler(t)
+	userID := uuid.New()
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]string{
+		"refresh_token": pair.RefreshToken,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/refresh", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.Refresh(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
