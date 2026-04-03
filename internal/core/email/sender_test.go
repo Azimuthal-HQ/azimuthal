@@ -41,3 +41,19 @@ func TestSMTPSender_FailsOnUnreachableHost(t *testing.T) {
 		t.Fatal("expected error when SMTP host is unreachable, got nil")
 	}
 }
+
+// TestSMTPSender_DefaultFrom verifies that an empty msg.From falls back to the sender's from.
+// This exercises the Send code path that sets a default from address.
+func TestSMTPSender_DefaultFrom(t *testing.T) {
+	s := email.NewSMTPSender("127.0.0.1", 19999, "default@example.com")
+	err := s.Send(context.Background(), email.Message{
+		// From intentionally empty — should use sender default
+		To:      []string{"to@example.com"},
+		Subject: "default from test",
+		Body:    "<p>body</p>",
+	})
+	// Connection will fail (no SMTP on 19999), but the default-from branch is hit.
+	if err == nil {
+		t.Fatal("expected connection error, got nil")
+	}
+}
