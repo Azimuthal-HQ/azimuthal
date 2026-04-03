@@ -30,45 +30,17 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	slog.Info("starting azimuthal",
-		"version", Version,
-		"build_time", BuildTime,
-	)
+	slog.Info("starting azimuthal", "version", Version, "build_time", BuildTime)
 
-	// Load and validate configuration (fails fast on missing required vars).
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("configuration loaded",
-		"env", cfg.AppEnv,
-		"port", cfg.AppPort,
-	)
+	slog.Info("configuration loaded", "env", cfg.AppEnv, "port", cfg.AppPort)
 
-	// Build a chi router with the global middleware stack and public endpoints.
-	// The full API router (NewRouter) requires DB-backed repository adapters
-	// that bridge domain service interfaces to sqlc-generated queries.
-	// Until those adapters are implemented (see docs/known-issues.md), this
-	// router serves the health/ready endpoints with proper middleware.
-	r := chi.NewRouter()
-	r.Use(api.Recoverer)
-	r.Use(api.RequestID)
-	r.Use(api.Logging)
-	r.Use(api.CORS)
-	r.Get("/health", api.HandleHealth)
-	r.Get("/ready", api.HandleReady)
-
-	portStr := strconv.Itoa(cfg.AppPort)
-
-	srv := &http.Server{
-		Addr:         ":" + portStr,
-		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
+	srv := newServer(cfg.AppPort)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -93,4 +65,25 @@ func main() {
 	}
 
 	slog.Info("shutdown complete")
+}
+
+// newServer builds an http.Server with the chi router, middleware stack, and
+// public endpoints. The full API router (api.NewRouter) requires DB-backed
+// repository adapters; see docs/known-issues.md.
+func newServer(port int) *http.Server {
+	r := chi.NewRouter()
+	r.Use(api.Recoverer)
+	r.Use(api.RequestID)
+	r.Use(api.Logging)
+	r.Use(api.CORS)
+	r.Get("/health", api.HandleHealth)
+	r.Get("/ready", api.HandleReady)
+
+	return &http.Server{
+		Addr:         ":" + strconv.Itoa(port),
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 }

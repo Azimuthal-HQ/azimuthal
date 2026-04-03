@@ -53,6 +53,7 @@ title = "azimuthal secret scanning"
     '''build/docker-compose\.yml''',
     # Project docs and context files
     '''CLAUDE\.md''',
+    '''README\.md''',
   ]
   regexes = [
     '''your[_-]?(secret|password|key|token)''',
