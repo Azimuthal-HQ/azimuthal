@@ -4,10 +4,10 @@ Documented by Agent 2E (Integration Validator) after validating Phases 0-2.
 
 ---
 
-## 1. Missing Repository Adapter Layer (Blocking: full API serving)
+## 1. ~~Missing Repository Adapter Layer~~ (RESOLVED)
 
 **Severity**: High
-**Status**: Needs implementation (Phase 3 prerequisite)
+**Status**: Resolved — implemented in `internal/db/adapters/` by Agent 2F
 
 The domain services (auth, tickets, projects) define repository interfaces using domain types (e.g., `auth.User`, `tickets.Ticket`, `projects.Item`), and the data layer has sqlc-generated queries using DB types (e.g., `generated.User`, `generated.Item`). There is no adapter code bridging these two layers.
 
@@ -21,7 +21,7 @@ The domain services (auth, tickets, projects) define repository interfaces using
 
 **Note**: The wiki `PageStore` interface uses generated types directly, so `*generated.Queries` already satisfies it. Only auth, tickets, and projects modules need adapters.
 
-**Recommendation**: Create `internal/db/adapters/` package with adapter structs for each repository interface. Resolve the OrgID and token-hashing mismatches at the adapter boundary.
+**Resolution**: Created `internal/db/adapters/` package with `UserAdapter`, `SessionAdapter`, `TicketAdapter`, `ItemAdapter`, `SprintAdapter`, `RelationAdapter`, and `LabelAdapter`. The OrgID mismatch is resolved by injecting a default org ID at the adapter boundary. The token hashing mismatch is resolved by SHA-256 hashing plain tokens in `SessionAdapter` before calling `GetSessionByTokenHash`. The `GetByEmail` signature mismatch is resolved by the adapter injecting the configured OrgID into the `GetUserByEmailParams`.
 
 ---
 
@@ -70,15 +70,16 @@ These may be intentional design choices (ephemeral data), but should be reviewed
 
 ---
 
-## 5. cmd/server/main.go Does Not Wire Full API Router
+## 5. ~~cmd/server/main.go Does Not Wire Full API Router~~ (RESOLVED)
 
 **Severity**: High (related to issue #1)
-**Status**: Blocked on adapter layer
+**Status**: Resolved — `cmd/server/main.go` now wires the full API router (Agent 2F)
 
-`cmd/server/main.go` loads config and serves health/ready through a chi router with the full middleware stack (RequestID, Logging, CORS, Recoverer). However, it does not call `api.NewRouter()` because that requires all service/handler instances, which in turn require the missing adapter layer (issue #1).
+`cmd/server/main.go` now:
+1. Connects to the database via `db.Connect()`
+2. Runs migrations via `db.Migrate()`
+3. Bootstraps a default organisation
+4. Constructs all services with DB-backed adapters from `internal/db/adapters/`
+5. Calls `api.NewRouter()` with the full `RouterConfig`
 
-Once adapters are implemented, main.go should be updated to:
-1. Connect to the database via `db.Connect()`
-2. Run migrations via `db.Migrate()`
-3. Construct services with DB-backed adapters
-4. Call `api.NewRouter()` with the full `RouterConfig`
+All API routes (auth, tickets, wiki, projects, spaces) are served alongside health/ready.
