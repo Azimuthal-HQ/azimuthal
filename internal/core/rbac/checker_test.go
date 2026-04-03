@@ -1,12 +1,10 @@
-//go:build !enterprise
-
 package rbac_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/Azimuthal-HQ/azimuthal/internal/enterprise/rbac"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/rbac"
 )
 
 // makeCheckerWithRole returns a checker that always resolves to the given role.
@@ -16,14 +14,14 @@ func makeCheckerWithRole(role rbac.Role) rbac.Checker {
 	})
 }
 
-func TestStubChecker_IsAvailable(t *testing.T) {
+func TestChecker_IsAvailable(t *testing.T) {
 	c := rbac.NewChecker()
-	if c.IsAvailable() {
-		t.Error("community stub should report IsAvailable() == false")
+	if !c.IsAvailable() {
+		t.Error("RBAC checker should report IsAvailable() == true")
 	}
 }
 
-func TestStubChecker_OwnerCanDoEverything(t *testing.T) {
+func TestChecker_OwnerCanDoEverything(t *testing.T) {
 	c := makeCheckerWithRole(rbac.RoleOwner)
 	actions := []rbac.Action{rbac.ActionCreate, rbac.ActionRead, rbac.ActionUpdate, rbac.ActionDelete, rbac.ActionManage}
 	for _, action := range actions {
@@ -37,7 +35,7 @@ func TestStubChecker_OwnerCanDoEverything(t *testing.T) {
 	}
 }
 
-func TestStubChecker_AdminCanDoEverything(t *testing.T) {
+func TestChecker_AdminCanDoEverything(t *testing.T) {
 	c := makeCheckerWithRole(rbac.RoleAdmin)
 	actions := []rbac.Action{rbac.ActionCreate, rbac.ActionRead, rbac.ActionUpdate, rbac.ActionDelete, rbac.ActionManage}
 	for _, action := range actions {
@@ -51,7 +49,7 @@ func TestStubChecker_AdminCanDoEverything(t *testing.T) {
 	}
 }
 
-func TestStubChecker_MemberPermissions(t *testing.T) {
+func TestChecker_MemberPermissions(t *testing.T) {
 	c := makeCheckerWithRole(rbac.RoleMember)
 	allowed := []rbac.Action{rbac.ActionCreate, rbac.ActionRead, rbac.ActionUpdate}
 	denied := []rbac.Action{rbac.ActionDelete, rbac.ActionManage}
@@ -76,7 +74,7 @@ func TestStubChecker_MemberPermissions(t *testing.T) {
 	}
 }
 
-func TestStubChecker_ViewerCanOnlyRead(t *testing.T) {
+func TestChecker_ViewerCanOnlyRead(t *testing.T) {
 	c := makeCheckerWithRole(rbac.RoleViewer)
 	allowed := []rbac.Action{rbac.ActionRead}
 	denied := []rbac.Action{rbac.ActionCreate, rbac.ActionUpdate, rbac.ActionDelete, rbac.ActionManage}
@@ -101,7 +99,7 @@ func TestStubChecker_ViewerCanOnlyRead(t *testing.T) {
 	}
 }
 
-func TestStubChecker_NonMemberIsDenied(t *testing.T) {
+func TestChecker_NonMemberIsDenied(t *testing.T) {
 	c := rbac.NewChecker() // zero-value resolver always returns ErrNotMember
 	ok, err := c.CanPerform(context.Background(), "stranger", "org1", "ticket", rbac.ActionRead)
 	if err == nil {
@@ -112,7 +110,7 @@ func TestStubChecker_NonMemberIsDenied(t *testing.T) {
 	}
 }
 
-func TestStubChecker_UserRole(t *testing.T) {
+func TestChecker_UserRole(t *testing.T) {
 	c := makeCheckerWithRole(rbac.RoleAdmin)
 	role, err := c.UserRole(context.Background(), "u1", "org1")
 	if err != nil {
@@ -123,6 +121,6 @@ func TestStubChecker_UserRole(t *testing.T) {
 	}
 }
 
-func TestStubChecker_ImplementsInterface(_ *testing.T) {
+func TestChecker_ImplementsInterface(_ *testing.T) {
 	var _ = rbac.NewChecker()
 }

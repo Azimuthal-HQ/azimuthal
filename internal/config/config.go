@@ -32,9 +32,6 @@ type Config struct {
 	SMTPPort int
 	SMTPFrom string
 
-	// Enterprise (EE builds only)
-	LicenseKey string
-
 	// App
 	AppEnv     string
 	AppPort    int
@@ -71,7 +68,6 @@ func Load() (*Config, error) {
 		SMTPHost:         v.GetString("SMTP_HOST"),
 		SMTPPort:         v.GetInt("SMTP_PORT"),
 		SMTPFrom:         v.GetString("SMTP_FROM"),
-		LicenseKey:       v.GetString("LICENSE_KEY"),
 		AppEnv:           v.GetString("APP_ENV"),
 		AppPort:          v.GetInt("APP_PORT"),
 		AppBaseURL:       v.GetString("APP_BASE_URL"),

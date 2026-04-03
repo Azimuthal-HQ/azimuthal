@@ -25,7 +25,6 @@ Everything else blocks on you. Do not write application logic.
 - [ ] `.editorconfig`, `.gitignore`, `.gitattributes`
 - [ ] `CONTRIBUTING.md` — references CLA requirement
 - [ ] `LICENSE` — Apache 2.0 full text
-- [ ] `LICENSE-ENTERPRISE` — placeholder proprietary license text
 - [ ] Verify `make build` passes before opening PR
 
 ### Dockerfile requirements
@@ -104,6 +103,7 @@ Do not write business logic — just the data access layer.
 - Down migrations must be included for every up migration
 - All tables must have `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`
 - All user-facing tables must have `deleted_at TIMESTAMPTZ` (soft delete)
+- The `audit_log` and `space_members` tables are standard tables available to all users
 
 ### Definition of Done
 `make migrate` runs clean. `make sqlc` generates without errors.
@@ -111,14 +111,14 @@ Do not write business logic — just the data access layer.
 
 ---
 
-## AGENT 1B — Core Auth
+## AGENT 1B — Core Auth & SSO
 **Phase**: 1 (parallel)
 **Branch**: `agent/1b-auth`
 **Depends on**: Phase 0 complete
 
 ### Your Job
 Build local authentication: user creation, login, sessions, JWT, and HTTP middleware.
-SSO/SAML is enterprise-only — do not implement it, just stub the interface.
+SSO/SAML is a standard feature — build the interface and default provider in `internal/core/sso/`.
 
 ### Deliverables
 - [ ] `internal/core/auth/user.go` — user CRUD (uses DB layer via interface)
@@ -126,8 +126,7 @@ SSO/SAML is enterprise-only — do not implement it, just stub the interface.
 - [ ] `internal/core/auth/jwt.go` — token generation, validation, refresh
 - [ ] `internal/core/auth/session.go` — session management (postgres-backed)
 - [ ] `internal/core/auth/middleware.go` — HTTP auth middleware for chi
-- [ ] `internal/enterprise/sso/provider.go` — SSOProvider interface + stub
-- [ ] `internal/enterprise/sso/stub.go` — `!enterprise` build tag stub
+- [ ] `internal/core/sso/provider.go` — SSO Provider interface + default implementation
 - [ ] Full test coverage for all above files
 - [ ] No hardcoded secrets — all config via `internal/config/`
 
@@ -142,14 +141,15 @@ SSO/SAML is enterprise-only — do not implement it, just stub the interface.
 
 ---
 
-## AGENT 1C — Config, Jobs & Storage
+## AGENT 1C — Config, Jobs, Storage, Audit, RBAC & Analytics
 **Phase**: 1 (parallel)
 **Branch**: `agent/1c-infrastructure`
 **Depends on**: Phase 0 complete
 
 ### Your Job
 Build the shared infrastructure that all modules depend on:
-config loading, background job queue, object storage interface.
+config loading, background job queue, object storage interface,
+audit logging, RBAC, and analytics reporting.
 
 ### Deliverables
 - [ ] `internal/config/config.go` — viper config struct with all env vars from CLAUDE.md
@@ -161,6 +161,9 @@ config loading, background job queue, object storage interface.
 - [ ] `internal/jobs/email.go` — email job worker (SMTP)
 - [ ] `internal/jobs/notification.go` — in-app notification worker
 - [ ] `internal/core/email/sender.go` — email sender interface + SMTP impl
+- [ ] `internal/core/audit/logger.go` — AuditLogger interface + default implementation
+- [ ] `internal/core/rbac/checker.go` — RBAC Checker interface + role-based implementation
+- [ ] `internal/core/analytics/reporter.go` — Analytics Reporter interface + default implementation
 - [ ] Tests for all above (use memory storage in tests, not real S3)
 
 ### Config must include validation
@@ -170,44 +173,6 @@ config loading, background job queue, object storage interface.
 
 ### Definition of Done
 `make test` passes. `make build` passes. Config fails loudly if `DATABASE_URL` is missing.
-
----
-
-## AGENT 1D — Enterprise Stubs & License Validator
-**Phase**: 1 (parallel)
-**Branch**: `agent/1d-enterprise-stubs`
-**Depends on**: Phase 0 complete
-
-### Your Job
-Define ALL enterprise interfaces and create community stubs for each.
-Do NOT implement the real enterprise features — that's the private repo's job.
-Also build the license key validator (the validation logic, not the key issuance).
-
-### Deliverables
-- [ ] `internal/enterprise/sso/provider.go` — SSOProvider interface
-- [ ] `internal/enterprise/sso/stub.go` (`!enterprise` tag) — returns ErrEnterpriseRequired
-- [ ] `internal/enterprise/audit/logger.go` — AuditLogger interface
-- [ ] `internal/enterprise/audit/stub.go` (`!enterprise` tag) — no-op
-- [ ] `internal/enterprise/rbac/checker.go` — RBACChecker interface
-- [ ] `internal/enterprise/rbac/stub.go` (`!enterprise` tag) — falls back to basic roles
-- [ ] `internal/enterprise/analytics/reporter.go` — AnalyticsReporter interface
-- [ ] `internal/enterprise/analytics/stub.go` (`!enterprise` tag) — returns ErrEnterpriseRequired
-- [ ] `internal/enterprise/license/validator.go` — LicenseValidator interface + RSA validation
-- [ ] `internal/enterprise/license/stub.go` (`!enterprise` tag) — always returns community license
-- [ ] `internal/enterprise/registry.go` — registers which implementation is active
-- [ ] Tests verifying stubs return correct errors/no-ops
-- [ ] Tests verifying build tag separation compiles correctly
-
-### ErrEnterpriseRequired
-```go
-var ErrEnterpriseRequired = errors.New(
-    "this feature requires an enterprise license — see azimuthal.com/enterprise",
-)
-```
-
-### Definition of Done
-`make build` passes. `make build-ee` also passes (stubs compile with enterprise tag).
-`make test` passes.
 
 ---
 

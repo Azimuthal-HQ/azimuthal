@@ -1,5 +1,3 @@
-//go:build !enterprise
-
 package audit_test
 
 import (
@@ -7,17 +5,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Azimuthal-HQ/azimuthal/internal/enterprise/audit"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 )
 
-func TestStubLogger_IsAvailable(t *testing.T) {
+func TestDefaultLogger_IsAvailable(t *testing.T) {
 	l := audit.NewLogger()
 	if l.IsAvailable() {
-		t.Error("community stub should report IsAvailable() == false")
+		t.Error("default logger should report IsAvailable() == false")
 	}
 }
 
-func TestStubLogger_Log_IsNoOp(t *testing.T) {
+func TestDefaultLogger_Log_IsNoOp(t *testing.T) {
 	l := audit.NewLogger()
 	event := audit.Event{
 		Type:         audit.EventTypeUserLogin,
@@ -29,12 +27,11 @@ func TestStubLogger_Log_IsNoOp(t *testing.T) {
 		OccurredAt:   time.Now(),
 	}
 
-	// Must not return an error — no-op implementation.
 	if err := l.Log(context.Background(), event); err != nil {
-		t.Errorf("stub Log() must be a no-op, got error: %v", err)
+		t.Errorf("default Log() must be a no-op, got error: %v", err)
 	}
 }
 
-func TestStubLogger_ImplementsInterface(_ *testing.T) {
+func TestDefaultLogger_ImplementsInterface(_ *testing.T) {
 	var _ = audit.NewLogger()
 }

@@ -7,7 +7,7 @@ Read it fully before writing any code.
 
 ## What Azimuthal Is
 
-**Azimuthal** is an open-core, self-hostable alternative to the Atlassian suite
+**Azimuthal** is a fully open-source, self-hostable alternative to the Atlassian suite
 (Jira, Confluence, Jira Service Desk), built in Go.
 
 The name comes from navigation: an azimuthal bearing is the precise angle that
@@ -15,11 +15,9 @@ tells you exactly where you're headed. That's what Azimuthal does for teams.
 
 - **Binary name**: `azimuthal`
 - **CLI examples**: `azimuthal backup`, `azimuthal restore`, `azimuthal admin`
-- **Community edition**: Apache 2.0, fully functional, single binary
-- **Enterprise edition**: Proprietary, SSO/SAML + audit logs + RBAC + analytics
-- **Repos**:
-  - Public:  github.com/Azimuthal-HQ/azimuthal  (this repo)
-  - Private: github.com/Azimuthal-HQ/azimuthal-ee
+- **License**: Apache 2.0, single repository, fully featured for all users
+- **Business model**: Revenue from managed hosting and support services, not paywalled code
+- **Repo**: github.com/Azimuthal-HQ/azimuthal (this repo)
 - **Container registry**: ghcr.io/azimuthal-hq/azimuthal
 
 Full architecture: `docs/architecture.md`
@@ -33,8 +31,8 @@ These apply to every agent, every PR, no exceptions.
 ### Licensing
 1. Never add a dependency with an AGPL, GPL, or LGPL license
 2. Run `go-licenses check ./...` before adding any new dependency
-3. All enterprise features live in `internal/enterprise/` with build tags
-4. Interfaces are defined in `internal/core/` — implementations elsewhere
+3. All features live in `internal/core/` — SSO, audit, RBAC, analytics are standard
+4. Interfaces are defined in `internal/core/` — implementations alongside them
 
 ### Code quality
 5. Write the test first, then the implementation (TDD)
@@ -49,7 +47,7 @@ These apply to every agent, every PR, no exceptions.
 12. New columns need a goose migration file — never edit existing migrations
 
 ### Security
-13. Never log passwords, tokens, or license keys
+13. Never log passwords, tokens, or secrets
 14. All user input must be validated before hitting the DB
 15. Use parameterised queries only — never string-concatenate SQL
 
@@ -79,20 +77,18 @@ Run `make pre-push` locally before opening a PR.
 ```
 .github/workflows/    → GitHub Actions CI/CD pipelines
 cmd/server/           → single binary entrypoint (main.go)
-internal/core/        → Apache 2.0 — ships to all users
+internal/core/        → all application code — ships to all users
   auth/               → local users, JWT, sessions, middleware
+  sso/                → SAML/OIDC single sign-on
+  audit/              → append-only audit log
+  rbac/               → role-based access control
+  analytics/          → usage and performance reporting
   tickets/            → service desk domain logic
   wiki/               → wiki/docs domain logic
   projects/           → project tracking domain logic
   notifications/      → email + in-app alerts
   storage/            → ObjectStore interface
   api/                → HTTP handlers, chi router, middleware
-internal/enterprise/  → proprietary — stub here, real in azimuthal-ee
-  sso/                → SAML/OIDC (build tag: enterprise)
-  audit/              → audit log writer
-  rbac/               → advanced permissions engine
-  analytics/          → reporting queries
-  license/            → license key validation
 internal/db/          → goose migrations, sqlc-generated queries
 internal/config/      → viper config (env + file)
 internal/jobs/        → river background workers
@@ -114,26 +110,27 @@ type ObjectStore interface {
     Delete(ctx context.Context, key string) error
 }
 
-// SSOProvider — SAML/OIDC (EE only)
-// internal/enterprise/sso/provider.go
-type SSOProvider interface {
+// SSOProvider — SAML/OIDC
+// internal/core/sso/provider.go
+type Provider interface {
     BeginAuth(w http.ResponseWriter, r *http.Request) error
     CompleteAuth(r *http.Request) (*User, error)
     IsAvailable() bool
 }
 
-// AuditLogger — append-only event log (EE only)
-// internal/enterprise/audit/logger.go
-type AuditLogger interface {
-    Log(ctx context.Context, event AuditEvent) error
+// AuditLogger — append-only event log
+// internal/core/audit/logger.go
+type Logger interface {
+    Log(ctx context.Context, event Event) error
     IsAvailable() bool
 }
 
-// LicenseValidator — license key verification (EE only)
-// internal/enterprise/license/validator.go
-type LicenseValidator interface {
-    Validate(key string) (*License, error)
-    HasFeature(feature string) bool
+// RBAC — role-based access control
+// internal/core/rbac/checker.go
+type Checker interface {
+    CanPerform(ctx context.Context, userID, orgID, resourceType string, action Action) (bool, error)
+    UserRole(ctx context.Context, userID, orgID string) (Role, error)
+    IsAvailable() bool
 }
 ```
 
@@ -142,8 +139,8 @@ type LicenseValidator interface {
 ## Container Images
 
 ```
-Community:   ghcr.io/azimuthal-hq/azimuthal:v1.2.3
-Enterprise:  ghcr.io/azimuthal-hq/azimuthal-ee:v1.2.3-ee
+ghcr.io/azimuthal-hq/azimuthal:v1.2.3
+ghcr.io/azimuthal-hq/azimuthal:latest
 ```
 
 No separate registry credentials needed — `GITHUB_TOKEN` handles ghcr.io auth.
@@ -157,21 +154,6 @@ Settings → Secrets and variables → Actions:
 ```
 JWT_SECRET            → random 64-char string for test runs
                         generate: openssl rand -hex 32
-
-# Enterprise repo only (azimuthal-ee):
-COMMUNITY_REPO_TOKEN  → fine-grained PAT, read-only on azimuthal/azimuthal
-```
-
----
-
-## Build Tag Convention
-
-```go
-// Community stub (always compiled, public repo)
-//go:build !enterprise
-
-// Enterprise implementation (private repo azimuthal-ee only)
-//go:build enterprise
 ```
 
 ---
@@ -196,9 +178,9 @@ Phase 0 (sequential — must complete first):
 
 Phase 1 (parallel — all start after Phase 0):
   Agent 1A → internal/db/ + all migrations + sqlc queries
-  Agent 1B → internal/core/auth/
+  Agent 1B → internal/core/auth/ + internal/core/sso/
   Agent 1C → internal/config/ + internal/jobs/ + internal/core/storage/
-  Agent 1D → internal/enterprise/ stubs + license validator
+             + internal/core/audit/ + internal/core/rbac/ + internal/core/analytics/
 
 Phase 2 (parallel — start after Phase 1):
   Agent 2A → internal/core/tickets/
@@ -232,9 +214,6 @@ JWT_EXPIRY=24h
 # Email
 SMTP_HOST=localhost
 SMTP_PORT=1025
-
-# Enterprise (EE builds only)
-LICENSE_KEY=<issued by azimuthal>
 
 # App
 APP_ENV=development

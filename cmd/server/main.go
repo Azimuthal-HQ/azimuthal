@@ -15,11 +15,10 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 )
 
-// Version, BuildTime, and Edition are injected at build time via -ldflags.
+// Version and BuildTime are injected at build time via -ldflags.
 var (
 	Version   = "dev"
 	BuildTime = "unknown"
-	Edition   = "community"
 )
 
 func main() {
@@ -31,7 +30,6 @@ func main() {
 	slog.Info("starting azimuthal",
 		"version", Version,
 		"build_time", BuildTime,
-		"edition", Edition,
 	)
 
 	mux := http.NewServeMux()

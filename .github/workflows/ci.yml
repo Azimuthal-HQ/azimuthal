@@ -37,14 +37,11 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
-      - name: Build community binary
+      - name: Build binary
         run: go build -v -o /tmp/${{ env.BINARY_NAME }} ./cmd/server
 
       - name: Vet
         run: go vet ./...
-
-      - name: Verify enterprise stubs compile
-        run: go build -tags enterprise -v ./... 2>/dev/null || true
 
 
   # ─────────────────────────────────────────────────────────────

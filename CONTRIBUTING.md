@@ -60,14 +60,6 @@ Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`
 Run `go-licenses check ./...` before adding any new dependency.
 Never add a dependency under GPL, AGPL, or LGPL.
 
-## Enterprise Features
-
-Enterprise features live in the private `azimuthal-ee` repository.
-Community contributions should target `internal/core/` only.
-If you need a new enterprise capability, open an issue to discuss
-the interface design — interfaces are defined in `internal/core/`
-and can be contributed here.
-
 ## Getting Help
 
 - GitHub Issues for bugs and features
