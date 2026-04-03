@@ -1,6 +1,6 @@
 # Makefile — Azimuthal development commands
 
-.PHONY: help build build-ee docker-build test test-coverage lint fmt \
+.PHONY: help build docker-build test test-coverage lint fmt \
         scan scan-sast scan-vuln scan-secrets scan-container \
         dev migrate rollback sqlc clean pre-push
 
@@ -19,8 +19,7 @@ help:
 	@echo "  Know exactly where your team is headed."
 	@echo ""
 	@echo "  Build"
-	@echo "    make build              Build community binary"
-	@echo "    make build-ee           Build enterprise binary"
+	@echo "    make build              Build binary"
 	@echo "    make docker-build       Build Docker image"
 	@echo ""
 	@echo "  Test & Quality"
@@ -49,16 +48,9 @@ help:
 
 # ── Build ─────────────────────────────────────────────────────
 build:
-	@echo "→ Building $(BINARY_NAME) (community)..."
+	@echo "→ Building $(BINARY_NAME)..."
 	@go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BINARY_NAME) ./cmd/server
 	@echo "✓ Built bin/$(BINARY_NAME)"
-
-build-ee:
-	@echo "→ Building $(BINARY_NAME) (enterprise)..."
-	@go build -tags enterprise -trimpath \
-		-ldflags="$(LDFLAGS) -X main.Edition=enterprise" \
-		-o bin/$(BINARY_NAME)-enterprise ./cmd/server
-	@echo "✓ Built bin/$(BINARY_NAME)-enterprise"
 
 docker-build:
 	@echo "→ Building Docker image..."

@@ -1,16 +1,10 @@
-// Package analytics defines the AnalyticsReporter interface and its community stub.
-// The real reporting engine lives in the enterprise repository.
+// Package analytics provides usage and performance reporting for Azimuthal.
+// Analytics is a standard feature available to all users.
 package analytics
 
 import (
 	"context"
-	"errors"
 	"time"
-)
-
-// ErrEnterpriseRequired is returned by community stubs for enterprise-only features.
-var ErrEnterpriseRequired = errors.New(
-	"this feature requires an enterprise license — see azimuthal.com/enterprise",
 )
 
 // TicketMetrics summarises service-desk performance for a time window.
@@ -53,9 +47,15 @@ type OrgSummary struct {
 	TotalPageViews int64
 }
 
+// ErrNotImplemented is returned when analytics queries are called before
+// the database-backed implementation is wired in.
+var ErrNotImplemented = errorString("analytics reporting not yet implemented — coming soon")
+
+type errorString string
+
+func (e errorString) Error() string { return string(e) }
+
 // Reporter produces usage and performance reports for an organisation.
-// The community edition returns ErrEnterpriseRequired for all methods.
-// The real implementation lives in github.com/Azimuthal-HQ/azimuthal-ee.
 type Reporter interface {
 	// OrgSummary returns aggregated metrics for orgID over the given time window.
 	OrgSummary(ctx context.Context, orgID string, from, to time.Time) (*OrgSummary, error)
@@ -65,4 +65,29 @@ type Reporter interface {
 
 	// IsAvailable reports whether the analytics engine is active.
 	IsAvailable() bool
+}
+
+// defaultReporter is a placeholder until the database-backed analytics
+// implementation is wired in.
+type defaultReporter struct{}
+
+// NewReporter returns the default Reporter.
+// Returns a placeholder until the database-backed analytics engine is implemented.
+func NewReporter() Reporter {
+	return &defaultReporter{}
+}
+
+// OrgSummary returns ErrNotImplemented until the analytics engine is wired in.
+func (s *defaultReporter) OrgSummary(_ context.Context, _ string, _, _ time.Time) (*OrgSummary, error) {
+	return nil, ErrNotImplemented
+}
+
+// UserActivity returns ErrNotImplemented until the analytics engine is wired in.
+func (s *defaultReporter) UserActivity(_ context.Context, _ string, _, _ time.Time) ([]UserActivitySummary, error) {
+	return nil, ErrNotImplemented
+}
+
+// IsAvailable returns false until the analytics engine is wired in.
+func (s *defaultReporter) IsAvailable() bool {
+	return false
 }

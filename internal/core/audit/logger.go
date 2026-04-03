@@ -1,5 +1,6 @@
-// Package audit defines the AuditLogger interface and its community stub.
-// The real append-only audit log implementation lives in the enterprise repository.
+// Package audit defines the AuditLogger interface for recording structured,
+// append-only audit events. Audit logging is a standard feature available to
+// all Azimuthal users.
 package audit
 
 import (
@@ -46,7 +47,8 @@ type Event struct {
 }
 
 // Logger writes structured, append-only audit events.
-// The community edition is a no-op. The real implementation lives in the enterprise repo.
+// The default implementation is a no-op that silently discards events until
+// a database-backed implementation is wired in.
 type Logger interface {
 	// Log records an audit event. Implementations must never return an error that
 	// would interrupt normal application flow — log and discard on failure.
@@ -54,4 +56,24 @@ type Logger interface {
 
 	// IsAvailable reports whether the audit log is active and accepting events.
 	IsAvailable() bool
+}
+
+// defaultLogger is a no-op audit logger used until the database-backed
+// implementation is wired in.
+type defaultLogger struct{}
+
+// NewLogger returns the default Logger.
+// Returns a no-op logger until the database-backed audit log is implemented.
+func NewLogger() Logger {
+	return &defaultLogger{}
+}
+
+// Log is a no-op — events are silently discarded until the DB implementation is wired in.
+func (s *defaultLogger) Log(_ context.Context, _ Event) error {
+	return nil
+}
+
+// IsAvailable returns false until the database-backed audit log is active.
+func (s *defaultLogger) IsAvailable() bool {
+	return false
 }

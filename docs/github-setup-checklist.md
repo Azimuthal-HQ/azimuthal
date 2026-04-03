@@ -13,25 +13,17 @@
 
 ---
 
-## 2. Create the Two Repos
+## 2. Create the Repository
 
-**Community repo (public):**
 - [ ] github.com/Azimuthal-HQ → "New repository"
-- [ ] Name: `Azimuthal-HQ`
+- [ ] Name: `azimuthal`
 - [ ] Visibility: **Public**
 - [ ] Add README, Apache 2.0 license, Go .gitignore
 - [ ] Default branch: `main`
 
-**Enterprise repo (private):**
-- [ ] github.com/Azimuthal-HQ → "New repository"
-- [ ] Name: `azimuthal-ee`
-- [ ] Visibility: **Private**
-- [ ] No license file (proprietary)
-- [ ] Default branch: `main`
-
 ---
 
-## 3. Repository Settings (community repo)
+## 3. Repository Settings
 
 Settings → General:
 - [ ] Disable "Allow merge commits"
@@ -42,7 +34,7 @@ Settings → General:
 
 ---
 
-## 4. Branch Protection (community repo)
+## 4. Branch Protection
 
 Settings → Branches → Add branch protection rule → `main`:
 
@@ -65,7 +57,7 @@ Settings → Branches → Add branch protection rule → `main`:
 
 ---
 
-## 5. Secrets (community repo)
+## 5. Secrets
 
 Settings → Secrets and variables → Actions → New repository secret:
 
@@ -145,20 +137,7 @@ updates:
 
 ---
 
-## 11. Enterprise Repo Secrets (azimuthal-ee — set up when ready)
-
-Fine-grained PAT for community repo access:
-- [ ] github.com → Settings → Developer settings → Fine-grained tokens
-- [ ] New token:
-  - Resource owner: azimuthal org
-  - Repository access: Only `azimuthal/azimuthal`
-  - Permissions: Contents (Read), Metadata (Read)
-  - Expiration: 90 days
-- [ ] Add as `COMMUNITY_REPO_TOKEN` secret in `azimuthal-ee` repo
-
----
-
-## 12. First Run Checklist
+## 11. First Run Checklist
 
 After Agent 0A opens its first PR:
 
@@ -175,7 +154,7 @@ After Agent 0A opens its first PR:
 
 | Step | Time |
 |------|------|
-| Create org + repos | 10 min |
+| Create org + repo | 10 min |
 | Repository settings | 5 min |
 | Branch protection | 10 min |
 | Secrets | 5 min |

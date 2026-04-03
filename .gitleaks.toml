@@ -8,10 +8,10 @@ title = "azimuthal secret scanning"
 # ── Azimuthal-specific rules ──────────────────────────────────
 
 [[rules]]
-  id = "azimuthal-license-private-key"
-  description = "Azimuthal enterprise license private key"
+  id = "azimuthal-private-key"
+  description = "Azimuthal private key"
   regex = '''-----BEGIN (RSA |EC )?PRIVATE KEY-----'''
-  tags = ["key", "enterprise", "critical"]
+  tags = ["key", "critical"]
 
 [[rules]]
   id = "azimuthal-jwt-secret"
