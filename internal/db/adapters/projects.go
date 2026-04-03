@@ -22,21 +22,7 @@ func NewItemAdapter(q *generated.Queries) *ItemAdapter {
 
 // Create persists a new project item.
 func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
-	_, err := a.q.CreateItem(ctx, generated.CreateItemParams{
-		ID:          item.ID,
-		SpaceID:     item.SpaceID,
-		ParentID:    pgUUID(item.ParentID),
-		Kind:        item.Kind,
-		Title:       item.Title,
-		Description: strPtr(item.Description),
-		Status:      item.Status,
-		Priority:    item.Priority,
-		ReporterID:  item.ReporterID,
-		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      item.Labels,
-		DueAt:       pgTimestampPtr(item.DueAt),
-		Rank:        item.Rank,
-	})
+	_, err := a.q.CreateItem(ctx, itemToCreateParams(item))
 	if err != nil {
 		return fmt.Errorf("item adapter create: %w", err)
 	}
@@ -54,17 +40,7 @@ func (a *ItemAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Item
 
 // Update persists changes to an existing item.
 func (a *ItemAdapter) Update(ctx context.Context, item *projects.Item) error {
-	_, err := a.q.UpdateItem(ctx, generated.UpdateItemParams{
-		ID:          item.ID,
-		Title:       item.Title,
-		Description: strPtr(item.Description),
-		Status:      item.Status,
-		Priority:    item.Priority,
-		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      item.Labels,
-		DueAt:       pgTimestampPtr(item.DueAt),
-		Rank:        item.Rank,
-	})
+	_, err := a.q.UpdateItem(ctx, itemToUpdateParams(item))
 	if err != nil {
 		return fmt.Errorf("item adapter update: %w", err)
 	}
@@ -146,15 +122,64 @@ func (a *ItemAdapter) ListBySprint(ctx context.Context, sprintID uuid.UUID) ([]*
 
 // Search performs full-text search on items within a space.
 func (a *ItemAdapter) Search(ctx context.Context, spaceID uuid.UUID, query string, limit int) ([]*projects.Item, error) {
+	searchLimit := int32(limit) //nolint:gosec // limit is validated by the service layer (capped at 50)
 	rows, err := a.q.SearchItems(ctx, generated.SearchItemsParams{
 		SpaceID:        spaceID,
 		PlaintoTsquery: query,
-		Limit:          int32(limit),
+		Limit:          searchLimit,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("item adapter search: %w", err)
 	}
 	return dbItemsToProjects(rows), nil
+}
+
+// itemToCreateParams converts a domain Item to sqlc CreateItemParams.
+func itemToCreateParams(item *projects.Item) generated.CreateItemParams {
+	return generated.CreateItemParams{
+		ID:          item.ID,
+		SpaceID:     item.SpaceID,
+		ParentID:    pgUUID(item.ParentID),
+		Kind:        item.Kind,
+		Title:       item.Title,
+		Description: strPtr(item.Description),
+		Status:      item.Status,
+		Priority:    item.Priority,
+		ReporterID:  item.ReporterID,
+		AssigneeID:  pgUUID(item.AssigneeID),
+		Labels:      item.Labels,
+		DueAt:       pgTimestampPtr(item.DueAt),
+		Rank:        item.Rank,
+	}
+}
+
+// itemToUpdateParams converts a domain Item to sqlc UpdateItemParams.
+func itemToUpdateParams(item *projects.Item) generated.UpdateItemParams {
+	return generated.UpdateItemParams{
+		ID:          item.ID,
+		Title:       item.Title,
+		Description: strPtr(item.Description),
+		Status:      item.Status,
+		Priority:    item.Priority,
+		AssigneeID:  pgUUID(item.AssigneeID),
+		Labels:      item.Labels,
+		DueAt:       pgTimestampPtr(item.DueAt),
+		Rank:        item.Rank,
+	}
+}
+
+// sprintToCreateParams converts a domain Sprint to sqlc CreateSprintParams.
+func sprintToCreateParams(sprint *projects.Sprint) generated.CreateSprintParams {
+	return generated.CreateSprintParams{
+		ID:        sprint.ID,
+		SpaceID:   sprint.SpaceID,
+		Name:      sprint.Name,
+		Goal:      strPtr(sprint.Goal),
+		Status:    sprint.Status,
+		StartsAt:  pgTimestampPtr(sprint.StartsAt),
+		EndsAt:    pgTimestampPtr(sprint.EndsAt),
+		CreatedBy: sprint.CreatedBy,
+	}
 }
 
 // dbItemToProject converts a generated.Item to a projects.Item.
@@ -202,16 +227,7 @@ func NewSprintAdapter(q *generated.Queries) *SprintAdapter {
 
 // Create persists a new sprint.
 func (a *SprintAdapter) Create(ctx context.Context, sprint *projects.Sprint) error {
-	_, err := a.q.CreateSprint(ctx, generated.CreateSprintParams{
-		ID:        sprint.ID,
-		SpaceID:   sprint.SpaceID,
-		Name:      sprint.Name,
-		Goal:      strPtr(sprint.Goal),
-		Status:    sprint.Status,
-		StartsAt:  pgTimestampPtr(sprint.StartsAt),
-		EndsAt:    pgTimestampPtr(sprint.EndsAt),
-		CreatedBy: sprint.CreatedBy,
-	})
+	_, err := a.q.CreateSprint(ctx, sprintToCreateParams(sprint))
 	if err != nil {
 		return fmt.Errorf("sprint adapter create: %w", err)
 	}

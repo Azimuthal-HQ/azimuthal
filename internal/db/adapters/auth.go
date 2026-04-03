@@ -28,14 +28,7 @@ func NewUserAdapter(q *generated.Queries, orgID uuid.UUID) *UserAdapter {
 
 // Create persists a new user. Returns auth.ErrEmailTaken if the email exists.
 func (a *UserAdapter) Create(ctx context.Context, u *auth.User) error {
-	_, err := a.q.CreateUser(ctx, generated.CreateUserParams{
-		ID:           u.ID,
-		OrgID:        a.orgID,
-		Email:        u.Email,
-		DisplayName:  u.DisplayName,
-		PasswordHash: strPtr(u.PasswordHash),
-		Role:         "member",
-	})
+	_, err := a.q.CreateUser(ctx, userToCreateParams(u, a.orgID))
 	if err != nil {
 		return fmt.Errorf("user adapter create: %w", err)
 	}
@@ -100,6 +93,30 @@ func dbUserToDomain(u generated.User) *auth.User {
 	}
 }
 
+// userToCreateParams converts a domain User to sqlc CreateUserParams.
+func userToCreateParams(u *auth.User, orgID uuid.UUID) generated.CreateUserParams {
+	return generated.CreateUserParams{
+		ID:           u.ID,
+		OrgID:        orgID,
+		Email:        u.Email,
+		DisplayName:  u.DisplayName,
+		PasswordHash: strPtr(u.PasswordHash),
+		Role:         "member",
+	}
+}
+
+// sessionToCreateParams converts a domain Session to sqlc CreateSessionParams.
+func sessionToCreateParams(s *auth.Session) generated.CreateSessionParams {
+	return generated.CreateSessionParams{
+		ID:        s.ID,
+		UserID:    s.UserID,
+		TokenHash: hashToken(s.Token),
+		IpAddress: parseIP(s.IPAddress),
+		UserAgent: strPtr(s.UserAgent),
+		ExpiresAt: pgTimestamp(s.ExpiresAt),
+	}
+}
+
 // SessionAdapter implements auth.SessionRepository using sqlc-generated queries.
 // It resolves the token↔hash mismatch: the domain Session stores a plain token,
 // but the database stores a SHA-256 hash. The adapter hashes on write and lookup.
@@ -115,14 +132,7 @@ func NewSessionAdapter(q *generated.Queries) *SessionAdapter {
 // Create persists a new session record. The plain token in s.Token is hashed
 // before storage; the domain Session retains the plain token for the caller.
 func (a *SessionAdapter) Create(ctx context.Context, s *auth.Session) error {
-	_, err := a.q.CreateSession(ctx, generated.CreateSessionParams{
-		ID:        s.ID,
-		UserID:    s.UserID,
-		TokenHash: hashToken(s.Token),
-		IpAddress: parseIP(s.IPAddress),
-		UserAgent: strPtr(s.UserAgent),
-		ExpiresAt: pgTimestamp(s.ExpiresAt),
-	})
+	_, err := a.q.CreateSession(ctx, sessionToCreateParams(s))
 	if err != nil {
 		return fmt.Errorf("session adapter create: %w", err)
 	}

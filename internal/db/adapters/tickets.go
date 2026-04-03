@@ -23,20 +23,7 @@ func NewTicketAdapter(q *generated.Queries) *TicketAdapter {
 
 // Create persists a new ticket as an item with kind='ticket'.
 func (a *TicketAdapter) Create(ctx context.Context, t *tickets.Ticket) error {
-	_, err := a.q.CreateItem(ctx, generated.CreateItemParams{
-		ID:          t.ID,
-		SpaceID:     t.SpaceID,
-		Kind:        "ticket",
-		Title:       t.Title,
-		Description: strPtr(t.Description),
-		Status:      string(t.Status),
-		Priority:    string(t.Priority),
-		ReporterID:  t.ReporterID,
-		AssigneeID:  pgUUID(t.AssigneeID),
-		Labels:      t.Labels,
-		DueAt:       pgTimestampPtr(t.DueAt),
-		Rank:        t.Rank,
-	})
+	_, err := a.q.CreateItem(ctx, ticketToCreateParams(t))
 	if err != nil {
 		return fmt.Errorf("ticket adapter create: %w", err)
 	}
@@ -54,17 +41,7 @@ func (a *TicketAdapter) GetByID(ctx context.Context, id uuid.UUID) (*tickets.Tic
 
 // Update persists changes to an existing ticket.
 func (a *TicketAdapter) Update(ctx context.Context, t *tickets.Ticket) error {
-	_, err := a.q.UpdateItem(ctx, generated.UpdateItemParams{
-		ID:          t.ID,
-		Title:       t.Title,
-		Description: strPtr(t.Description),
-		Status:      string(t.Status),
-		Priority:    string(t.Priority),
-		AssigneeID:  pgUUID(t.AssigneeID),
-		Labels:      t.Labels,
-		DueAt:       pgTimestampPtr(t.DueAt),
-		Rank:        t.Rank,
-	})
+	_, err := a.q.UpdateItem(ctx, ticketToUpdateParams(t))
 	if err != nil {
 		return fmt.Errorf("ticket adapter update: %w", err)
 	}
@@ -146,6 +123,39 @@ func filterTickets(items []generated.Item) []*tickets.Ticket {
 		}
 	}
 	return result
+}
+
+// ticketToCreateParams converts a domain Ticket to sqlc CreateItemParams.
+func ticketToCreateParams(t *tickets.Ticket) generated.CreateItemParams {
+	return generated.CreateItemParams{
+		ID:          t.ID,
+		SpaceID:     t.SpaceID,
+		Kind:        "ticket",
+		Title:       t.Title,
+		Description: strPtr(t.Description),
+		Status:      string(t.Status),
+		Priority:    string(t.Priority),
+		ReporterID:  t.ReporterID,
+		AssigneeID:  pgUUID(t.AssigneeID),
+		Labels:      t.Labels,
+		DueAt:       pgTimestampPtr(t.DueAt),
+		Rank:        t.Rank,
+	}
+}
+
+// ticketToUpdateParams converts a domain Ticket to sqlc UpdateItemParams.
+func ticketToUpdateParams(t *tickets.Ticket) generated.UpdateItemParams {
+	return generated.UpdateItemParams{
+		ID:          t.ID,
+		Title:       t.Title,
+		Description: strPtr(t.Description),
+		Status:      string(t.Status),
+		Priority:    string(t.Priority),
+		AssigneeID:  pgUUID(t.AssigneeID),
+		Labels:      t.Labels,
+		DueAt:       pgTimestampPtr(t.DueAt),
+		Rank:        t.Rank,
+	}
 }
 
 // dbItemToTicket converts a generated.Item to a tickets.Ticket.

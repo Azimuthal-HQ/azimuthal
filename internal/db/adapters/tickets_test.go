@@ -143,5 +143,103 @@ func TestFilterTicketsEmpty(t *testing.T) {
 	}
 }
 
+func TestTicketToCreateParams(t *testing.T) {
+	assignee := uuid.New()
+	due := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
+	tk := &tickets.Ticket{
+		ID:          uuid.New(),
+		SpaceID:     uuid.New(),
+		Title:       "Create test",
+		Description: "Desc",
+		Status:      tickets.StatusOpen,
+		Priority:    tickets.PriorityHigh,
+		ReporterID:  uuid.New(),
+		AssigneeID:  &assignee,
+		Labels:      []string{"bug"},
+		DueAt:       &due,
+		Rank:        "0|aaa:",
+	}
+
+	got := ticketToCreateParams(tk)
+
+	if got.ID != tk.ID {
+		t.Errorf("ID mismatch")
+	}
+	if got.Kind != "ticket" {
+		t.Errorf("Kind should be 'ticket', got %v", got.Kind)
+	}
+	if got.Title != "Create test" {
+		t.Errorf("Title mismatch")
+	}
+	if got.Description == nil || *got.Description != "Desc" {
+		t.Errorf("Description mismatch")
+	}
+	if got.Status != "open" {
+		t.Errorf("Status mismatch: got %v", got.Status)
+	}
+	if got.Priority != "high" {
+		t.Errorf("Priority mismatch: got %v", got.Priority)
+	}
+	if !got.AssigneeID.Valid {
+		t.Error("AssigneeID should be valid")
+	}
+	if len(got.Labels) != 1 || got.Labels[0] != "bug" {
+		t.Errorf("Labels mismatch: got %v", got.Labels)
+	}
+	if !got.DueAt.Valid {
+		t.Error("DueAt should be valid")
+	}
+}
+
+func TestTicketToCreateParamsNilOptionals(t *testing.T) {
+	tk := &tickets.Ticket{
+		ID:         uuid.New(),
+		SpaceID:    uuid.New(),
+		Title:      "Minimal",
+		Status:     tickets.StatusOpen,
+		Priority:   tickets.PriorityMedium,
+		ReporterID: uuid.New(),
+	}
+
+	got := ticketToCreateParams(tk)
+	if got.AssigneeID.Valid {
+		t.Error("AssigneeID should be invalid for nil")
+	}
+	if got.DueAt.Valid {
+		t.Error("DueAt should be invalid for nil")
+	}
+}
+
+func TestTicketToUpdateParams(t *testing.T) {
+	assignee := uuid.New()
+	tk := &tickets.Ticket{
+		ID:          uuid.New(),
+		Title:       "Updated title",
+		Description: "Updated desc",
+		Status:      tickets.StatusInProgress,
+		Priority:    tickets.PriorityUrgent,
+		AssigneeID:  &assignee,
+		Labels:      []string{"feature", "urgent"},
+		Rank:        "0|bbb:",
+	}
+
+	got := ticketToUpdateParams(tk)
+	if got.ID != tk.ID {
+		t.Errorf("ID mismatch")
+	}
+	if got.Title != "Updated title" {
+		t.Errorf("Title mismatch")
+	}
+	if got.Status != "in_progress" {
+		t.Errorf("Status mismatch: got %v", got.Status)
+	}
+	if got.Priority != "urgent" {
+		t.Errorf("Priority mismatch: got %v", got.Priority)
+	}
+	if len(got.Labels) != 2 {
+		t.Errorf("Labels mismatch: got %v", got.Labels)
+	}
+}
+
 // Verify interface compliance at compile time.
 var _ tickets.TicketRepository = (*TicketAdapter)(nil)

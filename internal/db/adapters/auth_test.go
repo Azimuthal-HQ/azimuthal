@@ -106,9 +106,9 @@ func TestHashToken(t *testing.T) {
 }
 
 func TestHashTokenDeterministic(t *testing.T) {
-	token := "deterministic-test"
-	a := hashToken(token)
-	b := hashToken(token)
+	input := "deterministic-test"
+	a := hashToken(input)
+	b := hashToken(input)
 	if a != b {
 		t.Error("hashToken is not deterministic")
 	}
@@ -182,6 +182,96 @@ func TestDbSessionToDomainNilFields(t *testing.T) {
 	}
 	if got.IPAddress != "" {
 		t.Errorf("expected empty IPAddress for nil, got %v", got.IPAddress)
+	}
+}
+
+func TestUserToCreateParams(t *testing.T) {
+	orgID := uuid.New()
+	u := &auth.User{
+		ID:           uuid.New(),
+		Email:        "user@example.com",
+		DisplayName:  "Test User",
+		PasswordHash: "hashed-pw",
+	}
+
+	got := userToCreateParams(u, orgID)
+
+	if got.ID != u.ID {
+		t.Errorf("ID mismatch")
+	}
+	if got.OrgID != orgID {
+		t.Errorf("OrgID mismatch: got %v, want %v", got.OrgID, orgID)
+	}
+	if got.Email != "user@example.com" {
+		t.Errorf("Email mismatch")
+	}
+	if got.DisplayName != "Test User" {
+		t.Errorf("DisplayName mismatch")
+	}
+	if got.PasswordHash == nil || *got.PasswordHash != "hashed-pw" {
+		t.Errorf("PasswordHash mismatch")
+	}
+	if got.Role != "member" {
+		t.Errorf("Role should be 'member', got %v", got.Role)
+	}
+}
+
+func TestSessionToCreateParams(t *testing.T) {
+	expires := time.Date(2025, 6, 16, 10, 0, 0, 0, time.UTC)
+	s := &auth.Session{
+		ID:        uuid.New(),
+		UserID:    uuid.New(),
+		Token:     "plain-tok",
+		ExpiresAt: expires,
+		UserAgent: "curl/7.88",
+		IPAddress: "10.0.0.5",
+	}
+
+	got := sessionToCreateParams(s)
+
+	if got.ID != s.ID {
+		t.Errorf("ID mismatch")
+	}
+	if got.UserID != s.UserID {
+		t.Errorf("UserID mismatch")
+	}
+	if got.TokenHash != hashToken("plain-tok") {
+		t.Errorf("TokenHash should be hash of plain token")
+	}
+	if got.UserAgent == nil || *got.UserAgent != "curl/7.88" {
+		t.Errorf("UserAgent mismatch")
+	}
+	if got.IpAddress == nil || got.IpAddress.String() != "10.0.0.5" {
+		t.Errorf("IpAddress mismatch")
+	}
+	if !got.ExpiresAt.Valid || !got.ExpiresAt.Time.Equal(expires) {
+		t.Errorf("ExpiresAt mismatch")
+	}
+}
+
+func TestSessionToCreateParamsEmptyIP(t *testing.T) {
+	s := &auth.Session{
+		ID:        uuid.New(),
+		UserID:    uuid.New(),
+		Token:     "tok2",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+
+	got := sessionToCreateParams(s)
+	if got.IpAddress != nil {
+		t.Errorf("expected nil IP for empty string, got %v", got.IpAddress)
+	}
+}
+
+func TestExportedHashToken(t *testing.T) {
+	a := HashToken("same-input")
+	b := HashToken("same-input")
+	if a != b {
+		t.Error("HashToken not deterministic")
+	}
+	c := HashToken("different")
+	if a == c {
+		t.Error("different inputs produced same hash")
 	}
 }
 

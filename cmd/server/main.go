@@ -95,13 +95,11 @@ func newServer(cfg *config.Config) (*http.Server, func(), error) {
 	ctx := context.Background()
 	noop := func() {}
 
-	// 1. Database connection
 	pool, err := db.Connect(ctx, db.DefaultConfig(cfg.DatabaseURL))
 	if err != nil {
 		return nil, noop, fmt.Errorf("connecting to database: %w", err)
 	}
 
-	// 2. Run migrations
 	if err := db.Migrate(ctx, pool); err != nil {
 		pool.Close()
 		return nil, noop, fmt.Errorf("running migrations: %w", err)
@@ -109,75 +107,17 @@ func newServer(cfg *config.Config) (*http.Server, func(), error) {
 
 	queries := generated.New(pool)
 
-	// 3. Bootstrap default organisation
 	orgID, err := ensureDefaultOrg(ctx, queries)
 	if err != nil {
 		pool.Close()
 		return nil, noop, fmt.Errorf("bootstrapping default org: %w", err)
 	}
 
-	// 4. Generate RSA key pair for JWT signing
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	handler, err := buildRouter(cfg, queries, orgID)
 	if err != nil {
 		pool.Close()
-		return nil, noop, fmt.Errorf("generating RSA key: %w", err)
+		return nil, noop, err
 	}
-
-	// 5. Construct auth services
-	jwtSvc := auth.NewJWTService(auth.TokenConfig{
-		PrivateKey: privateKey,
-		PublicKey:  &privateKey.PublicKey,
-		AccessTTL:  cfg.JWTExpiry,
-		RefreshTTL: cfg.JWTExpiry * 7,
-		Issuer:     "azimuthal",
-	})
-
-	userAdapter := adapters.NewUserAdapter(queries, orgID)
-	userSvc := auth.NewUserService(userAdapter)
-
-	sessionAdapter := adapters.NewSessionAdapter(queries)
-	sessionSvc := auth.NewSessionService(sessionAdapter, auth.SessionConfig{
-		TTL: cfg.JWTExpiry,
-	})
-
-	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc)
-
-	// 6. Construct ticket service
-	ticketAdapter := adapters.NewTicketAdapter(queries)
-	ticketSvc := tickets.NewTicketService(ticketAdapter)
-
-	// 7. Construct project services
-	itemAdapter := adapters.NewItemAdapter(queries)
-	sprintAdapter := adapters.NewSprintAdapter(queries)
-	relationAdapter := adapters.NewRelationAdapter(queries)
-	labelAdapter := adapters.NewLabelAdapter(queries)
-
-	itemSvc := projects.NewItemService(itemAdapter)
-	sprintSvc := projects.NewSprintService(sprintAdapter)
-	backlogSvc := projects.NewBacklogService(itemAdapter, sprintAdapter)
-	roadmapSvc := projects.NewRoadmapService(itemAdapter, sprintAdapter)
-	relationSvc := projects.NewRelationService(relationAdapter)
-	labelSvc := projects.NewLabelService(labelAdapter)
-
-	// 8. Construct wiki service (PageStore is satisfied by *generated.Queries directly)
-	wikiSvc := wiki.NewService(queries)
-
-	// 9. Construct API handlers
-	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc)
-	ticketHandler := ticketsapi.NewHandler(ticketSvc)
-	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc)
-	wikiHandler := wikiapi.NewHandler(wikiSvc)
-	spaceHandler := spacesapi.NewHandler(queries)
-
-	// 10. Build the full API router
-	handler := api.NewRouter(api.RouterConfig{
-		Authenticator:  authenticator,
-		AuthHandler:    authHandler,
-		TicketHandler:  ticketHandler,
-		WikiHandler:    wikiHandler,
-		ProjectHandler: projectHandler,
-		SpaceHandler:   spaceHandler,
-	})
 
 	srv := &http.Server{
 		Addr:         ":" + strconv.Itoa(cfg.AppPort),
@@ -187,11 +127,46 @@ func newServer(cfg *config.Config) (*http.Server, func(), error) {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	cleanup := func() {
-		pool.Close()
+	return srv, func() { pool.Close() }, nil
+}
+
+// buildRouter constructs all domain services with DB-backed adapters and
+// returns the fully wired API router.
+func buildRouter(cfg *config.Config, queries *generated.Queries, orgID uuid.UUID) (http.Handler, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("generating RSA key: %w", err)
 	}
 
-	return srv, cleanup, nil
+	jwtSvc := auth.NewJWTService(auth.TokenConfig{
+		PrivateKey: privateKey,
+		PublicKey:  &privateKey.PublicKey,
+		AccessTTL:  cfg.JWTExpiry,
+		RefreshTTL: cfg.JWTExpiry * 7,
+		Issuer:     "azimuthal",
+	})
+
+	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, orgID))
+	sessionSvc := auth.NewSessionService(adapters.NewSessionAdapter(queries), auth.SessionConfig{TTL: cfg.JWTExpiry})
+	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc)
+
+	ticketSvc := tickets.NewTicketService(adapters.NewTicketAdapter(queries))
+
+	itemAdapter := adapters.NewItemAdapter(queries)
+	sprintAdapter := adapters.NewSprintAdapter(queries)
+	itemSvc := projects.NewItemService(itemAdapter)
+	sprintSvc := projects.NewSprintService(sprintAdapter)
+
+	wikiSvc := wiki.NewService(queries)
+
+	return api.NewRouter(api.RouterConfig{
+		Authenticator:  authenticator,
+		AuthHandler:    authapi.NewHandler(userSvc, jwtSvc, sessionSvc),
+		TicketHandler:  ticketsapi.NewHandler(ticketSvc),
+		WikiHandler:    wikiapi.NewHandler(wikiSvc),
+		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))),
+		SpaceHandler:   spacesapi.NewHandler(queries),
+	}), nil
 }
 
 // ensureDefaultOrg creates or retrieves the default organization. In a

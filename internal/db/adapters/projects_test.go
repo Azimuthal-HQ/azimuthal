@@ -242,6 +242,154 @@ func TestDbSprintToProjectNilOptionals(t *testing.T) {
 	}
 }
 
+func TestItemToCreateParams(t *testing.T) {
+	parentID := uuid.New()
+	assigneeID := uuid.New()
+	due := time.Date(2025, 8, 1, 0, 0, 0, 0, time.UTC)
+
+	item := &projects.Item{
+		ID:          uuid.New(),
+		SpaceID:     uuid.New(),
+		ParentID:    &parentID,
+		Kind:        "story",
+		Title:       "Build feature",
+		Description: "Details here",
+		Status:      "open",
+		Priority:    "high",
+		ReporterID:  uuid.New(),
+		AssigneeID:  &assigneeID,
+		Labels:      []string{"frontend"},
+		DueAt:       &due,
+		Rank:        "0|ccc:",
+	}
+
+	got := itemToCreateParams(item)
+
+	if got.ID != item.ID {
+		t.Errorf("ID mismatch")
+	}
+	if got.Kind != "story" {
+		t.Errorf("Kind mismatch: got %v", got.Kind)
+	}
+	if !got.ParentID.Valid {
+		t.Error("ParentID should be valid")
+	}
+	if got.Description == nil || *got.Description != "Details here" {
+		t.Errorf("Description mismatch")
+	}
+	if !got.AssigneeID.Valid {
+		t.Error("AssigneeID should be valid")
+	}
+	if !got.DueAt.Valid {
+		t.Error("DueAt should be valid")
+	}
+}
+
+func TestItemToCreateParamsNilOptionals(t *testing.T) {
+	item := &projects.Item{
+		ID:         uuid.New(),
+		SpaceID:    uuid.New(),
+		Kind:       "task",
+		Title:      "Simple task",
+		Status:     "open",
+		Priority:   "medium",
+		ReporterID: uuid.New(),
+	}
+
+	got := itemToCreateParams(item)
+	if got.ParentID.Valid {
+		t.Error("ParentID should be invalid for nil")
+	}
+	if got.AssigneeID.Valid {
+		t.Error("AssigneeID should be invalid for nil")
+	}
+	if got.DueAt.Valid {
+		t.Error("DueAt should be invalid for nil")
+	}
+}
+
+func TestItemToUpdateParams(t *testing.T) {
+	assignee := uuid.New()
+	item := &projects.Item{
+		ID:          uuid.New(),
+		Title:       "Updated task",
+		Description: "New desc",
+		Status:      "in_progress",
+		Priority:    "urgent",
+		AssigneeID:  &assignee,
+		Labels:      []string{"critical"},
+		Rank:        "0|ddd:",
+	}
+
+	got := itemToUpdateParams(item)
+	if got.ID != item.ID {
+		t.Errorf("ID mismatch")
+	}
+	if got.Title != "Updated task" {
+		t.Errorf("Title mismatch")
+	}
+	if got.Status != "in_progress" {
+		t.Errorf("Status mismatch")
+	}
+	if !got.AssigneeID.Valid {
+		t.Error("AssigneeID should be valid")
+	}
+}
+
+func TestSprintToCreateParams(t *testing.T) {
+	start := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 7, 14, 0, 0, 0, 0, time.UTC)
+
+	sprint := &projects.Sprint{
+		ID:        uuid.New(),
+		SpaceID:   uuid.New(),
+		Name:      "Sprint 3",
+		Goal:      "Ship MVP",
+		Status:    "planned",
+		StartsAt:  &start,
+		EndsAt:    &end,
+		CreatedBy: uuid.New(),
+	}
+
+	got := sprintToCreateParams(sprint)
+	if got.ID != sprint.ID {
+		t.Errorf("ID mismatch")
+	}
+	if got.Name != "Sprint 3" {
+		t.Errorf("Name mismatch")
+	}
+	if got.Goal == nil || *got.Goal != "Ship MVP" {
+		t.Errorf("Goal mismatch")
+	}
+	if !got.StartsAt.Valid {
+		t.Error("StartsAt should be valid")
+	}
+	if !got.EndsAt.Valid {
+		t.Error("EndsAt should be valid")
+	}
+}
+
+func TestSprintToCreateParamsNilDates(t *testing.T) {
+	sprint := &projects.Sprint{
+		ID:        uuid.New(),
+		SpaceID:   uuid.New(),
+		Name:      "Sprint undated",
+		Status:    "planned",
+		CreatedBy: uuid.New(),
+	}
+
+	got := sprintToCreateParams(sprint)
+	if got.StartsAt.Valid {
+		t.Error("StartsAt should be invalid for nil")
+	}
+	if got.EndsAt.Valid {
+		t.Error("EndsAt should be invalid for nil")
+	}
+	if got.Goal == nil || *got.Goal != "" {
+		t.Errorf("Goal should be empty string pointer for empty goal")
+	}
+}
+
 // Verify interface compliance at compile time.
 var _ projects.ItemRepository = (*ItemAdapter)(nil)
 var _ projects.SprintRepository = (*SprintAdapter)(nil)
