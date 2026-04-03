@@ -16,18 +16,18 @@ import (
 // minimal mocks
 type mockItemRepo struct{}
 
-func (m *mockItemRepo) Create(_ context.Context, _ *projects.Item) error   { return nil }
+func (m *mockItemRepo) Create(_ context.Context, _ *projects.Item) error { return nil }
 func (m *mockItemRepo) GetByID(_ context.Context, _ uuid.UUID) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
 }
-func (m *mockItemRepo) Update(_ context.Context, _ *projects.Item) error   { return nil }
+func (m *mockItemRepo) Update(_ context.Context, _ *projects.Item) error { return nil }
 func (m *mockItemRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ string) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
 }
 func (m *mockItemRepo) UpdateSprint(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
 	return projects.ErrNotFound
 }
-func (m *mockItemRepo) SoftDelete(_ context.Context, _ uuid.UUID) error    { return nil }
+func (m *mockItemRepo) SoftDelete(_ context.Context, _ uuid.UUID) error { return nil }
 func (m *mockItemRepo) ListBySpace(_ context.Context, _ uuid.UUID) ([]*projects.Item, error) {
 	return nil, nil
 }
@@ -53,7 +53,7 @@ func (m *mockSprintRepo) GetByID(_ context.Context, _ uuid.UUID) (*projects.Spri
 func (m *mockSprintRepo) GetActiveBySpace(_ context.Context, _ uuid.UUID) (*projects.Sprint, error) {
 	return nil, projects.ErrNotFound
 }
-func (m *mockSprintRepo) Update(_ context.Context, _ *projects.Sprint) error   { return nil }
+func (m *mockSprintRepo) Update(_ context.Context, _ *projects.Sprint) error { return nil }
 func (m *mockSprintRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ string) (*projects.Sprint, error) {
 	return nil, projects.ErrNotFound
 }
