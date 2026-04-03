@@ -212,7 +212,7 @@ func (m *mockStore) SearchPages(_ context.Context, arg generated.SearchPagesPara
 				})
 			}
 		}
-		if int32(len(result)) >= arg.Limit {
+		if len(result) >= int(arg.Limit) {
 			break
 		}
 	}

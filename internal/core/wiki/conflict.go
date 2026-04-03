@@ -2,6 +2,7 @@ package wiki
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -34,7 +35,7 @@ func (s *Service) UpdatePageOrConflict(ctx context.Context, input UpdatePageInpu
 		return page, nil, nil
 	}
 
-	if err != ErrVersionConflict {
+	if !errors.Is(err, ErrVersionConflict) {
 		return generated.Page{}, nil, err
 	}
 

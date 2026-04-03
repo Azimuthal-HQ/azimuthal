@@ -12,14 +12,14 @@ import (
 
 // TreeNode represents a page and its children in the page tree.
 type TreeNode struct {
-	ID       uuid.UUID          `json:"id"`
-	SpaceID  uuid.UUID          `json:"space_id"`
-	ParentID pgtype.UUID        `json:"parent_id"`
-	Title    string             `json:"title"`
-	Version  int32              `json:"version"`
-	AuthorID uuid.UUID          `json:"author_id"`
-	Position int32              `json:"position"`
-	Children []*TreeNode        `json:"children"`
+	ID       uuid.UUID   `json:"id"`
+	SpaceID  uuid.UUID   `json:"space_id"`
+	ParentID pgtype.UUID `json:"parent_id"`
+	Title    string      `json:"title"`
+	Version  int32       `json:"version"`
+	AuthorID uuid.UUID   `json:"author_id"`
+	Position int32       `json:"position"`
+	Children []*TreeNode `json:"children"`
 }
 
 // ListPagesBySpace returns all pages in a space as a flat list.
