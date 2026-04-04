@@ -214,7 +214,7 @@ func doGet(t *testing.T, client *http.Client, url, token string, wantStatus int)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := client.Do(req) //nolint:bodyclose // closed below
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -252,7 +252,7 @@ func doPost(t *testing.T, client *http.Client, url string, payload interface{}, 
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := client.Do(req) //nolint:bodyclose // closed below
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
 	}
