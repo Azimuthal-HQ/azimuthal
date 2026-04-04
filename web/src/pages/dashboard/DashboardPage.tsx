@@ -70,11 +70,11 @@ const SPACE_BADGE_LABEL: Record<Space['type'], string> = {
 function linkForSpace(space: Space): string {
   switch (space.type) {
     case 'service_desk':
-      return '/tickets';
+      return `/tickets`;
     case 'wiki':
-      return '/wiki';
+      return `/wiki`;
     case 'project':
-      return '/backlog';
+      return `/backlog`;
   }
 }
 

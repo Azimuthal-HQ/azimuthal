@@ -27,26 +27,26 @@ interface NavItem {
 
 const NAV_ITEMS: Record<string, NavItem[]> = {
   service_desk: [
-    { label: 'Dashboard', to: 'dashboard', icon: LayoutDashboard },
-    { label: 'Tickets', to: 'tickets', icon: Ticket },
-    { label: 'Kanban Board', to: 'board', icon: Columns3 },
-    { label: 'Reports', to: 'reports', icon: BarChart3 },
+    { label: 'Dashboard', to: '/', icon: LayoutDashboard },
+    { label: 'Tickets', to: '/tickets', icon: Ticket },
+    { label: 'Kanban Board', to: '/kanban', icon: Columns3 },
+    { label: 'Reports', to: '/tickets', icon: BarChart3 },
   ],
   wiki: [
-    { label: 'All Pages', to: 'pages', icon: FileText },
-    { label: 'Recent', to: 'recent', icon: Clock },
-    { label: 'Favorites', to: 'favorites', icon: Star },
-    { label: 'Trash', to: 'trash', icon: Trash2 },
+    { label: 'All Pages', to: '/wiki', icon: FileText },
+    { label: 'Recent', to: '/wiki', icon: Clock },
+    { label: 'Favorites', to: '/wiki', icon: Star },
+    { label: 'Trash', to: '/wiki', icon: Trash2 },
   ],
   project: [
-    { label: 'Backlog', to: 'backlog', icon: ListTodo },
-    { label: 'Sprint Board', to: 'board', icon: Columns3 },
-    { label: 'Roadmap', to: 'roadmap', icon: Map },
-    { label: 'Labels', to: 'labels', icon: Tags },
+    { label: 'Backlog', to: '/backlog', icon: ListTodo },
+    { label: 'Sprint Board', to: '/board', icon: Columns3 },
+    { label: 'Roadmap', to: '/backlog', icon: Map },
+    { label: 'Labels', to: '/backlog', icon: Tags },
   ],
   dashboard: [
     { label: 'Home', to: '/', icon: Home },
-    { label: 'All Spaces', to: '/spaces', icon: Compass },
+    { label: 'All Spaces', to: '/', icon: Compass },
     { label: 'Settings', to: '/settings', icon: Settings },
   ],
 };
