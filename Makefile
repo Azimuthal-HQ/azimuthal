@@ -2,7 +2,8 @@
 
 .PHONY: help build docker-build test test-coverage lint fmt \
         scan scan-sast scan-vuln scan-secrets scan-container \
-        dev migrate rollback sqlc clean pre-push
+        dev migrate rollback sqlc clean pre-push \
+        frontend frontend-install frontend-type-check
 
 # ── Config ────────────────────────────────────────────────────
 BINARY_NAME    := azimuthal
@@ -19,7 +20,8 @@ help:
 	@echo "  Know exactly where your team is headed."
 	@echo ""
 	@echo "  Build"
-	@echo "    make build              Build binary"
+	@echo "    make build              Build frontend + Go binary"
+	@echo "    make frontend           Build frontend only"
 	@echo "    make docker-build       Build Docker image"
 	@echo ""
 	@echo "  Test & Quality"
@@ -46,8 +48,24 @@ help:
 	@echo "    make clean              Remove build artifacts"
 	@echo ""
 
+# ── Frontend ──────────────────────────────────────────────────
+frontend-install:
+	@echo "→ Installing frontend dependencies..."
+	@cd web && npm ci
+	@echo "✓ Frontend dependencies installed"
+
+frontend-type-check:
+	@echo "→ Type-checking frontend..."
+	@cd web && npm run type-check
+	@echo "✓ Frontend type-check passed"
+
+frontend: frontend-install
+	@echo "→ Building frontend..."
+	@cd web && npm run build
+	@echo "✓ Frontend built to web/dist/"
+
 # ── Build ─────────────────────────────────────────────────────
-build:
+build: frontend
 	@echo "→ Building $(BINARY_NAME)..."
 	@go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BINARY_NAME) ./cmd/server
 	@echo "✓ Built bin/$(BINARY_NAME)"
@@ -148,6 +166,6 @@ pre-push: fmt lint test scan
 
 # ── Housekeeping ──────────────────────────────────────────────
 clean:
-	@rm -rf bin/ coverage.out coverage.html
+	@rm -rf bin/ coverage.out coverage.html web/dist/ web/node_modules/
 	@docker rmi $(BINARY_NAME):latest $(BINARY_NAME):$(VERSION) 2>/dev/null || true
 	@echo "✓ Cleaned"

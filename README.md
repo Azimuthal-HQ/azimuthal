@@ -9,15 +9,27 @@ A fully open-source, self-hostable alternative to the Atlassian suite (Jira, Con
 - **Service Desk** — ticket lifecycle, email ingestion, kanban boards
 - **Wiki** — page tree, markdown rendering, version history, conflict detection
 - **Project Tracking** — backlog, sprints, roadmap, cross-tool linking
+- **Unified Frontend** — React + TypeScript SPA embedded in the Go binary, dark mode by default
 - **SSO** — SAML/OIDC single sign-on
 - **RBAC** — role-based access control
 - **Audit Log** — append-only event logging
+
+## What works today
+
+- **Single binary** — `make build` produces one binary with the frontend embedded. Run `./azimuthal` and visit http://localhost:8080
+- **Dark mode by default** — steel blue and silver design system with light mode opt-in via settings
+- **Service Desk** — ticket list, ticket detail, kanban board with drag-and-drop
+- **Wiki** — page tree with collapsible navigation, markdown rendering
+- **Project Tracking** — backlog view, sprint board with drag-and-drop
+- **Unified navigation** — top nav with space switcher, context-sensitive sidebar, consistent design across all modules
+- **REST API** — full CRUD for tickets, wiki pages, projects, sprints, labels, and spaces
 
 ## Quick Start
 
 ### Prerequisites
 
 - Go 1.23+
+- Node.js 20+ (for building the frontend)
 - PostgreSQL 15+
 - MinIO or S3-compatible storage (for file attachments)
 
@@ -83,7 +95,7 @@ go test ./...
 ## Project Structure
 
 ```
-cmd/server/        — single binary entrypoint
+cmd/server/        — single binary entrypoint (serves API + embedded frontend)
 internal/core/     — all application logic
   api/             — HTTP handlers and router (chi)
   auth/            — authentication, JWT, sessions
@@ -97,6 +109,7 @@ internal/core/     — all application logic
 internal/db/       — database migrations and sqlc queries
 internal/config/   — configuration loading
 internal/jobs/     — background workers
+web/               — React + TypeScript frontend (Vite, Tailwind, shadcn/ui)
 migrations/        — goose SQL migration files
 build/             — Dockerfile and docker-compose files
 ```
