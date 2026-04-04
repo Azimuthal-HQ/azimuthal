@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
@@ -194,14 +195,19 @@ export function BacklogPage() {
                     className="border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors"
                   >
                     <td className="whitespace-nowrap px-4 py-3">
-                      <span
-                        className="font-medium text-[var(--color-primary)]"
+                      <Link
+                        to={`/backlog/${item.key}`}
+                        className="font-medium text-[var(--color-primary)] hover:underline"
                         style={{ fontFamily: 'var(--font-mono)' }}
                       >
                         {item.key}
-                      </span>
+                      </Link>
                     </td>
-                    <td className="px-4 py-3 text-[var(--color-text)]">{item.title}</td>
+                    <td className="px-4 py-3 text-[var(--color-text)]">
+                      <Link to={`/backlog/${item.key}`} className="hover:underline">
+                        {item.title}
+                      </Link>
+                    </td>
                     <td className="px-4 py-3">
                       <Badge variant={TYPE_VARIANT[item.type]}>
                         {TYPE_LABEL[item.type]}

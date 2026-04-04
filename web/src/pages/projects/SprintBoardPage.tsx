@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   DndContext,
   closestCorners,
@@ -118,9 +119,10 @@ function findColumn(
 interface SortableItemCardProps {
   item: SprintItem;
   overlay?: boolean;
+  onItemClick?: (key: string) => void;
 }
 
-function SortableItemCard({ item, overlay }: SortableItemCardProps) {
+function SortableItemCard({ item, onItemClick }: { item: SprintItem; onItemClick?: (key: string) => void }) {
   const {
     attributes,
     listeners,
@@ -140,12 +142,12 @@ function SortableItemCard({ item, overlay }: SortableItemCardProps) {
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <ItemCard item={item} overlay={overlay} />
+      <ItemCard item={item} onItemClick={onItemClick} />
     </div>
   );
 }
 
-function ItemCard({ item, overlay }: SortableItemCardProps) {
+function ItemCard({ item, overlay, onItemClick }: SortableItemCardProps) {
   const TypeIcon = TYPE_ICON[item.type];
 
   return (
@@ -154,12 +156,13 @@ function ItemCard({ item, overlay }: SortableItemCardProps) {
         'cursor-grab transition-shadow hover:shadow-[var(--shadow-md)]',
         overlay && 'shadow-[var(--shadow-lg)] rotate-2',
       )}
+      onClick={() => onItemClick?.(item.key)}
     >
       <CardContent className="space-y-2 p-3">
         <div className="flex items-center gap-2">
           <TypeIcon className="h-4 w-4 text-[var(--color-text-muted)]" />
           <span
-            className="text-[var(--text-xs)] font-medium text-[var(--color-primary)]"
+            className="text-[var(--text-xs)] font-medium text-[var(--color-primary)] hover:underline"
             style={{ fontFamily: 'var(--font-mono)' }}
           >
             {item.key}
@@ -196,9 +199,10 @@ function ItemCard({ item, overlay }: SortableItemCardProps) {
 interface DroppableColumnProps {
   column: ColumnDef;
   items: SprintItem[];
+  onItemClick?: (key: string) => void;
 }
 
-function DroppableColumn({ column, items }: DroppableColumnProps) {
+function DroppableColumn({ column, items, onItemClick }: DroppableColumnProps) {
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-[var(--radius-lg)] bg-[var(--color-bg)] p-3">
       <div className="mb-3 flex items-center justify-between">
@@ -215,7 +219,7 @@ function DroppableColumn({ column, items }: DroppableColumnProps) {
       >
         <div className="flex flex-1 flex-col gap-2">
           {items.map((item) => (
-            <SortableItemCard key={item.id} item={item} />
+            <SortableItemCard key={item.id} item={item} onItemClick={onItemClick} />
           ))}
         </div>
       </SortableContext>
@@ -229,8 +233,13 @@ function DroppableColumn({ column, items }: DroppableColumnProps) {
 
 /** Sprint board page with drag-and-drop columns and sprint progress. */
 export function SprintBoardPage() {
+  const navigate = useNavigate();
   const [columns, setColumns] = useState<Record<ColumnId, SprintItem[]>>(INITIAL_COLUMNS);
   const [activeItem, setActiveItem] = useState<SprintItem | null>(null);
+
+  const handleItemClick = useCallback((key: string) => {
+    navigate(`/backlog/${key}`);
+  }, [navigate]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -337,6 +346,7 @@ export function SprintBoardPage() {
               key={col.id}
               column={col}
               items={columns[col.id]}
+              onItemClick={handleItemClick}
             />
           ))}
         </div>

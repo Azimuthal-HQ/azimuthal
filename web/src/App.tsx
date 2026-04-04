@@ -7,6 +7,7 @@ import { TicketDetailPage } from './pages/servicedesk/TicketDetailPage';
 import { KanbanPage } from './pages/servicedesk/KanbanPage';
 import { WikiPage } from './pages/wiki/WikiPage';
 import { BacklogPage } from './pages/projects/BacklogPage';
+import { ItemDetailPage } from './pages/projects/ItemDetailPage';
 import { SprintBoardPage } from './pages/projects/SprintBoardPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 
@@ -29,6 +30,7 @@ export function App() {
 
         {/* Projects — top-level convenience routes */}
         <Route path="backlog" element={<BacklogPage />} />
+        <Route path="backlog/:itemKey" element={<ItemDetailPage />} />
         <Route path="board" element={<SprintBoardPage />} />
 
         {/* Space-scoped routes (API-backed, with space ID) */}
