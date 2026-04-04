@@ -34,3 +34,6 @@ bin/
 
 # Frontend
 web/node_modules/
+
+# Claude Code worktrees
+.claude/
