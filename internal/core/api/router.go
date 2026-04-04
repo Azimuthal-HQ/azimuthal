@@ -21,6 +21,7 @@ type RouterConfig struct {
 	WikiHandler    *wikiapi.Handler
 	ProjectHandler *projectsapi.Handler
 	SpaceHandler   *spacesapi.Handler
+	SPAHandler     http.Handler // serves the embedded frontend; nil disables SPA serving
 }
 
 // NewRouter builds the unified chi router with all routes and middleware.
@@ -73,6 +74,11 @@ func NewRouter(cfg RouterConfig) http.Handler {
 			r.Mount("/", cfg.ProjectHandler.Routes())
 		})
 	})
+
+	// SPA frontend: serve static assets and fall back to index.html
+	if cfg.SPAHandler != nil {
+		r.NotFound(cfg.SPAHandler.ServeHTTP)
+	}
 
 	return r
 }

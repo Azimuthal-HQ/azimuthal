@@ -7,11 +7,13 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/db"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/web"
 )
 
 // Version and BuildTime are injected at build time via -ldflags.
@@ -159,6 +162,11 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, orgID uuid.UUID
 
 	wikiSvc := wiki.NewService(queries)
 
+	spaHandler, err := newSPAHandler()
+	if err != nil {
+		return nil, fmt.Errorf("creating SPA handler: %w", err)
+	}
+
 	return api.NewRouter(api.RouterConfig{
 		Authenticator:  authenticator,
 		AuthHandler:    authapi.NewHandler(userSvc, jwtSvc, sessionSvc),
@@ -166,6 +174,37 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, orgID uuid.UUID
 		WikiHandler:    wikiapi.NewHandler(wikiSvc),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))),
 		SpaceHandler:   spacesapi.NewHandler(queries),
+		SPAHandler:     spaHandler,
+	}), nil
+}
+
+// newSPAHandler returns an http.Handler that serves the embedded frontend
+// assets. For any request that doesn't match a static file, it falls back
+// to index.html so the React Router can handle client-side routing.
+func newSPAHandler() (http.Handler, error) {
+	distFS, err := fs.Sub(web.DistFS, "dist")
+	if err != nil {
+		return nil, fmt.Errorf("creating sub filesystem: %w", err)
+	}
+
+	fileServer := http.FileServer(http.FS(distFS))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Try to serve the file directly
+		if path != "/" {
+			cleanPath := strings.TrimPrefix(path, "/")
+			if f, err := distFS.(fs.ReadFileFS).ReadFile(cleanPath); err == nil {
+				_ = f // file exists, let the file server handle it
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Fall back to index.html for client-side routing
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
 	}), nil
 }
 
