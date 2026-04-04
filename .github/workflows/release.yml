@@ -15,7 +15,6 @@ jobs:
 
   build-release:
     name: Build Release Binaries
-    needs: 
     runs-on: ubuntu-latest
     permissions:
       contents: write
