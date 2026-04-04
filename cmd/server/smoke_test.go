@@ -52,8 +52,7 @@ func TestSmoke(t *testing.T) {
 
 	// 1. GET /health — expects 200
 	t.Run("health", func(t *testing.T) {
-		resp := mustGet(t, client, base+"/health")
-		body := readJSONAndClose(t, resp)
+		body := doGet(t, client, base+"/health", "", http.StatusOK)
 		if body["status"] != "ok" {
 			t.Errorf("expected status ok, got %v", body["status"])
 		}
@@ -61,8 +60,7 @@ func TestSmoke(t *testing.T) {
 
 	// 2. GET /ready — expects 200
 	t.Run("ready", func(t *testing.T) {
-		resp := mustGet(t, client, base+"/ready")
-		body := readJSONAndClose(t, resp)
+		body := doGet(t, client, base+"/ready", "", http.StatusOK)
 		if body["status"] != "ready" {
 			t.Errorf("expected status ready, got %v", body["status"])
 		}
@@ -78,9 +76,7 @@ func TestSmoke(t *testing.T) {
 			"display_name": "Smoke Tester",
 			"password":     "test-password-123",
 		}
-		resp := mustPost(t, client, base+"/api/v1/auth/register", payload, "")
-		assertStatus(t, resp, http.StatusCreated)
-		body := readJSONAndClose(t, resp)
+		body := doPost(t, client, base+"/api/v1/auth/register", payload, "", http.StatusCreated)
 
 		token, ok := body["access_token"].(string)
 		if !ok || token == "" {
@@ -141,11 +137,13 @@ func TestSmoke(t *testing.T) {
 			"is_private":  false,
 		}
 		url := fmt.Sprintf("%s/api/v1/orgs/%s/spaces", base, orgID)
-		resp := mustPost(t, client, url, payload, accessToken)
-		assertStatus(t, resp, http.StatusCreated)
-		body := readJSONAndClose(t, resp)
+		body := doPost(t, client, url, payload, accessToken, http.StatusCreated)
 
 		id, ok := body["id"].(string)
+		if !ok || id == "" {
+			// Some handlers return PascalCase field names
+			id, ok = body["ID"].(string)
+		}
 		if !ok || id == "" {
 			t.Fatalf("expected space id in response, got %v", body)
 		}
@@ -166,11 +164,13 @@ func TestSmoke(t *testing.T) {
 			"labels":      []string{},
 		}
 		url := fmt.Sprintf("%s/api/v1/spaces/%s/tickets", base, spaceID)
-		resp := mustPost(t, client, url, payload, accessToken)
-		assertStatus(t, resp, http.StatusCreated)
-		body := readJSONAndClose(t, resp)
+		body := doPost(t, client, url, payload, accessToken, http.StatusCreated)
 
 		id, ok := body["id"].(string)
+		if !ok || id == "" {
+			// Ticket handler returns PascalCase field names
+			id, ok = body["ID"].(string)
+		}
 		if !ok || id == "" {
 			t.Fatalf("expected ticket id in response, got %v", body)
 		}
@@ -184,52 +184,66 @@ func TestSmoke(t *testing.T) {
 	// 7. Retrieve the ticket and verify it matches
 	t.Run("get_ticket", func(t *testing.T) {
 		url := fmt.Sprintf("%s/api/v1/spaces/%s/tickets/%s", base, spaceID, ticketID)
-		resp := mustGetAuth(t, client, url, accessToken)
-		assertStatus(t, resp, http.StatusOK)
-		body := readJSONAndClose(t, resp)
+		body := doGet(t, client, url, accessToken, http.StatusOK)
 
-		if body["title"] != "Smoke test ticket" {
-			t.Errorf("expected title 'Smoke test ticket', got %v", body["title"])
+		title := body["title"]
+		if title == nil {
+			title = body["Title"]
 		}
-		if body["description"] != "Created by automated smoke test" {
-			t.Errorf("expected description 'Created by automated smoke test', got %v", body["description"])
+		if title != "Smoke test ticket" {
+			t.Errorf("expected title 'Smoke test ticket', got %v", title)
+		}
+		desc := body["description"]
+		if desc == nil {
+			desc = body["Description"]
+		}
+		if desc != "Created by automated smoke test" {
+			t.Errorf("expected description 'Created by automated smoke test', got %v", desc)
 		}
 	})
 }
 
-// --- helpers ---
-
-func mustGet(t *testing.T, client *http.Client, url string) *http.Response {
-	t.Helper()
-	resp, err := client.Get(url)
-	if err != nil {
-		t.Fatalf("GET %s: %v", url, err)
-	}
-	return resp
-}
-
-func mustGetAuth(t *testing.T, client *http.Client, url, token string) *http.Response {
+// doGet performs a GET request, asserts the status, reads and closes the body,
+// and returns the parsed JSON. All in one call to satisfy bodyclose linter.
+func doGet(t *testing.T, client *http.Client, url, token string, wantStatus int) map[string]interface{} {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatalf("creating request: %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(req) //nolint:bodyclose // closed below
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	return resp
+	defer func() { _ = resp.Body.Close() }()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading body: %v", err)
+	}
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("expected status %d, got %d: %s", wantStatus, resp.StatusCode, string(raw))
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("parsing JSON %q: %v", string(raw), err)
+	}
+	return result
 }
 
-func mustPost(t *testing.T, client *http.Client, url string, payload interface{}, token string) *http.Response {
+// doPost performs a POST request with JSON body, asserts the status, reads and
+// closes the body, and returns the parsed JSON.
+func doPost(t *testing.T, client *http.Client, url string, payload interface{}, token string, wantStatus int) map[string]interface{} {
 	t.Helper()
-	body, err := json.Marshal(payload)
+	jsonBody, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshalling payload: %v", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(jsonBody))
 	if err != nil {
 		t.Fatalf("creating request: %v", err)
 	}
@@ -238,34 +252,22 @@ func mustPost(t *testing.T, client *http.Client, url string, payload interface{}
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:bodyclose // closed below
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
 	}
-	return resp
-}
-
-func assertStatus(t *testing.T, resp *http.Response, expected int) {
-	t.Helper()
-	if resp.StatusCode != expected {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected status %d, got %d: %s", expected, resp.StatusCode, string(body))
-	}
-}
-
-// readJSONAndClose reads the response body as JSON and closes it.
-func readJSONAndClose(t *testing.T, resp *http.Response) map[string]interface{} {
-	t.Helper()
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("reading body: %v", err)
 	}
-
+	if resp.StatusCode != wantStatus {
+		t.Fatalf("expected status %d, got %d: %s", wantStatus, resp.StatusCode, string(raw))
+	}
 	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		t.Fatalf("parsing JSON %q: %v", string(body), err)
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("parsing JSON %q: %v", string(raw), err)
 	}
 	return result
 }
