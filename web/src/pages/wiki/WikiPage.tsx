@@ -1,8 +1,20 @@
 import { useState, useMemo } from 'react';
-import { ChevronRight, ChevronDown, FileText, Edit } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileText, Edit, Plus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from '../../components/ui/button';
+import { Input } from '../../components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogClose,
+} from '../../components/ui/dialog';
+import { useToast } from '../../components/ui/toast';
 import { cn } from '../../lib/utils';
+import { createWikiPage } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,7 +38,7 @@ interface WikiPageData {
 // Mock data
 // ---------------------------------------------------------------------------
 
-const PAGE_TREE: WikiNode[] = [
+const INITIAL_PAGE_TREE: WikiNode[] = [
   {
     id: 'getting-started',
     title: 'Getting Started',
@@ -47,7 +59,7 @@ const PAGE_TREE: WikiNode[] = [
   { id: 'contributing', title: 'Contributing' },
 ];
 
-const MOCK_PAGES: Record<string, WikiPageData> = {
+const INITIAL_PAGES: Record<string, WikiPageData> = {
   'getting-started': {
     id: 'getting-started',
     title: 'Getting Started',
@@ -287,6 +299,21 @@ make test
 };
 
 // ---------------------------------------------------------------------------
+// Helper: flatten tree for parent selector
+// ---------------------------------------------------------------------------
+
+function flattenTree(nodes: WikiNode[], depth: number = 0): { id: string; title: string; depth: number }[] {
+  const result: { id: string; title: string; depth: number }[] = [];
+  for (const node of nodes) {
+    result.push({ id: node.id, title: node.title, depth });
+    if (node.children) {
+      result.push(...flattenTree(node.children, depth + 1));
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Tree node component
 // ---------------------------------------------------------------------------
 
@@ -357,12 +384,28 @@ function TreeNode({ node, depth, activeId, expanded, onSelect, onToggle }: TreeN
 
 /** Two-panel wiki page with sidebar tree and markdown content. */
 export function WikiPage() {
+  const { toast } = useToast();
+  const [pageTree, setPageTree] = useState(INITIAL_PAGE_TREE);
+  const [pages, setPages] = useState(INITIAL_PAGES);
   const [activeId, setActiveId] = useState('getting-started');
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(['getting-started', 'architecture']),
   );
 
-  const activePage = useMemo(() => MOCK_PAGES[activeId], [activeId]);
+  // New Page modal state
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [formTitle, setFormTitle] = useState('');
+  const [formParent, setFormParent] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const activePage = useMemo(() => pages[activeId], [pages, activeId]);
+  const flatPages = useMemo(() => flattenTree(pageTree), [pageTree]);
+
+  function resetForm() {
+    setFormTitle('');
+    setFormParent('');
+    setSubmitting(false);
+  }
 
   function handleToggle(id: string) {
     setExpanded((prev) => {
@@ -376,6 +419,64 @@ export function WikiPage() {
     });
   }
 
+  // Check if active page is in "new empty page" mode
+  const isNewEmptyPage = activePage && activePage.content === '';
+
+  async function handleCreatePage() {
+    const title = formTitle.trim();
+    if (!title) return;
+
+    setSubmitting(true);
+
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+    try {
+      const apiCall = createWikiPage('default', {
+        title,
+        body: '',
+        parent_id: formParent || undefined,
+      });
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 3000),
+      );
+      await Promise.race([apiCall, timeout]);
+
+      toast({ title: 'Page created', variant: 'success' });
+    } catch {
+      // Mock mode fallback — add locally
+      const newId = slug || `page-${Date.now()}`;
+
+      // Add to pages data
+      const newPageData: WikiPageData = {
+        id: newId,
+        title,
+        author: 'You',
+        lastEdited: new Date().toISOString().slice(0, 10),
+        content: '',
+      };
+      setPages((prev) => ({ ...prev, [newId]: newPageData }));
+
+      // Add to tree
+      const newNode: WikiNode = { id: newId, title };
+      if (formParent) {
+        // Add as child of parent
+        setPageTree((prev) => addChildToTree(prev, formParent, newNode));
+        setExpanded((prev) => new Set([...prev, formParent]));
+      } else {
+        // Add at top level
+        setPageTree((prev) => [...prev, newNode]);
+      }
+
+      // Navigate to the new page
+      setActiveId(newId);
+      toast({ title: 'Mock mode — backend not connected', variant: 'warning' });
+    } finally {
+      setSubmitting(false);
+      setDialogOpen(false);
+      resetForm();
+    }
+  }
+
   return (
     <div className="flex gap-6">
       {/* Sidebar */}
@@ -384,7 +485,7 @@ export function WikiPage() {
           <h2 className="mb-2 px-2 text-[var(--text-xs)] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
             Pages
           </h2>
-          {PAGE_TREE.map((node) => (
+          {pageTree.map((node) => (
             <TreeNode
               key={node.id}
               node={node}
@@ -395,12 +496,49 @@ export function WikiPage() {
               onToggle={handleToggle}
             />
           ))}
+
+          {/* New Page button */}
+          <button
+            type="button"
+            onClick={() => setDialogOpen(true)}
+            className={cn(
+              'flex w-full items-center gap-1.5 rounded-[var(--radius-md)] px-2 py-1.5 mt-2 text-left text-[var(--text-sm)]',
+              'text-[var(--color-text-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-surface-hover)] transition-colors',
+              'border border-dashed border-[var(--color-border)]',
+            )}
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>New Page</span>
+          </button>
         </div>
       </aside>
 
       {/* Content */}
       <main className="min-w-0 flex-1">
-        {activePage ? (
+        {isNewEmptyPage ? (
+          /* New empty page — edit mode */
+          <div className="space-y-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+                  {activePage.title}
+                </h1>
+                <p className="mt-1 text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                  By {activePage.author} &middot; Created {activePage.lastEdited}
+                </p>
+              </div>
+              <Button variant="default" size="sm">
+                <Edit className="mr-2 h-4 w-4" />
+                Edit
+              </Button>
+            </div>
+            <div className="flex min-h-[300px] items-center justify-center rounded-[var(--radius-lg)] border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface)]">
+              <p className="text-[var(--text-lg)] text-[var(--color-text-muted)]">
+                Start writing...
+              </p>
+            </div>
+          </div>
+        ) : activePage ? (
           <div className="space-y-4">
             {/* Page header */}
             <div className="flex items-start justify-between">
@@ -440,6 +578,84 @@ export function WikiPage() {
           </div>
         )}
       </main>
+
+      {/* New Page dialog */}
+      <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Page</DialogTitle>
+            <DialogDescription>
+              Create a new wiki page. You can nest it under an existing page.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Title */}
+            <div className="space-y-2">
+              <label htmlFor="page-title" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                Title
+              </label>
+              <Input
+                id="page-title"
+                placeholder="e.g. Getting Started Guide"
+                value={formTitle}
+                onChange={(e) => setFormTitle(e.target.value)}
+                autoFocus
+              />
+            </div>
+
+            {/* Parent Page */}
+            <div className="space-y-2">
+              <label htmlFor="page-parent" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                Parent Page <span className="text-[var(--color-text-muted)] font-normal">(optional)</span>
+              </label>
+              <select
+                id="page-parent"
+                value={formParent}
+                onChange={(e) => setFormParent(e.target.value)}
+                className={cn(
+                  'flex h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
+                  'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+                )}
+              >
+                <option value="">No parent (top level)</option>
+                {flatPages.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {'\u00A0\u00A0'.repeat(p.depth)}{p.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" type="button">Cancel</Button>
+            </DialogClose>
+            <Button onClick={handleCreatePage} disabled={submitting || !formTitle.trim()}>
+              {submitting ? 'Creating...' : 'Create Page'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Tree mutation helper
+// ---------------------------------------------------------------------------
+
+/** Recursively adds a child node under the specified parent ID. */
+function addChildToTree(tree: WikiNode[], parentId: string, child: WikiNode): WikiNode[] {
+  return tree.map((node) => {
+    if (node.id === parentId) {
+      return { ...node, children: [...(node.children ?? []), child] };
+    }
+    if (node.children) {
+      return { ...node, children: addChildToTree(node.children, parentId, child) };
+    }
+    return node;
+  });
 }

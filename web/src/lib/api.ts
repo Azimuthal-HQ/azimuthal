@@ -640,6 +640,9 @@ export function useUpdateProjectItem(spaceId: string, itemId: string) {
 // Re-export create helpers for direct use
 export {
   createSpace,
+  createTicket,
+  createWikiPage,
+  createProjectItem,
   createSprint,
   createLabel,
   type CreateSpaceRequest,
