@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,93 +47,126 @@ func runRestore(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	inFile, err := os.Open(restoreInput)
+	entries, err := readArchive(restoreInput)
 	if err != nil {
-		return fmt.Errorf("opening backup file: %w", err)
+		return err
 	}
-	defer inFile.Close()
+
+	manifest, err := validateManifest(entries)
+	if err != nil {
+		return err
+	}
+
+	if err := restoreDatabase(cfg, entries); err != nil {
+		return err
+	}
+
+	if err := restoreStorage(cfg, entries); err != nil {
+		return err
+	}
+
+	fmt.Printf("Restore complete (%d files in manifest).\n", len(manifest.Files))
+	return nil
+}
+
+// readArchive opens and decompresses a .tar.gz backup, returning all entries.
+func readArchive(path string) (map[string][]byte, error) {
+	inFile, err := os.Open(path) // #nosec G304 -- user-provided CLI flag
+	if err != nil {
+		return nil, fmt.Errorf("opening backup file: %w", err)
+	}
+	defer func() { _ = inFile.Close() }()
 
 	gr, err := gzip.NewReader(inFile)
 	if err != nil {
-		return fmt.Errorf("decompressing backup: %w", err)
+		return nil, fmt.Errorf("decompressing backup: %w", err)
 	}
-	defer gr.Close()
+	defer func() { _ = gr.Close() }()
 
 	tr := tar.NewReader(gr)
-
-	// First pass: read all entries into memory for manifest validation
 	entries := make(map[string][]byte)
+
 	for {
 		header, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("reading archive entry: %w", err)
+			return nil, fmt.Errorf("reading archive entry: %w", err)
 		}
 
 		data, err := io.ReadAll(tr)
 		if err != nil {
-			return fmt.Errorf("reading archive data for %s: %w", header.Name, err)
+			return nil, fmt.Errorf("reading archive data for %s: %w", header.Name, err)
 		}
 		entries[header.Name] = data
 	}
 
-	// Validate manifest
+	return entries, nil
+}
+
+// validateManifest checks the manifest.json is present and all referenced files exist.
+func validateManifest(entries map[string][]byte) (*backupManifest, error) {
 	fmt.Println("Validating backup manifest...")
 	manifestData, ok := entries["manifest.json"]
 	if !ok {
-		return fmt.Errorf("invalid backup: manifest.json not found")
+		return nil, fmt.Errorf("invalid backup: manifest.json not found")
 	}
 
 	var manifest backupManifest
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
-		return fmt.Errorf("invalid manifest: %w", err)
+		return nil, fmt.Errorf("invalid manifest: %w", err)
 	}
 
 	fmt.Printf("  Azimuthal version: %s\n", manifest.AzimuthalVersion)
 	fmt.Printf("  Backup timestamp:  %s\n", manifest.BackupTimestamp.Format("2006-01-02 15:04:05 UTC"))
 	fmt.Printf("  Files in archive:  %d\n", len(manifest.Files))
 
-	// Verify all manifest files exist in archive
 	for _, f := range manifest.Files {
 		if _, exists := entries[f]; !exists {
-			return fmt.Errorf("invalid backup: manifest references %q but file not in archive", f)
+			return nil, fmt.Errorf("invalid backup: manifest references %q but file not in archive", f)
 		}
 	}
 	fmt.Println("  Manifest valid.")
+	return &manifest, nil
+}
 
-	// Step 1: Restore database
-	if dbDump, exists := entries["database.sql"]; exists {
-		fmt.Println("Restoring PostgreSQL database...")
-		if err := restorePostgres(cfg.DatabaseURL, dbDump); err != nil {
-			return fmt.Errorf("restoring postgres: %w", err)
-		}
-		fmt.Println("  Database restored.")
-	} else {
+// restoreDatabase restores the PostgreSQL dump from the archive if present.
+func restoreDatabase(cfg *config.Config, entries map[string][]byte) error {
+	dbDump, exists := entries["database.sql"]
+	if !exists {
 		fmt.Println("No database dump found in backup, skipping.")
+		return nil
 	}
 
-	// Step 2: Restore object storage
-	if cfg.StorageEndpoint != "" {
-		fmt.Println("Restoring object storage...")
-		count, err := restoreObjectStorage(cfg, entries)
-		if err != nil {
-			return fmt.Errorf("restoring object storage: %w", err)
-		}
-		fmt.Printf("  Restored %d files to object storage.\n", count)
-	} else {
+	fmt.Println("Restoring PostgreSQL database...")
+	if err := restorePostgres(cfg.DatabaseURL, dbDump); err != nil {
+		return fmt.Errorf("restoring postgres: %w", err)
+	}
+	fmt.Println("  Database restored.")
+	return nil
+}
+
+// restoreStorage restores object storage files from the archive if configured.
+func restoreStorage(cfg *config.Config, entries map[string][]byte) error {
+	if cfg.StorageEndpoint == "" {
 		fmt.Println("Skipping object storage (no STORAGE_ENDPOINT configured).")
+		return nil
 	}
 
-	fmt.Println("Restore complete.")
+	fmt.Println("Restoring object storage...")
+	count, err := restoreObjectStorage(cfg, entries)
+	if err != nil {
+		return fmt.Errorf("restoring object storage: %w", err)
+	}
+	fmt.Printf("  Restored %d files to object storage.\n", count)
 	return nil
 }
 
 // restorePostgres runs the SQL dump through psql to restore the database.
 // Uses --clean and --if-exists in the dump, making this idempotent.
 func restorePostgres(databaseURL string, dump []byte) error {
-	cmd := exec.Command("psql", databaseURL)
+	cmd := exec.Command("psql", databaseURL) // #nosec G204 -- trusted config value
 	cmd.Stdin = bytes.NewReader(dump)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = os.Stderr

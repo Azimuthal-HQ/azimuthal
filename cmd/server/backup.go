@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,17 +51,17 @@ func runBackup(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	outFile, err := os.Create(backupOutput)
+	outFile, err := os.Create(backupOutput) // #nosec G304 -- user-provided CLI flag
 	if err != nil {
 		return fmt.Errorf("creating output file: %w", err)
 	}
-	defer outFile.Close()
+	defer func() { _ = outFile.Close() }()
 
 	gw := gzip.NewWriter(outFile)
-	defer gw.Close()
+	defer func() { _ = gw.Close() }()
 
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	manifest := backupManifest{
 		AzimuthalVersion: Version,
@@ -110,15 +111,16 @@ func runBackup(_ *cobra.Command, _ []string) error {
 // dumpPostgres runs pg_dump and returns the SQL dump bytes and the postgres version.
 func dumpPostgres(databaseURL string) ([]byte, string, error) {
 	// Get postgres version
-	versionCmd := exec.Command("psql", databaseURL, "-t", "-c", "SELECT version();")
+	versionCmd := exec.Command("psql", databaseURL, "-t", "-c", "SELECT version();") // #nosec G204 -- trusted config value
 	versionOut, _ := versionCmd.Output()
 	pgVersion := string(versionOut)
 
 	// Run pg_dump
-	cmd := exec.Command("pg_dump", "--no-owner", "--no-acl", "--clean", "--if-exists", databaseURL)
+	cmd := exec.Command("pg_dump", "--no-owner", "--no-acl", "--clean", "--if-exists", databaseURL) // #nosec G204 -- trusted config value
 	out, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			return nil, "", fmt.Errorf("pg_dump failed: %s", string(exitErr.Stderr))
 		}
 		return nil, "", fmt.Errorf("pg_dump failed: %w", err)
@@ -151,7 +153,7 @@ func backupObjectStorage(tw *tar.Writer, cfg *config.Config, manifest *backupMan
 		}
 
 		data, err := io.ReadAll(reader)
-		reader.Close()
+		_ = reader.Close()
 		if err != nil {
 			return count, fmt.Errorf("reading object %s: %w", obj.Key, err)
 		}
@@ -194,4 +196,3 @@ func stripStoragePrefix(archivePath string) string {
 	}
 	return archivePath
 }
-

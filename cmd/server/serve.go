@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -33,7 +34,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	cfg, err := config.Load()
 	if err != nil {
-		return err
+		return fmt.Errorf("loading config: %w", err)
 	}
 
 	slog.Info("configuration loaded", "env", cfg.AppEnv, "port", cfg.AppPort)
@@ -62,10 +63,9 @@ func runServe(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return err
+		return fmt.Errorf("shutting down server: %w", err)
 	}
 
 	slog.Info("shutdown complete")
 	return nil
 }
-

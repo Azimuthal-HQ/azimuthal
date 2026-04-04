@@ -53,10 +53,7 @@ func TestSmoke(t *testing.T) {
 	// 1. GET /health — expects 200
 	t.Run("health", func(t *testing.T) {
 		resp := mustGet(t, client, base+"/health")
-		defer resp.Body.Close()
-
-		assertStatus(t, resp, http.StatusOK)
-		body := readJSON(t, resp)
+		body := readJSONAndClose(t, resp)
 		if body["status"] != "ok" {
 			t.Errorf("expected status ok, got %v", body["status"])
 		}
@@ -65,10 +62,7 @@ func TestSmoke(t *testing.T) {
 	// 2. GET /ready — expects 200
 	t.Run("ready", func(t *testing.T) {
 		resp := mustGet(t, client, base+"/ready")
-		defer resp.Body.Close()
-
-		assertStatus(t, resp, http.StatusOK)
-		body := readJSON(t, resp)
+		body := readJSONAndClose(t, resp)
 		if body["status"] != "ready" {
 			t.Errorf("expected status ready, got %v", body["status"])
 		}
@@ -85,10 +79,8 @@ func TestSmoke(t *testing.T) {
 			"password":     "test-password-123",
 		}
 		resp := mustPost(t, client, base+"/api/v1/auth/register", payload, "")
-		defer resp.Body.Close()
-
 		assertStatus(t, resp, http.StatusCreated)
-		body := readJSON(t, resp)
+		body := readJSONAndClose(t, resp)
 
 		token, ok := body["access_token"].(string)
 		if !ok || token == "" {
@@ -150,10 +142,8 @@ func TestSmoke(t *testing.T) {
 		}
 		url := fmt.Sprintf("%s/api/v1/orgs/%s/spaces", base, orgID)
 		resp := mustPost(t, client, url, payload, accessToken)
-		defer resp.Body.Close()
-
 		assertStatus(t, resp, http.StatusCreated)
-		body := readJSON(t, resp)
+		body := readJSONAndClose(t, resp)
 
 		id, ok := body["id"].(string)
 		if !ok || id == "" {
@@ -173,13 +163,12 @@ func TestSmoke(t *testing.T) {
 			"title":       "Smoke test ticket",
 			"description": "Created by automated smoke test",
 			"priority":    "medium",
+			"labels":      []string{},
 		}
 		url := fmt.Sprintf("%s/api/v1/spaces/%s/tickets", base, spaceID)
 		resp := mustPost(t, client, url, payload, accessToken)
-		defer resp.Body.Close()
-
 		assertStatus(t, resp, http.StatusCreated)
-		body := readJSON(t, resp)
+		body := readJSONAndClose(t, resp)
 
 		id, ok := body["id"].(string)
 		if !ok || id == "" {
@@ -196,10 +185,8 @@ func TestSmoke(t *testing.T) {
 	t.Run("get_ticket", func(t *testing.T) {
 		url := fmt.Sprintf("%s/api/v1/spaces/%s/tickets/%s", base, spaceID, ticketID)
 		resp := mustGetAuth(t, client, url, accessToken)
-		defer resp.Body.Close()
-
 		assertStatus(t, resp, http.StatusOK)
-		body := readJSON(t, resp)
+		body := readJSONAndClose(t, resp)
 
 		if body["title"] != "Smoke test ticket" {
 			t.Errorf("expected title 'Smoke test ticket', got %v", body["title"])
@@ -266,8 +253,11 @@ func assertStatus(t *testing.T, resp *http.Response, expected int) {
 	}
 }
 
-func readJSON(t *testing.T, resp *http.Response) map[string]interface{} {
+// readJSONAndClose reads the response body as JSON and closes it.
+func readJSONAndClose(t *testing.T, resp *http.Response) map[string]interface{} {
 	t.Helper()
+	defer func() { _ = resp.Body.Close() }()
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("reading body: %v", err)
