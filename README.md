@@ -16,7 +16,10 @@ A fully open-source, self-hostable alternative to the Atlassian suite (Jira, Con
 
 ## What works today
 
-- **Single binary** — `make build` produces one binary with the frontend embedded. Run `./azimuthal` and visit http://localhost:8080
+- **Single binary** — `make build` produces one binary with the frontend embedded. Run `./azimuthal serve` and visit http://localhost:8080
+- **Docker Compose self-hosting** — `docker compose -f build/docker-compose.yml up -d` runs the full stack (app + PostgreSQL + MinIO)
+- **Backup and restore** — `azimuthal backup --output backup.tar.gz` creates a full archive; `azimuthal restore --input backup.tar.gz` restores it
+- **Admin CLI** — `azimuthal admin create-user` and `azimuthal admin reset-password` for user management
 - **Dark mode by default** — steel blue and silver design system with light mode opt-in via settings
 - **Service Desk** — ticket list, ticket detail, kanban board with drag-and-drop
 - **Wiki** — page tree with collapsible navigation, markdown rendering
@@ -24,7 +27,32 @@ A fully open-source, self-hostable alternative to the Atlassian suite (Jira, Con
 - **Unified navigation** — top nav with space switcher, context-sensitive sidebar, consistent design across all modules
 - **REST API** — full CRUD for tickets, wiki pages, projects, sprints, labels, and spaces
 
-## Quick Start
+## Self-Hosting
+
+The fastest way to run Azimuthal is with Docker Compose:
+
+```bash
+# 1. Download compose file and environment template
+curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/build/docker-compose.yml
+curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/.env.example
+cp .env.example .env
+
+# 2. Edit .env — set passwords and generate a JWT secret
+#    openssl rand -hex 32
+
+# 3. Start everything
+docker compose up -d
+
+# 4. Create your first user
+docker compose exec app /azimuthal admin create-user \
+  --email admin@example.com \
+  --name "Admin" \
+  --password your-secure-password
+```
+
+See [docs/self-hosting.md](docs/self-hosting.md) for the full guide including environment variable reference, backup/restore instructions, and troubleshooting.
+
+## Quick Start (from source)
 
 ### Prerequisites
 
@@ -45,7 +73,7 @@ go install github.com/pressly/goose/v3/cmd/goose@latest
 docker compose -f build/docker-compose.dev.yml up -d
 
 # 3. Set required env vars
-export DATABASE_URL="postgres://azimuthal:azimuthal@localhost:5432/azimuthal_dev?sslmode=disable"
+export DATABASE_URL="postgres://azimuthal:dev@localhost:5432/azimuthal_dev?sslmode=disable"
 export JWT_SECRET="$(openssl rand -hex 32)"
 
 # 4. Run migrations
@@ -53,15 +81,21 @@ make migrate
 
 # 5. Build and run
 make build
-./azimuthal
+./bin/azimuthal serve
 ```
 
 The server starts on http://localhost:8080 by default.
 
-### Run with Docker
+## CLI Commands
 
-```bash
-docker compose -f build/docker-compose.yml up -d
+```
+azimuthal serve                          Start the HTTP server
+azimuthal backup --output file.tar.gz    Create a full backup
+azimuthal restore --input file.tar.gz    Restore from backup
+azimuthal admin create-user              Create a new user
+azimuthal admin reset-password           Reset a user's password
+azimuthal --version                      Show version
+azimuthal --help                         Show all commands
 ```
 
 ## Running Tests

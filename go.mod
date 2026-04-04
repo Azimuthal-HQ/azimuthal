@@ -3,14 +3,16 @@ module github.com/Azimuthal-HQ/azimuthal
 go 1.26.0
 
 require (
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/sergi/go-diff v1.4.0
+	github.com/spf13/cobra v1.10.2
 	github.com/yuin/goldmark v1.8.2
 )
 
-require github.com/go-chi/chi/v5 v5.2.5 // indirect
+require github.com/inconshreveable/mousetrap v1.1.0 // indirect
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
