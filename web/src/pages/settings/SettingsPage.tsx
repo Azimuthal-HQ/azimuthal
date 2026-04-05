@@ -1,10 +1,11 @@
-import { useState } from 'react';
-import { Shield, Palette, User, Building2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Shield, Palette, User, Building2, Check } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { useTheme } from '../../components/theme/ThemeProvider';
 import { useAuth } from '../../lib/auth';
+import { useOrganization, useUpdateOrganization } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -44,10 +45,37 @@ export function SettingsPage() {
   const [displayName, setDisplayName] = useState(user?.email?.split('@')[0] ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
 
-  // Organization state
+  // Organization state — populated from API
+  const orgId = user?.orgId ?? '';
+  const { data: org } = useOrganization(orgId);
+  const updateOrgMutation = useUpdateOrganization(orgId);
   const [orgName, setOrgName] = useState('');
   const [orgSlug, setOrgSlug] = useState('');
   const [orgDescription, setOrgDescription] = useState('');
+  const [orgSaveSuccess, setOrgSaveSuccess] = useState(false);
+
+  // Populate org fields when data loads
+  useEffect(() => {
+    if (org) {
+      setOrgName(org.name ?? '');
+      setOrgSlug(org.slug ?? '');
+      setOrgDescription(org.description ?? '');
+    }
+  }, [org]);
+
+  async function handleSaveOrg() {
+    if (!orgName.trim()) return;
+    try {
+      await updateOrgMutation.mutateAsync({
+        name: orgName.trim(),
+        description: orgDescription.trim() || undefined,
+      });
+      setOrgSaveSuccess(true);
+      setTimeout(() => setOrgSaveSuccess(false), 3000);
+    } catch {
+      // Error handled by mutation state
+    }
+  }
 
   // Appearance state
   const { theme, setTheme } = useTheme();
@@ -205,8 +233,24 @@ export function SettingsPage() {
                     )}
                   />
                 </div>
+                {updateOrgMutation.error && (
+                  <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
+                    {updateOrgMutation.error.message}
+                  </p>
+                )}
+                {orgSaveSuccess && (
+                  <div className="flex items-center gap-2 text-[var(--text-sm)] text-green-600">
+                    <Check className="h-4 w-4" />
+                    Changes saved successfully
+                  </div>
+                )}
                 <div className="flex justify-end">
-                  <Button>Save Changes</Button>
+                  <Button
+                    onClick={handleSaveOrg}
+                    disabled={updateOrgMutation.isPending || !orgName.trim()}
+                  >
+                    {updateOrgMutation.isPending ? 'Saving...' : 'Save Changes'}
+                  </Button>
                 </div>
               </CardContent>
             </Card>

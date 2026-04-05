@@ -11,9 +11,11 @@ import (
 // User represents an authenticated user in the system.
 type User struct {
 	ID           uuid.UUID
+	OrgID        uuid.UUID
 	Email        string
 	DisplayName  string
 	PasswordHash string
+	Role         string
 	IsActive     bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time

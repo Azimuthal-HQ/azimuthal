@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Ticket, FileText, ListTodo, Plus, BarChart3, BookOpen, Zap, AlertCircle } from 'lucide-react';
+import { Ticket, FileText, ListTodo, Plus, BarChart3, Headphones, Columns3, LayoutGrid, AlertCircle, Compass } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
@@ -86,7 +86,7 @@ export function DashboardPage() {
       const created = await createSpaceMutation.mutateAsync({
         name,
         slug,
-        space_type: formType,
+        type: formType,
         description: formDescription.trim() || undefined,
       });
       setDialogOpen(false);
@@ -115,13 +115,6 @@ export function DashboardPage() {
         </Button>
       </div>
 
-      {/* Quick stats */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard icon={Ticket} label="Spaces" value={spaces?.length ?? 0} />
-        <StatCard icon={BookOpen} label="Service Desks" value={spaces?.filter(s => s.space_type === 'service_desk').length ?? 0} />
-        <StatCard icon={Zap} label="Projects" value={spaces?.filter(s => s.space_type === 'project').length ?? 0} />
-      </div>
-
       {/* Loading state */}
       {isLoading && (
         <div className="flex h-32 items-center justify-center text-[var(--color-text-muted)]">
@@ -139,14 +132,60 @@ export function DashboardPage() {
         </div>
       )}
 
+      {/* Empty state onboarding */}
+      {spaces && spaces.length === 0 && !isLoading && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-[var(--color-primary-muted)]">
+            <Compass className="h-12 w-12 text-[var(--color-primary)]" />
+          </div>
+          <h2 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+            Welcome to Azimuthal
+          </h2>
+          <p className="mt-2 max-w-md text-[var(--text-sm)] text-[var(--color-text-muted)]">
+            You don't have any spaces yet. Create your first space to get started.
+          </p>
+          <Button
+            size="lg"
+            className="mt-6"
+            onClick={() => setDialogOpen(true)}
+          >
+            <Plus className="mr-2 h-5 w-5" />
+            Create your first space
+          </Button>
+          <div className="mt-8 max-w-md text-left">
+            <p className="mb-3 text-[var(--text-sm)] font-medium text-[var(--color-text-muted)]">
+              Not sure where to start?
+            </p>
+            <ul className="space-y-2 text-[var(--text-sm)] text-[var(--color-text-muted)]">
+              <li className="flex items-start gap-2">
+                <Headphones className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                <span><strong className="text-[var(--color-text)]">Service Desk</strong> &mdash; track and resolve customer issues</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                <span><strong className="text-[var(--color-text)]">Wiki</strong> &mdash; document your team's knowledge</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <ListTodo className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                <span><strong className="text-[var(--color-text)]">Project</strong> &mdash; plan and track work with sprints and backlogs</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {/* Quick stats — only shown when spaces exist */}
+      {spaces && spaces.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <StatCard icon={LayoutGrid} label="Spaces" value={spaces.length} />
+          <StatCard icon={Headphones} label="Service Desks" value={spaces.filter(s => s.space_type === 'service_desk').length} />
+          <StatCard icon={Columns3} label="Projects" value={spaces.filter(s => s.space_type === 'project').length} />
+        </div>
+      )}
+
       {/* Space cards */}
-      {spaces && (
+      {spaces && spaces.length > 0 && (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {spaces.length === 0 && !isLoading && (
-            <div className="col-span-full flex h-32 items-center justify-center text-[var(--color-text-muted)]">
-              No spaces yet. Create one to get started.
-            </div>
-          )}
           {spaces.map((space) => {
             const Icon = SPACE_ICON_MAP[space.space_type];
             return (

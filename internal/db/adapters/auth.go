@@ -83,9 +83,11 @@ func (a *UserAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 func dbUserToDomain(u generated.User) *auth.User {
 	return &auth.User{
 		ID:           u.ID,
+		OrgID:        u.OrgID,
 		Email:        u.Email,
 		DisplayName:  u.DisplayName,
 		PasswordHash: derefStr(u.PasswordHash),
+		Role:         u.Role,
 		IsActive:     u.IsActive,
 		CreatedAt:    goTime(u.CreatedAt),
 		UpdatedAt:    goTime(u.UpdatedAt),

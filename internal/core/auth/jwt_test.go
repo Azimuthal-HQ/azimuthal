@@ -31,7 +31,7 @@ func TestJWTService_IssueAndValidate(t *testing.T) {
 	userID := uuid.New()
 	email := "jwt@example.com"
 
-	pair, err := svc.IssueTokenPair(userID, email)
+	pair, err := svc.IssueTokenPair(userID, email, uuid.New().String(), "member")
 	if err != nil {
 		t.Fatalf("issuing token pair: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestJWTService_IssueAndValidate(t *testing.T) {
 
 func TestJWTService_RefreshToken_NotAccepted_AsAccess(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
-	pair, err := svc.IssueTokenPair(uuid.New(), "a@b.com")
+	pair, err := svc.IssueTokenPair(uuid.New(), "a@b.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestJWTService_RefreshToken_NotAccepted_AsAccess(t *testing.T) {
 
 func TestJWTService_AccessToken_NotAccepted_AsRefresh(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
-	pair, err := svc.IssueTokenPair(uuid.New(), "a@b.com")
+	pair, err := svc.IssueTokenPair(uuid.New(), "a@b.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestJWTService_AccessToken_NotAccepted_AsRefresh(t *testing.T) {
 func TestJWTService_Refresh_IssuesNewPair(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
 	userID := uuid.New()
-	pair, err := svc.IssueTokenPair(userID, "refresh@example.com")
+	pair, err := svc.IssueTokenPair(userID, "refresh@example.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestJWTService_ExpiredToken(t *testing.T) {
 	cfg.AccessTTL = -time.Second // expired immediately
 	svc := NewJWTService(cfg)
 
-	pair, err := svc.IssueTokenPair(uuid.New(), "exp@example.com")
+	pair, err := svc.IssueTokenPair(uuid.New(), "exp@example.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestJWTService_ExpiredToken(t *testing.T) {
 
 func TestJWTService_TamperedToken(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
-	pair, err := svc.IssueTokenPair(uuid.New(), "tamper@example.com")
+	pair, err := svc.IssueTokenPair(uuid.New(), "tamper@example.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,11 +127,59 @@ func TestJWTService_TamperedToken(t *testing.T) {
 	}
 }
 
+func TestJWTService_OrgIDInClaims(t *testing.T) {
+	svc := NewJWTService(testTokenConfig(t))
+	userID := uuid.New()
+	orgID := uuid.New().String()
+
+	pair, err := svc.IssueTokenPair(userID, "org@example.com", orgID, "owner")
+	if err != nil {
+		t.Fatalf("issuing token pair: %v", err)
+	}
+
+	claims, err := svc.ValidateAccessToken(pair.AccessToken)
+	if err != nil {
+		t.Fatalf("validating access token: %v", err)
+	}
+	if claims.OrgID != orgID {
+		t.Errorf("expected orgID %s, got %s", orgID, claims.OrgID)
+	}
+	if claims.Role != "owner" {
+		t.Errorf("expected role owner, got %s", claims.Role)
+	}
+}
+
+func TestJWTService_RefreshPreservesOrgID(t *testing.T) {
+	svc := NewJWTService(testTokenConfig(t))
+	orgID := uuid.New().String()
+
+	pair, err := svc.IssueTokenPair(uuid.New(), "refresh-org@example.com", orgID, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newPair, err := svc.RefreshTokens(pair.RefreshToken)
+	if err != nil {
+		t.Fatalf("refreshing tokens: %v", err)
+	}
+
+	claims, err := svc.ValidateAccessToken(newPair.AccessToken)
+	if err != nil {
+		t.Fatalf("validating refreshed token: %v", err)
+	}
+	if claims.OrgID != orgID {
+		t.Errorf("expected orgID %s after refresh, got %s", orgID, claims.OrgID)
+	}
+	if claims.Role != "admin" {
+		t.Errorf("expected role admin after refresh, got %s", claims.Role)
+	}
+}
+
 func TestJWTService_WrongKey(t *testing.T) {
 	svc1 := NewJWTService(testTokenConfig(t))
 	svc2 := NewJWTService(testTokenConfig(t)) // different key pair
 
-	pair, err := svc1.IssueTokenPair(uuid.New(), "key@example.com")
+	pair, err := svc1.IssueTokenPair(uuid.New(), "key@example.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}

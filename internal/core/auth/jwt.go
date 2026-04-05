@@ -34,6 +34,8 @@ type TokenPair struct {
 type Claims struct {
 	UserID uuid.UUID `json:"uid"`
 	Email  string    `json:"email"`
+	OrgID  string    `json:"org_id"`
+	Role   string    `json:"role"`
 	// TokenType differentiates "access" from "refresh" tokens.
 	TokenType string `json:"typ"`
 	jwt.RegisteredClaims
@@ -50,12 +52,12 @@ func NewJWTService(cfg TokenConfig) *JWTService {
 }
 
 // IssueTokenPair generates a new access/refresh token pair for the given user.
-func (s *JWTService) IssueTokenPair(userID uuid.UUID, email string) (*TokenPair, error) {
-	access, err := s.signToken(userID, email, "access", s.cfg.AccessTTL)
+func (s *JWTService) IssueTokenPair(userID uuid.UUID, email, orgID, role string) (*TokenPair, error) {
+	access, err := s.signToken(userID, email, orgID, role, "access", s.cfg.AccessTTL)
 	if err != nil {
 		return nil, fmt.Errorf("issuing access token: %w", err)
 	}
-	refresh, err := s.signToken(userID, email, "refresh", s.cfg.RefreshTTL)
+	refresh, err := s.signToken(userID, email, orgID, role, "refresh", s.cfg.RefreshTTL)
 	if err != nil {
 		return nil, fmt.Errorf("issuing refresh token: %w", err)
 	}
@@ -85,15 +87,17 @@ func (s *JWTService) RefreshTokens(refreshTokenString string) (*TokenPair, error
 	if claims.TokenType != "refresh" {
 		return nil, ErrInvalidToken
 	}
-	return s.IssueTokenPair(claims.UserID, claims.Email)
+	return s.IssueTokenPair(claims.UserID, claims.Email, claims.OrgID, claims.Role)
 }
 
 // signToken creates a signed JWT with the given parameters.
-func (s *JWTService) signToken(userID uuid.UUID, email, tokenType string, ttl time.Duration) (string, error) {
+func (s *JWTService) signToken(userID uuid.UUID, email, orgID, role, tokenType string, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
 	claims := &Claims{
 		UserID:    userID,
 		Email:     email,
+		OrgID:     orgID,
+		Role:      role,
 		TokenType: tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.cfg.Issuer,
