@@ -2,7 +2,6 @@ import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Clock, AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { cn } from '../../lib/utils';
 import { useProjectItem } from '../../lib/api';
 
 // ---------------------------------------------------------------------------

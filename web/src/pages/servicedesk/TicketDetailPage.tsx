@@ -1,9 +1,6 @@
-import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronRight, MessageSquare, Clock, AlertCircle } from 'lucide-react';
-import { Button } from '../../components/ui/button';
+import { ChevronRight, Clock, AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
-import { Input } from '../../components/ui/input';
 import { Card, CardContent } from '../../components/ui/card';
 import { cn } from '../../lib/utils';
 import { useTicket, useUpdateTicket, type TicketStatus } from '../../lib/api';
@@ -52,7 +49,6 @@ export function TicketDetailPage() {
   const effectiveSpaceId = spaceId ?? 'default';
   const { data: ticket, isLoading, error } = useTicket(effectiveSpaceId, ticketId ?? '');
   const updateMutation = useUpdateTicket(effectiveSpaceId, ticketId ?? '');
-  const [commentText, setCommentText] = useState('');
 
   function handleStatusChange(newStatus: TicketStatus) {
     updateMutation.mutate({ status: newStatus });

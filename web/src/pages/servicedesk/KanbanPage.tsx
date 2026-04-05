@@ -19,7 +19,7 @@ import { AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent } from '../../components/ui/card';
 import { cn } from '../../lib/utils';
-import { useTickets, type Ticket, type TicketStatus } from '../../lib/api';
+import { useTickets, type Ticket } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,10 +199,8 @@ export function KanbanPage() {
   );
 
   const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
+    (_event: DragEndEvent) => {
       setActiveTicket(null);
-      // Drag-and-drop status updates would require calling updateTicket
-      // For now, the board reflects server state
     },
     [],
   );

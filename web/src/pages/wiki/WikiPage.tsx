@@ -14,7 +14,7 @@ import {
   DialogClose,
 } from '../../components/ui/dialog';
 import { cn } from '../../lib/utils';
-import { useWikiPages, useCreateWikiPage, type WikiPage as WikiPageType } from '../../lib/api';
+import { useWikiPages, useCreateWikiPage } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Main component

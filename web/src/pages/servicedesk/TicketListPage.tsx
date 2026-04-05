@@ -14,7 +14,7 @@ import {
   DialogClose,
 } from '../../components/ui/dialog';
 import { cn } from '../../lib/utils';
-import { useTickets, useCreateTicket, type Ticket, type TicketStatus } from '../../lib/api';
+import { useTickets, useCreateTicket, type TicketStatus } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types

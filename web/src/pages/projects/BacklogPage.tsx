@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Plus, Search, BookOpen, Bug, CheckSquare, AlertTriangle, ArrowUp, Minus, ArrowDown, AlertCircle } from 'lucide-react';
+import { Plus, Search, AlertTriangle, ArrowUp, Minus, ArrowDown, AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
@@ -26,10 +26,6 @@ const PRIORITY_VARIANT: Record<number, BadgeProps['variant']> = {
 const PRIORITY_LABEL: Record<number, string> = {
   0: 'Critical', 1: 'High', 2: 'Medium', 3: 'Low',
 };
-const PRIORITY_ICON_MAP = {
-  0: AlertTriangle, 1: ArrowUp, 2: Minus, 3: ArrowDown,
-};
-
 const STATUS_LABEL: Record<string, string> = {
   todo: 'To Do', in_progress: 'In Progress', in_review: 'In Review', done: 'Done',
 };
