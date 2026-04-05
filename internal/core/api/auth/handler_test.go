@@ -329,6 +329,63 @@ func TestLogoutNoAuth(t *testing.T) {
 	}
 }
 
+func TestMeNoAuth(t *testing.T) {
+	h, _ := setupHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/me", nil)
+	rr := httptest.NewRecorder()
+	h.Me(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestMeWithAuth(t *testing.T) {
+	h, jwtSvc := setupHandler(t)
+	userID := uuid.New()
+	orgID := uuid.New()
+
+	// Register a user first so GetUser can find them
+	regBody, _ := json.Marshal(map[string]string{
+		"email":        "me@test.com",
+		"display_name": "Me User",
+		"password":     "password123",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewReader(regBody))
+	rr := httptest.NewRecorder()
+	h.Register(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	// Decode to get actual user ID
+	var resp map[string]interface{}
+	_ = json.NewDecoder(rr.Body).Decode(&resp)
+	userMap := resp["user"].(map[string]interface{})
+	actualID, _ := uuid.Parse(userMap["id"].(string))
+
+	// Issue a token with the actual user ID
+	pair, err := jwtSvc.IssueTokenPair(actualID, "me@test.com", orgID.String(), "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create chi router with auth middleware
+	authenticator := auth.NewAuthenticator(jwtSvc, auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: time.Hour}))
+	r := chi.NewRouter()
+	r.Use(authenticator.RequireAuth)
+	r.Get("/me", h.Me)
+
+	req = httptest.NewRequest(http.MethodGet, "/me", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr = httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	_ = userID // used for clarity
+}
+
 func TestRefreshWithValidToken(t *testing.T) {
 	h, jwtSvc := setupHandler(t)
 	userID := uuid.New()

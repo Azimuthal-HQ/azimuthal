@@ -127,6 +127,54 @@ func TestJWTService_TamperedToken(t *testing.T) {
 	}
 }
 
+func TestJWTService_OrgIDInClaims(t *testing.T) {
+	svc := NewJWTService(testTokenConfig(t))
+	userID := uuid.New()
+	orgID := uuid.New().String()
+
+	pair, err := svc.IssueTokenPair(userID, "org@example.com", orgID, "owner")
+	if err != nil {
+		t.Fatalf("issuing token pair: %v", err)
+	}
+
+	claims, err := svc.ValidateAccessToken(pair.AccessToken)
+	if err != nil {
+		t.Fatalf("validating access token: %v", err)
+	}
+	if claims.OrgID != orgID {
+		t.Errorf("expected orgID %s, got %s", orgID, claims.OrgID)
+	}
+	if claims.Role != "owner" {
+		t.Errorf("expected role owner, got %s", claims.Role)
+	}
+}
+
+func TestJWTService_RefreshPreservesOrgID(t *testing.T) {
+	svc := NewJWTService(testTokenConfig(t))
+	orgID := uuid.New().String()
+
+	pair, err := svc.IssueTokenPair(uuid.New(), "refresh-org@example.com", orgID, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newPair, err := svc.RefreshTokens(pair.RefreshToken)
+	if err != nil {
+		t.Fatalf("refreshing tokens: %v", err)
+	}
+
+	claims, err := svc.ValidateAccessToken(newPair.AccessToken)
+	if err != nil {
+		t.Fatalf("validating refreshed token: %v", err)
+	}
+	if claims.OrgID != orgID {
+		t.Errorf("expected orgID %s after refresh, got %s", orgID, claims.OrgID)
+	}
+	if claims.Role != "admin" {
+		t.Errorf("expected role admin after refresh, got %s", claims.Role)
+	}
+}
+
 func TestJWTService_WrongKey(t *testing.T) {
 	svc1 := NewJWTService(testTokenConfig(t))
 	svc2 := NewJWTService(testTokenConfig(t)) // different key pair

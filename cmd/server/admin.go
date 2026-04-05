@@ -61,6 +61,30 @@ func slugifyName(name string) string {
 	return s
 }
 
+// ensureOrgForUser creates or retrieves an organization with a slug derived from the display name.
+func ensureOrgForUser(ctx context.Context, queries *generated.Queries, displayName string) (uuid.UUID, string, error) {
+	orgSlug := slugifyName(displayName)
+
+	existingOrg, err := queries.GetOrganizationBySlug(ctx, orgSlug)
+	if err == nil {
+		return existingOrg.ID, orgSlug, nil
+	}
+
+	orgID := uuid.New()
+	orgDesc := fmt.Sprintf("Organization for %s", displayName)
+	_, err = queries.CreateOrganization(ctx, generated.CreateOrganizationParams{
+		ID:          orgID,
+		Slug:        orgSlug,
+		Name:        displayName,
+		Description: &orgDesc,
+		Plan:        "free",
+	})
+	if err != nil {
+		return uuid.Nil, "", fmt.Errorf("creating organization: %w", err)
+	}
+	return orgID, orgSlug, nil
+}
+
 // runCreateUser connects to the database and creates a user, organization, and membership.
 func runCreateUser(_ *cobra.Command, _ []string) error {
 	cfg, err := config.Load()
@@ -81,36 +105,17 @@ func runCreateUser(_ *cobra.Command, _ []string) error {
 
 	queries := generated.New(pool)
 
-	// Create an organization derived from the user's name.
-	orgSlug := slugifyName(createUserName)
-	orgID := uuid.New()
-
-	// Check if the slug already exists; reuse the existing org if so.
-	existingOrg, err := queries.GetOrganizationBySlug(ctx, orgSlug)
-	if err == nil {
-		orgID = existingOrg.ID
-	} else {
-		orgDesc := fmt.Sprintf("Organization for %s", createUserName)
-		_, err = queries.CreateOrganization(ctx, generated.CreateOrganizationParams{
-			ID:          orgID,
-			Slug:        orgSlug,
-			Name:        createUserName,
-			Description: &orgDesc,
-			Plan:        "free",
-		})
-		if err != nil {
-			return fmt.Errorf("creating organization: %w", err)
-		}
+	orgID, orgSlug, err := ensureOrgForUser(ctx, queries, createUserName)
+	if err != nil {
+		return fmt.Errorf("setting up organization: %w", err)
 	}
 
-	// Create the user in that organization.
 	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, orgID))
 	u, err := userSvc.CreateUser(ctx, createUserEmail, createUserName, createUserPassword)
 	if err != nil {
 		return fmt.Errorf("creating user: %w", err)
 	}
 
-	// Create membership linking user to org as owner.
 	_, err = queries.CreateMembership(ctx, generated.CreateMembershipParams{
 		ID:        uuid.New(),
 		OrgID:     orgID,
@@ -122,6 +127,12 @@ func runCreateUser(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("creating membership: %w", err)
 	}
 
+	printCreateUserSuccess(u, orgSlug)
+	return nil
+}
+
+// printCreateUserSuccess prints the success output after creating a user and org.
+func printCreateUserSuccess(u *auth.User, orgSlug string) {
 	fmt.Printf("\u2713 User created: %s (%s)\n", u.DisplayName, u.Email)
 	fmt.Printf("\u2713 Organization created: %s\n", orgSlug)
 	fmt.Printf("\u2713 User added as owner of %s\n", orgSlug)
@@ -129,8 +140,6 @@ func runCreateUser(_ *cobra.Command, _ []string) error {
 	fmt.Println("Next steps:")
 	fmt.Println("  Visit http://localhost:8080 and log in with your credentials")
 	fmt.Println("  Run 'azimuthal admin create-user' to add more users")
-
-	return nil
 }
 
 // --- reset-password ---

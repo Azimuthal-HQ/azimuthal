@@ -196,3 +196,46 @@ func TestCreateInvalidBody(t *testing.T) {
 		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
 	}
 }
+
+func TestGetOrgInvalidOrgID(t *testing.T) {
+	h := setupHandler()
+	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "orgID", "bad")
+	rr := httptest.NewRecorder()
+	h.GetOrg(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestUpdateOrgInvalidOrgID(t *testing.T) {
+	h := setupHandler()
+	req := withParam(httptest.NewRequest(http.MethodPatch, "/", nil), "orgID", "bad")
+	rr := httptest.NewRecorder()
+	h.UpdateOrg(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestUpdateOrgInvalidBody(t *testing.T) {
+	h := setupHandler()
+	req := withParam(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader("{bad")), "orgID", uuid.New().String())
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.UpdateOrg(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestUpdateOrgEmptyName(t *testing.T) {
+	h := setupHandler()
+	body := `{"name":""}`
+	req := withParam(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(body)), "orgID", uuid.New().String())
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.UpdateOrg(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+}
