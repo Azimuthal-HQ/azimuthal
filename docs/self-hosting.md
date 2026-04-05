@@ -39,6 +39,23 @@ docker compose exec app /azimuthal admin create-user \
 
 Azimuthal is now running at http://localhost:8080.
 
+## First-Run: Create an Admin User
+
+After starting Azimuthal for the first time, you must create an admin user before
+you can log in through the web UI:
+
+```bash
+docker compose exec app /azimuthal admin create-user \
+  --email admin@example.com \
+  --name "Admin" \
+  --password changeme
+```
+
+Replace the email and password with your own values. This user will have full admin
+access. You can then log in at `http://localhost:8080/login` with these credentials.
+
+> **Important:** Change the default password immediately after your first login.
+
 ## Environment Variable Reference
 
 ### Required

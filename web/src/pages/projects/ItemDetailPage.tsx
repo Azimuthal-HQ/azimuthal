@@ -1,122 +1,63 @@
-import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Clock, MessageSquare, User as UserIcon } from 'lucide-react';
+import { ArrowLeft, Clock, AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
-import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { Input } from '../../components/ui/input';
-import { cn } from '../../lib/utils';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type ItemType = 'story' | 'bug' | 'task';
-type ItemPriority = 'critical' | 'high' | 'medium' | 'low';
-type ItemStatus = 'todo' | 'in_progress' | 'in_review' | 'done';
-
-interface Comment {
-  id: string;
-  author: string;
-  authorInitials: string;
-  body: string;
-  timestamp: string;
-}
-
-interface ProjectItem {
-  id: string;
-  key: string;
-  title: string;
-  description: string;
-  type: ItemType;
-  priority: ItemPriority;
-  status: ItemStatus;
-  sprint: string | null;
-  points: number | null;
-  assignee: string;
-  assigneeInitials: string;
-  reporter: string;
-  created: string;
-  updated: string;
-  labels: string[];
-  comments: Comment[];
-}
-
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
-
-const MOCK_ITEMS: Record<string, ProjectItem> = {
-  'PROD-101': { id: '1', key: 'PROD-101', title: 'User registration flow', description: 'Implement the full user registration flow including email verification, password strength validation, and welcome onboarding sequence.\n\n## Acceptance Criteria\n- User can sign up with email and password\n- Email verification is sent on registration\n- Password must meet strength requirements\n- Welcome wizard shown on first login', type: 'story', priority: 'high', status: 'done', sprint: 'Sprint 12', points: 8, assignee: 'Alice Chen', assigneeInitials: 'AC', reporter: 'Dana Kim', created: '2026-03-10', updated: '2026-03-28', labels: ['auth', 'onboarding'], comments: [
-    { id: 'c1', author: 'Dana Kim', authorInitials: 'DK', body: 'This is the top priority for the sprint. Let me know if the design specs are clear enough.', timestamp: '2026-03-10 09:15' },
-    { id: 'c2', author: 'Alice Chen', authorInitials: 'AC', body: 'Design specs look good. Starting on the backend flow today. Email verification will use the existing SMTP worker.', timestamp: '2026-03-11 10:30' },
-    { id: 'c3', author: 'Alice Chen', authorInitials: 'AC', body: 'Registration flow is complete and deployed to staging. Ready for review.', timestamp: '2026-03-27 16:45' },
-  ] },
-  'PROD-102': { id: '2', key: 'PROD-102', title: 'Fix password reset email not sending', description: 'The password reset flow silently fails when the SMTP server is unreachable. No error is shown to the user.\n\n## Steps to Reproduce\n1. Click "Forgot Password"\n2. Enter valid email\n3. Click Submit\n4. No email arrives, no error shown\n\n## Expected\nEither send the email or show an error message.', type: 'bug', priority: 'critical', status: 'in_progress', sprint: 'Sprint 12', points: 3, assignee: 'Bob Martinez', assigneeInitials: 'BM', reporter: 'Eve Johnson', created: '2026-03-12', updated: '2026-03-30', labels: ['auth', 'email'], comments: [
-    { id: 'c4', author: 'Eve Johnson', authorInitials: 'EJ', body: 'Multiple customers have reported this. The SMTP connection timeout is swallowed silently.', timestamp: '2026-03-12 14:20' },
-    { id: 'c5', author: 'Bob Martinez', authorInitials: 'BM', body: 'Confirmed. The error from the email worker is being caught but not propagated back to the handler. Working on a fix.', timestamp: '2026-03-29 11:00' },
-  ] },
-  'PROD-103': { id: '3', key: 'PROD-103', title: 'Add RBAC middleware', description: 'Implement role-based access control middleware that checks user permissions before allowing access to protected endpoints.', type: 'story', priority: 'high', status: 'in_review', sprint: 'Sprint 12', points: 13, assignee: 'Charlie Osei', assigneeInitials: 'CO', reporter: 'Alice Chen', created: '2026-03-14', updated: '2026-04-01', labels: ['security', 'api'], comments: [
-    { id: 'c6', author: 'Charlie Osei', authorInitials: 'CO', body: 'PR is up for review. I used the Checker interface from internal/core/rbac/ as the foundation.', timestamp: '2026-03-31 15:30' },
-  ] },
-  'PROD-104': { id: '4', key: 'PROD-104', title: 'Set up CI pipeline for frontend', description: 'Configure GitHub Actions to run lint, type-check, and build on every push to the web/ directory.', type: 'task', priority: 'medium', status: 'todo', sprint: 'Sprint 12', points: 5, assignee: 'Dana Kim', assigneeInitials: 'DK', reporter: 'Bob Martinez', created: '2026-03-16', updated: '2026-03-16', labels: ['devops'], comments: [] },
-  'PROD-105': { id: '5', key: 'PROD-105', title: 'Dashboard analytics widgets', description: 'Add analytics widgets to the main dashboard showing ticket resolution time, sprint velocity, and wiki page views.', type: 'story', priority: 'medium', status: 'todo', sprint: 'Sprint 13', points: 8, assignee: 'Alice Chen', assigneeInitials: 'AC', reporter: 'Dana Kim', created: '2026-03-20', updated: '2026-03-20', labels: ['analytics', 'dashboard'], comments: [] },
-  'PROD-106': { id: '6', key: 'PROD-106', title: 'Broken avatar upload on mobile', description: 'Avatar upload fails on mobile browsers. The file picker opens but the selected image is not uploaded.', type: 'bug', priority: 'high', status: 'todo', sprint: 'Sprint 13', points: 3, assignee: 'Bob Martinez', assigneeInitials: 'BM', reporter: 'Charlie Osei', created: '2026-03-22', updated: '2026-03-22', labels: ['mobile', 'media'], comments: [
-    { id: 'c7', author: 'Charlie Osei', authorInitials: 'CO', body: 'Reproduced on iOS Safari and Chrome for Android. Looks like the file input change event is not firing correctly.', timestamp: '2026-03-22 13:10' },
-  ] },
-  'PROD-107': { id: '7', key: 'PROD-107', title: 'API rate limiting implementation', description: 'Implement token bucket rate limiting on all public API endpoints to prevent abuse.', type: 'story', priority: 'high', status: 'todo', sprint: 'Sprint 13', points: 8, assignee: 'Charlie Osei', assigneeInitials: 'CO', reporter: 'Alice Chen', created: '2026-03-24', updated: '2026-03-24', labels: ['security', 'api'], comments: [] },
-  'PROD-108': { id: '8', key: 'PROD-108', title: 'Write integration tests for wiki module', description: 'Add integration tests covering page creation, editing, version history, and conflict detection.', type: 'task', priority: 'medium', status: 'todo', sprint: null, points: 5, assignee: 'Eve Johnson', assigneeInitials: 'EJ', reporter: 'Dana Kim', created: '2026-03-25', updated: '2026-03-25', labels: ['testing'], comments: [] },
-  'PROD-109': { id: '9', key: 'PROD-109', title: 'Evaluate caching strategy for search', description: 'Research and prototype caching approaches for full-text search results.', type: 'task', priority: 'low', status: 'todo', sprint: null, points: 3, assignee: 'Bob Martinez', assigneeInitials: 'BM', reporter: 'Alice Chen', created: '2026-03-26', updated: '2026-03-26', labels: ['performance'], comments: [] },
-  'PROD-110': { id: '10', key: 'PROD-110', title: 'Notification preferences page', description: 'Allow users to configure which notifications they receive via email and in-app.', type: 'story', priority: 'medium', status: 'todo', sprint: null, points: 5, assignee: 'Dana Kim', assigneeInitials: 'DK', reporter: 'Eve Johnson', created: '2026-03-28', updated: '2026-03-28', labels: ['notifications', 'settings'], comments: [] },
-  'PROD-111': { id: '11', key: 'PROD-111', title: 'Implement notification preferences', description: 'Build the preferences UI and backend for notification settings.', type: 'story', priority: 'medium', status: 'todo', sprint: 'Sprint 12', points: 5, assignee: 'Eve Johnson', assigneeInitials: 'EJ', reporter: 'Dana Kim', created: '2026-03-15', updated: '2026-03-15', labels: ['notifications'], comments: [] },
-  'PROD-112': { id: '12', key: 'PROD-112', title: 'Add search indexing for wiki pages', description: 'Implement full-text search indexing using PostgreSQL tsvector for wiki page content.', type: 'story', priority: 'high', status: 'in_progress', sprint: 'Sprint 12', points: 8, assignee: 'Alice Chen', assigneeInitials: 'AC', reporter: 'Charlie Osei', created: '2026-03-18', updated: '2026-03-31', labels: ['search', 'wiki'], comments: [
-    { id: 'c8', author: 'Alice Chen', authorInitials: 'AC', body: 'Using tsvector with GIN index. Initial benchmarks show sub-50ms search across 10k pages.', timestamp: '2026-03-30 14:20' },
-  ] },
-  'PROD-113': { id: '13', key: 'PROD-113', title: 'Fix broken link in onboarding step 3', description: 'The link to the documentation in the third onboarding step leads to a 404 page.', type: 'bug', priority: 'low', status: 'done', sprint: 'Sprint 12', points: 2, assignee: 'Bob Martinez', assigneeInitials: 'BM', reporter: 'Eve Johnson', created: '2026-03-19', updated: '2026-03-27', labels: ['onboarding'], comments: [
-    { id: 'c9', author: 'Bob Martinez', authorInitials: 'BM', body: 'The docs URL was updated but the onboarding wizard still referenced the old path. One-line fix pushed.', timestamp: '2026-03-27 09:45' },
-  ] },
-};
+import { useProjectItem } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Badge helpers
 // ---------------------------------------------------------------------------
 
-const TYPE_VARIANT: Record<ItemType, BadgeProps['variant']> = { story: 'default', bug: 'danger', task: 'secondary' };
-const TYPE_LABEL: Record<ItemType, string> = { story: 'Story', bug: 'Bug', task: 'Task' };
-const PRIORITY_VARIANT: Record<ItemPriority, BadgeProps['variant']> = { critical: 'danger', high: 'warning', medium: 'secondary', low: 'outline' };
-const PRIORITY_LABEL: Record<ItemPriority, string> = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
-const STATUS_VARIANT: Record<ItemStatus, BadgeProps['variant']> = { todo: 'secondary', in_progress: 'warning', in_review: 'default', done: 'success' };
-const STATUS_LABEL: Record<ItemStatus, string> = { todo: 'To Do', in_progress: 'In Progress', in_review: 'In Review', done: 'Done' };
+const PRIORITY_VARIANT: Record<number, BadgeProps['variant']> = { 0: 'danger', 1: 'warning', 2: 'secondary', 3: 'outline' };
+const PRIORITY_LABEL: Record<number, string> = { 0: 'Critical', 1: 'High', 2: 'Medium', 3: 'Low' };
+const STATUS_VARIANT: Record<string, BadgeProps['variant']> = { todo: 'secondary', in_progress: 'warning', in_review: 'default', done: 'success' };
+const STATUS_LABEL: Record<string, string> = { todo: 'To Do', in_progress: 'In Progress', in_review: 'In Review', done: 'Done' };
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-/** Detail view for a project item, matching the ticket detail pattern. */
+/** Detail view for a project item. */
 export function ItemDetailPage() {
-  const { itemKey } = useParams<{ itemKey: string }>();
-  const item = MOCK_ITEMS[itemKey ?? ''];
-  const [commentText, setCommentText] = useState('');
-  const [comments, setComments] = useState<Comment[]>(item?.comments ?? []);
+  const { spaceId, itemKey } = useParams<{ spaceId: string; itemKey: string }>();
+  const effectiveSpaceId = spaceId ?? 'default';
+  const itemId = itemKey ?? '';
 
-  function handleAddComment() {
-    if (!commentText.trim()) return;
-    const newComment: Comment = {
-      id: `c${Date.now()}`,
-      author: 'You',
-      authorInitials: 'YO',
-      body: commentText.trim(),
-      timestamp: new Date().toISOString().slice(0, 16).replace('T', ' '),
-    };
-    setComments((prev) => [...prev, newComment]);
-    setCommentText('');
+  // We need a useProjectItem hook - let's use a direct query
+  const { data: item, isLoading, error } = useProjectItem(effectiveSpaceId, itemId);
+
+  const backlogPath = spaceId ? `/spaces/${spaceId}/backlog` : '/backlog';
+
+  if (isLoading) {
+    return (
+      <div className="flex h-64 items-center justify-center text-[var(--color-text-muted)]">
+        Loading item...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <Link to={backlogPath} className="flex items-center gap-1 text-[var(--text-sm)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+          <ArrowLeft className="h-4 w-4" />
+          Backlog
+        </Link>
+        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+          <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
+          <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
+            {error.status === 404 ? 'Item not found.' : `Failed to load item: ${error.message}`}
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (!item) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-[var(--color-text-muted)]">
         <p className="text-lg font-medium">Item not found</p>
-        <Link to="/backlog" className="mt-2 text-[var(--color-primary)] hover:underline">
+        <Link to={backlogPath} className="mt-2 text-[var(--color-primary)] hover:underline">
           Back to backlog
         </Link>
       </div>
@@ -127,145 +68,47 @@ export function ItemDetailPage() {
     <div className="space-y-6">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-text-muted)]">
-        <Link to="/backlog" className="flex items-center gap-1 hover:text-[var(--color-text)]">
+        <Link to={backlogPath} className="flex items-center gap-1 hover:text-[var(--color-text)]">
           <ArrowLeft className="h-4 w-4" />
           Backlog
         </Link>
         <span>/</span>
-        <span className="text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono)' }}>{item.key}</span>
+        <span className="text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono)' }}>{item.id.slice(0, 8)}</span>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Main content — left 2/3 */}
+        {/* Main content */}
         <div className="space-y-6 lg:col-span-2">
-          {/* Title & badges */}
-          <div>
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <Badge variant={TYPE_VARIANT[item.type]}>{TYPE_LABEL[item.type]}</Badge>
-              <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]" style={{ fontFamily: 'var(--font-mono)' }}>{item.key}</span>
-            </div>
-            <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">{item.title}</h1>
-          </div>
+          <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">{item.title}</h1>
 
-          {/* Description */}
-          <Card>
-            <CardHeader><CardTitle>Description</CardTitle></CardHeader>
-            <CardContent>
-              <div className="whitespace-pre-wrap text-[var(--text-sm)] text-[var(--color-text)] leading-relaxed">
-                {item.description}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Activity timeline — same pattern as ticket detail */}
-          <div className="space-y-4">
-            <h2 className="text-[var(--text-lg)] font-semibold text-[var(--color-text)]">
-              Activity
-            </h2>
-
-            <div className="space-y-4">
-              {comments.map((c) => (
-                <div key={c.id} className="flex gap-3">
-                  <span
-                    className={cn(
-                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-                      'bg-[var(--color-primary-muted)] text-[var(--text-xs)] font-medium text-[var(--color-primary)]',
-                    )}
-                  >
-                    {c.authorInitials}
-                  </span>
-                  <div className="flex-1 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                        {c.author}
-                      </span>
-                      <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                        {c.timestamp}
-                      </span>
-                    </div>
-                    <p className="text-[var(--text-sm)] leading-relaxed text-[var(--color-text)]">
-                      {c.body}
-                    </p>
-                  </div>
+          {item.description && (
+            <Card>
+              <CardHeader><CardTitle>Description</CardTitle></CardHeader>
+              <CardContent>
+                <div className="whitespace-pre-wrap text-[var(--text-sm)] text-[var(--color-text)] leading-relaxed">
+                  {item.description}
                 </div>
-              ))}
-            </div>
-
-            {/* New comment input */}
-            <div className="flex gap-3">
-              <span
-                className={cn(
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-                  'bg-[var(--color-primary-muted)] text-[var(--text-xs)] font-medium text-[var(--color-primary)]',
-                )}
-              >
-                YO
-              </span>
-              <div className="flex flex-1 gap-2">
-                <Input
-                  placeholder="Add a comment..."
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleAddComment();
-                    }
-                  }}
-                  className="flex-1"
-                />
-                <Button onClick={handleAddComment} disabled={!commentText.trim()}>
-                  <MessageSquare className="mr-2 h-4 w-4" />
-                  Comment
-                </Button>
-              </div>
-            </div>
-          </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
-        {/* Sidebar — right 1/3 */}
+        {/* Sidebar */}
         <div className="space-y-4">
           <Card>
             <CardContent className="space-y-4 p-4">
               <DetailRow label="Status">
-                <Badge variant={STATUS_VARIANT[item.status]}>{STATUS_LABEL[item.status]}</Badge>
+                <Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>{STATUS_LABEL[item.status] ?? item.status}</Badge>
               </DetailRow>
               <DetailRow label="Priority">
-                <Badge variant={PRIORITY_VARIANT[item.priority]}>{PRIORITY_LABEL[item.priority]}</Badge>
-              </DetailRow>
-              <DetailRow label="Assignee">
-                <div className="flex items-center gap-2">
-                  <span className={cn('flex h-6 w-6 items-center justify-center rounded-full', 'bg-[var(--color-primary-muted)] text-[var(--text-xs)] font-medium text-[var(--color-primary)]')}>
-                    {item.assigneeInitials}
-                  </span>
-                  <span className="text-[var(--text-sm)] text-[var(--color-text)]">{item.assignee}</span>
-                </div>
-              </DetailRow>
-              <DetailRow label="Reporter">
-                <div className="flex items-center gap-2">
-                  <UserIcon className="h-4 w-4 text-[var(--color-text-muted)]" />
-                  <span className="text-[var(--text-sm)] text-[var(--color-text)]">{item.reporter}</span>
-                </div>
-              </DetailRow>
-              <DetailRow label="Sprint">
-                <span className="text-[var(--text-sm)] text-[var(--color-text)]">{item.sprint ?? 'Backlog'}</span>
-              </DetailRow>
-              <DetailRow label="Points">
-                <span className="text-[var(--text-sm)] text-[var(--color-text)]">{item.points ?? '\u2014'}</span>
-              </DetailRow>
-              <DetailRow label="Labels">
-                <div className="flex flex-wrap gap-1">
-                  {item.labels.map((label) => (
-                    <Badge key={label} variant="outline">{label}</Badge>
-                  ))}
-                </div>
+                <Badge variant={PRIORITY_VARIANT[item.priority] ?? 'secondary'}>{PRIORITY_LABEL[item.priority] ?? 'Unknown'}</Badge>
               </DetailRow>
               <div className="border-t border-[var(--color-border)] pt-3 space-y-1">
                 <div className="flex items-center gap-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                  <Clock className="h-3 w-3" /> Created {item.created}
+                  <Clock className="h-3 w-3" /> Created {item.created_at.slice(0, 10)}
                 </div>
                 <div className="flex items-center gap-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                  <Clock className="h-3 w-3" /> Updated {item.updated}
+                  <Clock className="h-3 w-3" /> Updated {item.updated_at.slice(0, 10)}
                 </div>
               </div>
             </CardContent>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Ticket, FileText, ListTodo, Plus, BarChart3, BookOpen, Zap } from 'lucide-react';
+import { Ticket, FileText, ListTodo, Plus, BarChart3, BookOpen, Zap, AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
@@ -15,78 +15,33 @@ import {
   DialogClose,
 } from '../../components/ui/dialog';
 import { cn } from '../../lib/utils';
-import { createSpace, type SpaceType } from '../../lib/api';
-
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
-
-interface Space {
-  id: string;
-  name: string;
-  type: 'service_desk' | 'wiki' | 'project';
-  description: string;
-  memberCount: number;
-  slug: string;
-}
-
-const INITIAL_SPACES: Space[] = [
-  {
-    id: 's1',
-    name: 'Customer Support',
-    type: 'service_desk',
-    description: 'Track and resolve customer issues and service requests.',
-    memberCount: 12,
-    slug: 'customer-support',
-  },
-  {
-    id: 's2',
-    name: 'Engineering Wiki',
-    type: 'wiki',
-    description: 'Internal documentation, runbooks, and architecture decisions.',
-    memberCount: 24,
-    slug: 'engineering-wiki',
-  },
-  {
-    id: 's3',
-    name: 'Product Roadmap',
-    type: 'project',
-    description: 'Plan and track product features across sprints.',
-    memberCount: 8,
-    slug: 'product-roadmap',
-  },
-];
-
-const MOCK_STATS = {
-  totalTickets: 142,
-  wikiPages: 87,
-  activeSprints: 3,
-};
+import { useSpaces, useCreateSpace, type Space, type SpaceType } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const SPACE_ICON_MAP: Record<Space['type'], typeof Ticket> = {
+const SPACE_ICON_MAP: Record<SpaceType, typeof Ticket> = {
   service_desk: Ticket,
   wiki: FileText,
   project: ListTodo,
 };
 
-const SPACE_BADGE_LABEL: Record<Space['type'], string> = {
+const SPACE_BADGE_LABEL: Record<SpaceType, string> = {
   service_desk: 'Service Desk',
   wiki: 'Wiki',
   project: 'Project',
 };
 
 function linkForSpace(space: Space): string {
-  switch (space.type) {
+  switch (space.space_type) {
     case 'service_desk':
-      return `/tickets`;
+      return `/spaces/${space.id}/tickets`;
     case 'wiki':
-      return `/wiki`;
+      return `/spaces/${space.id}/wiki`;
     case 'project':
-      return `/backlog`;
+      return `/spaces/${space.id}/backlog`;
   }
 }
 
@@ -104,84 +59,41 @@ function slugify(name: string): string {
 /** Main dashboard page showing spaces, quick stats, and navigation. */
 export function DashboardPage() {
   const navigate = useNavigate();
-  const [spaces, setSpaces] = useState<Space[]>(INITIAL_SPACES);
+  const { user } = useAuth();
+  const orgId = user?.orgId ?? '';
+  const { data: spaces, isLoading, error } = useSpaces(orgId);
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState<SpaceType>('service_desk');
   const [formDescription, setFormDescription] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+
+  const createSpaceMutation = useCreateSpace(orgId);
 
   function resetForm() {
     setFormName('');
     setFormType('service_desk');
     setFormDescription('');
-    setError(null);
-    setSubmitting(false);
   }
 
   async function handleCreate() {
     const name = formName.trim();
-    if (!name) {
-      setError('Name is required.');
-      return;
-    }
-
-    setSubmitting(true);
-    setError(null);
+    if (!name) return;
 
     const slug = slugify(name);
 
-    // Helper to create a local-only space when the API is unavailable
-    function createLocal() {
-      const fallbackId = `s${Date.now()}`;
-      const newSpace: Space = {
-        id: fallbackId,
-        name,
-        type: formType,
-        description: formDescription.trim(),
-        memberCount: 1,
-        slug,
-      };
-      setSpaces((prev) => [...prev, newSpace]);
-      setDialogOpen(false);
-      resetForm();
-      navigate(linkForSpace(newSpace));
-    }
-
     try {
-      // Race the API call against a 3-second timeout so the UI stays
-      // responsive even when the backend isn't running.
-      const apiCall = createSpace('default', {
+      const created = await createSpaceMutation.mutateAsync({
         name,
         slug,
         space_type: formType,
         description: formDescription.trim() || undefined,
       });
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), 3000),
-      );
-
-      const created = await Promise.race([apiCall, timeoutPromise]);
-
-      // Add the new space to the local list
-      const newSpace: Space = {
-        id: created.id,
-        name: created.name,
-        type: created.space_type,
-        description: created.description ?? '',
-        memberCount: 1,
-        slug: created.slug,
-      };
-      setSpaces((prev) => [...prev, newSpace]);
       setDialogOpen(false);
       resetForm();
-      navigate(linkForSpace(newSpace));
+      navigate(linkForSpace(created));
     } catch {
-      // API unavailable — fall back to local-only space creation
-      createLocal();
-    } finally {
-      setSubmitting(false);
+      // Error is handled by mutation state
     }
   }
 
@@ -205,44 +117,65 @@ export function DashboardPage() {
 
       {/* Quick stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard icon={Ticket} label="Total Tickets" value={MOCK_STATS.totalTickets} />
-        <StatCard icon={BookOpen} label="Wiki Pages" value={MOCK_STATS.wikiPages} />
-        <StatCard icon={Zap} label="Active Sprints" value={MOCK_STATS.activeSprints} />
+        <StatCard icon={Ticket} label="Spaces" value={spaces?.length ?? 0} />
+        <StatCard icon={BookOpen} label="Service Desks" value={spaces?.filter(s => s.space_type === 'service_desk').length ?? 0} />
+        <StatCard icon={Zap} label="Projects" value={spaces?.filter(s => s.space_type === 'project').length ?? 0} />
       </div>
 
+      {/* Loading state */}
+      {isLoading && (
+        <div className="flex h-32 items-center justify-center text-[var(--color-text-muted)]">
+          Loading spaces...
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && (
+        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+          <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
+          <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
+            Failed to load spaces: {error.message}
+          </p>
+        </div>
+      )}
+
       {/* Space cards */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {spaces.map((space) => {
-          const Icon = SPACE_ICON_MAP[space.type];
-          return (
-            <Link key={space.id} to={linkForSpace(space)} className="group">
-              <Card className="h-full transition-shadow group-hover:shadow-[var(--shadow-md)]">
-                <CardHeader>
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-primary-muted)]">
-                      <Icon className="h-5 w-5 text-[var(--color-primary)]" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <CardTitle className="truncate">{space.name}</CardTitle>
-                      <div className="mt-1 flex items-center gap-2">
-                        <Badge variant="secondary">
-                          {SPACE_BADGE_LABEL[space.type]}
-                        </Badge>
-                        <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                          {space.memberCount} members
-                        </span>
+      {spaces && (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {spaces.length === 0 && !isLoading && (
+            <div className="col-span-full flex h-32 items-center justify-center text-[var(--color-text-muted)]">
+              No spaces yet. Create one to get started.
+            </div>
+          )}
+          {spaces.map((space) => {
+            const Icon = SPACE_ICON_MAP[space.space_type];
+            return (
+              <Link key={space.id} to={linkForSpace(space)} className="group">
+                <Card className="h-full transition-shadow group-hover:shadow-[var(--shadow-md)]">
+                  <CardHeader>
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-primary-muted)]">
+                        <Icon className="h-5 w-5 text-[var(--color-primary)]" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <CardTitle className="truncate">{space.name}</CardTitle>
+                        <div className="mt-1 flex items-center gap-2">
+                          <Badge variant="secondary">
+                            {SPACE_BADGE_LABEL[space.space_type]}
+                          </Badge>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <CardDescription>{space.description}</CardDescription>
-                </CardContent>
-              </Card>
-            </Link>
-          );
-        })}
-      </div>
+                  </CardHeader>
+                  <CardContent>
+                    <CardDescription>{space.description}</CardDescription>
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
+        </div>
+      )}
 
       {/* Create Space dialog */}
       <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
@@ -312,8 +245,8 @@ export function DashboardPage() {
             </div>
 
             {/* Error */}
-            {error && (
-              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{error}</p>
+            {createSpaceMutation.error && (
+              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{createSpaceMutation.error.message}</p>
             )}
           </div>
 
@@ -321,8 +254,8 @@ export function DashboardPage() {
             <DialogClose asChild>
               <Button variant="outline" type="button">Cancel</Button>
             </DialogClose>
-            <Button onClick={handleCreate} disabled={submitting || !formName.trim()}>
-              {submitting ? 'Creating...' : 'Create Space'}
+            <Button onClick={handleCreate} disabled={createSpaceMutation.isPending || !formName.trim()}>
+              {createSpaceMutation.isPending ? 'Creating...' : 'Create Space'}
             </Button>
           </DialogFooter>
         </DialogContent>

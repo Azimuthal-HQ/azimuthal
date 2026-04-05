@@ -64,11 +64,11 @@ const NAV_ITEMS: Record<string, NavItem[]> = {
   ],
 };
 
-// Map space types to a friendly mock space name for demo purposes
+// Space type display names (used as fallback when no space name is provided)
 const SPACE_NAME: Record<string, string> = {
-  service_desk: 'Customer Support',
-  wiki: 'Engineering Wiki',
-  project: 'Product Roadmap',
+  service_desk: 'Service Desk',
+  wiki: 'Wiki',
+  project: 'Project',
 };
 
 interface SidebarProps {

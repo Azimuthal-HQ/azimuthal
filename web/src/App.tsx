@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Shell } from './components/layout/Shell';
+import { RequireAuth } from './components/auth/RequireAuth';
 import { LoginPage } from './pages/auth/LoginPage';
 import { DashboardPage } from './pages/dashboard/DashboardPage';
 import { TicketListPage } from './pages/servicedesk/TicketListPage';
@@ -15,7 +16,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/" element={<Shell />}>
+      <Route path="/" element={<RequireAuth><Shell /></RequireAuth>}>
         <Route index element={<DashboardPage />} />
         <Route path="dashboard" element={<Navigate to="/" replace />} />
 
@@ -40,6 +41,7 @@ export function App() {
         <Route path="spaces/:spaceId/wiki" element={<WikiPage />} />
         <Route path="spaces/:spaceId/wiki/:pageId" element={<WikiPage />} />
         <Route path="spaces/:spaceId/backlog" element={<BacklogPage />} />
+        <Route path="spaces/:spaceId/backlog/:itemKey" element={<ItemDetailPage />} />
         <Route path="spaces/:spaceId/board" element={<SprintBoardPage />} />
 
         <Route path="settings" element={<SettingsPage />} />
