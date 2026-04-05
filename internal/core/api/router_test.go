@@ -510,7 +510,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 
 func authHeader(t *testing.T, jwtSvc *auth.JWTService, userID uuid.UUID) string {
 	t.Helper()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com")
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatalf("issuing token pair: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestAuthRefresh(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 
 	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com")
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatalf("issuing tokens: %v", err)
 	}

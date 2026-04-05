@@ -109,6 +109,8 @@ export interface Organization {
   id: string;
   name: string;
   slug: string;
+  description: string | null;
+  plan: string;
   created_at: string;
   updated_at: string;
 }
@@ -269,7 +271,7 @@ async function fetchSpaces(orgId: string): Promise<Space[]> {
 interface CreateSpaceRequest {
   name: string;
   slug: string;
-  space_type: SpaceType;
+  type: SpaceType;
   description?: string;
 }
 
@@ -467,10 +469,43 @@ async function createLabel(orgId: string, req: CreateLabelRequest): Promise<Labe
 }
 
 // ---------------------------------------------------------------------------
+// Organization API functions
+// ---------------------------------------------------------------------------
+
+async function fetchOrganization(orgId: string): Promise<Organization> {
+  return apiFetch<Organization>(`/orgs/${orgId}`);
+}
+
+interface UpdateOrganizationRequest {
+  name: string;
+  description?: string;
+}
+
+async function updateOrganization(
+  orgId: string,
+  req: UpdateOrganizationRequest,
+): Promise<Organization> {
+  return apiFetch<Organization>(`/orgs/${orgId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Current user API function
+// ---------------------------------------------------------------------------
+
+async function fetchMe(): Promise<User> {
+  return apiFetch<User>('/auth/me');
+}
+
+// ---------------------------------------------------------------------------
 // Query key factories
 // ---------------------------------------------------------------------------
 
 export const queryKeys = {
+  me: () => ['me'] as const,
+  organization: (orgId: string) => ['organization', orgId] as const,
   spaces: (orgId: string) => ['spaces', orgId] as const,
   tickets: (spaceId: string) => ['tickets', spaceId] as const,
   ticket: (spaceId: string, ticketId: string) => ['tickets', spaceId, ticketId] as const,
@@ -487,6 +522,23 @@ export const queryKeys = {
 // ---------------------------------------------------------------------------
 
 type QueryOpts<T> = Omit<UseQueryOptions<T, APIError>, 'queryKey' | 'queryFn'>;
+
+export function useMe(opts?: QueryOpts<User>) {
+  return useQuery<User, APIError>({
+    queryKey: queryKeys.me(),
+    queryFn: fetchMe,
+    ...opts,
+  });
+}
+
+export function useOrganization(orgId: string, opts?: QueryOpts<Organization>) {
+  return useQuery<Organization, APIError>({
+    queryKey: queryKeys.organization(orgId),
+    queryFn: () => fetchOrganization(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
 
 export function useSpaces(orgId: string, opts?: QueryOpts<Space[]>) {
   return useQuery<Space[], APIError>({
@@ -593,6 +645,16 @@ export function useRegister() {
   });
 }
 
+export function useUpdateOrganization(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Organization, APIError, UpdateOrganizationRequest>({
+    mutationFn: (req) => updateOrganization(orgId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.organization(orgId) });
+    },
+  });
+}
+
 export function useCreateSpace(orgId: string) {
   const queryClient = useQueryClient();
   return useMutation<Space, APIError, CreateSpaceRequest>({
@@ -674,6 +736,8 @@ export {
   createProjectItem,
   createSprint,
   createLabel,
+  updateOrganization,
+  type UpdateOrganizationRequest,
   type CreateSpaceRequest,
   type CreateTicketRequest,
   type UpdateTicketRequest,

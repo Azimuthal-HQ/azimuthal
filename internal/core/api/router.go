@@ -47,6 +47,13 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(cfg.Authenticator.RequireAuth)
 
+		// Current user profile
+		r.Get("/auth/me", cfg.AuthHandler.Me)
+
+		// Organization management
+		r.Get("/orgs/{orgID}", cfg.SpaceHandler.GetOrg)
+		r.Patch("/orgs/{orgID}", cfg.SpaceHandler.UpdateOrg)
+
 		// Spaces (scoped by org)
 		r.Route("/orgs/{orgID}/spaces", func(r chi.Router) {
 			r.Mount("/", cfg.SpaceHandler.Routes())

@@ -31,6 +31,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Post("/register", h.Register)
 	r.Post("/refresh", h.Refresh)
 	r.Post("/logout", h.Logout)
+	r.Get("/me", h.Me)
 	return r
 }
 
@@ -64,6 +65,8 @@ type userResponse struct {
 	ID          uuid.UUID `json:"id"`
 	Email       string    `json:"email"`
 	DisplayName string    `json:"display_name"`
+	OrgID       string    `json:"org_id"`
+	Role        string    `json:"role"`
 	IsActive    bool      `json:"is_active"`
 }
 
@@ -89,7 +92,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email)
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
@@ -102,6 +105,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 			ID:          user.ID,
 			Email:       user.Email,
 			DisplayName: user.DisplayName,
+			OrgID:       user.OrgID.String(),
+			Role:        user.Role,
 			IsActive:    user.IsActive,
 		},
 	})
@@ -129,7 +134,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email)
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
@@ -142,6 +147,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 			ID:          user.ID,
 			Email:       user.Email,
 			DisplayName: user.DisplayName,
+			OrgID:       user.OrgID.String(),
+			Role:        user.Role,
 			IsActive:    user.IsActive,
 		},
 	})
@@ -189,4 +196,28 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+}
+
+// Me returns the current authenticated user's profile.
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return
+	}
+
+	user, err := h.users.GetUser(r.Context(), claims.UserID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to get user")
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, userResponse{
+		ID:          user.ID,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		OrgID:       user.OrgID.String(),
+		Role:        user.Role,
+		IsActive:    user.IsActive,
+	})
 }

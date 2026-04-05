@@ -31,7 +31,7 @@ func TestRequireAuth_BearerToken_Valid(t *testing.T) {
 	a, jwtSvc, _ := testAuthenticator(t)
 	userID := uuid.New()
 
-	pair, err := jwtSvc.IssueTokenPair(userID, "user@example.com")
+	pair, err := jwtSvc.IssueTokenPair(userID, "user@example.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestOptionalAuth_WithToken(t *testing.T) {
 	a, jwtSvc, _ := testAuthenticator(t)
 	userID := uuid.New()
 
-	pair, err := jwtSvc.IssueTokenPair(userID, "opt@example.com")
+	pair, err := jwtSvc.IssueTokenPair(userID, "opt@example.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -58,6 +58,66 @@ type addMemberRequest struct {
 	Role   string    `json:"role"`
 }
 
+// GetOrg returns an organization by ID.
+func (h *Handler) GetOrg(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+
+	org, err := h.queries.GetOrganizationByID(r.Context(), orgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "organization not found")
+		return
+	}
+	respond.JSON(w, http.StatusOK, org)
+}
+
+type updateOrgRequest struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description,omitempty"`
+}
+
+// UpdateOrg updates an organization's details.
+func (h *Handler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+
+	var req updateOrgRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Name == "" {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "name is required")
+		return
+	}
+
+	// Fetch current org to preserve plan
+	current, err := h.queries.GetOrganizationByID(r.Context(), orgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "organization not found")
+		return
+	}
+
+	org, err := h.queries.UpdateOrganization(r.Context(), generated.UpdateOrganizationParams{
+		ID:          orgID,
+		Name:        req.Name,
+		Description: req.Description,
+		Plan:        current.Plan,
+	})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to update organization")
+		return
+	}
+	respond.JSON(w, http.StatusOK, org)
+}
+
 // List returns all spaces for the organization.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	orgID, err := orgIDFromURL(r)

@@ -156,7 +156,7 @@ func TestRefreshNilBody(t *testing.T) {
 func TestLogoutWithClaims(t *testing.T) {
 	h, jwtSvc := setupHandler(t)
 	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com")
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestLogoutNoAuth(t *testing.T) {
 func TestRefreshWithValidToken(t *testing.T) {
 	h, jwtSvc := setupHandler(t)
 	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com")
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member")
 	if err != nil {
 		t.Fatal(err)
 	}
