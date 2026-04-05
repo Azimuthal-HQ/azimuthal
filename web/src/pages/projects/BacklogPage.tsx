@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Plus, Search, AlertTriangle, ArrowUp, Minus, ArrowDown, AlertCircle } from 'lucide-react';
+import { Plus, Search, AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
