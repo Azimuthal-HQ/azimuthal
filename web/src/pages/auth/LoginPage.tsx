@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Logo } from '../../components/layout/Logo';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { useAuth } from '../../lib/auth';
+import { loginUser, APIError } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
 /** Full-page login form with centered card layout. */
@@ -15,6 +16,7 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -22,20 +24,16 @@ export function LoginPage() {
     setLoading(true);
 
     try {
-      // Mock login: in a real app this would call the API
-      // Simulate a short delay then store a fake JWT
-      await new Promise((resolve) => setTimeout(resolve, 400));
-
-      const mockPayload = btoa(
-        JSON.stringify({ sub: 'u_1', exp: Math.floor(Date.now() / 1000) + 86400, iat: Math.floor(Date.now() / 1000), email, org_id: 'org_1', role: 'admin' }),
-      );
-      const mockToken = `eyJhbGciOiJIUzI1NiJ9.${mockPayload}.mock-signature`;
-      const mockRefresh = 'mock-refresh-token';
-
-      login(mockToken, mockRefresh);
-      navigate('/');
-    } catch {
-      setError('Invalid email or password. Please try again.');
+      const data = await loginUser({ email, password });
+      login(data.access_token, data.refresh_token);
+      const redirect = searchParams.get('redirect') || '/';
+      navigate(redirect);
+    } catch (err) {
+      if (err instanceof APIError && (err.status === 401 || err.status === 400)) {
+        setError('Invalid email or password');
+      } else {
+        setError('Unable to connect to server. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

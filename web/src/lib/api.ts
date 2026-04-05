@@ -4,7 +4,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import type { UseQueryOptions } from '@tanstack/react-query';
-import { getToken, setToken, setRefreshToken, getRefreshToken } from './auth';
+import { getToken, setToken, setRefreshToken, getRefreshToken, removeToken, removeRefreshToken } from './auth';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -64,6 +64,16 @@ async function apiFetch<T>(
   });
 
   if (!response.ok) {
+    // On 401, clear tokens and redirect to login
+    if (response.status === 401) {
+      removeToken();
+      removeRefreshToken();
+      const currentPath = window.location.pathname;
+      if (currentPath !== '/login') {
+        window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+      }
+    }
+
     let body: APIErrorBody;
     try {
       body = (await response.json()) as APIErrorBody;
@@ -532,6 +542,15 @@ export function useProjectItems(spaceId: string, opts?: QueryOpts<ProjectItem[]>
   });
 }
 
+export function useProjectItem(spaceId: string, itemId: string, opts?: QueryOpts<ProjectItem>) {
+  return useQuery<ProjectItem, APIError>({
+    queryKey: queryKeys.projectItem(spaceId, itemId),
+    queryFn: () => fetchProjectItem(spaceId, itemId),
+    enabled: !!spaceId && !!itemId,
+    ...opts,
+  });
+}
+
 export function useSprints(spaceId: string, opts?: QueryOpts<Sprint[]>) {
   return useQuery<Sprint[], APIError>({
     queryKey: queryKeys.sprints(spaceId),
@@ -570,6 +589,16 @@ export function useRegister() {
     onSuccess: (data) => {
       setToken(data.access_token);
       setRefreshToken(data.refresh_token);
+    },
+  });
+}
+
+export function useCreateSpace(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Space, APIError, CreateSpaceRequest>({
+    mutationFn: (req) => createSpace(orgId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaces(orgId) });
     },
   });
 }

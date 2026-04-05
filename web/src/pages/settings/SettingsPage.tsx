@@ -1,39 +1,15 @@
 import { useState } from 'react';
-import { Camera, Shield, Palette, User, Building2, Trash2 } from 'lucide-react';
+import { Shield, Palette, User, Building2 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
-import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { useTheme } from '../../components/theme/ThemeProvider';
+import { useAuth } from '../../lib/auth';
 import { cn } from '../../lib/utils';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-interface OrgMember {
-  id: string;
-  name: string;
-  email: string;
-  role: 'admin' | 'member' | 'viewer';
-  initials: string;
-}
-
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
-
-const MOCK_MEMBERS: OrgMember[] = [
-  { id: 'u1', name: 'Alice Chen', email: 'alice@example.com', role: 'admin', initials: 'AC' },
-  { id: 'u2', name: 'Bob Martinez', email: 'bob@example.com', role: 'member', initials: 'BM' },
-  { id: 'u3', name: 'Charlie Osei', email: 'charlie@example.com', role: 'viewer', initials: 'CO' },
-];
-
-const ROLE_VARIANT: Record<OrgMember['role'], 'default' | 'secondary' | 'outline'> = {
-  admin: 'default',
-  member: 'secondary',
-  viewer: 'outline',
-};
 
 type TabId = 'profile' | 'organization' | 'appearance';
 
@@ -62,21 +38,24 @@ const FONT_SIZE_OPTIONS = [
 /** Settings page with Profile, Organization, and Appearance tabs. */
 export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>('profile');
+  const { user } = useAuth();
 
   // Profile state
-  const [displayName, setDisplayName] = useState('Alice Chen');
-  const [email, setEmail] = useState('alice@example.com');
+  const [displayName, setDisplayName] = useState(user?.email?.split('@')[0] ?? '');
+  const [email, setEmail] = useState(user?.email ?? '');
 
   // Organization state
-  const [orgName, setOrgName] = useState('Azimuthal HQ');
-  const [orgSlug, setOrgSlug] = useState('azimuthal-hq');
-  const [orgDescription, setOrgDescription] = useState(
-    'The core team building the Azimuthal platform.',
-  );
+  const [orgName, setOrgName] = useState('');
+  const [orgSlug, setOrgSlug] = useState('');
+  const [orgDescription, setOrgDescription] = useState('');
 
   // Appearance state
   const { theme, setTheme } = useTheme();
   const [fontSize, setFontSize] = useState('base');
+
+  const initials = displayName
+    ? displayName.slice(0, 2).toUpperCase()
+    : (user?.email?.slice(0, 2).toUpperCase() ?? '??');
 
   return (
     <div className="space-y-6">
@@ -125,12 +104,8 @@ export function SettingsPage() {
                       'bg-[var(--color-primary-muted)] text-[var(--text-xl)] font-semibold text-[var(--color-primary)]',
                     )}
                   >
-                    AC
+                    {initials}
                   </div>
-                  <Button variant="secondary" size="sm">
-                    <Camera className="mr-2 h-4 w-4" />
-                    Upload Photo
-                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -166,6 +141,7 @@ export function SettingsPage() {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    disabled
                   />
                 </div>
                 <div className="flex justify-end">
@@ -231,57 +207,6 @@ export function SettingsPage() {
                 </div>
                 <div className="flex justify-end">
                   <Button>Save Changes</Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Members */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>Members</CardTitle>
-                  <Button variant="secondary" size="sm">
-                    Invite Member
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="divide-y divide-[var(--color-border)]">
-                  {MOCK_MEMBERS.map((member) => (
-                    <div
-                      key={member.id}
-                      className="flex items-center justify-between py-3 first:pt-0 last:pb-0"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={cn(
-                            'flex h-8 w-8 items-center justify-center rounded-full',
-                            'bg-[var(--color-primary-muted)] text-[var(--text-xs)] font-medium text-[var(--color-primary)]',
-                          )}
-                        >
-                          {member.initials}
-                        </span>
-                        <div>
-                          <p className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                            {member.name}
-                          </p>
-                          <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                            {member.email}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={ROLE_VARIANT[member.role]}>
-                          {member.role.charAt(0).toUpperCase() + member.role.slice(1)}
-                        </Badge>
-                        {member.role !== 'admin' && (
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <Trash2 className="h-4 w-4 text-[var(--color-text-muted)]" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </CardContent>
             </Card>
