@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Shell } from './components/layout/Shell';
 import { RequireAuth } from './components/auth/RequireAuth';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoginPage } from './pages/auth/LoginPage';
 import { DashboardPage } from './pages/dashboard/DashboardPage';
 import { TicketListPage } from './pages/servicedesk/TicketListPage';
@@ -35,14 +36,14 @@ export function App() {
         <Route path="board" element={<SprintBoardPage />} />
 
         {/* Space-scoped routes (API-backed, with space ID) */}
-        <Route path="spaces/:spaceId/tickets" element={<TicketListPage />} />
-        <Route path="spaces/:spaceId/tickets/:ticketId" element={<TicketDetailPage />} />
-        <Route path="spaces/:spaceId/kanban" element={<KanbanPage />} />
-        <Route path="spaces/:spaceId/wiki" element={<WikiPage />} />
-        <Route path="spaces/:spaceId/wiki/:pageId" element={<WikiPage />} />
-        <Route path="spaces/:spaceId/backlog" element={<BacklogPage />} />
-        <Route path="spaces/:spaceId/backlog/:itemKey" element={<ItemDetailPage />} />
-        <Route path="spaces/:spaceId/board" element={<SprintBoardPage />} />
+        <Route path="spaces/:spaceId/tickets" element={<ErrorBoundary><TicketListPage /></ErrorBoundary>} />
+        <Route path="spaces/:spaceId/tickets/:ticketId" element={<ErrorBoundary><TicketDetailPage /></ErrorBoundary>} />
+        <Route path="spaces/:spaceId/kanban" element={<ErrorBoundary><KanbanPage /></ErrorBoundary>} />
+        <Route path="spaces/:spaceId/wiki" element={<ErrorBoundary><WikiPage /></ErrorBoundary>} />
+        <Route path="spaces/:spaceId/wiki/:pageId" element={<ErrorBoundary><WikiPage /></ErrorBoundary>} />
+        <Route path="spaces/:spaceId/backlog" element={<ErrorBoundary><BacklogPage /></ErrorBoundary>} />
+        <Route path="spaces/:spaceId/backlog/:itemKey" element={<ErrorBoundary><ItemDetailPage /></ErrorBoundary>} />
+        <Route path="spaces/:spaceId/board" element={<ErrorBoundary><SprintBoardPage /></ErrorBoundary>} />
 
         <Route path="settings" element={<SettingsPage />} />
         <Route path="settings/:section" element={<SettingsPage />} />

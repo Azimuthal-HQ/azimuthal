@@ -120,7 +120,7 @@ export interface Space {
   org_id: string;
   name: string;
   slug: string;
-  space_type: SpaceType;
+  type: SpaceType;
   description: string;
   created_at: string;
   updated_at: string;
