@@ -35,7 +35,7 @@ const SPACE_BADGE_LABEL: Record<SpaceType, string> = {
 };
 
 function linkForSpace(space: Space): string {
-  switch (space.space_type) {
+  switch (space.type) {
     case 'service_desk':
       return `/spaces/${space.id}/tickets`;
     case 'wiki':
@@ -178,8 +178,8 @@ export function DashboardPage() {
       {spaces && spaces.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <StatCard icon={LayoutGrid} label="Spaces" value={spaces.length} />
-          <StatCard icon={Headphones} label="Service Desks" value={spaces.filter(s => s.space_type === 'service_desk').length} />
-          <StatCard icon={Columns3} label="Projects" value={spaces.filter(s => s.space_type === 'project').length} />
+          <StatCard icon={Headphones} label="Service Desks" value={spaces.filter(s => s.type === 'service_desk').length} />
+          <StatCard icon={Columns3} label="Projects" value={spaces.filter(s => s.type === 'project').length} />
         </div>
       )}
 
@@ -187,7 +187,7 @@ export function DashboardPage() {
       {spaces && spaces.length > 0 && (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {spaces.map((space) => {
-            const Icon = SPACE_ICON_MAP[space.space_type];
+            const Icon = SPACE_ICON_MAP[space.type];
             return (
               <Link key={space.id} to={linkForSpace(space)} className="group">
                 <Card className="h-full transition-shadow group-hover:shadow-[var(--shadow-md)]">
@@ -200,7 +200,7 @@ export function DashboardPage() {
                         <CardTitle className="truncate">{space.name}</CardTitle>
                         <div className="mt-1 flex items-center gap-2">
                           <Badge variant="secondary">
-                            {SPACE_BADGE_LABEL[space.space_type]}
+                            {SPACE_BADGE_LABEL[space.type]}
                           </Badge>
                         </div>
                       </div>
