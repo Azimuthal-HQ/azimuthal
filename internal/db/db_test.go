@@ -450,7 +450,7 @@ func TestCreateItemAdaptersDefaultLabels(t *testing.T) {
 
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "adapter-labels@example.com")
-	ticketSpace := setupSpace(t, q, org.ID, user.ID, "tickets")
+	ticketSpace := setupSpace(t, q, org.ID, user.ID, "service_desk")
 	projectSpace := setupSpace(t, q, org.ID, user.ID, "project")
 
 	// Test ticket adapter with nil labels.
