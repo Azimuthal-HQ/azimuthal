@@ -21,20 +21,6 @@ export function App() {
         <Route index element={<DashboardPage />} />
         <Route path="dashboard" element={<Navigate to="/" replace />} />
 
-        {/* Service desk — top-level convenience routes */}
-        <Route path="tickets" element={<TicketListPage />} />
-        <Route path="tickets/:ticketId" element={<TicketDetailPage />} />
-        <Route path="kanban" element={<KanbanPage />} />
-
-        {/* Wiki — top-level convenience routes */}
-        <Route path="wiki" element={<WikiPage />} />
-        <Route path="wiki/:pageId" element={<WikiPage />} />
-
-        {/* Projects — top-level convenience routes */}
-        <Route path="backlog" element={<BacklogPage />} />
-        <Route path="backlog/:itemKey" element={<ItemDetailPage />} />
-        <Route path="board" element={<SprintBoardPage />} />
-
         {/* Space-scoped routes (API-backed, with space ID) */}
         <Route path="spaces/:spaceId/tickets" element={<ErrorBoundary><TicketListPage /></ErrorBoundary>} />
         <Route path="spaces/:spaceId/tickets/:ticketId" element={<ErrorBoundary><TicketDetailPage /></ErrorBoundary>} />

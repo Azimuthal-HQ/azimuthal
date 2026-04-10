@@ -19,14 +19,13 @@ const STATUS_LABEL: Record<string, string> = { todo: 'To Do', in_progress: 'In P
 
 /** Detail view for a project item. */
 export function ItemDetailPage() {
-  const { spaceId, itemKey } = useParams<{ spaceId: string; itemKey: string }>();
-  const effectiveSpaceId = spaceId ?? 'default';
+  const { spaceId = '', itemKey } = useParams<{ spaceId: string; itemKey: string }>();
   const itemId = itemKey ?? '';
 
   // We need a useProjectItem hook - let's use a direct query
-  const { data: item, isLoading, error } = useProjectItem(effectiveSpaceId, itemId);
+  const { data: item, isLoading, error } = useProjectItem(spaceId, itemId);
 
-  const backlogPath = spaceId ? `/spaces/${spaceId}/backlog` : '/backlog';
+  const backlogPath = `/spaces/${spaceId}/backlog`;
 
   if (isLoading) {
     return (

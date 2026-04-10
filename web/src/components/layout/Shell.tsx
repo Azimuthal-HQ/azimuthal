@@ -7,10 +7,6 @@ import { Sidebar, type SpaceType } from './Sidebar';
 
 /** Derives the space type from the current URL pathname. */
 function deriveSpaceType(pathname: string): SpaceType {
-  // Top-level convenience routes
-  if (pathname.startsWith('/tickets') || pathname.startsWith('/kanban')) return 'service_desk';
-  if (pathname.startsWith('/wiki')) return 'wiki';
-  if (pathname.startsWith('/backlog') || pathname.startsWith('/board')) return 'project';
   // Space-scoped routes: /spaces/:id/tickets, /spaces/:id/wiki, etc.
   if (/\/spaces\/[^/]+\/(tickets|kanban)/.test(pathname)) return 'service_desk';
   if (/\/spaces\/[^/]+\/wiki/.test(pathname)) return 'wiki';

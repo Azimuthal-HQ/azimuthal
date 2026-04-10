@@ -1,4 +1,5 @@
-import { NavLink, Link } from 'react-router-dom';
+import { NavLink, Link, useParams } from 'react-router-dom';
+import { useMemo } from 'react';
 import {
   ArrowLeft,
   BarChart3,
@@ -39,30 +40,33 @@ const SPACE_TYPE_ICON: Record<string, React.ComponentType<{ className?: string }
   project: ListTodo,
 };
 
-const NAV_ITEMS: Record<string, NavItem[]> = {
-  service_desk: [
-    { id: 'sd-tickets', label: 'Tickets', to: '/tickets', icon: LayoutDashboard },
-    { id: 'sd-kanban', label: 'Kanban Board', to: '/kanban', icon: Columns3 },
-    { id: 'sd-reports', label: 'Reports', to: '/tickets', icon: BarChart3 },
-  ],
-  wiki: [
-    { id: 'wiki-pages', label: 'All Pages', to: '/wiki', icon: FileText },
-    { id: 'wiki-recent', label: 'Recent', to: '/wiki', icon: Clock },
-    { id: 'wiki-favorites', label: 'Favorites', to: '/wiki', icon: Star },
-    { id: 'wiki-trash', label: 'Trash', to: '/wiki', icon: Trash2 },
-  ],
-  project: [
-    { id: 'proj-backlog', label: 'Backlog', to: '/backlog', icon: ListTodo },
-    { id: 'proj-board', label: 'Sprint Board', to: '/board', icon: Columns3 },
-    { id: 'proj-roadmap', label: 'Roadmap', to: '/backlog', icon: Map },
-    { id: 'proj-labels', label: 'Labels', to: '/backlog', icon: Tags },
-  ],
-  dashboard: [
-    { id: 'dash-home', label: 'Home', to: '/', icon: Home },
-    { id: 'dash-spaces', label: 'All Spaces', to: '/', icon: Compass },
-    { id: 'dash-settings', label: 'Settings', to: '/settings', icon: Settings },
-  ],
-};
+function buildNavItems(spaceId: string): Record<string, NavItem[]> {
+  const prefix = `/spaces/${spaceId}`;
+  return {
+    service_desk: [
+      { id: 'sd-tickets', label: 'Tickets', to: `${prefix}/tickets`, icon: LayoutDashboard },
+      { id: 'sd-kanban', label: 'Kanban Board', to: `${prefix}/kanban`, icon: Columns3 },
+      { id: 'sd-reports', label: 'Reports', to: `${prefix}/tickets`, icon: BarChart3 },
+    ],
+    wiki: [
+      { id: 'wiki-pages', label: 'All Pages', to: `${prefix}/wiki`, icon: FileText },
+      { id: 'wiki-recent', label: 'Recent', to: `${prefix}/wiki`, icon: Clock },
+      { id: 'wiki-favorites', label: 'Favorites', to: `${prefix}/wiki`, icon: Star },
+      { id: 'wiki-trash', label: 'Trash', to: `${prefix}/wiki`, icon: Trash2 },
+    ],
+    project: [
+      { id: 'proj-backlog', label: 'Backlog', to: `${prefix}/backlog`, icon: ListTodo },
+      { id: 'proj-board', label: 'Sprint Board', to: `${prefix}/board`, icon: Columns3 },
+      { id: 'proj-roadmap', label: 'Roadmap', to: `${prefix}/backlog`, icon: Map },
+      { id: 'proj-labels', label: 'Labels', to: `${prefix}/backlog`, icon: Tags },
+    ],
+    dashboard: [
+      { id: 'dash-home', label: 'Home', to: '/', icon: Home },
+      { id: 'dash-spaces', label: 'All Spaces', to: '/', icon: Compass },
+      { id: 'dash-settings', label: 'Settings', to: '/settings', icon: Settings },
+    ],
+  };
+}
 
 // Space type display names (used as fallback when no space name is provided)
 const SPACE_NAME: Record<string, string> = {
@@ -80,7 +84,9 @@ interface SidebarProps {
 
 /** Left navigation sidebar with space-type-aware nav items. */
 export function Sidebar({ spaceType, isOpen, onToggle, className }: SidebarProps) {
-  const items = NAV_ITEMS[spaceType ?? 'dashboard'];
+  const { spaceId } = useParams<{ spaceId: string }>();
+  const navItems = useMemo(() => buildNavItems(spaceId ?? ''), [spaceId]);
+  const items = navItems[spaceType ?? 'dashboard'];
   const isInSpace = spaceType !== null;
 
   return (
