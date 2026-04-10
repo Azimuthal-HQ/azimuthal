@@ -33,7 +33,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/search", h.Search)
 	r.Get("/kanban", h.Kanban)
 	r.Get("/{ticketID}", h.Get)
-	r.Put("/{ticketID}", h.Update)
+	r.Patch("/{ticketID}", h.Update)
 	r.Delete("/{ticketID}", h.Delete)
 	r.Post("/{ticketID}/status", h.TransitionStatus)
 	r.Post("/{ticketID}/assign", h.Assign)

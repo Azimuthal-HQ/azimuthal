@@ -1086,7 +1086,7 @@ func TestTicketUpdate(t *testing.T) {
 		"description": "Updated description",
 		"priority":    "high",
 	})
-	req = httptest.NewRequest(http.MethodPut, baseURL+"/"+created.ID.String(), updateBody)
+	req = httptest.NewRequest(http.MethodPatch, baseURL+"/"+created.ID.String(), updateBody)
 	req.Header.Set("Authorization", token)
 	req.Header.Set("Content-Type", "application/json")
 	rr = httptest.NewRecorder()
@@ -1549,7 +1549,7 @@ func TestProjectItemUpdate(t *testing.T) {
 		"description": "Updated desc",
 		"priority":    "high",
 	})
-	req = httptest.NewRequest(http.MethodPut, baseURL+"/"+created.ID.String(), updateBody)
+	req = httptest.NewRequest(http.MethodPatch, baseURL+"/"+created.ID.String(), updateBody)
 	req.Header.Set("Authorization", token)
 	req.Header.Set("Content-Type", "application/json")
 	rr = httptest.NewRecorder()
