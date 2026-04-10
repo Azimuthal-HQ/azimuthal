@@ -136,6 +136,10 @@ func (a *ItemAdapter) Search(ctx context.Context, spaceID uuid.UUID, query strin
 
 // itemToCreateParams converts a domain Item to sqlc CreateItemParams.
 func itemToCreateParams(item *projects.Item) generated.CreateItemParams {
+	labels := item.Labels
+	if labels == nil {
+		labels = []string{}
+	}
 	return generated.CreateItemParams{
 		ID:          item.ID,
 		SpaceID:     item.SpaceID,
@@ -147,7 +151,7 @@ func itemToCreateParams(item *projects.Item) generated.CreateItemParams {
 		Priority:    item.Priority,
 		ReporterID:  item.ReporterID,
 		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      item.Labels,
+		Labels:      labels,
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
 	}
@@ -155,6 +159,10 @@ func itemToCreateParams(item *projects.Item) generated.CreateItemParams {
 
 // itemToUpdateParams converts a domain Item to sqlc UpdateItemParams.
 func itemToUpdateParams(item *projects.Item) generated.UpdateItemParams {
+	labels := item.Labels
+	if labels == nil {
+		labels = []string{}
+	}
 	return generated.UpdateItemParams{
 		ID:          item.ID,
 		Title:       item.Title,
@@ -162,7 +170,7 @@ func itemToUpdateParams(item *projects.Item) generated.UpdateItemParams {
 		Status:      item.Status,
 		Priority:    item.Priority,
 		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      item.Labels,
+		Labels:      labels,
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
 	}
