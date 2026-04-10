@@ -127,6 +127,10 @@ func filterTickets(items []generated.Item) []*tickets.Ticket {
 
 // ticketToCreateParams converts a domain Ticket to sqlc CreateItemParams.
 func ticketToCreateParams(t *tickets.Ticket) generated.CreateItemParams {
+	labels := t.Labels
+	if labels == nil {
+		labels = []string{}
+	}
 	return generated.CreateItemParams{
 		ID:          t.ID,
 		SpaceID:     t.SpaceID,
@@ -137,7 +141,7 @@ func ticketToCreateParams(t *tickets.Ticket) generated.CreateItemParams {
 		Priority:    string(t.Priority),
 		ReporterID:  t.ReporterID,
 		AssigneeID:  pgUUID(t.AssigneeID),
-		Labels:      t.Labels,
+		Labels:      labels,
 		DueAt:       pgTimestampPtr(t.DueAt),
 		Rank:        t.Rank,
 	}
@@ -145,6 +149,10 @@ func ticketToCreateParams(t *tickets.Ticket) generated.CreateItemParams {
 
 // ticketToUpdateParams converts a domain Ticket to sqlc UpdateItemParams.
 func ticketToUpdateParams(t *tickets.Ticket) generated.UpdateItemParams {
+	labels := t.Labels
+	if labels == nil {
+		labels = []string{}
+	}
 	return generated.UpdateItemParams{
 		ID:          t.ID,
 		Title:       t.Title,
@@ -152,7 +160,7 @@ func ticketToUpdateParams(t *tickets.Ticket) generated.UpdateItemParams {
 		Status:      string(t.Status),
 		Priority:    string(t.Priority),
 		AssigneeID:  pgUUID(t.AssigneeID),
-		Labels:      t.Labels,
+		Labels:      labels,
 		DueAt:       pgTimestampPtr(t.DueAt),
 		Rank:        t.Rank,
 	}
