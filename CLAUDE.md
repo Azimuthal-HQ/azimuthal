@@ -74,17 +74,149 @@ Run `make pre-push` locally before opening a PR.
 
 ## Testing Requirements — Non-Negotiable
 
-Before opening any PR that touches create, update, or delete operations:
+Before opening any PR that touches create, update, or delete operations,
+agents MUST run the full local verification suite below. No exceptions.
 
-1. Run `make migrate` against a real local database before testing
-2. Test the actual API endpoint with a real HTTP call — not just unit tests
-3. Verify every operation succeeds with MINIMUM required fields only
-   (do not test only the happy path with all fields populated)
-4. Verify every operation succeeds with ALL optional fields populated
-5. Do not rely solely on `go test ./...` for integration correctness —
-   unit tests do not catch database constraint violations
-6. If you cannot run a real database locally, note it explicitly in the
-   PR description and flag it for human verification before merge
+### Step 1 — Build verification
+```bash
+go build ./...
+go vet ./...
+go test -race ./...
+```
+
+### Step 2 — Start real local services
+```bash
+# Start postgres and minio
+docker compose -f build/docker-compose.dev.yml up -d db storage
+
+# Wait for healthy
+docker compose -f build/docker-compose.dev.yml exec db pg_isready -U azimuthal
+
+# Run migrations
+make migrate
+```
+
+### Step 3 — Start the binary
+```bash
+go build -o /tmp/azimuthal-test ./cmd/server
+DATABASE_URL=postgres://azimuthal:dev@localhost:5432/azimuthal_dev?sslmode=disable \
+JWT_SECRET=test-secret-for-local-testing-only \
+STORAGE_ENDPOINT=http://localhost:9000 \
+STORAGE_ACCESS_KEY=minioadmin \
+STORAGE_SECRET_KEY=minioadmin \
+STORAGE_BUCKET=azimuthal \
+APP_ENV=development \
+/tmp/azimuthal-test serve &
+SERVER_PID=$!
+sleep 2  # wait for server to start
+```
+
+### Step 4 — Create a test user and get a JWT
+```bash
+/tmp/azimuthal-test admin create-user \
+  --email test@azimuthal.dev \
+  --name "Test User" \
+  --password testpassword123
+
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@azimuthal.dev","password":"testpassword123"}' \
+  | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+
+echo "Got token: ${TOKEN:0:20}..."
+```
+
+### Step 5 — Get org ID
+```bash
+ORG_ID=$(curl -s http://localhost:8080/api/v1/me \
+  -H "Authorization: Bearer $TOKEN" \
+  | grep -o '"org_id":"[^"]*"' | cut -d'"' -f4)
+
+echo "Org ID: $ORG_ID"
+```
+
+### Step 6 — Test create operations with MINIMUM required fields
+```bash
+# Create a service desk space
+SPACE=$(curl -s -X POST \
+  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test Desk","type":"service_desk","slug":"test-desk"}')
+SPACE_ID=$(echo $SPACE | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+echo "Space ID: $SPACE_ID"
+
+# Create a ticket with minimum fields only
+curl -s -X POST \
+  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/items" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Test ticket","type":"ticket","status":"open","priority":"medium"}' \
+  | grep -v '"error"' && echo "✅ Ticket created" || echo "❌ Ticket failed"
+
+# Create a wiki space
+WIKI=$(curl -s -X POST \
+  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test Wiki","type":"wiki","slug":"test-wiki"}')
+WIKI_ID=$(echo $WIKI | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+# Create a page with minimum fields only
+curl -s -X POST \
+  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces/$WIKI_ID/pages" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Test page","slug":"test-page","content":""}' \
+  | grep -v '"error"' && echo "✅ Page created" || echo "❌ Page failed"
+
+# Create a project space
+PROJ=$(curl -s -X POST \
+  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test Project","type":"project","slug":"test-project"}')
+PROJ_ID=$(echo $PROJ | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+# Create an item with minimum fields only
+curl -s -X POST \
+  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces/$PROJ_ID/items" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Test item","type":"task","status":"open","priority":"medium"}' \
+  | grep -v '"error"' && echo "✅ Item created" || echo "❌ Item failed"
+```
+
+### Step 7 — Verify API routes return correct Content-Type
+```bash
+# API routes must return application/json
+CT=$(curl -s -I \
+  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/items" \
+  -H "Authorization: Bearer $TOKEN" \
+  | grep -i content-type)
+echo "API Content-Type: $CT"
+echo $CT | grep "application/json" && echo "✅ API returns JSON" || echo "❌ API returning wrong content type"
+
+# Frontend routes must return text/html
+CT=$(curl -s -I "http://localhost:8080/spaces/$SPACE_ID/tickets" \
+  | grep -i content-type)
+echo "Frontend Content-Type: $CT"
+echo $CT | grep "text/html" && echo "✅ Frontend returns HTML" || echo "❌ Frontend routing broken"
+```
+
+### Step 8 — Clean up
+```bash
+kill $SERVER_PID
+docker compose -f build/docker-compose.dev.yml down
+```
+
+### PR Rules
+
+- If **ALL steps pass**: open a normal ready-to-merge PR
+- If **ANY step fails**: fix the issue before opening the PR
+- If a step **cannot run** (e.g. Docker not available in environment): open a
+  **DRAFT** PR, mark the step unchecked, add comment "Requires human verification"
+- **NEVER** open a ready-to-merge PR with unchecked Definition of Done items
 
 ---
 
