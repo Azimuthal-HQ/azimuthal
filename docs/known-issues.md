@@ -83,3 +83,24 @@ These may be intentional design choices (ephemeral data), but should be reviewed
 5. Calls `api.NewRouter()` with the full `RouterConfig`
 
 All API routes (auth, tickets, wiki, projects, spaces) are served alongside health/ready.
+
+---
+
+## 6. Testing Gap — Real Database Integration Tests
+
+**Discovered:** v0.1.4 testing
+**Status:** Partially mitigated — see CLAUDE.md Testing Requirements
+
+Agent tests use `go test ./...` which does not catch database constraint
+violations that only surface when inserting real rows with missing fields.
+
+Specific example: The `labels` column on the `items` table had a NOT NULL
+constraint with no default value. Creating a ticket or project item with
+no labels field caused SQLSTATE 23502. This was not caught by any automated
+test because no test exercised minimum-field creation against a real database.
+
+**Mitigation:** All agents must now follow the Testing Requirements in
+CLAUDE.md before opening PRs that touch write operations.
+
+**Permanent fix:** Add `DEFAULT '{}'` to the labels column migration and
+default labels to `[]` in the item adapter layer (fixed in v0.1.5).
