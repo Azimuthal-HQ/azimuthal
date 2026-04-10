@@ -72,6 +72,22 @@ Run `make pre-push` locally before opening a PR.
 
 ---
 
+## Testing Requirements — Non-Negotiable
+
+Before opening any PR that touches create, update, or delete operations:
+
+1. Run `make migrate` against a real local database before testing
+2. Test the actual API endpoint with a real HTTP call — not just unit tests
+3. Verify every operation succeeds with MINIMUM required fields only
+   (do not test only the happy path with all fields populated)
+4. Verify every operation succeeds with ALL optional fields populated
+5. Do not rely solely on `go test ./...` for integration correctness —
+   unit tests do not catch database constraint violations
+6. If you cannot run a real database locally, note it explicitly in the
+   PR description and flag it for human verification before merge
+
+---
+
 ## Repository Layout
 
 ```
