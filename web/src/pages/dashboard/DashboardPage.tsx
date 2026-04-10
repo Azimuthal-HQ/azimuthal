@@ -61,7 +61,8 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const orgId = user?.orgId ?? '';
-  const { data: spaces, isLoading, error } = useSpaces(orgId);
+  const { data: rawSpaces, isLoading, error } = useSpaces(orgId);
+  const spaces = rawSpaces ? (Array.isArray(rawSpaces) ? rawSpaces : [rawSpaces]) : undefined;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formName, setFormName] = useState('');

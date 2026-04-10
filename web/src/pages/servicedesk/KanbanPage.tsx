@@ -107,7 +107,7 @@ function TicketCard({ ticket, overlay, spaceId }: SortableTicketCardProps) {
           className="text-[var(--text-xs)] font-medium text-[var(--color-primary)] hover:underline"
           style={{ fontFamily: 'var(--font-mono)' }}
         >
-          {ticket.id.slice(0, 8)}
+          {(ticket.id ?? '').slice(0, 8)}
         </Link>
         <p className="text-[var(--text-sm)] leading-snug text-[var(--color-text)]">
           {ticket.title}

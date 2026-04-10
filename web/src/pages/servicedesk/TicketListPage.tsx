@@ -229,7 +229,7 @@ export function TicketListPage() {
                         className="font-[var(--font-mono)] text-[var(--color-primary)] hover:underline"
                         style={{ fontFamily: 'var(--font-mono)' }}
                       >
-                        {ticket.id.slice(0, 8)}
+                        {(ticket.id ?? '').slice(0, 8)}
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-[var(--color-text)]">
@@ -248,7 +248,7 @@ export function TicketListPage() {
                       </Badge>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-[var(--color-text-muted)]">
-                      {ticket.created_at.slice(0, 10)}
+                      {(ticket.created_at ?? '').slice(0, 10)}
                     </td>
                   </tr>
                 );

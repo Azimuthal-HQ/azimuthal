@@ -21,13 +21,14 @@ interface TopNavProps {
 
 /** Fixed top navigation bar with logo, space switcher, and user actions. */
 export function TopNav({
-  spaces = [],
+  spaces: rawSpaces = [],
   currentSpaceId,
   onSpaceChange,
   onLogout,
   userName = 'User',
   className,
 }: TopNavProps) {
+  const spaces = Array.isArray(rawSpaces) ? rawSpaces : [rawSpaces];
   const [spaceSwitcherOpen, setSpaceSwitcherOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const spaceSwitcherRef = useRef<HTMLDivElement>(null);
