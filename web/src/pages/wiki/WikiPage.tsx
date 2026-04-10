@@ -22,10 +22,9 @@ import { useWikiPages, useCreateWikiPage } from '../../lib/api';
 
 /** Two-panel wiki page with sidebar list and markdown content. */
 export function WikiPage() {
-  const { spaceId, pageId } = useParams<{ spaceId: string; pageId: string }>();
-  const effectiveSpaceId = spaceId ?? 'default';
-  const { data: pages, isLoading, error } = useWikiPages(effectiveSpaceId);
-  const createMutation = useCreateWikiPage(effectiveSpaceId);
+  const { spaceId = '', pageId } = useParams<{ spaceId: string; pageId: string }>();
+  const { data: pages, isLoading, error } = useWikiPages(spaceId);
+  const createMutation = useCreateWikiPage(spaceId);
 
   const [activeId, setActiveId] = useState<string | null>(pageId ?? null);
 
@@ -53,16 +52,19 @@ export function WikiPage() {
     const title = formTitle.trim();
     if (!title) return;
 
+    const body = {
+      title,
+      content: '',
+    };
+    console.log('[WikiPage] Creating page:', JSON.stringify(body));
+
     try {
-      const created = await createMutation.mutateAsync({
-        title,
-        body: '',
-      });
+      const created = await createMutation.mutateAsync(body);
       setActiveId(created.id);
       setDialogOpen(false);
       resetForm();
-    } catch {
-      // Error handled by mutation state
+    } catch (err) {
+      console.error('[WikiPage] Create page error:', err);
     }
   }
 

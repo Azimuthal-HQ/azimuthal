@@ -93,7 +93,7 @@ function SortableTicketCard({ ticket, spaceId }: { ticket: Ticket; spaceId?: str
 }
 
 function TicketCard({ ticket, overlay, spaceId }: SortableTicketCardProps) {
-  const ticketPath = spaceId ? `/spaces/${spaceId}/tickets/${ticket.id}` : `/tickets/${ticket.id}`;
+  const ticketPath = `/spaces/${spaceId}/tickets/${ticket.id}`;
   return (
     <Card
       className={cn(
@@ -163,9 +163,8 @@ function DroppableColumn({ column, tickets, spaceId }: DroppableColumnProps) {
 
 /** Kanban board view for service desk tickets with drag-and-drop. */
 export function KanbanPage() {
-  const { spaceId } = useParams<{ spaceId: string }>();
-  const effectiveSpaceId = spaceId ?? 'default';
-  const { data: tickets, isLoading, error } = useTickets(effectiveSpaceId);
+  const { spaceId = '' } = useParams<{ spaceId: string }>();
+  const { data: tickets, isLoading, error } = useTickets(spaceId);
   const [activeTicket, setActiveTicket] = useState<Ticket | null>(null);
 
   const columns = useMemo(() => {

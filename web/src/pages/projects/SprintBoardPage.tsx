@@ -141,9 +141,8 @@ function DroppableColumn({ column, items, onItemClick }: { column: ColumnDef; it
 /** Sprint board page with drag-and-drop columns. */
 export function SprintBoardPage() {
   const navigate = useNavigate();
-  const { spaceId } = useParams<{ spaceId: string }>();
-  const effectiveSpaceId = spaceId ?? 'default';
-  const { data: items, isLoading, error } = useProjectItems(effectiveSpaceId);
+  const { spaceId = '' } = useParams<{ spaceId: string }>();
+  const { data: items, isLoading, error } = useProjectItems(spaceId);
   const [activeItem, setActiveItem] = useState<ProjectItem | null>(null);
 
   const columns = useMemo(() => {
@@ -164,7 +163,7 @@ export function SprintBoardPage() {
   }, [items]);
 
   const handleItemClick = useCallback((id: string) => {
-    const backlogPath = spaceId ? `/spaces/${spaceId}/backlog/${id}` : `/backlog/${id}`;
+    const backlogPath = `/spaces/${spaceId}/backlog/${id}`;
     navigate(backlogPath);
   }, [navigate, spaceId]);
 

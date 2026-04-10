@@ -39,22 +39,23 @@ const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
 
 /** Backlog list page for project items. */
 export function BacklogPage() {
-  const { spaceId } = useParams<{ spaceId: string }>();
-  const effectiveSpaceId = spaceId ?? 'default';
-  const { data: items, isLoading, error } = useProjectItems(effectiveSpaceId);
-  const createMutation = useCreateProjectItem(effectiveSpaceId);
+  const { spaceId = '' } = useParams<{ spaceId: string }>();
+  const { data: items, isLoading, error } = useProjectItems(spaceId);
+  const createMutation = useCreateProjectItem(spaceId);
 
   const [search, setSearch] = useState('');
 
   // Modal state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formTitle, setFormTitle] = useState('');
-  const [formPriority, setFormPriority] = useState(2); // medium
+  const [formPriority, setFormPriority] = useState('medium');
+  const [formKind, setFormKind] = useState('task');
   const [formDescription, setFormDescription] = useState('');
 
   function resetForm() {
     setFormTitle('');
-    setFormPriority(2);
+    setFormPriority('medium');
+    setFormKind('task');
     setFormDescription('');
   }
 
@@ -62,17 +63,20 @@ export function BacklogPage() {
     const title = formTitle.trim();
     if (!title) return;
 
+    const body = {
+      title,
+      description: formDescription.trim() || undefined,
+      kind: formKind,
+      priority: formPriority,
+    };
+    console.log('[BacklogPage] Creating item:', JSON.stringify(body));
+
     try {
-      await createMutation.mutateAsync({
-        title,
-        description: formDescription.trim() || undefined,
-        status: 'todo',
-        priority: formPriority,
-      });
+      await createMutation.mutateAsync(body);
       setDialogOpen(false);
       resetForm();
-    } catch {
-      // Error handled by mutation state
+    } catch (err) {
+      console.error('[BacklogPage] Create item error:', err);
     }
   }
 
@@ -162,7 +166,7 @@ export function BacklogPage() {
               </thead>
               <tbody>
                 {groupItems.map((item) => {
-                  const itemPath = spaceId ? `/spaces/${spaceId}/backlog/${item.id}` : `/backlog/${item.id}`;
+                  const itemPath = `/spaces/${spaceId}/backlog/${item.id}`;
                   return (
                     <tr key={item.id} className="border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors">
                       <td className="whitespace-nowrap px-4 py-3">
@@ -204,6 +208,46 @@ export function BacklogPage() {
             <div className="space-y-2">
               <label htmlFor="item-title" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Title</label>
               <Input id="item-title" placeholder="e.g. Implement user registration flow" value={formTitle} onChange={(e) => setFormTitle(e.target.value)} autoFocus />
+            </div>
+
+            <div className="flex gap-4">
+              <div className="space-y-2 flex-1">
+                <label htmlFor="item-kind" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Type</label>
+                <select
+                  id="item-kind"
+                  value={formKind}
+                  onChange={(e) => setFormKind(e.target.value)}
+                  className={cn(
+                    'flex h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
+                    'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+                  )}
+                >
+                  <option value="task">Task</option>
+                  <option value="story">Story</option>
+                  <option value="bug">Bug</option>
+                  <option value="epic">Epic</option>
+                </select>
+              </div>
+
+              <div className="space-y-2 flex-1">
+                <label htmlFor="item-priority" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Priority</label>
+                <select
+                  id="item-priority"
+                  value={formPriority}
+                  onChange={(e) => setFormPriority(e.target.value)}
+                  className={cn(
+                    'flex h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
+                    'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+                  )}
+                >
+                  <option value="urgent">Urgent</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
             </div>
 
             <div className="space-y-2">

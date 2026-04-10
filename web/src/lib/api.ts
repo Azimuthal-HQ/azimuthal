@@ -297,10 +297,9 @@ async function fetchTicket(spaceId: string, ticketId: string): Promise<Ticket> {
 interface CreateTicketRequest {
   title: string;
   description?: string;
-  status?: TicketStatus;
-  priority?: number;
+  priority?: string;
   assignee_id?: string | null;
-  label_ids?: string[];
+  labels?: string[];
 }
 
 async function createTicket(spaceId: string, req: CreateTicketRequest): Promise<Ticket> {
@@ -313,10 +312,8 @@ async function createTicket(spaceId: string, req: CreateTicketRequest): Promise<
 interface UpdateTicketRequest {
   title?: string;
   description?: string;
-  status?: TicketStatus;
-  priority?: number;
-  assignee_id?: string | null;
-  label_ids?: string[];
+  priority?: string;
+  labels?: string[];
 }
 
 async function updateTicket(
@@ -327,6 +324,17 @@ async function updateTicket(
   return apiFetch<Ticket>(`/spaces/${spaceId}/tickets/${ticketId}`, {
     method: 'PATCH',
     body: JSON.stringify(req),
+  });
+}
+
+async function transitionTicketStatus(
+  spaceId: string,
+  ticketId: string,
+  status: TicketStatus,
+): Promise<Ticket> {
+  return apiFetch<Ticket>(`/spaces/${spaceId}/tickets/${ticketId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status }),
   });
 }
 
@@ -344,8 +352,9 @@ async function fetchWikiPage(spaceId: string, pageId: string): Promise<WikiPage>
 
 interface CreateWikiPageRequest {
   title: string;
-  body: string;
+  content: string;
   parent_id?: string | null;
+  position?: number;
 }
 
 async function createWikiPage(spaceId: string, req: CreateWikiPageRequest): Promise<WikiPage> {
@@ -357,8 +366,8 @@ async function createWikiPage(spaceId: string, req: CreateWikiPageRequest): Prom
 
 interface UpdateWikiPageRequest {
   title?: string;
-  body?: string;
-  parent_id?: string | null;
+  content?: string;
+  expected_version?: number;
 }
 
 async function updateWikiPage(
@@ -387,11 +396,11 @@ export async function fetchProjectItem(spaceId: string, itemId: string): Promise
 interface CreateProjectItemRequest {
   title: string;
   description?: string;
-  status?: string;
-  priority?: number;
+  kind: string;
+  priority: string;
   assignee_id?: string | null;
   sprint_id?: string | null;
-  label_ids?: string[];
+  labels?: string[];
 }
 
 async function createProjectItem(
@@ -407,12 +416,9 @@ async function createProjectItem(
 interface UpdateProjectItemRequest {
   title?: string;
   description?: string;
-  status?: string;
-  priority?: number;
+  priority?: string;
   assignee_id?: string | null;
-  sprint_id?: string | null;
-  sort_order?: number;
-  label_ids?: string[];
+  labels?: string[];
 }
 
 async function updateProjectItem(
@@ -679,6 +685,17 @@ export function useUpdateTicket(spaceId: string, ticketId: string) {
   const queryClient = useQueryClient();
   return useMutation<Ticket, APIError, UpdateTicketRequest>({
     mutationFn: (req) => updateTicket(spaceId, ticketId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
+    },
+  });
+}
+
+export function useTransitionTicketStatus(spaceId: string, ticketId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Ticket, APIError, TicketStatus>({
+    mutationFn: (status) => transitionTicketStatus(spaceId, ticketId, status),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });

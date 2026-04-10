@@ -61,11 +61,11 @@ const PRIORITY_ICON: Record<TicketPriority, typeof AlertTriangle> = {
   low: ArrowDown,
 };
 
-const PRIORITY_NAME_TO_NUM: Record<TicketPriority, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
+const PRIORITY_NAME_TO_API: Record<TicketPriority, string> = {
+  critical: 'urgent',
+  high: 'high',
+  medium: 'medium',
+  low: 'low',
 };
 
 // ---------------------------------------------------------------------------
@@ -74,10 +74,9 @@ const PRIORITY_NAME_TO_NUM: Record<TicketPriority, number> = {
 
 /** Filterable list/table view of service desk tickets. */
 export function TicketListPage() {
-  const { spaceId } = useParams<{ spaceId: string }>();
-  const effectiveSpaceId = spaceId ?? 'default';
-  const { data: tickets, isLoading, error } = useTickets(effectiveSpaceId);
-  const createTicketMutation = useCreateTicket(effectiveSpaceId);
+  const { spaceId = '' } = useParams<{ spaceId: string }>();
+  const { data: tickets, isLoading, error } = useTickets(spaceId);
+  const createTicketMutation = useCreateTicket(spaceId);
 
   const [statusFilter, setStatusFilter] = useState<TicketStatus | 'all'>('all');
   const [priorityFilter, setPriorityFilter] = useState<number | 'all'>('all');
@@ -99,16 +98,19 @@ export function TicketListPage() {
     const title = formTitle.trim();
     if (!title) return;
 
+    const body = {
+      title,
+      description: formDescription.trim() || undefined,
+      priority: PRIORITY_NAME_TO_API[formPriority],
+    };
+    console.log('[TicketListPage] Creating ticket:', JSON.stringify(body));
+
     try {
-      await createTicketMutation.mutateAsync({
-        title,
-        description: formDescription.trim() || undefined,
-        priority: PRIORITY_NAME_TO_NUM[formPriority],
-      });
+      await createTicketMutation.mutateAsync(body);
       setDialogOpen(false);
       resetForm();
-    } catch {
-      // Error handled by mutation state
+    } catch (err) {
+      console.error('[TicketListPage] Create ticket error:', err);
     }
   }
 
@@ -215,7 +217,7 @@ export function TicketListPage() {
             </thead>
             <tbody>
               {filtered.map((ticket) => {
-                const ticketPath = spaceId ? `/spaces/${spaceId}/tickets/${ticket.id}` : `/tickets/${ticket.id}`;
+                const ticketPath = `/spaces/${spaceId}/tickets/${ticket.id}`;
                 return (
                   <tr
                     key={ticket.id}

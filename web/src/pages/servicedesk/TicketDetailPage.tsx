@@ -3,7 +3,7 @@ import { ChevronRight, Clock, AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent } from '../../components/ui/card';
 import { cn } from '../../lib/utils';
-import { useTicket, useUpdateTicket, type TicketStatus } from '../../lib/api';
+import { useTicket, useTransitionTicketStatus, type TicketStatus } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Badge helpers
@@ -45,13 +45,12 @@ const ALL_STATUSES: TicketStatus[] = ['open', 'in_progress', 'resolved', 'closed
 
 /** Detail page for a single service desk ticket. */
 export function TicketDetailPage() {
-  const { spaceId, ticketId } = useParams<{ spaceId: string; ticketId: string }>();
-  const effectiveSpaceId = spaceId ?? 'default';
-  const { data: ticket, isLoading, error } = useTicket(effectiveSpaceId, ticketId ?? '');
-  const updateMutation = useUpdateTicket(effectiveSpaceId, ticketId ?? '');
+  const { spaceId = '', ticketId } = useParams<{ spaceId: string; ticketId: string }>();
+  const { data: ticket, isLoading, error } = useTicket(spaceId, ticketId ?? '');
+  const transitionMutation = useTransitionTicketStatus(spaceId, ticketId ?? '');
 
   function handleStatusChange(newStatus: TicketStatus) {
-    updateMutation.mutate({ status: newStatus });
+    transitionMutation.mutate(newStatus);
   }
 
   if (isLoading) {
