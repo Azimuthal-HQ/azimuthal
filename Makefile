@@ -2,7 +2,7 @@
 
 .PHONY: help build docker-build test test-coverage lint fmt \
         scan scan-sast scan-vuln scan-secrets scan-container \
-        dev migrate rollback sqlc clean pre-push \
+        dev migrate rollback sqlc clean pre-push verify-api \
         frontend frontend-install frontend-type-check
 
 # ── Config ────────────────────────────────────────────────────
@@ -158,6 +158,13 @@ dev:
 	@echo "→ Starting Azimuthal dev server..."
 	@which air > /dev/null || go install github.com/air-verse/air@latest
 	@air
+
+# ── API Verification ─────────────────────────────────────────
+verify-api: build
+	@echo "→ Running full API verification suite..."
+	@chmod +x scripts/verify-api.sh
+	@./scripts/verify-api.sh
+	@echo "✓ API verification complete"
 
 # ── Pre-push (run before git push) ───────────────────────────
 pre-push: fmt lint test scan
