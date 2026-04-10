@@ -54,7 +54,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Post("/items", h.CreateItem)
 	r.Get("/items/search", h.SearchItems)
 	r.Get("/items/{itemID}", h.GetItem)
-	r.Put("/items/{itemID}", h.UpdateItem)
+	r.Patch("/items/{itemID}", h.UpdateItem)
 	r.Delete("/items/{itemID}", h.DeleteItem)
 	r.Post("/items/{itemID}/status", h.UpdateItemStatus)
 	r.Post("/items/{itemID}/sprint", h.AssignToSprint)

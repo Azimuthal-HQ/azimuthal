@@ -145,6 +145,13 @@ func newSPAHandler() (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
+		// Never intercept API routes — return a proper 404 so clients
+		// get JSON errors instead of index.html.
+		if strings.HasPrefix(path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
+
 		// Try to serve the file directly
 		if path != "/" {
 			cleanPath := strings.TrimPrefix(path, "/")
