@@ -265,7 +265,8 @@ export async function refreshAccessToken(): Promise<RefreshResponse> {
 // ---------------------------------------------------------------------------
 
 async function fetchSpaces(orgId: string): Promise<Space[]> {
-  return apiFetch<Space[]>(`/orgs/${orgId}/spaces`);
+  const data = await apiFetch<Space[] | Space>(`/orgs/${orgId}/spaces`);
+  return Array.isArray(data) ? data : [data];
 }
 
 interface CreateSpaceRequest {
@@ -287,7 +288,8 @@ async function createSpace(orgId: string, req: CreateSpaceRequest): Promise<Spac
 // ---------------------------------------------------------------------------
 
 async function fetchTickets(spaceId: string): Promise<Ticket[]> {
-  return apiFetch<Ticket[]>(`/spaces/${spaceId}/tickets`);
+  const data = await apiFetch<Ticket[] | Ticket>(`/spaces/${spaceId}/tickets`);
+  return Array.isArray(data) ? data : [data];
 }
 
 async function fetchTicket(spaceId: string, ticketId: string): Promise<Ticket> {
@@ -343,7 +345,8 @@ async function transitionTicketStatus(
 // ---------------------------------------------------------------------------
 
 async function fetchWikiPages(spaceId: string): Promise<WikiPage[]> {
-  return apiFetch<WikiPage[]>(`/spaces/${spaceId}/wiki`);
+  const data = await apiFetch<WikiPage[] | WikiPage>(`/spaces/${spaceId}/wiki`);
+  return Array.isArray(data) ? data : [data];
 }
 
 async function fetchWikiPage(spaceId: string, pageId: string): Promise<WikiPage> {
@@ -386,7 +389,8 @@ async function updateWikiPage(
 // ---------------------------------------------------------------------------
 
 async function fetchProjectItems(spaceId: string): Promise<ProjectItem[]> {
-  return apiFetch<ProjectItem[]>(`/spaces/${spaceId}/projects/items`);
+  const data = await apiFetch<ProjectItem[] | ProjectItem>(`/spaces/${spaceId}/projects/items`);
+  return Array.isArray(data) ? data : [data];
 }
 
 export async function fetchProjectItem(spaceId: string, itemId: string): Promise<ProjectItem> {

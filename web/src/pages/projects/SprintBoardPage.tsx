@@ -90,7 +90,7 @@ function ItemCard({ item, overlay, onItemClick }: { item: ProjectItem; overlay?:
           className="text-[var(--text-xs)] font-medium text-[var(--color-primary)]"
           style={{ fontFamily: 'var(--font-mono)' }}
         >
-          {item.id.slice(0, 8)}
+          {(item.id ?? '').slice(0, 8)}
         </span>
         <p className="text-[var(--text-sm)] leading-snug text-[var(--color-text)]">
           {item.title}

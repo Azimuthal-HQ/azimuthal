@@ -144,7 +144,7 @@ export function WikiPage() {
                   {activePage.title}
                 </h1>
                 <p className="mt-1 text-[var(--text-sm)] text-[var(--color-text-muted)]">
-                  Last edited {activePage.updated_at.slice(0, 10)}
+                  Last edited {(activePage.updated_at ?? '').slice(0, 10)}
                 </p>
               </div>
               <Button variant="secondary" size="sm">

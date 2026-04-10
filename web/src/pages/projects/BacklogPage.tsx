@@ -103,6 +103,15 @@ export function BacklogPage() {
       if (b[0] === 'Backlog') return -1;
       return a[0].localeCompare(b[0]);
     });
+    // Sort items within each group by sort_order, treating falsy values as lowest priority
+    for (const [, groupItems] of entries) {
+      groupItems.sort((a, b) => {
+        if (!a.sort_order && !b.sort_order) return 0;
+        if (!a.sort_order) return 1;
+        if (!b.sort_order) return -1;
+        return a.sort_order - b.sort_order;
+      });
+    }
     return entries;
   }, [filtered]);
 
@@ -171,7 +180,7 @@ export function BacklogPage() {
                     <tr key={item.id} className="border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors">
                       <td className="whitespace-nowrap px-4 py-3">
                         <Link to={itemPath} className="font-medium text-[var(--color-primary)] hover:underline" style={{ fontFamily: 'var(--font-mono)' }}>
-                          {item.id.slice(0, 8)}
+                          {(item.id ?? '').slice(0, 8)}
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-[var(--color-text)]">
