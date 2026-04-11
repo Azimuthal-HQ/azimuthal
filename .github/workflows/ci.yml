@@ -399,11 +399,8 @@ jobs:
           go install github.com/pressly/goose/v3/cmd/goose@latest
           goose -dir migrations postgres "$DATABASE_URL" up
 
-      - name: Install frontend dependencies
-        run: cd web && npm install
-
       - name: Build frontend
-        run: cd web && npm run build
+        run: cd web && npm ci && npm run build
 
       - name: Build binary
         run: |
