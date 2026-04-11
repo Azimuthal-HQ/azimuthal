@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -12,16 +13,24 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 )
 
+// MembershipResolver looks up a user's primary organization after login.
+type MembershipResolver interface {
+	// PrimaryOrgForUser returns the org ID, slug, and name for the user's
+	// primary organization (owner role preferred, then earliest membership).
+	PrimaryOrgForUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, string, string, error)
+}
+
 // Handler holds the dependencies for auth HTTP handlers.
 type Handler struct {
-	users    *auth.UserService
-	jwt      *auth.JWTService
-	sessions *auth.SessionService
+	users       *auth.UserService
+	jwt         *auth.JWTService
+	sessions    *auth.SessionService
+	memberships MembershipResolver
 }
 
 // NewHandler creates an auth Handler.
-func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService) *Handler {
-	return &Handler{users: users, jwt: jwt, sessions: sessions}
+func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver) *Handler {
+	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships}
 }
 
 // Routes returns a chi.Router with all auth endpoints mounted.
@@ -43,7 +52,15 @@ type loginRequest struct {
 type loginResponse struct {
 	AccessToken  string       `json:"access_token"`
 	RefreshToken string       `json:"refresh_token"`
+	Token        string       `json:"token"`
 	User         userResponse `json:"user"`
+	Org          *orgResponse `json:"org,omitempty"`
+}
+
+type orgResponse struct {
+	ID   uuid.UUID `json:"id"`
+	Slug string    `json:"slug"`
+	Name string    `json:"name"`
 }
 
 type registerRequest struct {
@@ -92,7 +109,17 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role)
+	// Resolve the user's primary org from memberships.
+	// Falls back to the user's org_id if no memberships exist (e.g. registered
+	// via the API but not yet added to an org through admin create-user).
+	orgID, orgSlug, orgName, err := h.memberships.PrimaryOrgForUser(r.Context(), user.ID)
+	if err != nil {
+		orgID = user.OrgID
+		orgSlug = ""
+		orgName = ""
+	}
+
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, orgID.String(), user.Role)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
@@ -101,13 +128,19 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, loginResponse{
 		AccessToken:  pair.AccessToken,
 		RefreshToken: pair.RefreshToken,
+		Token:        pair.AccessToken,
 		User: userResponse{
 			ID:          user.ID,
 			Email:       user.Email,
 			DisplayName: user.DisplayName,
-			OrgID:       user.OrgID.String(),
+			OrgID:       orgID.String(),
 			Role:        user.Role,
 			IsActive:    user.IsActive,
+		},
+		Org: &orgResponse{
+			ID:   orgID,
+			Slug: orgSlug,
+			Name: orgName,
 		},
 	})
 }
@@ -143,6 +176,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, loginResponse{
 		AccessToken:  pair.AccessToken,
 		RefreshToken: pair.RefreshToken,
+		Token:        pair.AccessToken,
 		User: userResponse{
 			ID:          user.ID,
 			Email:       user.Email,

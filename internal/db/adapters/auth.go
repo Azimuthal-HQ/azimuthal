@@ -44,13 +44,10 @@ func (a *UserAdapter) GetByID(ctx context.Context, id uuid.UUID) (*auth.User, er
 	return dbUserToDomain(row), nil
 }
 
-// GetByEmail retrieves a user by email address. Returns auth.ErrNotFound if absent.
-// The generated query requires OrgID; the adapter injects the configured one.
+// GetByEmail retrieves a user by email address globally (across all orgs).
+// Returns auth.ErrNotFound if absent.
 func (a *UserAdapter) GetByEmail(ctx context.Context, email string) (*auth.User, error) {
-	row, err := a.q.GetUserByEmail(ctx, generated.GetUserByEmailParams{
-		OrgID: a.orgID,
-		Email: email,
-	})
+	row, err := a.q.GetUserByEmailGlobal(ctx, email)
 	if err != nil {
 		return nil, fmt.Errorf("user adapter get by email: %w", err)
 	}
@@ -200,4 +197,28 @@ func dbSessionToDomain(s generated.Session, plainToken string) *auth.Session {
 // HashToken is exported for use in tests and the wiring layer.
 func HashToken(token string) string {
 	return hashToken(token)
+}
+
+// MembershipAdapter provides org-membership lookups backed by sqlc queries.
+type MembershipAdapter struct {
+	q *generated.Queries
+}
+
+// NewMembershipAdapter creates a MembershipAdapter.
+func NewMembershipAdapter(q *generated.Queries) *MembershipAdapter {
+	return &MembershipAdapter{q: q}
+}
+
+// PrimaryOrgForUser returns the user's primary organization (owner role first,
+// then earliest membership). Returns the org ID, slug, and name.
+func (a *MembershipAdapter) PrimaryOrgForUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, string, string, error) {
+	rows, err := a.q.ListMembershipsByUser(ctx, userID)
+	if err != nil {
+		return uuid.Nil, "", "", fmt.Errorf("membership adapter list by user: %w", err)
+	}
+	if len(rows) == 0 {
+		return uuid.Nil, "", "", fmt.Errorf("membership adapter: no memberships found for user")
+	}
+	// Rows are ordered: owner first, then by created_at ASC
+	return rows[0].OrgID, rows[0].OrgSlug, rows[0].OrgName, nil
 }

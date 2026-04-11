@@ -134,12 +134,12 @@ func runCreateUser(_ *cobra.Command, _ []string) error {
 // printCreateUserSuccess prints the success output after creating a user and org.
 func printCreateUserSuccess(u *auth.User, orgSlug string) {
 	fmt.Printf("\u2713 User created: %s (%s)\n", u.DisplayName, u.Email)
-	fmt.Printf("\u2713 Organization created: %s\n", orgSlug)
-	fmt.Printf("\u2713 User added as owner of %s\n", orgSlug)
+	fmt.Printf("\u2713 Organization created: %s (slug: %s)\n", u.DisplayName, orgSlug)
+	fmt.Printf("\u2713 User added as owner\n")
 	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Println("  Visit http://localhost:8080 and log in with your credentials")
-	fmt.Println("  Run 'azimuthal admin create-user' to add more users")
+	fmt.Println("Login at: http://localhost:8080/login")
+	fmt.Printf("Email:    %s\n", u.Email)
+	fmt.Println("Password: <the password you provided>")
 }
 
 // --- reset-password ---
@@ -178,12 +178,7 @@ func runResetPassword(_ *cobra.Command, _ []string) error {
 
 	queries := generated.New(pool)
 
-	orgID, err := ensureDefaultOrg(ctx, queries)
-	if err != nil {
-		return fmt.Errorf("getting default org: %w", err)
-	}
-
-	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, orgID))
+	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, uuid.Nil))
 	u, err := userSvc.GetUserByEmail(ctx, resetEmail)
 	if err != nil {
 		return fmt.Errorf("finding user: %w", err)

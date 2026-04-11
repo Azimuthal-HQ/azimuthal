@@ -102,9 +102,11 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, orgID uuid.UUID
 		Issuer:     "azimuthal",
 	})
 
-	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, orgID))
+	userAdapter := adapters.NewUserAdapter(queries, orgID)
+	userSvc := auth.NewUserService(userAdapter)
 	sessionSvc := auth.NewSessionService(adapters.NewSessionAdapter(queries), auth.SessionConfig{TTL: cfg.JWTExpiry})
 	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc)
+	membershipResolver := adapters.NewMembershipAdapter(queries)
 
 	ticketSvc := tickets.NewTicketService(adapters.NewTicketAdapter(queries))
 
@@ -122,7 +124,7 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, orgID uuid.UUID
 
 	return api.NewRouter(api.RouterConfig{
 		Authenticator:  authenticator,
-		AuthHandler:    authapi.NewHandler(userSvc, jwtSvc, sessionSvc),
+		AuthHandler:    authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver),
 		TicketHandler:  ticketsapi.NewHandler(ticketSvc),
 		WikiHandler:    wikiapi.NewHandler(wikiSvc),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))),
@@ -168,9 +170,8 @@ func newSPAHandler() (http.Handler, error) {
 	}), nil
 }
 
-// ensureDefaultOrg creates or retrieves the default organization. In a
-// single-tenant deployment this is the only org; multi-tenant support can
-// be added later.
+// ensureDefaultOrg creates or retrieves the default organization. This org
+// is used for the register endpoint; login looks up users globally.
 func ensureDefaultOrg(ctx context.Context, q *generated.Queries) (uuid.UUID, error) {
 	org, err := q.GetOrganizationBySlug(ctx, "default")
 	if err == nil {

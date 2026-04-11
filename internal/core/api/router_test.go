@@ -442,6 +442,12 @@ func (m *mockRelationRepo) Delete(_ context.Context, _ uuid.UUID) error { return
 
 type mockLabelRepo struct{}
 
+type mockMembershipResolver struct{}
+
+func (m *mockMembershipResolver) PrimaryOrgForUser(_ context.Context, _ uuid.UUID) (uuid.UUID, string, string, error) {
+	return uuid.MustParse("00000000-0000-0000-0000-000000000001"), "test-org", "Test Org", nil
+}
+
 func (m *mockLabelRepo) Create(_ context.Context, l *projects.Label) error {
 	l.ID = uuid.New()
 	return nil
@@ -489,7 +495,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	relationSvc := projects.NewRelationService(&mockRelationRepo{})
 	labelSvc := projects.NewLabelService(&mockLabelRepo{})
 
-	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc)
+	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{})
 	ticketHandler := ticketsapi.NewHandler(ticketSvc)
 	wikiHandler := wikiapi.NewHandler(wikiSvc)
 	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc)
