@@ -101,6 +101,13 @@ func (m *mockSessionRepo) DeleteAllForUser(_ context.Context, userID uuid.UUID) 
 
 func (m *mockSessionRepo) DeleteExpired(_ context.Context) error { return nil }
 
+// mockMembershipResolver returns a fixed org for any user.
+type mockMembershipResolver struct{}
+
+func (m *mockMembershipResolver) PrimaryOrgForUser(_ context.Context, _ uuid.UUID) (uuid.UUID, string, string, error) {
+	return uuid.MustParse("00000000-0000-0000-0000-000000000001"), "test-org", "Test Org", nil
+}
+
 func setupHandler(t *testing.T) (*authapi.Handler, *auth.JWTService) {
 	t.Helper()
 	pk, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -116,7 +123,7 @@ func setupHandler(t *testing.T) (*authapi.Handler, *auth.JWTService) {
 	})
 	userSvc := auth.NewUserService(newMockUserRepo())
 	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
-	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc)
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{})
 	return h, jwtSvc
 }
 

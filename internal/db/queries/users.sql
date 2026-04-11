@@ -9,6 +9,17 @@ SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL;
 -- name: GetUserByEmail :one
 SELECT * FROM users WHERE org_id = $1 AND email = $2 AND deleted_at IS NULL;
 
+-- name: GetUserByEmailGlobal :one
+SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL;
+
+-- name: ListMembershipsByUser :many
+SELECT m.id, m.org_id, m.user_id, m.role, m.invited_by, m.created_at, m.updated_at,
+       o.slug AS org_slug, o.name AS org_name
+FROM memberships m
+JOIN organizations o ON o.id = m.org_id
+WHERE m.user_id = $1
+ORDER BY m.role = 'owner' DESC, m.created_at ASC;
+
 -- name: ListUsersByOrg :many
 SELECT * FROM users WHERE org_id = $1 AND deleted_at IS NULL ORDER BY display_name ASC;
 

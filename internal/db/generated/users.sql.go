@@ -208,6 +208,81 @@ const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at FROM users WHERE org_id = $1 AND email = $2 AND deleted_at IS NULL
 `
 
+const getUserByEmailGlobal = `-- name: GetUserByEmailGlobal :one
+SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at FROM users WHERE email = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) GetUserByEmailGlobal(ctx context.Context, email string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByEmailGlobal, email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Email,
+		&i.DisplayName,
+		&i.AvatarUrl,
+		&i.PasswordHash,
+		&i.Role,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.LastLoginAt,
+	)
+	return i, err
+}
+
+const listMembershipsByUser = `-- name: ListMembershipsByUser :many
+SELECT m.id, m.org_id, m.user_id, m.role, m.invited_by, m.created_at, m.updated_at,
+       o.slug AS org_slug, o.name AS org_name
+FROM memberships m
+JOIN organizations o ON o.id = m.org_id
+WHERE m.user_id = $1
+ORDER BY m.role = 'owner' DESC, m.created_at ASC
+`
+
+type ListMembershipsByUserRow struct {
+	ID        uuid.UUID          `json:"id"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	Role      string             `json:"role"`
+	InvitedBy pgtype.UUID        `json:"invited_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	OrgSlug   string             `json:"org_slug"`
+	OrgName   string             `json:"org_name"`
+}
+
+func (q *Queries) ListMembershipsByUser(ctx context.Context, userID uuid.UUID) ([]ListMembershipsByUserRow, error) {
+	rows, err := q.db.Query(ctx, listMembershipsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMembershipsByUserRow{}
+	for rows.Next() {
+		var i ListMembershipsByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.UserID,
+			&i.Role,
+			&i.InvitedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgSlug,
+			&i.OrgName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 type GetUserByEmailParams struct {
 	OrgID uuid.UUID `json:"org_id"`
 	Email string    `json:"email"`
