@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -62,7 +63,13 @@ func newServer(cfg *config.Config) (*http.Server, func(), error) {
 
 	queries := generated.New(pool)
 
-	handler, err := buildRouter(cfg, queries)
+	orgID, err := ensureDefaultOrg(ctx, queries)
+	if err != nil {
+		pool.Close()
+		return nil, noop, fmt.Errorf("bootstrapping default org: %w", err)
+	}
+
+	handler, err := buildRouter(cfg, queries, orgID)
 	if err != nil {
 		pool.Close()
 		return nil, noop, err
@@ -81,7 +88,7 @@ func newServer(cfg *config.Config) (*http.Server, func(), error) {
 
 // buildRouter constructs all domain services with DB-backed adapters and
 // returns the fully wired API router.
-func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, error) {
+func buildRouter(cfg *config.Config, queries *generated.Queries, orgID uuid.UUID) (http.Handler, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("generating RSA key: %w", err)
@@ -95,7 +102,7 @@ func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, 
 		Issuer:     "azimuthal",
 	})
 
-	userAdapter := adapters.NewUserAdapter(queries, uuid.Nil)
+	userAdapter := adapters.NewUserAdapter(queries, orgID)
 	userSvc := auth.NewUserService(userAdapter)
 	sessionSvc := auth.NewSessionService(adapters.NewSessionAdapter(queries), auth.SessionConfig{TTL: cfg.JWTExpiry})
 	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc)
@@ -163,3 +170,25 @@ func newSPAHandler() (http.Handler, error) {
 	}), nil
 }
 
+// ensureDefaultOrg creates or retrieves the default organization. This org
+// is used for the register endpoint; login looks up users globally.
+func ensureDefaultOrg(ctx context.Context, q *generated.Queries) (uuid.UUID, error) {
+	org, err := q.GetOrganizationBySlug(ctx, "default")
+	if err == nil {
+		return org.ID, nil
+	}
+
+	desc := "Default organisation"
+	org, err = q.CreateOrganization(ctx, generated.CreateOrganizationParams{
+		ID:          uuid.New(),
+		Slug:        "default",
+		Name:        "Default",
+		Description: &desc,
+		Plan:        "free",
+	})
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("creating default org: %w", err)
+	}
+	slog.Info("created default organisation", "org_id", org.ID)
+	return org.ID, nil
+}
