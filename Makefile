@@ -4,7 +4,8 @@
         scan scan-sast scan-vuln scan-secrets scan-container \
         dev migrate rollback sqlc clean pre-push verify-api \
         frontend frontend-install frontend-type-check \
-        test-db-up test-db-down test-db-reset test-live test-live-verbose
+        test-db-up test-db-down test-db-reset test-live test-live-verbose \
+        e2e-test e2e-report e2e-headed
 
 # ── Config ────────────────────────────────────────────────────
 BINARY_NAME    := azimuthal
@@ -214,6 +215,25 @@ test-live-coverage: test-db-up ## Run tests with real database and generate cove
 	@go tool cover -html=coverage.out -o coverage.html
 	@go tool cover -func=coverage.out | tail -5
 	@echo "✓ Coverage report: coverage.html"
+
+# ── E2E Tests ──────────────────────────────────────────────────────────────────
+
+e2e-test: ## Run Playwright E2E tests against a live server
+	@echo "→ Starting test database..."
+	@$(MAKE) test-db-up
+	@echo "→ Building binary and frontend..."
+	@cd web && npm ci && npm run build
+	@go build -o /tmp/azimuthal-test ./cmd/server
+	@echo "→ Running Playwright E2E tests..."
+	@export $$(cat .env.test | xargs) && cd web && npx playwright test
+	@echo "✓ E2E tests complete"
+	@$(MAKE) test-db-down
+
+e2e-report: ## Open the last Playwright HTML report
+	@cd web && npx playwright show-report
+
+e2e-headed: ## Run E2E tests in headed mode (visible browser)
+	@export $$(cat .env.test | xargs) && cd web && npx playwright test --headed
 
 # ── Housekeeping ──────────────────────────────────────────────
 clean:
