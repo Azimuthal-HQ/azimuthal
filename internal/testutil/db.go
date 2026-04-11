@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,6 +20,11 @@ import (
 	// pgx stdlib driver required by goose for database/sql compatibility.
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+// gooseMu serializes calls to goose.SetTableName + goose.Up because
+// goose stores the table name in a global variable. Without this lock,
+// parallel tests clobber each other's goose_db_version table name.
+var gooseMu sync.Mutex
 
 // TestDB wraps a database connection for integration tests.
 type TestDB struct {
@@ -76,6 +82,8 @@ func NewTestDB(t *testing.T) *TestDB {
 }
 
 // runMigrations applies goose migrations to the given schema.
+// The goose global table-name is protected by gooseMu so parallel tests
+// do not race on goose.SetTableName.
 func runMigrations(t *testing.T, dsn, schema string, pool *pgxpool.Pool) {
 	t.Helper()
 
@@ -95,9 +103,13 @@ func runMigrations(t *testing.T, dsn, schema string, pool *pgxpool.Pool) {
 		t.Fatalf("testutil: set search_path: %v", err)
 	}
 
+	// Serialize goose calls — SetTableName is a package-level global.
+	gooseMu.Lock()
 	goose.SetTableName(schema + ".goose_db_version")
+	err = goose.Up(migDB, findMigrationsDir())
+	gooseMu.Unlock()
 
-	if err = goose.Up(migDB, findMigrationsDir()); err != nil {
+	if err != nil {
 		pool.Close()
 		t.Fatalf("testutil: migrate: %v", err)
 	}

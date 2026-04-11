@@ -1,6 +1,7 @@
 # Known Issues
 
 Documented by Agent 2E (Integration Validator) after validating Phases 0-2.
+Updated by test/backend-coverage branch with test references.
 
 ---
 
@@ -25,12 +26,12 @@ The domain services (auth, tickets, projects) define repository interfaces using
 
 ---
 
-## 2. Test Coverage Below 60% Floor (47.1%)
+## 2. Test Coverage Below 60% Floor (47.1%) — IMPROVED
 
 **Severity**: Medium
-**Status**: Needs additional tests
+**Status**: Improved to 82.4% (cross-package) / 59.2% (per-package) with integration tests
 
-Overall statement coverage is 47.1%. Lowest-coverage packages:
+Overall statement coverage was 47.1%. After adding integration tests (test/backend-coverage branch), cross-package coverage is 82.4% using `-coverpkg=./internal/...`. Previously-lowest-coverage packages:
 
 | Package | Coverage |
 |---|---|
@@ -104,3 +105,94 @@ CLAUDE.md before opening PRs that touch write operations.
 
 **Permanent fix:** Add `DEFAULT '{}'` to the labels column migration and
 default labels to `[]` in the item adapter layer (fixed in v0.1.5).
+
+---
+
+## 7. RSA Key Generated at Runtime on Every Startup
+
+**Severity**: Medium
+**Status**: Open — documented with skipped test
+
+JWT signing uses an RSA key pair generated fresh each time the server starts
+(`cmd/server/main.go`). All issued JWTs and sessions are invalidated on every
+restart. The key should be loaded from persistent storage or derived from `JWT_SECRET`.
+
+**Test**: `internal/core/api/known_issues_test.go` — `TestRSAKey_SurvivesRestart` (skipped)
+**See also**: `docs/project-state.md` Section 4, issue #1
+
+---
+
+## 8. CORS Allows All Origins
+
+**Severity**: Medium (security)
+**Status**: Open — documented with skipped test
+
+`internal/core/api/middleware.go` sets `Access-Control-Allow-Origin: *`.
+This is appropriate for development but a security risk in production.
+
+**Test**: `internal/core/api/known_issues_test.go` — `TestCORS_RestrictedInProduction` (skipped)
+
+---
+
+## 9. Audit Logger Discards All Events
+
+**Severity**: Low
+**Status**: Open — documented with skipped test
+
+The default audit logger implementation silently discards all events.
+`IsAvailable()` returns false. No events are persisted to the database.
+
+**Test**: `internal/core/api/known_issues_test.go` — `TestAuditLog_PersistsEvents` (skipped)
+**See also**: `docs/project-state.md` Section 3 — Audit Logging
+
+---
+
+## 10. Profile Update Endpoint Missing
+
+**Severity**: Low
+**Status**: Open — documented with skipped test
+
+The frontend profile form exists but the Save button is not connected to any
+API endpoint. There is no `PUT /api/v1/me` or `PATCH /api/v1/me` endpoint.
+
+**Test**: `internal/core/api/known_issues_test.go` — `TestProfileUpdate_SavesChanges` (skipped)
+**See also**: `docs/project-state.md` Section 3 — Profile Settings Save
+
+---
+
+## 11. Duplicate Email Registration Returns 500 Instead of 409
+
+**Severity**: Medium
+**Status**: Open — captured by integration test
+
+When registering a user with an already-taken email, the API returns 500
+(INTERNAL_ERROR) instead of 409 (CONFLICT). The `UserAdapter.Create` method
+does not map postgres unique constraint violations to `auth.ErrEmailTaken`.
+
+**Test**: `internal/core/api/routes_integration_test.go` — `TestIntegration_Register_DuplicateEmail`
+
+---
+
+## 12. Goose Migration Mutex Required for Parallel Tests
+
+**Severity**: Low
+**Status**: Fixed in test/backend-coverage branch
+
+`goose.SetTableName()` uses a package-level global variable. When integration
+tests run in parallel, concurrent `goose.Up()` calls with different schema-scoped
+table names race and cause `SQLSTATE 42P01` or `SQLSTATE 23505` errors.
+
+**Fix**: Added `sync.Mutex` in `internal/testutil/db.go` around `goose.SetTableName` + `goose.Up` calls.
+
+---
+
+## 13. Smoke Test login_user Failure (Pre-existing)
+
+**Severity**: Medium
+**Status**: Open — pre-existing on main branch
+
+`cmd/server/smoke_test.go` `TestSmoke/login_user` fails because it registers
+two users with the same email. The second registration returns 500 (due to
+issue #11 above), causing the login step to fail.
+
+**Test**: `cmd/server/smoke_test.go` — `TestSmoke/login_user`
