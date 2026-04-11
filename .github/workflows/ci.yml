@@ -353,17 +353,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - "9001:9000"
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 5s
-          --health-retries 5
 
     env:
       DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
@@ -379,6 +368,18 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9001:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            quay.io/minio/minio:latest server /data
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:9001/minio/health/live && break
+            sleep 2
+          done
 
       - name: Set up Go
         uses: actions/setup-go@v5
