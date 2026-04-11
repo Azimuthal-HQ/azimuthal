@@ -91,6 +91,21 @@ Estimated time: 15 minutes on a fresh deployment.
 
 ---
 
+## Automated E2E Tests
+
+Playwright E2E tests run automatically on every PR via GitHub Actions.
+The `E2E Tests (Playwright)` job must pass before any PR can merge.
+
+To run E2E tests locally before pushing:
+```bash
+make e2e-test
+```
+
+The Playwright report is uploaded as a CI artifact on every run.
+Screenshots and traces are uploaded on failure for debugging.
+
+---
+
 ## API Spot Checks
 
 Open browser dev tools → Network tab, then:
