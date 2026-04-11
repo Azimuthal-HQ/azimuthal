@@ -10,41 +10,41 @@ import (
 // TicketMetrics summarises service-desk performance for a time window.
 type TicketMetrics struct {
 	// TotalCreated is the number of tickets opened in the window.
-	TotalCreated int64
+	TotalCreated int64 `json:"total_created"`
 	// TotalResolved is the number of tickets resolved in the window.
-	TotalResolved int64
+	TotalResolved int64 `json:"total_resolved"`
 	// AverageResolutionHours is the mean time to resolution in hours.
-	AverageResolutionHours float64
+	AverageResolutionHours float64 `json:"average_resolution_hours"`
 	// OpenByStatus maps status names to their current ticket counts.
-	OpenByStatus map[string]int64
+	OpenByStatus map[string]int64 `json:"open_by_status"`
 }
 
 // UserActivitySummary describes how active a user has been in a window.
 type UserActivitySummary struct {
 	// UserID is the user this summary belongs to.
-	UserID string
+	UserID string `json:"user_id"`
 	// ItemsCreated is the total number of items this user created.
-	ItemsCreated int64
+	ItemsCreated int64 `json:"items_created"`
 	// CommentsPosted is the number of comments this user posted.
-	CommentsPosted int64
+	CommentsPosted int64 `json:"comments_posted"`
 	// LastActiveAt is the timestamp of the user's most recent action.
-	LastActiveAt time.Time
+	LastActiveAt time.Time `json:"last_active_at"`
 }
 
 // OrgSummary is the top-level analytics snapshot for an organisation.
 type OrgSummary struct {
 	// OrgID is the organisation this summary belongs to.
-	OrgID string
+	OrgID string `json:"org_id"`
 	// WindowStart is the beginning of the reporting window.
-	WindowStart time.Time
+	WindowStart time.Time `json:"window_start"`
 	// WindowEnd is the end of the reporting window.
-	WindowEnd time.Time
+	WindowEnd time.Time `json:"window_end"`
 	// Tickets holds service-desk metrics for the window.
-	Tickets TicketMetrics
+	Tickets TicketMetrics `json:"tickets"`
 	// ActiveUsers is the list of users with activity in the window.
-	ActiveUsers []UserActivitySummary
+	ActiveUsers []UserActivitySummary `json:"active_users"`
 	// TotalPageViews is the number of wiki page views recorded.
-	TotalPageViews int64
+	TotalPageViews int64 `json:"total_page_views"`
 }
 
 // ErrNotImplemented is returned when analytics queries are called before

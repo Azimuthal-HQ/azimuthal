@@ -26,8 +26,8 @@ type TokenConfig struct {
 
 // TokenPair holds an access token and a refresh token.
 type TokenPair struct {
-	AccessToken  string
-	RefreshToken string
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 // Claims are the JWT payload fields for Azimuthal tokens.

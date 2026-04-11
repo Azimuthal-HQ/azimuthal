@@ -14,9 +14,9 @@ import (
 
 // InboundEmail represents a parsed inbound email that can be converted to a ticket.
 type InboundEmail struct {
-	From    string
-	Subject string
-	Body    string
+	From    string `json:"from"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
 }
 
 // ParseInboundEmail parses a raw RFC 2822 email from the reader and extracts

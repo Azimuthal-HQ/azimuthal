@@ -28,16 +28,16 @@ var validSprintTransitions = map[string]map[string]bool{
 
 // Sprint represents a time-boxed iteration within a project space.
 type Sprint struct {
-	ID        uuid.UUID
-	SpaceID   uuid.UUID
-	Name      string
-	Goal      string
-	Status    string
-	StartsAt  *time.Time
-	EndsAt    *time.Time
-	CreatedBy uuid.UUID
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID        uuid.UUID  `json:"id"`
+	SpaceID   uuid.UUID  `json:"space_id"`
+	Name      string     `json:"name"`
+	Goal      string     `json:"goal"`
+	Status    string     `json:"status"`
+	StartsAt  *time.Time `json:"starts_at"`
+	EndsAt    *time.Time `json:"ends_at"`
+	CreatedBy uuid.UUID  `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // SprintRepository defines the data access contract for sprints.

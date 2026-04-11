@@ -15,9 +15,9 @@ type EmailSender interface {
 
 // ReplyParams holds the parameters for sending an email reply on a ticket.
 type ReplyParams struct {
-	TicketID   uuid.UUID
-	Recipients []string
-	Body       string
+	TicketID   uuid.UUID `json:"ticket_id"`
+	Recipients []string  `json:"recipients"`
+	Body       string    `json:"body"`
 }
 
 // SendReply sends an outbound email reply for a ticket. It fetches the ticket

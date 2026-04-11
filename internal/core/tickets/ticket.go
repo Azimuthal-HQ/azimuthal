@@ -12,20 +12,20 @@ import (
 
 // Ticket represents a service desk ticket. It maps to items with kind='ticket'.
 type Ticket struct {
-	ID          uuid.UUID
-	SpaceID     uuid.UUID
-	Title       string
-	Description string
-	Status      Status
-	Priority    Priority
-	ReporterID  uuid.UUID
-	AssigneeID  *uuid.UUID
-	Labels      []string
-	DueAt       *time.Time
-	ResolvedAt  *time.Time
-	Rank        string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          uuid.UUID  `json:"id"`
+	SpaceID     uuid.UUID  `json:"space_id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Status      Status     `json:"status"`
+	Priority    Priority   `json:"priority"`
+	ReporterID  uuid.UUID  `json:"reporter_id"`
+	AssigneeID  *uuid.UUID `json:"assignee_id"`
+	Labels      []string   `json:"labels"`
+	DueAt       *time.Time `json:"due_at"`
+	ResolvedAt  *time.Time `json:"resolved_at"`
+	Rank        string     `json:"rank"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // TicketRepository defines the data access contract for tickets.

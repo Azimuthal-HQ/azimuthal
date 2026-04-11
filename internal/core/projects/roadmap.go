@@ -21,15 +21,15 @@ func NewRoadmapService(itemRepo ItemRepository, sprintRepo SprintRepository) *Ro
 
 // RoadmapItem represents an item with its due date for roadmap display.
 type RoadmapItem struct {
-	Item    *Item
-	DueAt   time.Time
-	Overdue bool
+	Item    *Item     `json:"item"`
+	DueAt   time.Time `json:"due_at"`
+	Overdue bool      `json:"overdue"`
 }
 
 // RoadmapSprint represents a sprint with its date range for roadmap display.
 type RoadmapSprint struct {
-	Sprint *Sprint
-	Items  []*Item
+	Sprint *Sprint `json:"sprint"`
+	Items  []*Item `json:"items"`
 }
 
 // GetItemsDueInRange returns items with a due date within the given time range.
