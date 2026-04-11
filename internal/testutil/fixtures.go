@@ -55,7 +55,7 @@ func CreateTestOrg(t *testing.T, pool *pgxpool.Pool) Org {
 func CreateTestUser(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) User {
 	t.Helper()
 	// bcrypt hash of "testpassword123"
-	testHash := "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/VK.s4VqK2" //nolint:gosec // test-only credential
+	testHash := "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/VK.s4VqK2"
 	user := User{
 		ID:          uuid.New(),
 		Email:       fmt.Sprintf("test-%s@azimuthal.dev", uuid.New().String()[:8]),

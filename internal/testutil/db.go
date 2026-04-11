@@ -110,7 +110,11 @@ func newPoolWithSchema(dsn, schema string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 	poolConfig.ConnConfig.RuntimeParams["search_path"] = fmt.Sprintf("%q, public", schema)
-	return pgxpool.NewWithConfig(context.Background(), poolConfig)
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("creating pool with schema: %w", err)
+	}
+	return pool, nil
 }
 
 // findMigrationsDir locates the migrations directory relative to this source file.
