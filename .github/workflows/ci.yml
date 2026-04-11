@@ -121,8 +121,8 @@ jobs:
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 60" | bc -l) )); then
-            echo "❌ Coverage ${COVERAGE}% is below the 60% floor"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below the 80% floor"
             exit 1
           fi
           echo "✅ Coverage ${COVERAGE}% meets minimum"
