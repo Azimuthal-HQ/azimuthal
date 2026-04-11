@@ -461,7 +461,7 @@ func TestLoginMembershipResolutionFailure(t *testing.T) {
 		t.Fatalf("register status = %d, want %d", rr.Code, http.StatusCreated)
 	}
 
-	// Login should fail because membership resolution fails
+	// Login should still succeed by falling back to user's org_id
 	loginBody, _ := json.Marshal(map[string]string{
 		"email":    "failmember@test.com",
 		"password": "password123",
@@ -469,7 +469,7 @@ func TestLoginMembershipResolutionFailure(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(loginBody))
 	rr = httptest.NewRecorder()
 	h.Login(rr, req)
-	if rr.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusInternalServerError)
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
 	}
 }

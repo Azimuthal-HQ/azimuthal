@@ -110,10 +110,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the user's primary org from memberships.
+	// Falls back to the user's org_id if no memberships exist (e.g. registered
+	// via the API but not yet added to an org through admin create-user).
 	orgID, orgSlug, orgName, err := h.memberships.PrimaryOrgForUser(r.Context(), user.ID)
 	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to resolve organization")
-		return
+		orgID = user.OrgID
+		orgSlug = ""
+		orgName = ""
 	}
 
 	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, orgID.String(), user.Role)

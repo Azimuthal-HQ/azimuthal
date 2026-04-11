@@ -99,6 +99,44 @@ func TestSmoke(t *testing.T) {
 		t.Fatal("cannot continue without access token")
 	}
 
+	// 3b. Login with the same credentials to test the login flow
+	t.Run("login_user", func(t *testing.T) {
+		payload := map[string]string{
+			"email":    fmt.Sprintf("smoke-%d@test.local", time.Now().UnixNano()),
+			"password": "test-password-123",
+		}
+		// Re-register a second user to get a known email for login
+		regPayload := map[string]string{
+			"email":        "smoke-login@test.local",
+			"display_name": "Login Tester",
+			"password":     "login-password-123",
+		}
+		doPost(t, client, base+"/api/v1/auth/register", regPayload, "", http.StatusCreated)
+
+		// Now login
+		loginPayload := map[string]string{
+			"email":    "smoke-login@test.local",
+			"password": "login-password-123",
+		}
+		body := doPost(t, client, base+"/api/v1/auth/login", loginPayload, "", http.StatusOK)
+
+		token, ok := body["token"].(string)
+		if !ok || token == "" {
+			t.Error("expected token in login response")
+		}
+		if body["access_token"] == nil {
+			t.Error("expected access_token in login response")
+		}
+		user, ok := body["user"].(map[string]interface{})
+		if !ok {
+			t.Fatal("expected user in login response")
+		}
+		if user["email"] != "smoke-login@test.local" {
+			t.Errorf("expected email smoke-login@test.local, got %v", user["email"])
+		}
+		_ = payload // used for clarity
+	})
+
 	// 4. Look up the default org ID from the database
 	var orgID string
 	t.Run("get_org_id", func(t *testing.T) {
