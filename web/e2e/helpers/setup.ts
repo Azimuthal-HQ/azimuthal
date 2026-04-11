@@ -39,13 +39,9 @@ export async function createUserAndLogin(page: Page): Promise<{
   await expect(page).not.toHaveURL(/\/login/, { timeout: 15000 })
 
   // Verify token was stored
-  const token = await page.evaluate((): string | null => {
-    for (const key of Object.keys(localStorage)) {
-      const val = localStorage.getItem(key)
-      if (val && val.startsWith('eyJ')) return val
-    }
-    return null
-  })
+  const token = await page.evaluate((): string | null =>
+    localStorage.getItem('azimuthal_access_token')
+  )
   if (!token) throw new Error('Login succeeded but no JWT found in localStorage')
 
   return { email, password }
@@ -64,19 +60,22 @@ export async function createSpace(
   await page.click('button:has-text("Create Space")')
   await expect(page.locator('text=Create a new space')).toBeVisible({ timeout: 5000 })
 
-  // Fill name
-  await page.fill('input[name="name"], input[placeholder*="name"]', name)
+  // Append timestamp to name to ensure unique slugs across test runs
+  const uniqueName = `${name} ${Date.now()}`
 
-  // Select type card
+  // Fill name — use the actual input id from DashboardPage.tsx
+  await page.fill('#space-name', uniqueName)
+
+  // Select type card inside the dialog
   const typeLabel = {
     service_desk: 'Service Desk',
     wiki: 'Wiki',
     project: 'Project',
   }[type]
-  await page.click(`text=${typeLabel}`)
+  await page.locator(`[role="dialog"] button:has-text("${typeLabel}")`).click()
 
-  // Submit
-  await page.click('button:has-text("Create Space")')
+  // Submit — click the Create Space button in the dialog footer
+  await page.locator('[role="dialog"] button:has-text("Create Space"):not(:has-text("Service Desk")):not(:has-text("Wiki")):not(:has-text("Project"))').click()
 
   // Wait for redirect into the space
   await expect(page).toHaveURL(/\/spaces\//, { timeout: 15000 })
@@ -92,13 +91,9 @@ export async function createSpace(
  * backend state after a UI action.
  */
 export async function getAuthToken(page: Page): Promise<string> {
-  const token = await page.evaluate((): string | null => {
-    for (const key of Object.keys(localStorage)) {
-      const val = localStorage.getItem(key)
-      if (val && val.startsWith('eyJ')) return val
-    }
-    return null
-  })
+  const token = await page.evaluate((): string | null =>
+    localStorage.getItem('azimuthal_access_token')
+  )
   if (!token) throw new Error('No auth token found in localStorage')
   return token
 }
