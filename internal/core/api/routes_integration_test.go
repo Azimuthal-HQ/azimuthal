@@ -134,7 +134,7 @@ func (ts *testServer) post(t *testing.T, path string, body any, authed bool) htt
 
 func (ts *testServer) do(t *testing.T, req *http.Request) httpResult {
 	t.Helper()
-	resp, err := http.DefaultClient.Do(req) //nolint:bodyclose,gosec // closed below; test-only URL
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // test-only URL
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
