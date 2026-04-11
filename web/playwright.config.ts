@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
+  timeout: 30000,
+  globalTimeout: 300000,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -25,10 +27,10 @@ export default defineConfig({
       `STORAGE_SECRET_KEY=${process.env.STORAGE_SECRET_KEY}`,
       `STORAGE_BUCKET=${process.env.STORAGE_BUCKET}`,
       `APP_PORT=8082`,
-      'APP_ENV=test /tmp/azimuthal-test serve'
+      `APP_ENV=test ${process.env.AZIMUTHAL_BINARY || '/tmp/azimuthal-test'} serve`
     ].join(' '),
     url: 'http://localhost:8082/health',
     reuseExistingServer: !process.env.CI,
-    timeout: 30000,
+    timeout: 60000,
   },
 })

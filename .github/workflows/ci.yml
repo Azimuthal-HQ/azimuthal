@@ -414,7 +414,8 @@ jobs:
         run: cd web && npx playwright install chromium --with-deps
 
       - name: Run E2E tests
-        run: cd web && npx playwright test
+        run: cd web && npx playwright test --reporter=list
+        timeout-minutes: 10
         env:
           BASE_URL: http://localhost:8082
           AZIMUTHAL_BINARY: /tmp/azimuthal-test
