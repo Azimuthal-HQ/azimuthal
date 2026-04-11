@@ -4,6 +4,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -155,6 +156,28 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// provisionOrgForUser creates a personal org and membership if an OrgProvisioner
+// is configured. Returns the org ID and slug (both zero values when orgs is nil).
+func (h *Handler) provisionOrgForUser(ctx context.Context, displayName, email string, userID uuid.UUID) (uuid.UUID, string, error) {
+	if h.orgs == nil {
+		return uuid.Nil, "", nil
+	}
+	name := displayName
+	if name == "" {
+		name = email
+	}
+	orgID, slug, err := h.orgs.ProvisionOrg(ctx, name)
+	if err != nil {
+		return uuid.Nil, "", fmt.Errorf("provisioning org: %w", err)
+	}
+	if userID != uuid.Nil {
+		if err := h.orgs.CreateMembership(ctx, orgID, userID); err != nil {
+			return uuid.Nil, "", fmt.Errorf("creating membership: %w", err)
+		}
+	}
+	return orgID, slug, nil
+}
+
 // Register creates a new user account and returns a JWT token pair.
 // When an OrgProvisioner is configured, each new user gets a personal
 // organization and an owner membership in it.
@@ -171,19 +194,10 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 	// Provision a personal org before creating the user so the user row
 	// has a valid org_id foreign key.
-	var orgID uuid.UUID
-	var orgSlug string
-	if h.orgs != nil {
-		name := req.DisplayName
-		if name == "" {
-			name = req.Email
-		}
-		var err error
-		orgID, orgSlug, err = h.orgs.ProvisionOrg(r.Context(), name)
-		if err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create organization")
-			return
-		}
+	orgID, orgSlug, err := h.provisionOrgForUser(r.Context(), req.DisplayName, req.Email, uuid.Nil)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create organization")
+		return
 	}
 
 	user, err := h.users.CreateUserInOrg(r.Context(), req.Email, req.DisplayName, req.Password, orgID)
@@ -196,7 +210,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create owner membership linking user to their org.
+	// Create owner membership now that we have the user ID.
 	if h.orgs != nil {
 		if err := h.orgs.CreateMembership(r.Context(), orgID, user.ID); err != nil {
 			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create membership")

@@ -163,4 +163,3 @@ func newSPAHandler() (http.Handler, error) {
 		fileServer.ServeHTTP(w, r)
 	}), nil
 }
-
