@@ -203,12 +203,12 @@ func TestUserAndSessionLifecycle(t *testing.T) {
 	}
 	defer func() { _ = q.SoftDeleteUser(ctx, user.ID) }()
 
-	found, err := q.GetUserByEmail(ctx, generated.GetUserByEmailParams{
+	found, err := q.GetUserByEmailAndOrg(ctx, generated.GetUserByEmailAndOrgParams{
 		OrgID: org.ID,
 		Email: "test@example.com",
 	})
 	if err != nil {
-		t.Fatalf("GetUserByEmail: %v", err)
+		t.Fatalf("GetUserByEmailAndOrg: %v", err)
 	}
 	if found.ID != user.ID {
 		t.Errorf("user ID mismatch")

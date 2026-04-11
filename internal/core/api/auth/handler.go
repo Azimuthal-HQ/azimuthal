@@ -4,6 +4,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -20,17 +21,27 @@ type MembershipResolver interface {
 	PrimaryOrgForUser(ctx context.Context, userID uuid.UUID) (uuid.UUID, string, string, error)
 }
 
+// OrgProvisioner creates a personal organization and membership for newly
+// registered users. When nil, Register skips org provisioning (useful in tests).
+type OrgProvisioner interface {
+	// ProvisionOrg creates a personal org for a user and returns the org ID and slug.
+	ProvisionOrg(ctx context.Context, displayName string) (uuid.UUID, string, error)
+	// CreateMembership adds the user as owner of the given org.
+	CreateMembership(ctx context.Context, orgID, userID uuid.UUID) error
+}
+
 // Handler holds the dependencies for auth HTTP handlers.
 type Handler struct {
 	users       *auth.UserService
 	jwt         *auth.JWTService
 	sessions    *auth.SessionService
 	memberships MembershipResolver
+	orgs        OrgProvisioner
 }
 
 // NewHandler creates an auth Handler.
-func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver) *Handler {
-	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships}
+func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner) *Handler {
+	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs}
 }
 
 // Routes returns a chi.Router with all auth endpoints mounted.
@@ -145,7 +156,31 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// provisionOrgForUser creates a personal org and membership if an OrgProvisioner
+// is configured. Returns the org ID and slug (both zero values when orgs is nil).
+func (h *Handler) provisionOrgForUser(ctx context.Context, displayName, email string, userID uuid.UUID) (uuid.UUID, string, error) {
+	if h.orgs == nil {
+		return uuid.Nil, "", nil
+	}
+	name := displayName
+	if name == "" {
+		name = email
+	}
+	orgID, slug, err := h.orgs.ProvisionOrg(ctx, name)
+	if err != nil {
+		return uuid.Nil, "", fmt.Errorf("provisioning org: %w", err)
+	}
+	if userID != uuid.Nil {
+		if err := h.orgs.CreateMembership(ctx, orgID, userID); err != nil {
+			return uuid.Nil, "", fmt.Errorf("creating membership: %w", err)
+		}
+	}
+	return orgID, slug, nil
+}
+
 // Register creates a new user account and returns a JWT token pair.
+// When an OrgProvisioner is configured, each new user gets a personal
+// organization and an owner membership in it.
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -157,7 +192,15 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.users.CreateUser(r.Context(), req.Email, req.DisplayName, req.Password)
+	// Provision a personal org before creating the user so the user row
+	// has a valid org_id foreign key.
+	orgID, orgSlug, err := h.provisionOrgForUser(r.Context(), req.DisplayName, req.Email, uuid.Nil)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create organization")
+		return
+	}
+
+	user, err := h.users.CreateUserInOrg(r.Context(), req.Email, req.DisplayName, req.Password, orgID)
 	if err != nil {
 		if errors.Is(err, auth.ErrEmailTaken) {
 			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "email address already in use")
@@ -165,6 +208,14 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		}
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create user")
 		return
+	}
+
+	// Create owner membership now that we have the user ID.
+	if h.orgs != nil {
+		if err := h.orgs.CreateMembership(r.Context(), orgID, user.ID); err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create membership")
+			return
+		}
 	}
 
 	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role)
@@ -184,6 +235,11 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 			OrgID:       user.OrgID.String(),
 			Role:        user.Role,
 			IsActive:    user.IsActive,
+		},
+		Org: &orgResponse{
+			ID:   orgID,
+			Slug: orgSlug,
+			Name: req.DisplayName,
 		},
 	})
 }

@@ -495,7 +495,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	relationSvc := projects.NewRelationService(&mockRelationRepo{})
 	labelSvc := projects.NewLabelService(&mockLabelRepo{})
 
-	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{})
+	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil)
 	ticketHandler := ticketsapi.NewHandler(ticketSvc)
 	wikiHandler := wikiapi.NewHandler(wikiSvc)
 	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc)

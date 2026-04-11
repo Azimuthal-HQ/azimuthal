@@ -47,7 +47,7 @@ func (a *UserAdapter) GetByID(ctx context.Context, id uuid.UUID) (*auth.User, er
 // GetByEmail retrieves a user by email address globally (across all orgs).
 // Returns auth.ErrNotFound if absent.
 func (a *UserAdapter) GetByEmail(ctx context.Context, email string) (*auth.User, error) {
-	row, err := a.q.GetUserByEmailGlobal(ctx, email)
+	row, err := a.q.GetUserByEmail(ctx, email)
 	if err != nil {
 		return nil, fmt.Errorf("user adapter get by email: %w", err)
 	}
@@ -93,7 +93,12 @@ func dbUserToDomain(u generated.User) *auth.User {
 }
 
 // userToCreateParams converts a domain User to sqlc CreateUserParams.
-func userToCreateParams(u *auth.User, orgID uuid.UUID) generated.CreateUserParams {
+// It uses the user's OrgID when set, falling back to the adapter's default.
+func userToCreateParams(u *auth.User, fallbackOrgID uuid.UUID) generated.CreateUserParams {
+	orgID := u.OrgID
+	if orgID == uuid.Nil {
+		orgID = fallbackOrgID
+	}
 	return generated.CreateUserParams{
 		ID:           u.ID,
 		OrgID:        orgID,
