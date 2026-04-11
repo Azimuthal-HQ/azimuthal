@@ -21,12 +21,12 @@ test.describe('Wiki', () => {
     await createSpace(page, 'Page Create Wiki', 'wiki')
 
     await page.click('button:has-text("New Page")')
-    await expect(page.locator('text=New Page')).toBeVisible()
+    await expect(page.locator('#page-title')).toBeVisible()
 
-    await page.fill('input[name="title"], input[placeholder*="title"]', 'E2E Test Page')
-    await page.click('button:has-text("Create Page")')
+    await page.fill('#page-title', 'E2E Test Page')
+    await page.locator('[role="dialog"] button:has-text("Create Page")').click()
 
-    await expect(page.locator('text=E2E Test Page')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=E2E Test Page').first()).toBeVisible({ timeout: 5000 })
   })
 
   test('back to dashboard link works', async ({ page }) => {
