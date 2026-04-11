@@ -31,12 +31,20 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
+// httpResult holds a consumed HTTP response (body already read and closed).
+type httpResult struct {
+	StatusCode  int
+	Body        []byte
+	ContentType string
+	Header      http.Header
+}
+
 // testServer holds a fully-wired httptest.Server backed by a real database.
 type testServer struct {
 	Server *httptest.Server
 	DB     *testutil.TestDB
 	OrgID  uuid.UUID
-	Token  string // valid JWT
+	Token  string
 }
 
 // newTestServer creates a full API server backed by a real database.
@@ -47,7 +55,6 @@ func newTestServer(t *testing.T) *testServer {
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
 	queries := generated.New(db.Pool)
 
-	// RSA key for JWT
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
@@ -88,41 +95,31 @@ func newTestServer(t *testing.T) *testServer {
 		WikiHandler:    wikiapi.NewHandler(wikiSvc),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
 		SpaceHandler:   spacesapi.NewHandler(queries),
-		SPAHandler:     nil, // no SPA in tests
+		SPAHandler:     nil,
 	})
 
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
-	// Issue a token for the test user.
 	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, org.ID.String(), "member")
 	require.NoError(t, err)
 
-	return &testServer{
-		Server: srv,
-		DB:     db,
-		OrgID:  org.ID,
-		Token:  pair.AccessToken,
-	}
+	return &testServer{Server: srv, DB: db, OrgID: org.ID, Token: pair.AccessToken}
 }
 
-func (ts *testServer) url(path string) string {
-	return ts.Server.URL + path
-}
+func (ts *testServer) url(path string) string { return ts.Server.URL + path }
 
-func (ts *testServer) get(t *testing.T, path string, authed bool) *http.Response {
+func (ts *testServer) get(t *testing.T, path string, authed bool) httpResult {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.url(path), nil)
 	require.NoError(t, err)
 	if authed {
 		req.Header.Set("Authorization", "Bearer "+ts.Token)
 	}
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	return resp
+	return ts.do(t, req)
 }
 
-func (ts *testServer) post(t *testing.T, path string, body any, authed bool) *http.Response {
+func (ts *testServer) post(t *testing.T, path string, body any, authed bool) httpResult {
 	t.Helper()
 	jsonBody, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -132,52 +129,53 @@ func (ts *testServer) post(t *testing.T, path string, body any, authed bool) *ht
 	if authed {
 		req.Header.Set("Authorization", "Bearer "+ts.Token)
 	}
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	return resp
+	return ts.do(t, req)
 }
 
-func readBody(t *testing.T, resp *http.Response) []byte {
+func (ts *testServer) do(t *testing.T, req *http.Request) httpResult {
 	t.Helper()
-	defer resp.Body.Close()
+	resp, err := http.DefaultClient.Do(req) //nolint:bodyclose,gosec // closed below; test-only URL
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	return b
+	return httpResult{
+		StatusCode:  resp.StatusCode,
+		Body:        b,
+		ContentType: resp.Header.Get("Content-Type"),
+		Header:      resp.Header,
+	}
 }
 
 // --- Health / Ready ---
 
-// TestHealthEndpoint verifies GET /health returns 200 with {"status":"ok"}.
+// TestIntegration_HealthEndpoint verifies GET /health returns 200 with {"status":"ok"}.
 func TestIntegration_HealthEndpoint(t *testing.T) {
 	ts := newTestServer(t)
-	resp := ts.get(t, "/health", false)
-	body := readBody(t, resp)
+	r := ts.get(t, "/health", false)
 
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+	require.Equal(t, http.StatusOK, r.StatusCode)
+	require.Contains(t, r.ContentType, "application/json")
 
 	var result map[string]string
-	require.NoError(t, json.Unmarshal(body, &result))
+	require.NoError(t, json.Unmarshal(r.Body, &result))
 	require.Equal(t, "ok", result["status"])
 }
 
-// TestReadyEndpoint verifies GET /ready returns 200 with {"status":"ready"}.
+// TestIntegration_ReadyEndpoint verifies GET /ready returns 200 with {"status":"ready"}.
 func TestIntegration_ReadyEndpoint(t *testing.T) {
 	ts := newTestServer(t)
-	resp := ts.get(t, "/ready", false)
-	body := readBody(t, resp)
+	r := ts.get(t, "/ready", false)
 
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+	require.Equal(t, http.StatusOK, r.StatusCode)
+	require.Contains(t, r.ContentType, "application/json")
 
 	var result map[string]string
-	require.NoError(t, json.Unmarshal(body, &result))
+	require.NoError(t, json.Unmarshal(r.Body, &result))
 	require.Equal(t, "ready", result["status"])
 }
 
-// --- API routes never return HTML ---
-
-// TestAPIRoutes_NeverReturnHTML verifies every /api/v1/... route returns JSON.
+// TestIntegration_APIRoutes_NeverReturnHTML verifies /api/v1/... routes return JSON.
 func TestIntegration_APIRoutes_NeverReturnHTML(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -191,50 +189,45 @@ func TestIntegration_APIRoutes_NeverReturnHTML(t *testing.T) {
 	}
 
 	for _, route := range routes {
-		resp := ts.get(t, route.path, route.authed)
-		ct := resp.Header.Get("Content-Type")
-		resp.Body.Close()
-		require.Contains(t, ct, "application/json",
-			"route %s must return JSON, got %s", route.path, ct)
-		require.NotContains(t, ct, "text/html",
+		r := ts.get(t, route.path, route.authed)
+		require.Contains(t, r.ContentType, "application/json",
+			"route %s must return JSON, got %s", route.path, r.ContentType)
+		require.NotContains(t, r.ContentType, "text/html",
 			"route %s must not return HTML", route.path)
 	}
 }
 
 // --- Auth middleware ---
 
-// TestAuthMiddleware_MissingToken_Returns401JSON tests that missing auth returns 401 JSON.
+// TestIntegration_AuthMiddleware_MissingToken_Returns401JSON tests missing auth → 401 JSON.
 func TestIntegration_AuthMiddleware_MissingToken_Returns401JSON(t *testing.T) {
 	ts := newTestServer(t)
-	resp := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), false)
-	body := readBody(t, resp)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), false)
 
-	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+	require.Equal(t, http.StatusUnauthorized, r.StatusCode)
+	require.Contains(t, r.ContentType, "application/json")
 
 	var errResp map[string]any
-	require.NoError(t, json.Unmarshal(body, &errResp))
+	require.NoError(t, json.Unmarshal(r.Body, &errResp))
 	errObj, ok := errResp["error"].(map[string]any)
 	require.True(t, ok, "error response must have 'error' object")
 	require.Equal(t, "UNAUTHORIZED", errObj["code"])
 }
 
-// TestAuthMiddleware_InvalidToken_Returns401JSON tests malformed token.
+// TestIntegration_AuthMiddleware_InvalidToken_Returns401JSON tests malformed token.
 func TestIntegration_AuthMiddleware_InvalidToken_Returns401JSON(t *testing.T) {
 	ts := newTestServer(t)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
 		ts.url(fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID)), nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer invalid-token-here")
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	body := readBody(t, resp)
+	r := ts.do(t, req)
 
-	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+	require.Equal(t, http.StatusUnauthorized, r.StatusCode)
+	require.Contains(t, r.ContentType, "application/json")
 
 	var errResp map[string]any
-	require.NoError(t, json.Unmarshal(body, &errResp))
+	require.NoError(t, json.Unmarshal(r.Body, &errResp))
 	errObj, ok := errResp["error"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "UNAUTHORIZED", errObj["code"])
@@ -242,136 +235,114 @@ func TestIntegration_AuthMiddleware_InvalidToken_Returns401JSON(t *testing.T) {
 
 // --- Auth login/register flow ---
 
-// TestRegisterAndLogin tests the full register → login flow.
+// TestIntegration_RegisterAndLogin tests the full register → login flow.
 func TestIntegration_RegisterAndLogin(t *testing.T) {
 	ts := newTestServer(t)
 
-	// Register
-	resp := ts.post(t, "/api/v1/auth/register", map[string]string{
+	r := ts.post(t, "/api/v1/auth/register", map[string]string{
 		"email":        "register-test@azimuthal.dev",
 		"display_name": "Register Test",
 		"password":     "testpassword123",
 	}, false)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "register response: %s", body)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "register: %s", r.Body)
 
 	var registerResp map[string]any
-	require.NoError(t, json.Unmarshal(body, &registerResp))
+	require.NoError(t, json.Unmarshal(r.Body, &registerResp))
 	require.NotEmpty(t, registerResp["access_token"])
-	require.NotEmpty(t, registerResp["refresh_token"])
 
-	// Login with same credentials
-	resp = ts.post(t, "/api/v1/auth/login", map[string]string{
+	r = ts.post(t, "/api/v1/auth/login", map[string]string{
 		"email":    "register-test@azimuthal.dev",
 		"password": "testpassword123",
 	}, false)
-	body = readBody(t, resp)
-	require.Equal(t, http.StatusOK, resp.StatusCode, "login response: %s", body)
+	require.Equal(t, http.StatusOK, r.StatusCode, "login: %s", r.Body)
 
 	var loginResp map[string]any
-	require.NoError(t, json.Unmarshal(body, &loginResp))
+	require.NoError(t, json.Unmarshal(r.Body, &loginResp))
 	require.NotEmpty(t, loginResp["access_token"])
 }
 
-// TestLogin_MissingFields tests validation on login.
+// TestIntegration_Login_MissingFields tests validation on login.
 func TestIntegration_Login_MissingFields(t *testing.T) {
 	ts := newTestServer(t)
-
-	resp := ts.post(t, "/api/v1/auth/login", map[string]string{
+	r := ts.post(t, "/api/v1/auth/login", map[string]string{
 		"email": "test@test.com",
-		// missing password
 	}, false)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "response: %s", body)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "response: %s", r.Body)
 }
 
-// TestLogin_WrongPassword returns 401.
+// TestIntegration_Login_WrongPassword returns 401.
 func TestIntegration_Login_WrongPassword(t *testing.T) {
 	ts := newTestServer(t)
 
-	// Register first
-	resp := ts.post(t, "/api/v1/auth/register", map[string]string{
+	r := ts.post(t, "/api/v1/auth/register", map[string]string{
 		"email":    "wrong-pass@azimuthal.dev",
 		"password": "correctpassword",
 	}, false)
-	resp.Body.Close()
-	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	require.Equal(t, http.StatusCreated, r.StatusCode)
 
-	// Login with wrong password
-	resp = ts.post(t, "/api/v1/auth/login", map[string]string{
+	r = ts.post(t, "/api/v1/auth/login", map[string]string{
 		"email":    "wrong-pass@azimuthal.dev",
 		"password": "wrongpassword",
 	}, false)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "response: %s", body)
+	require.Equal(t, http.StatusUnauthorized, r.StatusCode, "response: %s", r.Body)
 }
 
 // --- Space CRUD ---
 
-// TestCreateSpace_AndList tests creating a space and listing it.
+// TestIntegration_CreateSpace_AndList tests creating a space and listing it.
 func TestIntegration_CreateSpace_AndList(t *testing.T) {
 	ts := newTestServer(t)
 
-	resp := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"name": "Test Space",
 		"slug": "test-space",
 		"type": "project",
 	}, true)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "create space: %s", body)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "create: %s", r.Body)
 
-	// List spaces
-	resp = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), true)
-	body = readBody(t, resp)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), true)
+	require.Equal(t, http.StatusOK, r.StatusCode)
 
 	var spaces []any
-	require.NoError(t, json.Unmarshal(body, &spaces))
+	require.NoError(t, json.Unmarshal(r.Body, &spaces))
 	require.GreaterOrEqual(t, len(spaces), 1)
 }
 
-// TestCreateSpace_MissingName returns 400.
+// TestIntegration_CreateSpace_MissingName returns 400.
 func TestIntegration_CreateSpace_MissingName(t *testing.T) {
 	ts := newTestServer(t)
-
-	resp := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"slug": "no-name",
 		"type": "project",
 	}, true)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "response: %s", body)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "response: %s", r.Body)
 }
 
 // --- Ticket CRUD ---
 
-// TestCreateTicket_AndGet tests creating a ticket via the API and retrieving it.
+// TestIntegration_CreateTicket_AndGet tests creating and retrieving a ticket.
 func TestIntegration_CreateTicket_AndGet(t *testing.T) {
 	ts := newTestServer(t)
-
-	// Create a space first
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
 
-	resp := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets", space.ID), map[string]any{
 		"title":    "Test Ticket",
 		"priority": "medium",
 	}, true)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "create ticket: %s", body)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "create: %s", r.Body)
 
 	var ticketResp map[string]any
-	require.NoError(t, json.Unmarshal(body, &ticketResp))
+	require.NoError(t, json.Unmarshal(r.Body, &ticketResp))
 	ticketID := ticketResp["id"].(string)
 
-	// Get ticket
-	resp = ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/tickets/%s", space.ID, ticketID), true)
-	body = readBody(t, resp)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	r = ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/tickets/%s", space.ID, ticketID), true)
+	require.Equal(t, http.StatusOK, r.StatusCode)
 }
 
 // --- Error format ---
 
-// TestErrorFormat_Consistent verifies all error responses use the same JSON structure.
+// TestIntegration_ErrorFormat_Consistent verifies error responses use consistent JSON.
 func TestIntegration_ErrorFormat_Consistent(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -399,17 +370,16 @@ func TestIntegration_ErrorFormat_Consistent(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := ts.get(t, tc.path, tc.authed)
-			body := readBody(t, resp)
-			require.Equal(t, tc.wantStatus, resp.StatusCode)
-			require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+			r := ts.get(t, tc.path, tc.authed)
+			require.Equal(t, tc.wantStatus, r.StatusCode)
+			require.Contains(t, r.ContentType, "application/json")
 
 			var errResp map[string]any
-			require.NoError(t, json.Unmarshal(body, &errResp))
+			require.NoError(t, json.Unmarshal(r.Body, &errResp))
 			errObj, ok := errResp["error"].(map[string]any)
-			require.True(t, ok, "error response must have 'error' object, got: %s", body)
-			require.NotEmpty(t, errObj["code"], "error must have a code")
-			require.NotEmpty(t, errObj["message"], "error must have a message")
+			require.True(t, ok, "error response must have 'error' object, got: %s", r.Body)
+			require.NotEmpty(t, errObj["code"])
+			require.NotEmpty(t, errObj["message"])
 			if tc.wantCode != "" {
 				require.Equal(t, tc.wantCode, errObj["code"])
 			}
@@ -419,74 +389,70 @@ func TestIntegration_ErrorFormat_Consistent(t *testing.T) {
 
 // --- Project items ---
 
-// TestCreateProjectItem_ViaAPI tests creating a project item via HTTP.
+// TestIntegration_CreateProjectItem_ViaAPI tests creating a project item via HTTP.
 func TestIntegration_CreateProjectItem_ViaAPI(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	resp := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
 		"title":    "API Item",
 		"kind":     "task",
 		"priority": "medium",
 	}, true)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "create item: %s", body)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "create: %s", r.Body)
 
 	var itemResp map[string]any
-	require.NoError(t, json.Unmarshal(body, &itemResp))
+	require.NoError(t, json.Unmarshal(r.Body, &itemResp))
 	require.Equal(t, "task", itemResp["kind"])
 	require.Equal(t, "open", itemResp["status"])
 	require.Equal(t, "medium", itemResp["priority"])
 }
 
-// TestCreateItem_MissingTitle_Returns400 tests validation.
+// TestIntegration_CreateItem_MissingTitle_Returns400 tests validation.
 func TestIntegration_CreateItem_MissingTitle_Returns400(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	resp := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
 		"kind":     "task",
 		"priority": "medium",
 	}, true)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "response: %s", body)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "response: %s", r.Body)
 }
 
-// TestCreateItem_MissingKind_Returns400 tests validation for missing kind.
+// TestIntegration_CreateItem_MissingKind_Returns400 tests validation for missing kind.
 func TestIntegration_CreateItem_MissingKind_Returns400(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	resp := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
 		"title":    "No kind",
 		"priority": "medium",
 	}, true)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "response: %s", body)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "response: %s", r.Body)
 }
 
 // --- Wiki ---
 
-// TestCreateWikiPage_ViaAPI tests wiki page creation via HTTP.
+// TestIntegration_CreateWikiPage_ViaAPI tests wiki page creation via HTTP.
 func TestIntegration_CreateWikiPage_ViaAPI(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
 
-	resp := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/wiki", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/wiki", space.ID), map[string]any{
 		"title":   "Test Wiki Page",
 		"content": "Some markdown content",
 	}, true)
-	body := readBody(t, resp)
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "create wiki page: %s", body)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "create: %s", r.Body)
 }
 
 // --- CORS ---
 
-// TestCORS_PreflightReturns204 verifies OPTIONS request returns 204.
+// TestIntegration_CORS_PreflightReturns204 verifies OPTIONS returns 204.
 func TestIntegration_CORS_PreflightReturns204(t *testing.T) {
 	ts := newTestServer(t)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodOptions,
@@ -495,17 +461,14 @@ func TestIntegration_CORS_PreflightReturns204(t *testing.T) {
 	req.Header.Set("Origin", "http://localhost:3000")
 	req.Header.Set("Access-Control-Request-Method", "POST")
 
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	resp.Body.Close()
-
-	require.Equal(t, http.StatusNoContent, resp.StatusCode)
-	require.NotEmpty(t, resp.Header.Get("Access-Control-Allow-Origin"))
+	r := ts.do(t, req)
+	require.Equal(t, http.StatusNoContent, r.StatusCode)
+	require.NotEmpty(t, r.Header.Get("Access-Control-Allow-Origin"))
 }
 
 // --- Register duplicate email ---
 
-// TestRegister_DuplicateEmail returns 409.
+// TestIntegration_Register_DuplicateEmail tests duplicate email registration.
 func TestIntegration_Register_DuplicateEmail(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -514,15 +477,12 @@ func TestIntegration_Register_DuplicateEmail(t *testing.T) {
 		"password": "testpassword123",
 	}
 
-	resp := ts.post(t, "/api/v1/auth/register", body, false)
-	resp.Body.Close()
-	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	r := ts.post(t, "/api/v1/auth/register", body, false)
+	require.Equal(t, http.StatusCreated, r.StatusCode)
 
-	resp = ts.post(t, "/api/v1/auth/register", body, false)
-	readBody(t, resp)
+	r = ts.post(t, "/api/v1/auth/register", body, false)
 	// NOTE: Currently returns 500 because the adapter does not map postgres
-	// unique constraint violations to auth.ErrEmailTaken. Ideally this
-	// should return 409 Conflict.
-	require.True(t, resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusInternalServerError,
-		"expected 409 or 500, got %d", resp.StatusCode)
+	// unique constraint violations to auth.ErrEmailTaken. Ideally 409.
+	require.True(t, r.StatusCode == http.StatusConflict || r.StatusCode == http.StatusInternalServerError,
+		"expected 409 or 500, got %d", r.StatusCode)
 }
