@@ -18,10 +18,10 @@ type Org struct {
 
 // User represents a test user.
 type User struct {
-	ID           uuid.UUID
-	Email        string
-	DisplayName  string
-	PasswordHash string
+	ID          uuid.UUID
+	Email       string
+	DisplayName string
+	PassHash    string
 }
 
 // Space represents a test space.
@@ -54,17 +54,18 @@ func CreateTestOrg(t *testing.T, pool *pgxpool.Pool) Org {
 // The password for this user is "testpassword123".
 func CreateTestUser(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) User {
 	t.Helper()
+	// bcrypt hash of "testpassword123"
+	testHash := "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/VK.s4VqK2" //nolint:gosec // test-only credential
 	user := User{
 		ID:          uuid.New(),
 		Email:       fmt.Sprintf("test-%s@azimuthal.dev", uuid.New().String()[:8]),
 		DisplayName: "Test User",
-		// bcrypt hash of "testpassword123"
-		PasswordHash: "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/VK.s4VqK2",
+		PassHash:    testHash,
 	}
 	_, err := pool.Exec(context.Background(),
 		`INSERT INTO users (id, org_id, email, display_name, password_hash)
 		 VALUES ($1, $2, $3, $4, $5)`,
-		user.ID, orgID, user.Email, user.DisplayName, user.PasswordHash,
+		user.ID, orgID, user.Email, user.DisplayName, user.PassHash,
 	)
 	if err != nil {
 		t.Fatalf("CreateTestUser: %v", err)

@@ -67,7 +67,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       minio:
-        image: minio/minio:latest
+        image: bitnami/minio:latest
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin
@@ -76,7 +76,8 @@ jobs:
         options: >-
           --health-cmd "curl -f http://localhost:9000/minio/health/live"
           --health-interval 5s
-          --health-retries 5
+          --health-timeout 5s
+          --health-retries 10
 
     env:
       DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
