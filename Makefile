@@ -210,7 +210,7 @@ test-live-verbose: test-db-up ## Run all tests with verbose output
 	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && go test -race -v ./... -count=1 -timeout=120s
 
 test-live-coverage: test-db-up ## Run tests with real database and generate coverage report
-	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && go test ./... -coverprofile=coverage.out -covermode=atomic
+	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && go test ./internal/... -coverprofile=coverage.out -covermode=atomic -coverpkg=./internal/... -timeout=300s
 	@go tool cover -html=coverage.out -o coverage.html
 	@go tool cover -func=coverage.out | tail -5
 	@echo "✓ Coverage report: coverage.html"
