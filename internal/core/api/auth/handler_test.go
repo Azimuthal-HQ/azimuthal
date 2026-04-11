@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -106,6 +107,13 @@ type mockMembershipResolver struct{}
 
 func (m *mockMembershipResolver) PrimaryOrgForUser(_ context.Context, _ uuid.UUID) (uuid.UUID, string, string, error) {
 	return uuid.MustParse("00000000-0000-0000-0000-000000000001"), "test-org", "Test Org", nil
+}
+
+// failingMembershipResolver always returns an error.
+type failingMembershipResolver struct{}
+
+func (m *failingMembershipResolver) PrimaryOrgForUser(_ context.Context, _ uuid.UUID) (uuid.UUID, string, string, error) {
+	return uuid.Nil, "", "", fmt.Errorf("no memberships found")
 }
 
 func setupHandler(t *testing.T) (*authapi.Handler, *auth.JWTService) {
@@ -295,6 +303,19 @@ func TestRegisterAndLoginSuccess(t *testing.T) {
 	if resp["access_token"] == nil || resp["access_token"] == "" {
 		t.Error("expected access_token in response")
 	}
+	if resp["token"] == nil || resp["token"] == "" {
+		t.Error("expected token in response")
+	}
+	org, ok := resp["org"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected org object in login response")
+	}
+	if org["slug"] != "test-org" {
+		t.Errorf("expected org slug 'test-org', got %v", org["slug"])
+	}
+	if org["name"] != "Test Org" {
+		t.Errorf("expected org name 'Test Org', got %v", org["name"])
+	}
 }
 
 func TestRegisterDuplicateEmail(t *testing.T) {
@@ -409,5 +430,46 @@ func TestRefreshWithValidToken(t *testing.T) {
 	h.Refresh(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestLoginMembershipResolutionFailure(t *testing.T) {
+	pk, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwtSvc := auth.NewJWTService(auth.TokenConfig{
+		PrivateKey: pk,
+		PublicKey:  &pk.PublicKey,
+		AccessTTL:  time.Hour,
+		RefreshTTL: 24 * time.Hour,
+		Issuer:     "test",
+	})
+	userSvc := auth.NewUserService(newMockUserRepo())
+	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &failingMembershipResolver{})
+
+	// Register a user first
+	regBody, _ := json.Marshal(map[string]string{
+		"email":    "failmember@test.com",
+		"password": "password123",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewReader(regBody))
+	rr := httptest.NewRecorder()
+	h.Register(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want %d", rr.Code, http.StatusCreated)
+	}
+
+	// Login should fail because membership resolution fails
+	loginBody, _ := json.Marshal(map[string]string{
+		"email":    "failmember@test.com",
+		"password": "password123",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(loginBody))
+	rr = httptest.NewRecorder()
+	h.Login(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusInternalServerError)
 	}
 }

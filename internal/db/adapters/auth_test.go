@@ -290,6 +290,13 @@ func TestNewSessionAdapter(t *testing.T) {
 	}
 }
 
+func TestNewMembershipAdapter(t *testing.T) {
+	adapter := NewMembershipAdapter(nil)
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
+	}
+}
+
 // Verify interface compliance at compile time.
 var _ auth.UserRepository = (*UserAdapter)(nil)
 var _ auth.SessionRepository = (*SessionAdapter)(nil)
