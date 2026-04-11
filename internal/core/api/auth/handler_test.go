@@ -131,7 +131,7 @@ func setupHandler(t *testing.T) (*authapi.Handler, *auth.JWTService) {
 	})
 	userSvc := auth.NewUserService(newMockUserRepo())
 	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
-	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{})
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil)
 	return h, jwtSvc
 }
 
@@ -447,7 +447,7 @@ func TestLoginMembershipResolutionFailure(t *testing.T) {
 	})
 	userSvc := auth.NewUserService(newMockUserRepo())
 	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
-	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &failingMembershipResolver{})
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &failingMembershipResolver{}, nil)
 
 	// Register a user first
 	regBody, _ := json.Marshal(map[string]string{

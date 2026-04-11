@@ -66,9 +66,10 @@ func TestSmoke(t *testing.T) {
 		}
 	})
 
-	// 3. Register a user (the default org was created during newServer)
+	// 3. Register a user — each user gets a personal org (no default org)
 	var accessToken string
 	var userID string
+	var orgID string
 
 	t.Run("register_user", func(t *testing.T) {
 		payload := map[string]string{
@@ -93,6 +94,17 @@ func TestSmoke(t *testing.T) {
 			t.Fatal("expected user.id in response")
 		}
 		userID = id
+
+		// The register response now includes an org
+		org, ok := body["org"].(map[string]interface{})
+		if !ok {
+			t.Fatal("expected org in register response")
+		}
+		oid, ok := org["id"].(string)
+		if !ok || oid == "" {
+			t.Fatal("expected org.id in register response")
+		}
+		orgID = oid
 	})
 
 	if accessToken == "" {
@@ -101,10 +113,6 @@ func TestSmoke(t *testing.T) {
 
 	// 3b. Login with the same credentials to test the login flow
 	t.Run("login_user", func(t *testing.T) {
-		payload := map[string]string{
-			"email":    fmt.Sprintf("smoke-%d@test.local", time.Now().UnixNano()),
-			"password": "test-password-123",
-		}
 		// Re-register a second user to get a known email for login
 		regPayload := map[string]string{
 			"email":        "smoke-login@test.local",
@@ -134,12 +142,17 @@ func TestSmoke(t *testing.T) {
 		if user["email"] != "smoke-login@test.local" {
 			t.Errorf("expected email smoke-login@test.local, got %v", user["email"])
 		}
-		_ = payload // used for clarity
+		org, ok := body["org"].(map[string]interface{})
+		if !ok {
+			t.Fatal("expected org in login response")
+		}
+		if org["slug"] == "" {
+			t.Error("expected org slug in login response")
+		}
 	})
 
-	// 4. Look up the default org ID from the database
-	var orgID string
-	t.Run("get_org_id", func(t *testing.T) {
+	// 4. Verify no default org exists
+	t.Run("no_default_org", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -149,11 +162,15 @@ func TestSmoke(t *testing.T) {
 		}
 		defer pool.Close()
 
+		var count int
 		err := pool.QueryRow(ctx,
-			"SELECT id FROM organizations WHERE slug = 'default' AND deleted_at IS NULL LIMIT 1",
-		).Scan(&orgID)
+			"SELECT COUNT(*) FROM organizations WHERE slug = 'default' AND deleted_at IS NULL",
+		).Scan(&count)
 		if err != nil {
-			t.Fatalf("looking up default org: %v", err)
+			t.Fatalf("querying default org: %v", err)
+		}
+		if count > 0 {
+			t.Error("expected no default org, but found one")
 		}
 	})
 

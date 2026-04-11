@@ -48,7 +48,14 @@ func NewUserService(repo UserRepository) *UserService {
 }
 
 // CreateUser registers a new user with a bcrypt-hashed password.
+// The user's OrgID is set by the adapter's default org.
 func (s *UserService) CreateUser(ctx context.Context, email, displayName, password string) (*User, error) {
+	return s.CreateUserInOrg(ctx, email, displayName, password, uuid.Nil)
+}
+
+// CreateUserInOrg registers a new user in the specified organization.
+// When orgID is uuid.Nil, the adapter's default org is used.
+func (s *UserService) CreateUserInOrg(ctx context.Context, email, displayName, password string, orgID uuid.UUID) (*User, error) {
 	if email == "" {
 		return nil, fmt.Errorf("creating user: email is required")
 	}
@@ -64,6 +71,7 @@ func (s *UserService) CreateUser(ctx context.Context, email, displayName, passwo
 	now := time.Now().UTC()
 	u := &User{
 		ID:           uuid.New(),
+		OrgID:        orgID,
 		Email:        email,
 		DisplayName:  displayName,
 		PasswordHash: hash,

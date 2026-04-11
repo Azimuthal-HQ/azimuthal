@@ -7,10 +7,10 @@ RETURNING *;
 SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GetUserByEmail :one
-SELECT * FROM users WHERE org_id = $1 AND email = $2 AND deleted_at IS NULL;
-
--- name: GetUserByEmailGlobal :one
 SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL;
+
+-- name: GetUserByEmailAndOrg :one
+SELECT * FROM users WHERE org_id = $1 AND email = $2 AND deleted_at IS NULL;
 
 -- name: ListMembershipsByUser :many
 SELECT m.id, m.org_id, m.user_id, m.role, m.invited_by, m.created_at, m.updated_at,
