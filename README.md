@@ -2,7 +2,7 @@
 
 A fully open-source, self-hostable alternative to the Atlassian suite (Jira, Confluence, Jira Service Desk), built in Go.
 
-**License**: Apache 2.0 — all features ship to every user, no enterprise tier.
+**License**: Apache 2.0 — Azimuthal is fully open source. All features are available to all users.
 
 ## Features
 

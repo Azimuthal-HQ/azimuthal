@@ -16,7 +16,7 @@ tells you exactly where you're headed. That's what Azimuthal does for teams.
 - **Binary name**: `azimuthal`
 - **CLI examples**: `azimuthal backup`, `azimuthal restore`, `azimuthal admin`
 - **License**: Apache 2.0, single repository, fully featured for all users
-- **Business model**: Revenue from managed hosting and support services, not paywalled code
+- **Business model**: Azimuthal is fully open source under Apache 2.0. All features are available to all users.
 - **Repo**: github.com/Azimuthal-HQ/azimuthal (this repo)
 - **Container registry**: ghcr.io/azimuthal-hq/azimuthal
 
