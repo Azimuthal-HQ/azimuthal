@@ -27,24 +27,24 @@ var ValidKinds = map[string]bool{
 
 // Item represents a project work item (task, story, epic, bug, or ticket).
 type Item struct {
-	ID          uuid.UUID
-	SpaceID     uuid.UUID
-	ParentID    *uuid.UUID
-	Kind        string
-	Title       string
-	Description string
-	Status      string
-	Priority    string
-	ReporterID  uuid.UUID
-	AssigneeID  *uuid.UUID
-	SprintID    *uuid.UUID
-	Labels      []string
-	DueAt       *time.Time
-	ResolvedAt  *time.Time
-	Rank        string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	DeletedAt   *time.Time
+	ID          uuid.UUID  `json:"id"`
+	SpaceID     uuid.UUID  `json:"space_id"`
+	ParentID    *uuid.UUID `json:"parent_id"`
+	Kind        string     `json:"kind"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Status      string     `json:"status"`
+	Priority    string     `json:"priority"`
+	ReporterID  uuid.UUID  `json:"reporter_id"`
+	AssigneeID  *uuid.UUID `json:"assignee_id"`
+	SprintID    *uuid.UUID `json:"sprint_id"`
+	Labels      []string   `json:"labels"`
+	DueAt       *time.Time `json:"due_at"`
+	ResolvedAt  *time.Time `json:"resolved_at"`
+	Rank        string     `json:"rank"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
 // ItemRepository defines the data access contract for project items.

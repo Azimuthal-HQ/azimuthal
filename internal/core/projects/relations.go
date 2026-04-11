@@ -27,14 +27,14 @@ var ValidRelationKinds = map[string]bool{
 
 // Relation represents a link between two items (or an item and a wiki page).
 type Relation struct {
-	ID        uuid.UUID
-	FromID    uuid.UUID
-	ToID      uuid.UUID
-	Kind      string
-	CreatedBy uuid.UUID
-	ToTitle   string
-	ToStatus  string
-	ToKind    string
+	ID        uuid.UUID `json:"id"`
+	FromID    uuid.UUID `json:"from_id"`
+	ToID      uuid.UUID `json:"to_id"`
+	Kind      string    `json:"kind"`
+	CreatedBy uuid.UUID `json:"created_by"`
+	ToTitle   string    `json:"to_title"`
+	ToStatus  string    `json:"to_status"`
+	ToKind    string    `json:"to_kind"`
 }
 
 // RelationRepository defines the data access contract for item relations.

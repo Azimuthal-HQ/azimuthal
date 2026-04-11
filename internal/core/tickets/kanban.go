@@ -10,8 +10,8 @@ import (
 // KanbanColumn represents a single column on a kanban board, holding tickets
 // grouped by their status.
 type KanbanColumn struct {
-	Status  Status
-	Tickets []*Ticket
+	Status  Status    `json:"status"`
+	Tickets []*Ticket `json:"tickets"`
 }
 
 // KanbanBoard returns the full kanban board for a space, with tickets grouped

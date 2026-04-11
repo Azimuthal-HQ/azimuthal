@@ -12,10 +12,10 @@ const DefaultLabelColor = "#6b7280"
 
 // Label represents an organization-level tag that can be applied to items.
 type Label struct {
-	ID    uuid.UUID
-	OrgID uuid.UUID
-	Name  string
-	Color string
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+	Name  string    `json:"name"`
+	Color string    `json:"color"`
 }
 
 // LabelRepository defines the data access contract for labels.

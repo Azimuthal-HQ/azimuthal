@@ -10,14 +10,14 @@ import (
 
 // Session represents an authenticated user session stored in postgres.
 type Session struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Token     string // opaque random token used as a lookup key
-	ExpiresAt time.Time
-	CreatedAt time.Time
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Token     string    `json:"-"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
 	// UserAgent and IPAddress are stored for audit purposes only.
-	UserAgent string
-	IPAddress string
+	UserAgent string `json:"user_agent"`
+	IPAddress string `json:"ip_address"`
 }
 
 // IsExpired reports whether the session is past its expiry time.

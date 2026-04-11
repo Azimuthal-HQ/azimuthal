@@ -10,16 +10,16 @@ import (
 
 // User represents an authenticated user in the system.
 type User struct {
-	ID           uuid.UUID
-	OrgID        uuid.UUID
-	Email        string
-	DisplayName  string
-	PasswordHash string
-	Role         string
-	IsActive     bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	DeletedAt    *time.Time
+	ID           uuid.UUID  `json:"id"`
+	OrgID        uuid.UUID  `json:"org_id"`
+	Email        string     `json:"email"`
+	DisplayName  string     `json:"display_name"`
+	PasswordHash string     `json:"-"`
+	Role         string     `json:"role"`
+	IsActive     bool       `json:"is_active"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
 }
 
 // UserRepository defines the data access contract for users.
