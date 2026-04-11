@@ -3,7 +3,8 @@
 .PHONY: help build docker-build test test-coverage lint fmt \
         scan scan-sast scan-vuln scan-secrets scan-container \
         dev migrate rollback sqlc clean pre-push verify-api \
-        frontend frontend-install frontend-type-check
+        frontend frontend-install frontend-type-check \
+        test-db-up test-db-down test-db-reset test-live test-live-verbose
 
 # ── Config ────────────────────────────────────────────────────
 BINARY_NAME    := azimuthal
@@ -27,8 +28,15 @@ help:
 	@echo "  Test & Quality"
 	@echo "    make test               Run all tests with race detector"
 	@echo "    make test-coverage      Run tests and open coverage report"
+	@echo "    make test-live          Run all tests with real database"
+	@echo "    make test-live-verbose  Run all tests with real database (verbose)"
 	@echo "    make lint               Run golangci-lint"
 	@echo "    make fmt                Format all Go code"
+	@echo ""
+	@echo "  Test Database"
+	@echo "    make test-db-up         Start test postgres (:5433) + minio (:9001)"
+	@echo "    make test-db-down       Stop and remove test services"
+	@echo "    make test-db-reset      Wipe and recreate test database"
 	@echo ""
 	@echo "  Security Scanning"
 	@echo "    make scan               Run ALL security scans"
@@ -170,6 +178,42 @@ verify-api: build
 pre-push: fmt lint test scan
 	@echo ""
 	@echo "✅ All local checks passed — safe to push to Azimuthal"
+
+# ── Test Database ────────────────────────────────────────────────────────────
+
+test-db-up: ## Start test database and storage (postgres on :5433, minio on :9001)
+	@echo "→ Starting test services..."
+	@docker compose -f build/docker-compose.test.yml up -d
+	@echo "→ Waiting for postgres to be ready..."
+	@until docker compose -f build/docker-compose.test.yml exec -T postgres-test pg_isready -U azimuthal_test; do \
+		sleep 1; \
+	done
+	@echo "→ Running migrations..."
+	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && goose -dir migrations postgres "$$DATABASE_URL" up
+	@echo "✓ Test database ready at localhost:5433"
+
+test-db-down: ## Stop and remove test database
+	@docker compose -f build/docker-compose.test.yml down
+	@echo "✓ Test services stopped"
+
+test-db-reset: ## Wipe and recreate test database from scratch
+	@docker compose -f build/docker-compose.test.yml down -v
+	@$(MAKE) test-db-up
+	@echo "✓ Test database reset complete"
+
+test-live: test-db-up ## Run all tests including integration tests requiring a real database
+	@echo "→ Running all tests with real database..."
+	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && go test -race ./... -count=1 -timeout=120s
+	@echo "✓ All tests complete"
+
+test-live-verbose: test-db-up ## Run all tests with verbose output
+	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && go test -race -v ./... -count=1 -timeout=120s
+
+test-live-coverage: test-db-up ## Run tests with real database and generate coverage report
+	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && go test ./... -coverprofile=coverage.out -covermode=atomic
+	@go tool cover -html=coverage.out -o coverage.html
+	@go tool cover -func=coverage.out | tail -5
+	@echo "✓ Coverage report: coverage.html"
 
 # ── Housekeeping ──────────────────────────────────────────────
 clean:

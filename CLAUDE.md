@@ -220,6 +220,40 @@ docker compose -f build/docker-compose.dev.yml down
 
 ---
 
+## Local Test Database
+
+A real Postgres + MinIO test environment is available for integration testing.
+
+```bash
+# Start test database (postgres on :5433, minio on :9001)
+make test-db-up
+
+# Run all tests including integration tests
+make test-live
+
+# Generate coverage report
+make test-live-coverage
+
+# Reset to clean state
+make test-db-reset
+
+# Stop when done
+make test-db-down
+```
+
+All integration tests use `testutil.NewTestDB(t)` from `internal/testutil/db.go`.
+Tests automatically skip if `DATABASE_URL` is not set.
+Each test gets its own isolated schema — tests never interfere with each other.
+
+Before opening any PR that touches write operations:
+
+1. Run `make test-db-up`
+2. Run `make test-live`
+3. Confirm all tests pass
+4. Run `make test-db-down`
+
+---
+
 ## Repository Layout
 
 ```

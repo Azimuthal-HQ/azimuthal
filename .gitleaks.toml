@@ -51,6 +51,9 @@ title = "azimuthal secret scanning"
     # docker-compose files use placeholder/env-var credentials
     '''build/docker-compose\.dev\.yml''',
     '''build/docker-compose\.yml''',
+    '''build/docker-compose\.test\.yml''',
+    # Test environment file — contains only test-local credentials
+    '''\.env\.test''',
     # Project docs and context files
     '''CLAUDE\.md''',
     '''README\.md''',
