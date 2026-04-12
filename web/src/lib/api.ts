@@ -64,13 +64,21 @@ async function apiFetch<T>(
   });
 
   if (!response.ok) {
-    // On 401, clear tokens and redirect to login
+    // On 401, only redirect to login for auth-critical endpoints.
+    // Non-critical 401s (e.g. permission denied on a resource) should
+    // throw an error without logging the user out.
     if (response.status === 401) {
-      removeToken();
-      removeRefreshToken();
-      const currentPath = window.location.pathname;
-      if (currentPath !== '/login') {
-        window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+      const url = response.url || '';
+      const isCriticalAuthEndpoint = url.includes('/auth/login') ||
+        url.includes('/auth/me') ||
+        url.includes('/auth/refresh');
+      if (isCriticalAuthEndpoint) {
+        removeToken();
+        removeRefreshToken();
+        const currentPath = window.location.pathname;
+        if (currentPath !== '/login') {
+          window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+        }
       }
     }
 
@@ -538,8 +546,8 @@ async function fetchMembers(orgId: string): Promise<Member[]> {
 // Comment API functions
 // ---------------------------------------------------------------------------
 
-async function fetchComments(spaceId: string, itemId: string): Promise<Comment[]> {
-  const data = await apiFetch<Comment[] | Comment>(`/spaces/${spaceId}/items/${itemId}/comments`);
+async function fetchComments(orgId: string, spaceId: string, itemId: string): Promise<Comment[]> {
+  const data = await apiFetch<Comment[] | Comment>(`/orgs/${orgId}/spaces/${spaceId}/items/${itemId}/comments`);
   return Array.isArray(data) ? data : [data];
 }
 
@@ -547,8 +555,8 @@ interface CreateCommentRequest {
   content: string;
 }
 
-async function createComment(spaceId: string, itemId: string, req: CreateCommentRequest): Promise<Comment> {
-  return apiFetch<Comment>(`/spaces/${spaceId}/items/${itemId}/comments`, {
+async function createComment(orgId: string, spaceId: string, itemId: string, req: CreateCommentRequest): Promise<Comment> {
+  return apiFetch<Comment>(`/orgs/${orgId}/spaces/${spaceId}/items/${itemId}/comments`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -687,11 +695,11 @@ export function useMembers(orgId: string, opts?: QueryOpts<Member[]>) {
   });
 }
 
-export function useComments(spaceId: string, itemId: string, opts?: QueryOpts<Comment[]>) {
+export function useComments(orgId: string, spaceId: string, itemId: string, opts?: QueryOpts<Comment[]>) {
   return useQuery<Comment[], APIError>({
     queryKey: queryKeys.comments(spaceId, itemId),
-    queryFn: () => fetchComments(spaceId, itemId),
-    enabled: !!spaceId && !!itemId,
+    queryFn: () => fetchComments(orgId, spaceId, itemId),
+    enabled: !!orgId && !!spaceId && !!itemId,
     ...opts,
   });
 }
@@ -815,10 +823,10 @@ export function useUpdateProjectItem(spaceId: string, itemId: string) {
   });
 }
 
-export function useCreateComment(spaceId: string, itemId: string) {
+export function useCreateComment(orgId: string, spaceId: string, itemId: string) {
   const queryClient = useQueryClient();
   return useMutation<Comment, APIError, CreateCommentRequest>({
-    mutationFn: (req) => createComment(spaceId, itemId, req),
+    mutationFn: (req) => createComment(orgId, spaceId, itemId, req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.comments(spaceId, itemId) });
     },

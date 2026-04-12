@@ -65,8 +65,8 @@ export function TicketDetailPage() {
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
   const { data: members } = useMembers(orgId);
-  const { data: comments, refetch: refetchComments } = useComments(spaceId, ticketId ?? '');
-  const createCommentMutation = useCreateComment(spaceId, ticketId ?? '');
+  const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, ticketId ?? '');
+  const createCommentMutation = useCreateComment(orgId, spaceId, ticketId ?? '');
 
   const [newComment, setNewComment] = useState('');
 

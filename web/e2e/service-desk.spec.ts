@@ -112,11 +112,65 @@ test.describe('Service Desk', () => {
     await expect(page.locator('text=Welcome back')).toBeVisible()
   })
 
-  test.skip('clicking a ticket row opens detail view — KNOWN GAP', async () => {
-    // See docs/project-state.md Section 2 — Service Desk
-    // Ticket detail view click is marked as working (✓) but priority display
-    // has a ⚠ warning about "Unknown" fallback for unmapped values.
-    // Skipping until priority mapping is fully verified end-to-end.
-    // File: web/src/pages/tickets/TicketDetailPage.tsx
+  test('clicking a ticket opens detail view and stays there — no redirect to login', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Detail View Test', 'service_desk')
+
+    await page.click('button:has-text("New Ticket")')
+    await page.fill('#ticket-title', 'Detail Test Ticket')
+    await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
+    await expect(page.locator('text=Detail Test Ticket')).toBeVisible({ timeout: 5000 })
+
+    // Click the ticket row
+    await page.click('text=Detail Test Ticket')
+
+    // Must stay on ticket detail — must NOT redirect to login
+    await expect(page).not.toHaveURL(/\/login/, { timeout: 5000 })
+    await expect(page).toHaveURL(/\/tickets\//, { timeout: 5000 })
+    await expect(page.locator('text=Detail Test Ticket')).toBeVisible()
+
+    // Wait for all async calls to settle — if redirect is going to happen it happens here
+    await page.waitForTimeout(2000)
+    await expect(page).not.toHaveURL(/\/login/)
+  })
+
+  test('ticket detail comments section loads without 404 error', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Comments Test Desk', 'service_desk')
+
+    await page.click('button:has-text("New Ticket")')
+    await page.fill('#ticket-title', 'Comments Test Ticket')
+    await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
+    await expect(page.locator('text=Comments Test Ticket')).toBeVisible({ timeout: 5000 })
+    await page.click('text=Comments Test Ticket')
+
+    // Must not redirect to login
+    await expect(page).not.toHaveURL(/\/login/, { timeout: 5000 })
+
+    // Comments/Activity section must be visible and not show errors
+    await expect(
+      page.locator('text=Activity').or(page.locator('text=Comments'))
+    ).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=404')).not.toBeVisible()
+    await expect(page.locator('text=Something went wrong')).not.toBeVisible()
+  })
+
+  test('can add a comment to a ticket', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Add Comment Test', 'service_desk')
+
+    await page.click('button:has-text("New Ticket")')
+    await page.fill('#ticket-title', 'Comment Target Ticket')
+    await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
+    await expect(page.locator('text=Comment Target Ticket')).toBeVisible({ timeout: 5000 })
+    await page.click('text=Comment Target Ticket')
+    await expect(page).not.toHaveURL(/\/login/, { timeout: 5000 })
+
+    // Add a comment
+    await page.fill('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]', 'This is a test comment')
+    await page.click('button:has-text("Comment")')
+
+    // Comment must appear in the thread
+    await expect(page.locator('text=This is a test comment')).toBeVisible({ timeout: 5000 })
   })
 })

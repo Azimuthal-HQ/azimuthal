@@ -18,6 +18,7 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
+	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
@@ -95,6 +96,7 @@ func newTestServer(t *testing.T) *testServer {
 		WikiHandler:    wikiapi.NewHandler(wikiSvc),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
 		SpaceHandler:   spacesapi.NewHandler(queries),
+		CommentHandler: commentsapi.NewHandler(queries),
 		SPAHandler:     nil,
 	})
 
@@ -464,6 +466,118 @@ func TestIntegration_CORS_PreflightReturns204(t *testing.T) {
 	r := ts.do(t, req)
 	require.Equal(t, http.StatusNoContent, r.StatusCode)
 	require.NotEmpty(t, r.Header.Get("Access-Control-Allow-Origin"))
+}
+
+// --- Auth /me endpoint ---
+
+// TestAuthMe_ValidToken_Returns200 verifies GET /api/v1/auth/me returns 200
+// with a valid JWT. This was returning 401 because the /me route was registered
+// in the public auth group without RequireAuth middleware, causing claims to be nil.
+func TestAuthMe_ValidToken_Returns200(t *testing.T) {
+	ts := newTestServer(t)
+	r := ts.get(t, "/api/v1/auth/me", true)
+
+	require.Equal(t, http.StatusOK, r.StatusCode, "auth/me with valid token: %s", r.Body)
+	require.Contains(t, r.ContentType, "application/json")
+
+	var user map[string]any
+	require.NoError(t, json.Unmarshal(r.Body, &user))
+	require.NotEmpty(t, user["email"], "must return user email")
+	require.NotEmpty(t, user["display_name"], "must return display_name")
+}
+
+// TestAuthMe_NoToken_Returns401JSON verifies GET /api/v1/auth/me without
+// Authorization header returns 401 JSON, not HTML.
+func TestAuthMe_NoToken_Returns401JSON(t *testing.T) {
+	ts := newTestServer(t)
+	r := ts.get(t, "/api/v1/auth/me", false)
+
+	require.Equal(t, http.StatusUnauthorized, r.StatusCode)
+	require.Contains(t, r.ContentType, "application/json")
+
+	var errResp map[string]any
+	require.NoError(t, json.Unmarshal(r.Body, &errResp))
+	errObj, ok := errResp["error"].(map[string]any)
+	require.True(t, ok, "error response must have 'error' object, got: %s", r.Body)
+	require.Equal(t, "UNAUTHORIZED", errObj["code"])
+}
+
+// TestAuthMe_SameTokenWorksOnBothEndpoints verifies the same JWT works on
+// both /auth/me and /orgs/:id/spaces. This was the root cause: /auth/me used
+// different middleware than other protected endpoints.
+func TestAuthMe_SameTokenWorksOnBothEndpoints(t *testing.T) {
+	ts := newTestServer(t)
+
+	meResult := ts.get(t, "/api/v1/auth/me", true)
+	require.Equal(t, http.StatusOK, meResult.StatusCode, "auth/me: %s", meResult.Body)
+
+	spacesResult := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), true)
+	require.Equal(t, http.StatusOK, spacesResult.StatusCode, "spaces: %s", spacesResult.Body)
+}
+
+// --- Comments ---
+
+// TestComments_CorrectURLIncludesOrgId verifies the correct comments URL
+// structure: /orgs/:orgId/spaces/:spaceId/items/:itemId/comments returns 200,
+// while /spaces/:spaceId/items/:itemId/comments returns 404.
+func TestComments_CorrectURLIncludesOrgId(t *testing.T) {
+	ts := newTestServer(t)
+	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+
+	// Create an item directly in the database
+	itemID := uuid.New()
+	_, err := ts.DB.Pool.Exec(context.Background(),
+		`INSERT INTO items (id, space_id, kind, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		itemID, space.ID, "ticket", "Test Ticket", "open", "medium", user.ID,
+	)
+	require.NoError(t, err)
+
+	// Correct URL: with orgId
+	correctResult := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/items/%s/comments", ts.OrgID, space.ID, itemID), true)
+	require.Equal(t, http.StatusOK, correctResult.StatusCode, "correct URL should return 200: %s", correctResult.Body)
+
+	// Wrong URL: without orgId — should return 404
+	wrongResult := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/items/%s/comments", space.ID, itemID), true)
+	require.Equal(t, http.StatusNotFound, wrongResult.StatusCode, "wrong URL should return 404")
+}
+
+// TestComments_PostAndRetrieve tests creating and retrieving a comment.
+func TestComments_PostAndRetrieve(t *testing.T) {
+	ts := newTestServer(t)
+	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+
+	// Create an item directly in the database
+	itemID := uuid.New()
+	_, err := ts.DB.Pool.Exec(context.Background(),
+		`INSERT INTO items (id, space_id, kind, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		itemID, space.ID, "ticket", "Comment Test Ticket", "open", "medium", user.ID,
+	)
+	require.NoError(t, err)
+
+	commentsURL := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/items/%s/comments", ts.OrgID, space.ID, itemID)
+
+	// POST a comment
+	postResult := ts.post(t, commentsURL, map[string]string{
+		"content": "This is a test comment",
+	}, true)
+	require.Equal(t, http.StatusCreated, postResult.StatusCode, "post comment: %s", postResult.Body)
+
+	var comment map[string]any
+	require.NoError(t, json.Unmarshal(postResult.Body, &comment))
+	require.Equal(t, "This is a test comment", comment["body"])
+	require.NotEmpty(t, comment["author_name"], "comment must have author_name populated")
+
+	// GET comments — should return the posted comment
+	getResult := ts.get(t, commentsURL, true)
+	require.Equal(t, http.StatusOK, getResult.StatusCode, "get comments: %s", getResult.Body)
+
+	var comments []map[string]any
+	require.NoError(t, json.Unmarshal(getResult.Body, &comments))
+	require.Len(t, comments, 1)
+	require.Equal(t, "This is a test comment", comments[0]["body"])
+	require.NotEmpty(t, comments[0]["author_name"], "listed comment must have author_name")
 }
 
 // --- Register duplicate email ---

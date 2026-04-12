@@ -18,6 +18,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
+	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
@@ -123,6 +124,7 @@ func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, 
 		WikiHandler:    wikiapi.NewHandler(wikiSvc),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))),
 		SpaceHandler:   spacesapi.NewHandler(queries),
+		CommentHandler: commentsapi.NewHandler(queries),
 		SPAHandler:     spaHandler,
 	}), nil
 }

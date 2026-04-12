@@ -5,6 +5,54 @@ Updated by test/backend-coverage branch with test references.
 
 ---
 
+## 0. ~~Ticket Detail Navigation — Redirect Loop~~ (RESOLVED)
+
+**Severity**: High
+**Status**: Resolved in fix/ticket-detail-auth branch
+
+**Was:** Clicking a ticket in the service desk caused a redirect loop back to login.
+Two bugs were involved:
+
+1. `GET /api/v1/auth/me` returned 401 with a valid token because the route was
+   registered in the public auth group (without `RequireAuth` middleware). Chi
+   matched the public route first, so claims were nil and the handler returned 401.
+   The frontend auth interceptor then treated every 401 as session expiry and
+   redirected to `/login`.
+
+2. Comments endpoint returned 404 because no HTTP handler for comments existed.
+   The DB layer (`ListCommentsByItem`, `CreateComment`) was implemented but never
+   wired to an API route.
+
+**Root cause (Bug 1):** `/me` was registered twice: once in the public `Routes()`
+method of the auth handler (no middleware) and once in the protected `/api/v1`
+block. Chi matched the public route first.
+
+**Root cause (Bug 2):** Missing comments API handler — only the DB queries existed.
+
+**Fix:**
+- Removed `/me` from the public auth `Routes()` method so only the protected
+  version (with `RequireAuth` middleware) is reachable.
+- Fixed the frontend auth interceptor to only redirect on auth-critical 401s
+  (`/auth/login`, `/auth/me`, `/auth/refresh`), not on every 401.
+- Created `internal/core/api/comments/handler.go` with List and Create endpoints.
+- Registered comments at `/orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments`.
+- Updated frontend to include orgId in all comments API calls.
+
+**Tests added:**
+- `TestAuthMe_ValidToken_Returns200`
+- `TestAuthMe_NoToken_Returns401JSON`
+- `TestAuthMe_SameTokenWorksOnBothEndpoints`
+- `TestComments_CorrectURLIncludesOrgId`
+- `TestComments_PostAndRetrieve`
+- Playwright: `clicking a ticket opens detail view and stays there`
+- Playwright: `ticket detail comments section loads without 404 error`
+- Playwright: `can add a comment to a ticket`
+
+**Lesson:** Never skip a test because a feature "might not be fully implemented."
+A failing test is a signal. A skip is silence.
+
+---
+
 ## 1. ~~Missing Repository Adapter Layer~~ (RESOLVED)
 
 **Severity**: High
