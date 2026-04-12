@@ -51,7 +51,6 @@ func (h *Handler) Routes() chi.Router {
 	r.Post("/register", h.Register)
 	r.Post("/refresh", h.Refresh)
 	r.Post("/logout", h.Logout)
-	r.Get("/me", h.Me)
 	return r
 }
 

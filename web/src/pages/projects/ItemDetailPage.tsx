@@ -47,8 +47,8 @@ export function ItemDetailPage() {
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
   const { data: members } = useMembers(orgId);
-  const { data: comments, refetch: refetchComments } = useComments(spaceId, itemId);
-  const createCommentMutation = useCreateComment(spaceId, itemId);
+  const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, itemId);
+  const createCommentMutation = useCreateComment(orgId, spaceId, itemId);
 
   const [newComment, setNewComment] = useState('');
 

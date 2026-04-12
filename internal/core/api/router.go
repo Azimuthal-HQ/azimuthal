@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
+	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
@@ -21,6 +22,7 @@ type RouterConfig struct {
 	WikiHandler    *wikiapi.Handler
 	ProjectHandler *projectsapi.Handler
 	SpaceHandler   *spacesapi.Handler
+	CommentHandler *commentsapi.Handler
 	SPAHandler     http.Handler // serves the embedded frontend; nil disables SPA serving
 }
 
@@ -38,17 +40,21 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	r.Get("/health", HandleHealth)
 	r.Get("/ready", HandleReady)
 
-	// Auth endpoints (mostly public)
+	// Auth endpoints (mostly public, /me is protected)
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Mount("/", cfg.AuthHandler.Routes())
+
+		// /me requires authentication — uses the same JWT middleware as
+		// all other protected endpoints to avoid redirect loops.
+		r.Group(func(r chi.Router) {
+			r.Use(cfg.Authenticator.RequireAuth)
+			r.Get("/me", cfg.AuthHandler.Me)
+		})
 	})
 
 	// Protected API endpoints
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(cfg.Authenticator.RequireAuth)
-
-		// Current user profile
-		r.Get("/auth/me", cfg.AuthHandler.Me)
 
 		// Organization management
 		r.Get("/orgs/{orgID}", cfg.SpaceHandler.GetOrg)
@@ -57,6 +63,13 @@ func NewRouter(cfg RouterConfig) http.Handler {
 		// Spaces (scoped by org)
 		r.Route("/orgs/{orgID}/spaces", func(r chi.Router) {
 			r.Mount("/", cfg.SpaceHandler.Routes())
+		})
+
+		// Comments (scoped by org, space, and item)
+		r.Route("/orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments", func(r chi.Router) {
+			if cfg.CommentHandler != nil {
+				r.Mount("/", cfg.CommentHandler.Routes())
+			}
 		})
 
 		// Labels (scoped by org)
