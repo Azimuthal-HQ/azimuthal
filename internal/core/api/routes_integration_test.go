@@ -134,6 +134,19 @@ func (ts *testServer) post(t *testing.T, path string, body any, authed bool) htt
 	return ts.do(t, req)
 }
 
+func (ts *testServer) patch(t *testing.T, path string, body any, authed bool) httpResult {
+	t.Helper()
+	jsonBody, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPatch, ts.url(path), bytes.NewReader(jsonBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	if authed {
+		req.Header.Set("Authorization", "Bearer "+ts.Token)
+	}
+	return ts.do(t, req)
+}
+
 func (ts *testServer) do(t *testing.T, req *http.Request) httpResult {
 	t.Helper()
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // test-only URL
@@ -581,6 +594,210 @@ func TestComments_PostAndRetrieve(t *testing.T) {
 }
 
 // --- Register duplicate email ---
+
+// --- Members URL routing ---
+
+// TestMembers_SpaceScopedURL_Returns200 verifies GET /api/v1/orgs/:orgId/spaces/:spaceId/members
+// returns 200 — this is the correct URL for listing space members.
+func TestMembers_SpaceScopedURL_Returns200(t *testing.T) {
+	ts := newTestServer(t)
+	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+
+	// Add the user as a space member
+	_, err := ts.DB.Pool.Exec(context.Background(),
+		`INSERT INTO space_members (id, space_id, user_id, role) VALUES ($1, $2, $3, $4)`,
+		uuid.New(), space.ID, user.ID, "member",
+	)
+	require.NoError(t, err)
+
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/members", ts.OrgID, space.ID), true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "space-scoped members URL should return 200: %s", r.Body)
+
+	var members []map[string]any
+	require.NoError(t, json.Unmarshal(r.Body, &members))
+	require.GreaterOrEqual(t, len(members), 1, "should have at least one member")
+	require.NotEmpty(t, members[0]["user_id"], "member must have user_id")
+	require.NotEmpty(t, members[0]["display_name"], "member must have display_name")
+}
+
+// TestMembers_OrgScopedURL_Returns404 verifies GET /api/v1/orgs/:orgId/members
+// returns 404 — the frontend was calling this wrong URL.
+func TestMembers_OrgScopedURL_Returns404(t *testing.T) {
+	ts := newTestServer(t)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/members", ts.OrgID), true)
+	// This URL does not exist on the backend — SPA fallback returns 404 or HTML.
+	// Without SPAHandler, the chi NotFound handler returns 404.
+	require.NotEqual(t, http.StatusOK, r.StatusCode,
+		"org-scoped /orgs/:orgId/members must NOT return 200 — this wrong URL was being called by the frontend")
+}
+
+// --- Comments URL routing (supplements existing tests) ---
+
+// TestComments_WrongURL_NoOrgId_Returns404 explicitly documents that the short URL
+// without orgId is intentionally not supported.
+func TestComments_WrongURL_NoOrgId_Returns404(t *testing.T) {
+	ts := newTestServer(t)
+	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+
+	itemID := uuid.New()
+	_, err := ts.DB.Pool.Exec(context.Background(),
+		`INSERT INTO items (id, space_id, kind, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		itemID, space.ID, "ticket", "Test Ticket", "open", "medium", user.ID,
+	)
+	require.NoError(t, err)
+
+	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/items/%s/comments", space.ID, itemID), true)
+	require.Equal(t, http.StatusNotFound, r.StatusCode,
+		"short URL without orgId must return 404 — documents that this is intentionally not supported")
+}
+
+// TestComments_PostAndRetrieve_FullURL verifies the full comment lifecycle via correct URL.
+func TestComments_PostAndRetrieve_FullURL(t *testing.T) {
+	ts := newTestServer(t)
+	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+
+	itemID := uuid.New()
+	_, err := ts.DB.Pool.Exec(context.Background(),
+		`INSERT INTO items (id, space_id, kind, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		itemID, space.ID, "ticket", "Full URL Comment Test", "open", "medium", user.ID,
+	)
+	require.NoError(t, err)
+
+	commentsURL := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/items/%s/comments", ts.OrgID, space.ID, itemID)
+
+	// POST a comment
+	postResult := ts.post(t, commentsURL, map[string]string{"content": "test comment"}, true)
+	require.Equal(t, http.StatusCreated, postResult.StatusCode, "post: %s", postResult.Body)
+
+	var comment map[string]any
+	require.NoError(t, json.Unmarshal(postResult.Body, &comment))
+	require.Equal(t, "test comment", comment["body"])
+	require.NotEmpty(t, comment["author_name"], "author_name must not be empty")
+
+	// GET — verify it's returned
+	getResult := ts.get(t, commentsURL, true)
+	require.Equal(t, http.StatusOK, getResult.StatusCode)
+
+	var comments []map[string]any
+	require.NoError(t, json.Unmarshal(getResult.Body, &comments))
+	require.Len(t, comments, 1)
+	require.Equal(t, "test comment", comments[0]["body"])
+	require.NotEmpty(t, comments[0]["author_name"])
+}
+
+// --- Project item status ---
+
+// TestProjectItem_StatusUpdate_Returns200 verifies POST /spaces/:spaceId/projects/items/:itemId/status
+// returns 200 for each valid status.
+func TestProjectItem_StatusUpdate_Returns200(t *testing.T) {
+	ts := newTestServer(t)
+	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+
+	// Create an item
+	createResult := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+		"title":    "Status Test Item",
+		"kind":     "task",
+		"priority": "medium",
+	}, true)
+	require.Equal(t, http.StatusCreated, createResult.StatusCode, "create: %s", createResult.Body)
+
+	var item map[string]any
+	require.NoError(t, json.Unmarshal(createResult.Body, &item))
+	itemID := item["id"].(string)
+
+	validStatuses := []string{"open", "in_progress", "in_review", "done", "closed"}
+	for _, status := range validStatuses {
+		t.Run(status, func(t *testing.T) {
+			r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items/%s/status", space.ID, itemID),
+				map[string]string{"status": status}, true)
+			require.Equal(t, http.StatusOK, r.StatusCode, "status %s: %s", status, r.Body)
+
+			var updated map[string]any
+			require.NoError(t, json.Unmarshal(r.Body, &updated))
+			require.Equal(t, status, updated["status"])
+		})
+	}
+}
+
+// TestProjectItem_StatusUpdate_InvalidStatus_NotRejected documents that the backend
+// currently does not validate status values — any string is accepted. This test
+// ensures we're aware of this behavior and can add validation later.
+func TestProjectItem_StatusUpdate_InvalidStatus_NotRejected(t *testing.T) {
+	ts := newTestServer(t)
+	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+
+	createResult := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+		"title":    "Invalid Status Item",
+		"kind":     "task",
+		"priority": "medium",
+	}, true)
+	require.Equal(t, http.StatusCreated, createResult.StatusCode)
+
+	var item map[string]any
+	require.NoError(t, json.Unmarshal(createResult.Body, &item))
+	itemID := item["id"].(string)
+
+	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items/%s/status", space.ID, itemID),
+		map[string]string{"status": "invalid_status"}, true)
+	// NOTE: Backend currently accepts any status string without validation.
+	// When validation is added, this should change to 400.
+	require.Equal(t, http.StatusOK, r.StatusCode, "backend currently accepts any status: %s", r.Body)
+}
+
+// --- Reporter data chain ---
+
+// TestReporter_ResolvedFromMembers verifies the data chain that powers reporter display:
+// an item's reporter_id matches a user in the space members response.
+func TestReporter_ResolvedFromMembers(t *testing.T) {
+	ts := newTestServer(t)
+	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+
+	// Create item first to discover the JWT user's ID (reporter_id comes from JWT)
+	createResult := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+		"title":    "Reporter Test Item",
+		"kind":     "task",
+		"priority": "medium",
+	}, true)
+	require.Equal(t, http.StatusCreated, createResult.StatusCode)
+
+	var item map[string]any
+	require.NoError(t, json.Unmarshal(createResult.Body, &item))
+	reporterID := item["reporter_id"].(string)
+	require.NotEmpty(t, reporterID, "item must have reporter_id")
+
+	// Add the JWT user (reporter) as a space member so they appear in the members list
+	reporterUUID, err := uuid.Parse(reporterID)
+	require.NoError(t, err)
+	_, err = ts.DB.Pool.Exec(context.Background(),
+		`INSERT INTO space_members (id, space_id, user_id, role) VALUES ($1, $2, $3, $4)`,
+		uuid.New(), space.ID, reporterUUID, "member",
+	)
+	require.NoError(t, err)
+
+	// Get space members
+	membersResult := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/members", ts.OrgID, space.ID), true)
+	require.Equal(t, http.StatusOK, membersResult.StatusCode)
+
+	var members []map[string]any
+	require.NoError(t, json.Unmarshal(membersResult.Body, &members))
+
+	// Find the reporter in the members list
+	found := false
+	for _, m := range members {
+		if m["user_id"].(string) == reporterID {
+			found = true
+			require.NotEmpty(t, m["display_name"], "reporter's display_name must be present")
+			break
+		}
+	}
+	require.True(t, found, "reporter_id %s must be present in space members list", reporterID)
+}
 
 // TestIntegration_Register_DuplicateEmail tests duplicate email registration.
 func TestIntegration_Register_DuplicateEmail(t *testing.T) {

@@ -173,4 +173,82 @@ test.describe('Service Desk', () => {
     // Comment must appear in the thread
     await expect(page.locator('text=This is a test comment')).toBeVisible({ timeout: 5000 })
   })
+
+  test('members endpoint loads — assignee dropdown visible without 404', async ({ page }) => {
+    const failedRequests: string[] = []
+    page.on('response', response => {
+      if (response.status() === 404 && response.url().includes('/members')) {
+        failedRequests.push(`404: ${response.url()}`)
+      }
+    })
+
+    await createUserAndLogin(page)
+    await createSpace(page, 'Assignee Test Desk', 'service_desk')
+    await page.click('button:has-text("New Ticket")')
+    await page.fill('#ticket-title', 'Assignee Test')
+    await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
+    await expect(page.locator('text=Assignee Test')).toBeVisible({ timeout: 5000 })
+    await page.click('text=Assignee Test')
+    await expect(page).not.toHaveURL(/\/login/)
+
+    // Assignee dropdown must be visible — verifies the members endpoint loaded
+    const assigneeSelect = page.locator('select').filter({ hasText: 'Unassigned' })
+    await expect(assigneeSelect).toBeVisible({ timeout: 5000 })
+
+    // Wait for requests to settle
+    await page.waitForTimeout(1000)
+
+    // No 404 errors on members endpoint
+    expect(failedRequests, `Members endpoint 404: ${failedRequests.join(', ')}`).toHaveLength(0)
+  })
+
+  test('comments section loads and a comment can be posted', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Comment Post Test', 'service_desk')
+    await page.click('button:has-text("New Ticket")')
+    await page.fill('#ticket-title', 'Comment Test Ticket')
+    await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
+    await expect(page.locator('text=Comment Test Ticket')).toBeVisible({ timeout: 5000 })
+    await page.click('text=Comment Test Ticket')
+    await expect(page).not.toHaveURL(/\/login/)
+
+    // Activity section must be visible
+    await expect(
+      page.locator('h3:has-text("Activity")').first()
+    ).toBeVisible({ timeout: 5000 })
+
+    // Post a comment
+    const commentBox = page.locator('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]')
+    await expect(commentBox).toBeVisible({ timeout: 5000 })
+    await commentBox.fill('This is a regression test comment')
+    await page.click('button:has-text("Comment")')
+
+    // Comment must appear
+    await expect(page.locator('text=This is a regression test comment')).toBeVisible({ timeout: 5000 })
+  })
+
+  test('no 404 errors in network tab when viewing ticket detail', async ({ page }) => {
+    const failedRequests: string[] = []
+    page.on('response', response => {
+      if (response.status() === 404) {
+        failedRequests.push(`404: ${response.url()}`)
+      }
+    })
+
+    await createUserAndLogin(page)
+    await createSpace(page, 'No 404 Test', 'service_desk')
+    await page.click('button:has-text("New Ticket")')
+    await page.fill('#ticket-title', 'No 404 Ticket')
+    await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
+    await expect(page.locator('text=No 404 Ticket')).toBeVisible({ timeout: 5000 })
+    await page.click('text=No 404 Ticket')
+    await expect(page).not.toHaveURL(/\/login/)
+
+    // Wait for all requests to settle
+    await page.waitForTimeout(2000)
+
+    // Filter to only API 404s — not expected 404s like missing favicon
+    const api404s = failedRequests.filter(r => r.includes('/api/'))
+    expect(api404s, `Unexpected API 404s: ${api404s.join(', ')}`).toHaveLength(0)
+  })
 })

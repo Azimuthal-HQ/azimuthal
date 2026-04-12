@@ -64,7 +64,7 @@ export function TicketDetailPage() {
   const updateMutation = useUpdateTicket(spaceId, ticketId ?? '');
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
-  const { data: members } = useMembers(orgId);
+  const { data: members } = useMembers(orgId, spaceId);
   const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, ticketId ?? '');
   const createCommentMutation = useCreateComment(orgId, spaceId, ticketId ?? '');
 

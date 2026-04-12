@@ -460,6 +460,17 @@ async function updateProjectItem(
   });
 }
 
+async function transitionProjectItemStatus(
+  spaceId: string,
+  itemId: string,
+  status: string,
+): Promise<ProjectItem> {
+  return apiFetch<ProjectItem>(`/spaces/${spaceId}/projects/items/${itemId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status }),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Sprint API functions
 // ---------------------------------------------------------------------------
@@ -537,8 +548,8 @@ async function fetchMe(): Promise<User> {
 // Member API functions
 // ---------------------------------------------------------------------------
 
-async function fetchMembers(orgId: string): Promise<Member[]> {
-  const data = await apiFetch<Member[] | Member>(`/orgs/${orgId}/members`);
+async function fetchMembers(orgId: string, spaceId: string): Promise<Member[]> {
+  const data = await apiFetch<Member[] | Member>(`/orgs/${orgId}/spaces/${spaceId}/members`);
   return Array.isArray(data) ? data : [data];
 }
 
@@ -578,7 +589,7 @@ export const queryKeys = {
   projectItem: (spaceId: string, itemId: string) => ['projectItems', spaceId, itemId] as const,
   sprints: (spaceId: string) => ['sprints', spaceId] as const,
   labels: (orgId: string) => ['labels', orgId] as const,
-  members: (orgId: string) => ['members', orgId] as const,
+  members: (orgId: string, spaceId: string) => ['members', orgId, spaceId] as const,
   comments: (spaceId: string, itemId: string) => ['comments', spaceId, itemId] as const,
 } as const;
 
@@ -686,11 +697,16 @@ export function useLabels(orgId: string, opts?: QueryOpts<Label[]>) {
   });
 }
 
-export function useMembers(orgId: string, opts?: QueryOpts<Member[]>) {
+export function useMembers(orgId: string, spaceId: string, opts?: QueryOpts<Member[]>) {
   return useQuery<Member[], APIError>({
-    queryKey: queryKeys.members(orgId),
-    queryFn: () => fetchMembers(orgId),
-    enabled: !!orgId,
+    queryKey: queryKeys.members(orgId, spaceId),
+    queryFn: () => fetchMembers(orgId, spaceId),
+    enabled: !!orgId && !!spaceId,
+    retry: (failureCount, error) => {
+      if (error?.status === 404) return false;
+      return failureCount < 2;
+    },
+    staleTime: 30000,
     ...opts,
   });
 }
@@ -700,6 +716,10 @@ export function useComments(orgId: string, spaceId: string, itemId: string, opts
     queryKey: queryKeys.comments(spaceId, itemId),
     queryFn: () => fetchComments(orgId, spaceId, itemId),
     enabled: !!orgId && !!spaceId && !!itemId,
+    retry: (failureCount, error) => {
+      if (error?.status === 404) return false;
+      return failureCount < 2;
+    },
     ...opts,
   });
 }
@@ -816,6 +836,17 @@ export function useUpdateProjectItem(spaceId: string, itemId: string) {
   const queryClient = useQueryClient();
   return useMutation<ProjectItem, APIError, UpdateProjectItemRequest>({
     mutationFn: (req) => updateProjectItem(spaceId, itemId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectItem(spaceId, itemId) });
+    },
+  });
+}
+
+export function useTransitionProjectItemStatus(spaceId: string, itemId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<ProjectItem, APIError, string>({
+    mutationFn: (status) => transitionProjectItemStatus(spaceId, itemId, status),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItem(spaceId, itemId) });

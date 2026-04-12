@@ -62,4 +62,46 @@ test.describe('Projects', () => {
     // File: web/src/pages/projects/ItemDetailPage.tsx
     // Detail view exists but is read-only with no edit capability
   })
+
+  test('project item status can be changed', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Status Change Project', 'project')
+    await page.click('button:has-text("Create Item")')
+    await page.fill('#item-title', 'Status Test Item')
+    await page.locator('[role="dialog"] button:has-text("Create Item")').click()
+    await expect(page.locator('text=Status Test Item')).toBeVisible({ timeout: 5000 })
+    await page.click('text=Status Test Item')
+    await expect(page).not.toHaveURL(/\/login/)
+
+    // Find status dropdown and change it
+    const statusSelect = page.locator('select').filter({ hasText: 'Open' }).first()
+    await expect(statusSelect).toBeVisible({ timeout: 5000 })
+    await statusSelect.selectOption('in_progress')
+
+    // Reload and verify status persisted — use Badge element to avoid matching dropdown option
+    await page.reload()
+    await expect(page.locator('[class*="inline-flex"]:has-text("In Progress")').first()).toBeVisible({ timeout: 5000 })
+  })
+
+  test('no 404 errors in network tab when viewing project item detail', async ({ page }) => {
+    const failedRequests: string[] = []
+    page.on('response', response => {
+      if (response.status() === 404) {
+        failedRequests.push(`404: ${response.url()}`)
+      }
+    })
+
+    await createUserAndLogin(page)
+    await createSpace(page, 'No 404 Project', 'project')
+    await page.click('button:has-text("Create Item")')
+    await page.fill('#item-title', 'No 404 Item')
+    await page.locator('[role="dialog"] button:has-text("Create Item")').click()
+    await expect(page.locator('text=No 404 Item')).toBeVisible({ timeout: 5000 })
+    await page.click('text=No 404 Item')
+    await expect(page).not.toHaveURL(/\/login/)
+    await page.waitForTimeout(2000)
+
+    const api404s = failedRequests.filter(r => r.includes('/api/'))
+    expect(api404s, `Unexpected API 404s: ${api404s.join(', ')}`).toHaveLength(0)
+  })
 })
