@@ -48,6 +48,20 @@ type commentResponse struct {
 }
 
 // List returns all comments for an item.
+//
+// @Summary      List comments
+// @Description  Returns all comments for the specified item.
+// @Tags         comments
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        itemID   path      string  true  "Item ID (UUID)"
+// @Success      200      {array}   api.SwaggerCommentResponse  "List of comments"
+// @Failure      400      {object}  api.SwaggerErrorResponse    "Invalid item ID"
+// @Failure      401      {object}  api.SwaggerErrorResponse    "Not authenticated"
+// @Failure      500      {object}  api.SwaggerErrorResponse    "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	itemID, err := itemIDFromURL(r)
 	if err != nil {
@@ -83,6 +97,22 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Create adds a new comment to an item.
+//
+// @Summary      Create comment
+// @Description  Adds a new comment to the specified item. Author is set from the JWT.
+// @Tags         comments
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string                          true  "Organization ID (UUID)"
+// @Param        spaceID  path      string                          true  "Space ID (UUID)"
+// @Param        itemID   path      string                          true  "Item ID (UUID)"
+// @Param        body     body      api.SwaggerCreateCommentRequest true  "Comment content"
+// @Success      201      {object}  api.SwaggerCommentResponse      "Comment created"
+// @Failure      400      {object}  api.SwaggerErrorResponse        "Validation error"
+// @Failure      401      {object}  api.SwaggerErrorResponse        "Not authenticated"
+// @Failure      500      {object}  api.SwaggerErrorResponse        "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {

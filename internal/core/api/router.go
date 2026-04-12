@@ -40,6 +40,9 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	r.Get("/health", HandleHealth)
 	r.Get("/ready", HandleReady)
 
+	// API documentation (no auth required)
+	RegisterDocsRoutes(r)
+
 	// Auth endpoints (mostly public, /me is protected)
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Mount("/", cfg.AuthHandler.Routes())

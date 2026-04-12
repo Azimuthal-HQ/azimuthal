@@ -1,976 +1,3969 @@
-openapi: 3.1.0
-info:
-  title: Azimuthal API
-  description: REST API for Azimuthal — self-hostable project management suite
-  version: 1.0.0
-  license:
-    name: Apache 2.0
-    url: https://www.apache.org/licenses/LICENSE-2.0
-
-servers:
-  - url: http://localhost:8080
-    description: Local development
-
-tags:
-  - name: health
-    description: Liveness and readiness probes
-  - name: auth
-    description: Authentication (login, register, token refresh)
-  - name: spaces
-    description: Space management
-  - name: tickets
-    description: Service desk tickets
-  - name: wiki
-    description: Wiki pages and revisions
-  - name: projects
-    description: Project items, sprints, backlog, roadmap
-
-paths:
-  /health:
-    get:
-      tags: [health]
-      summary: Liveness probe
-      operationId: getHealth
-      responses:
-        "200":
-          description: Service is alive
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthResponse"
-
-  /ready:
-    get:
-      tags: [health]
-      summary: Readiness probe
-      operationId: getReady
-      responses:
-        "200":
-          description: Service is ready
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthResponse"
-
-  /api/v1/auth/login:
-    post:
-      tags: [auth]
-      summary: Login with email and password
-      operationId: login
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoginRequest"
-      responses:
-        "200":
-          description: Authenticated successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LoginResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/auth/register:
-    post:
-      tags: [auth]
-      summary: Register a new user account
-      operationId: register
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RegisterRequest"
-      responses:
-        "201":
-          description: User created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LoginResponse"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /api/v1/auth/refresh:
-    post:
-      tags: [auth]
-      summary: Refresh access token
-      operationId: refreshToken
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RefreshRequest"
-      responses:
-        "200":
-          description: Tokens refreshed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RefreshResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/auth/logout:
-    post:
-      tags: [auth]
-      summary: Logout (invalidate all sessions)
-      operationId: logout
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Logged out
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/orgs/{orgID}/spaces:
-    parameters:
-      - $ref: "#/components/parameters/OrgID"
-    get:
-      tags: [spaces]
-      summary: List spaces in an organization
-      operationId: listSpaces
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: List of spaces
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Space"
-    post:
-      tags: [spaces]
-      summary: Create a new space
-      operationId: createSpace
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateSpaceRequest"
-      responses:
-        "201":
-          description: Space created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Space"
-
-  /api/v1/orgs/{orgID}/spaces/{spaceID}:
-    parameters:
-      - $ref: "#/components/parameters/OrgID"
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [spaces]
-      summary: Get a space by ID
-      operationId: getSpace
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Space details
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Space"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    put:
-      tags: [spaces]
-      summary: Update a space
-      operationId: updateSpace
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateSpaceRequest"
-      responses:
-        "200":
-          description: Space updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Space"
-    delete:
-      tags: [spaces]
-      summary: Delete a space (soft delete)
-      operationId: deleteSpace
-      security:
-        - bearerAuth: []
-      responses:
-        "204":
-          description: Space deleted
-
-  /api/v1/spaces/{spaceID}/tickets:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [tickets]
-      summary: List tickets in a space
-      operationId: listTickets
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: List of tickets
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Ticket"
-    post:
-      tags: [tickets]
-      summary: Create a ticket
-      operationId: createTicket
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateTicketRequest"
-      responses:
-        "201":
-          description: Ticket created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Ticket"
-
-  /api/v1/spaces/{spaceID}/tickets/{ticketID}:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-      - $ref: "#/components/parameters/TicketID"
-    get:
-      tags: [tickets]
-      summary: Get a ticket by ID
-      operationId: getTicket
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Ticket details
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Ticket"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    put:
-      tags: [tickets]
-      summary: Update a ticket
-      operationId: updateTicket
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateTicketRequest"
-      responses:
-        "200":
-          description: Ticket updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Ticket"
-    delete:
-      tags: [tickets]
-      summary: Delete a ticket (soft delete)
-      operationId: deleteTicket
-      security:
-        - bearerAuth: []
-      responses:
-        "204":
-          description: Ticket deleted
-
-  /api/v1/spaces/{spaceID}/tickets/{ticketID}/status:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-      - $ref: "#/components/parameters/TicketID"
-    post:
-      tags: [tickets]
-      summary: Transition ticket status
-      operationId: transitionTicketStatus
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [status]
-              properties:
-                status:
-                  type: string
-                  enum: [open, in_progress, resolved, closed]
-      responses:
-        "200":
-          description: Status updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Ticket"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /api/v1/spaces/{spaceID}/tickets/search:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [tickets]
-      summary: Search tickets
-      operationId: searchTickets
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: q
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-            maximum: 200
-      responses:
-        "200":
-          description: Search results
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Ticket"
-
-  /api/v1/spaces/{spaceID}/tickets/kanban:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [tickets]
-      summary: Get kanban board view
-      operationId: getKanbanBoard
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Kanban columns with tickets
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/KanbanColumn"
-
-  /api/v1/spaces/{spaceID}/wiki:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [wiki]
-      summary: List wiki pages in a space
-      operationId: listWikiPages
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: List of pages
-    post:
-      tags: [wiki]
-      summary: Create a wiki page
-      operationId: createWikiPage
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreatePageRequest"
-      responses:
-        "201":
-          description: Page created
-
-  /api/v1/spaces/{spaceID}/wiki/{pageID}:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-      - $ref: "#/components/parameters/PageID"
-    get:
-      tags: [wiki]
-      summary: Get a wiki page
-      operationId: getWikiPage
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Page details
-        "404":
-          $ref: "#/components/responses/NotFound"
-    put:
-      tags: [wiki]
-      summary: Update a wiki page (with optimistic locking)
-      operationId: updateWikiPage
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdatePageRequest"
-      responses:
-        "200":
-          description: Page updated
-        "409":
-          description: Version conflict
-    delete:
-      tags: [wiki]
-      summary: Delete a wiki page
-      operationId: deleteWikiPage
-      security:
-        - bearerAuth: []
-      responses:
-        "204":
-          description: Page deleted
-
-  /api/v1/spaces/{spaceID}/wiki/tree:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [wiki]
-      summary: Get full page tree
-      operationId: getWikiTree
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Page tree
-
-  /api/v1/spaces/{spaceID}/wiki/search:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [wiki]
-      summary: Search wiki pages
-      operationId: searchWikiPages
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: q
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
-      responses:
-        "200":
-          description: Search results
-
-  /api/v1/spaces/{spaceID}/projects/items:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [projects]
-      summary: List project items
-      operationId: listProjectItems
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: List of items
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ProjectItem"
-    post:
-      tags: [projects]
-      summary: Create a project item
-      operationId: createProjectItem
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateItemRequest"
-      responses:
-        "201":
-          description: Item created
-
-  /api/v1/spaces/{spaceID}/projects/sprints:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [projects]
-      summary: List sprints
-      operationId: listSprints
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: List of sprints
-    post:
-      tags: [projects]
-      summary: Create a sprint
-      operationId: createSprint
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateSprintRequest"
-      responses:
-        "201":
-          description: Sprint created
-
-  /api/v1/spaces/{spaceID}/projects/backlog:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [projects]
-      summary: Get backlog items
-      operationId: getBacklog
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Backlog items
-
-  /api/v1/spaces/{spaceID}/projects/roadmap:
-    parameters:
-      - $ref: "#/components/parameters/SpaceID"
-    get:
-      tags: [projects]
-      summary: Get roadmap items in date range
-      operationId: getRoadmap
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: from
-          in: query
-          required: true
-          schema:
-            type: string
-            format: date
-        - name: to
-          in: query
-          required: true
-          schema:
-            type: string
-            format: date
-      responses:
-        "200":
-          description: Roadmap items
-
 components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-
-  parameters:
-    OrgID:
-      name: orgID
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-    SpaceID:
-      name: spaceID
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-    TicketID:
-      name: ticketID
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-    PageID:
-      name: pageID
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-
-  responses:
-    NotFound:
-      description: Resource not found
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    Unauthorized:
-      description: Authentication required or invalid
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    Conflict:
-      description: Conflict (duplicate, version mismatch, invalid transition)
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-
   schemas:
-    ErrorResponse:
-      type: object
-      required: [error]
+    api.SwaggerAddMemberRequest:
       properties:
-        error:
-          type: object
-          required: [code, message]
-          properties:
-            code:
-              type: string
-              enum:
-                - NOT_FOUND
-                - VALIDATION_ERROR
-                - UNAUTHORIZED
-                - FORBIDDEN
-                - CONFLICT
-                - INTERNAL_ERROR
-                - BAD_REQUEST
-                - INVALID_TRANSITION
-            message:
-              type: string
-            request_id:
-              type: string
-
-    HealthResponse:
+        role:
+          example: member
+          type: string
+        user_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
       type: object
+    api.SwaggerAssignRequest:
       properties:
-        status:
-          type: string
-
-    LoginRequest:
-      type: object
-      required: [email, password]
-      properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
-
-    RegisterRequest:
-      type: object
-      required: [email, password]
-      properties:
-        email:
-          type: string
-          format: email
-        display_name:
-          type: string
-        password:
-          type: string
-
-    RefreshRequest:
-      type: object
-      required: [refresh_token]
-      properties:
-        refresh_token:
-          type: string
-
-    LoginResponse:
-      type: object
-      properties:
-        access_token:
-          type: string
-        refresh_token:
-          type: string
-        user:
-          $ref: "#/components/schemas/UserSummary"
-
-    RefreshResponse:
-      type: object
-      properties:
-        access_token:
-          type: string
-        refresh_token:
-          type: string
-
-    UserSummary:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        email:
-          type: string
-        display_name:
-          type: string
-        is_active:
-          type: boolean
-
-    Space:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        org_id:
-          type: string
-          format: uuid
-        slug:
-          type: string
-        name:
-          type: string
-        description:
-          type: string
-        type:
-          type: string
-        icon:
-          type: string
-        is_private:
-          type: boolean
-        created_by:
-          type: string
-          format: uuid
-        created_at:
-          type: string
-          format: date-time
-
-    CreateSpaceRequest:
-      type: object
-      required: [slug, name, type]
-      properties:
-        slug:
-          type: string
-        name:
-          type: string
-        description:
-          type: string
-        type:
-          type: string
-        icon:
-          type: string
-        is_private:
-          type: boolean
-
-    UpdateSpaceRequest:
-      type: object
-      required: [name]
-      properties:
-        name:
-          type: string
-        description:
-          type: string
-        icon:
-          type: string
-        is_private:
-          type: boolean
-
-    Ticket:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        space_id:
-          type: string
-          format: uuid
-        title:
-          type: string
-        description:
-          type: string
-        status:
-          type: string
-          enum: [open, in_progress, resolved, closed]
-        priority:
-          type: string
-          enum: [urgent, high, medium, low]
-        reporter_id:
-          type: string
-          format: uuid
         assignee_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
           type: string
-          format: uuid
-        labels:
-          type: array
-          items:
-            type: string
-        created_at:
-          type: string
-          format: date-time
-
-    CreateTicketRequest:
       type: object
-      required: [title, priority]
+    api.SwaggerCommentResponse:
       properties:
-        title:
+        author_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
           type: string
-        description:
+        author_name:
+          example: Admin User
           type: string
-        priority:
-          type: string
-          enum: [urgent, high, medium, low]
-        assignee_id:
-          type: string
-          format: uuid
-        labels:
-          type: array
-          items:
-            type: string
-
-    UpdateTicketRequest:
-      type: object
-      properties:
-        title:
-          type: string
-        description:
-          type: string
-        priority:
-          type: string
-          enum: [urgent, high, medium, low]
-        labels:
-          type: array
-          items:
-            type: string
-
-    KanbanColumn:
-      type: object
-      properties:
-        status:
-          type: string
-        tickets:
-          type: array
-          items:
-            $ref: "#/components/schemas/Ticket"
-
-    CreatePageRequest:
-      type: object
-      required: [title]
-      properties:
-        title:
+        body:
+          example: This looks good, let's merge it.
           type: string
         content:
+          example: This looks good, let's merge it.
+          type: string
+        created_at:
+          example: "2026-01-15T10:30:00Z"
+          type: string
+        id:
+          example: c3d4e5f6-a7b8-9012-cdef-123456789012
+          type: string
+        item_id:
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+          type: string
+        updated_at:
+          example: "2026-01-15T10:30:00Z"
+          type: string
+      type: object
+    api.SwaggerCreateCommentRequest:
+      properties:
+        content:
+          example: This looks good, let's merge it.
+          type: string
+      type: object
+    api.SwaggerCreateItemRequest:
+      properties:
+        assignee_id:
+          type: string
+        description:
+          example: Full-text search for items
+          type: string
+        due_at:
+          type: string
+        kind:
+          example: task
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        priority:
+          example: medium
+          type: string
+        sprint_id:
+          type: string
+        title:
+          example: Implement search
+          type: string
+      type: object
+    api.SwaggerCreateLabelRequest:
+      properties:
+        color:
+          example: '#ff0000'
+          type: string
+        name:
+          example: bug
+          type: string
+      type: object
+    api.SwaggerCreatePageRequest:
+      properties:
+        content:
+          example: |-
+            # Welcome
+            This is a wiki page.
           type: string
         parent_id:
           type: string
-          format: uuid
         position:
+          example: 0
           type: integer
-
-    UpdatePageRequest:
-      type: object
-      required: [title, content, expected_version]
-      properties:
         title:
+          example: Getting Started
           type: string
-        content:
-          type: string
-        expected_version:
-          type: integer
-
-    ProjectItem:
       type: object
+    api.SwaggerCreateRelationRequest:
       properties:
-        id:
-          type: string
-          format: uuid
-        space_id:
-          type: string
-          format: uuid
         kind:
+          example: blocks
           type: string
-          enum: [ticket, task, story, epic, bug]
-        title:
+        to_id:
+          example: b2c3d4e5-f6a7-8901-bcde-f12345678901
           type: string
-        description:
-          type: string
-        status:
-          type: string
-        priority:
-          type: string
-          enum: [urgent, high, medium, low]
-        reporter_id:
-          type: string
-          format: uuid
-        assignee_id:
-          type: string
-          format: uuid
-        sprint_id:
-          type: string
-          format: uuid
-        labels:
-          type: array
-          items:
-            type: string
-
-    CreateItemRequest:
       type: object
-      required: [title, kind, priority]
+    api.SwaggerCreateSpaceRequest:
       properties:
-        title:
-          type: string
         description:
+          example: A project space
           type: string
-        kind:
+        icon:
+          example: rocket
           type: string
-          enum: [ticket, task, story, epic, bug]
-        priority:
-          type: string
-          enum: [urgent, high, medium, low]
-        assignee_id:
-          type: string
-          format: uuid
-        sprint_id:
-          type: string
-          format: uuid
-        labels:
-          type: array
-          items:
-            type: string
-        due_at:
-          type: string
-          format: date-time
-
-    CreateSprintRequest:
-      type: object
-      required: [name]
-      properties:
+        is_private:
+          example: false
+          type: boolean
         name:
+          example: My Project
+          type: string
+        slug:
+          example: my-project
+          type: string
+        type:
+          example: project
+          type: string
+      type: object
+    api.SwaggerCreateSprintRequest:
+      properties:
+        ends_at:
           type: string
         goal:
+          example: Complete core features
+          type: string
+        name:
+          example: Sprint 1
           type: string
         starts_at:
           type: string
-          format: date-time
+      type: object
+    api.SwaggerCreateTicketRequest:
+      properties:
+        assignee_id:
+          type: string
+        description:
+          example: The login button does not work on mobile
+          type: string
+        labels:
+          example:
+          - bug
+          - frontend
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        priority:
+          example: medium
+          type: string
+        title:
+          example: Fix login button
+          type: string
+      type: object
+    api.SwaggerErrorDetail:
+      properties:
+        code:
+          example: UNAUTHORIZED
+          type: string
+        message:
+          example: invalid email or password
+          type: string
+        request_id:
+          example: req_a8d9912a
+          type: string
+      type: object
+    api.SwaggerErrorResponse:
+      properties:
+        error:
+          $ref: '#/components/schemas/api.SwaggerErrorDetail'
+      type: object
+    api.SwaggerKanbanColumn:
+      properties:
+        status:
+          example: open
+          type: string
+        tickets:
+          items:
+            $ref: '#/components/schemas/api.SwaggerTicketResponse'
+          type: array
+          uniqueItems: false
+      type: object
+    api.SwaggerLoginRequest:
+      properties:
+        email:
+          example: admin@azimuthal.com
+          type: string
+        password:
+          example: yourpassword
+          type: string
+      type: object
+    api.SwaggerLoginResponse:
+      properties:
+        access_token:
+          example: eyJhbGciOiJSUzI1NiIs...
+          type: string
+        org:
+          $ref: '#/components/schemas/api.SwaggerOrgResponse'
+        refresh_token:
+          example: eyJhbGciOiJSUzI1NiIs...
+          type: string
+        token:
+          example: eyJhbGciOiJSUzI1NiIs...
+          type: string
+        user:
+          $ref: '#/components/schemas/api.SwaggerUserResponse'
+      type: object
+    api.SwaggerLogoutResponse:
+      properties:
+        message:
+          example: logged out
+          type: string
+      type: object
+    api.SwaggerMessageResponse:
+      properties:
+        message:
+          example: operation completed
+          type: string
+      type: object
+    api.SwaggerMovePageRequest:
+      properties:
+        parent_id:
+          type: string
+        position:
+          example: 1
+          type: integer
+      type: object
+    api.SwaggerMoveToBacklogRequest:
+      properties:
+        item_id:
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+          type: string
+      type: object
+    api.SwaggerMoveToSprintRequest:
+      properties:
+        item_id:
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+          type: string
+        sprint_id:
+          example: b2c3d4e5-f6a7-8901-bcde-f12345678901
+          type: string
+      type: object
+    api.SwaggerOrgResponse:
+      properties:
+        id:
+          example: 9c0e1642-64bc-4745-992e-8e0eec643ee1
+          type: string
+        name:
+          example: My Organization
+          type: string
+        slug:
+          example: my-org
+          type: string
+      type: object
+    api.SwaggerRefreshRequest:
+      properties:
+        refresh_token:
+          example: eyJhbGciOiJSUzI1NiIs...
+          type: string
+      type: object
+    api.SwaggerRefreshResponse:
+      properties:
+        access_token:
+          example: eyJhbGciOiJSUzI1NiIs...
+          type: string
+        refresh_token:
+          example: eyJhbGciOiJSUzI1NiIs...
+          type: string
+      type: object
+    api.SwaggerRegisterRequest:
+      properties:
+        display_name:
+          example: New User
+          type: string
+        email:
+          example: newuser@azimuthal.com
+          type: string
+        password:
+          example: securepassword123
+          type: string
+      type: object
+    api.SwaggerSprintAssignRequest:
+      properties:
+        sprint_id:
+          type: string
+      type: object
+    api.SwaggerStatusRequest:
+      properties:
+        status:
+          example: in_progress
+          type: string
+      type: object
+    api.SwaggerTicketResponse:
+      properties:
+        assignee_id:
+          type: string
+        created_at:
+          type: string
+        description:
+          example: The login button does not work
+          type: string
+        due_at:
+          type: string
+        id:
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        priority:
+          example: 1
+          type: integer
+        rank:
+          example: '0|aaaaaa:'
+          type: string
+        reporter_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+        resolved_at:
+          type: string
+        space_id:
+          example: b2c3d4e5-f6a7-8901-bcde-f12345678901
+          type: string
+        status:
+          example: open
+          type: string
+        title:
+          example: Fix login button
+          type: string
+        updated_at:
+          type: string
+      type: object
+    api.SwaggerTransitionRequest:
+      properties:
+        status:
+          example: in_progress
+          type: string
+      type: object
+    api.SwaggerUpdateItemRequest:
+      properties:
+        assignee_id:
+          type: string
+        description:
+          example: Updated description
+          type: string
+        due_at:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        priority:
+          example: high
+          type: string
+        title:
+          example: Implement search (updated)
+          type: string
+      type: object
+    api.SwaggerUpdateOrgRequest:
+      properties:
+        description:
+          example: Updated description
+          type: string
+        name:
+          example: Updated Org
+          type: string
+      type: object
+    api.SwaggerUpdatePageRequest:
+      properties:
+        content:
+          example: '# Updated Content'
+          type: string
+        expected_version:
+          example: 1
+          type: integer
+        title:
+          example: Getting Started (updated)
+          type: string
+      type: object
+    api.SwaggerUpdateSpaceRequest:
+      properties:
+        description:
+          example: Updated description
+          type: string
+        icon:
+          example: star
+          type: string
+        is_private:
+          example: false
+          type: boolean
+        name:
+          example: Updated Name
+          type: string
+      type: object
+    api.SwaggerUpdateSprintRequest:
+      properties:
         ends_at:
           type: string
-          format: date-time
+        goal:
+          example: Updated goal
+          type: string
+        name:
+          example: Sprint 1 (updated)
+          type: string
+        starts_at:
+          type: string
+      type: object
+    api.SwaggerUpdateTicketRequest:
+      properties:
+        description:
+          example: Updated description
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        priority:
+          example: high
+          type: string
+        title:
+          example: Fix login button (updated)
+          type: string
+      type: object
+    api.SwaggerUserResponse:
+      properties:
+        display_name:
+          example: Admin
+          type: string
+        email:
+          example: admin@azimuthal.com
+          type: string
+        id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+        is_active:
+          example: true
+          type: boolean
+        org_id:
+          example: 9c0e1642-64bc-4745-992e-8e0eec643ee1
+          type: string
+        role:
+          example: member
+          type: string
+      type: object
+    api.healthResponse:
+      properties:
+        status:
+          type: string
+      type: object
+  securitySchemes:
+    BearerAuth:
+      description: 'JWT Bearer token. Format: "Bearer <token>". Obtain via POST /api/v1/auth/login'
+      in: header
+      name: Authorization
+      type: apiKey
+externalDocs:
+  description: ""
+  url: ""
+info:
+  contact:
+    email: hello@azimuthalhq.com
+    name: Azimuthal HQ
+    url: https://azimuthalhq.com
+  description: |-
+    The fully open-source alternative to Jira, Confluence, and Jira Service Desk.
+    Self-hostable, single binary, Apache 2.0 licensed.
+
+    ## Authentication
+    All endpoints except /auth/login and /auth/register require a Bearer JWT token.
+    Obtain a token via POST /api/v1/auth/login, then include it as:
+    `Authorization: Bearer <your-token>`
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  title: Azimuthal API
+  version: "1.0"
+openapi: 3.1.0
+paths:
+  /auth/login:
+    post:
+      description: Validates email and password, returns JWT access/refresh tokens
+        and user profile with primary org.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerLoginRequest'
+                description: Login credentials
+                summary: body
+        description: Login credentials
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerLoginResponse'
+          description: Authenticated successfully
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing email or password
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid credentials
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      summary: Authenticate user
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      description: Deletes all sessions for the current user.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerLogoutResponse'
+          description: Logged out
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Logout user
+      tags:
+      - auth
+  /auth/me:
+    get:
+      description: Returns the profile of the currently authenticated user.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerUserResponse'
+          description: User profile
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Get current user
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      description: Exchanges a valid refresh token for a new access/refresh token
+        pair.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerRefreshRequest'
+                description: Refresh token
+                summary: body
+        description: Refresh token
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerRefreshResponse'
+          description: New token pair
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing refresh_token
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid or expired refresh token
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      summary: Refresh tokens
+      tags:
+      - auth
+  /auth/register:
+    post:
+      description: Creates a new user account with a personal organization, returns
+        JWT tokens.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerRegisterRequest'
+                description: Registration details
+                summary: body
+        description: Registration details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerLoginResponse'
+          description: User created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Email already in use
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      summary: Register new user
+      tags:
+      - auth
+  /health:
+    get:
+      description: Returns {"status":"ok"} when the server is running.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.healthResponse'
+          description: Server is alive
+      summary: Liveness probe
+      tags:
+      - health
+  /orgs/{orgID}:
+    get:
+      description: Returns an organization by its ID.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Organization details
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid org ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Get organization
+      tags:
+      - spaces
+    patch:
+      description: Updates an organization's name and description (preserves plan).
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerUpdateOrgRequest'
+                description: Updated org fields
+                summary: body
+        description: Updated org fields
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Updated organization
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Update organization
+      tags:
+      - spaces
+  /orgs/{orgID}/labels:
+    get:
+      description: Returns all labels for an organization
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List labels
+      tags:
+      - labels
+    post:
+      description: Creates a new label for an organization
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateLabelRequest'
+                description: Label details
+                summary: body
+        description: Label details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a label
+      tags:
+      - labels
+  /orgs/{orgID}/labels/{labelID}:
+    delete:
+      description: Removes a label from an organization
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Label ID (UUID)
+        in: path
+        name: labelID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a label
+      tags:
+      - labels
+  /orgs/{orgID}/spaces:
+    get:
+      description: Returns all spaces belonging to the specified organization.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: List of spaces
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid org ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List spaces
+      tags:
+      - spaces
+    post:
+      description: Creates a new space in the organization. Type must be 'project',
+        'wiki', or 'service_desk'.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateSpaceRequest'
+                description: Space details
+                summary: body
+        description: Space details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created space
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Create space
+      tags:
+      - spaces
+  /orgs/{orgID}/spaces/{spaceID}:
+    delete:
+      description: Soft-deletes a space by ID.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Delete space
+      tags:
+      - spaces
+    get:
+      description: Returns a single space by ID.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Space details
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Get space
+      tags:
+      - spaces
+    put:
+      description: Updates a space's name, description, icon, and privacy setting.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerUpdateSpaceRequest'
+                description: Updated fields
+                summary: body
+        description: Updated fields
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Updated space
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Update space
+      tags:
+      - spaces
+  /orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments:
+    get:
+      description: Returns all comments for the specified item.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.SwaggerCommentResponse'
+                type: array
+          description: List of comments
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid item ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List comments
+      tags:
+      - comments
+    post:
+      description: Adds a new comment to the specified item. Author is set from the
+        JWT.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateCommentRequest'
+                description: Comment content
+                summary: body
+        description: Comment content
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerCommentResponse'
+          description: Comment created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Create comment
+      tags:
+      - comments
+  /orgs/{orgID}/spaces/{spaceID}/members:
+    get:
+      description: Returns all members of the specified space.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: List of members
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List space members
+      tags:
+      - members
+    post:
+      description: Adds a user as a member of the specified space.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerAddMemberRequest'
+                description: Member details
+                summary: body
+        description: Member details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Member added
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Add space member
+      tags:
+      - members
+  /orgs/{orgID}/spaces/{spaceID}/members/{userID}:
+    delete:
+      description: Removes a user from the specified space.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: User ID (UUID)
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Removed
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Remove space member
+      tags:
+      - members
+  /ready:
+    get:
+      description: Returns {"status":"ready"} when the server is ready to accept traffic.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.healthResponse'
+          description: Server is ready
+      summary: Readiness probe
+      tags:
+      - health
+  /spaces/{spaceID}/projects/backlog:
+    get:
+      description: Returns the unassigned backlog items for a space
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get backlog
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/backlog/move-to-backlog:
+    post:
+      description: Moves an item from a sprint back to the backlog
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerMoveToBacklogRequest'
+                description: Move details
+                summary: body
+        description: Move details
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerMessageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Move item to backlog
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/backlog/move-to-sprint:
+    post:
+      description: Moves an item from the backlog to a sprint
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerMoveToSprintRequest'
+                description: Move details
+                summary: body
+        description: Move details
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerMessageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Move item to sprint
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/items:
+    get:
+      description: Returns all items in a project space
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List project items
+      tags:
+      - projects
+    post:
+      description: Creates a new item in a project space
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateItemRequest'
+                description: Item details
+                summary: body
+        description: Item details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a project item
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/items/{itemID}:
+    delete:
+      description: Soft-deletes a project item
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a project item
+      tags:
+      - projects
+    get:
+      description: Returns a single project item by its ID
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a project item
+      tags:
+      - projects
+    patch:
+      description: Modifies an existing project item
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerUpdateItemRequest'
+                description: Updated item details
+                summary: body
+        description: Updated item details
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update a project item
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/items/{itemID}/relations:
+    get:
+      description: Returns all relations for a project item
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List item relations
+      tags:
+      - projects
+    post:
+      description: Creates a new relation from a project item to another item
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateRelationRequest'
+                description: Relation details
+                summary: body
+        description: Relation details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create item relation
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/items/{itemID}/sprint:
+    post:
+      description: Assigns a project item to a sprint
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerSprintAssignRequest'
+                description: Sprint assignment
+                summary: body
+        description: Sprint assignment
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerMessageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Assign item to sprint
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/items/{itemID}/status:
+    post:
+      description: Changes the status of a project item
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerStatusRequest'
+                description: New status
+                summary: body
+        description: New status
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update item status
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/items/search:
+    get:
+      description: Performs full-text search on project items
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        schema:
+          type: string
+      - description: Maximum results (default 50, max 200)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Search project items
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/relations/{relationID}:
+    delete:
+      description: Removes a relation between project items
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Relation ID (UUID)
+        in: path
+        name: relationID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a relation
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/roadmap:
+    get:
+      description: Returns items with due dates in a date range
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: from
+        required: true
+        schema:
+          type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: to
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get roadmap
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/roadmap/overdue:
+    get:
+      description: Returns items that are past their due date
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get overdue items
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/roadmap/sprints:
+    get:
+      description: Returns sprints with their items for roadmap view
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get sprint roadmap
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/sprints:
+    get:
+      description: Returns all sprints in a project space
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List sprints
+      tags:
+      - projects
+    post:
+      description: Creates a new sprint in a project space
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateSprintRequest'
+                description: Sprint details
+                summary: body
+        description: Sprint details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a sprint
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/sprints/{sprintID}:
+    get:
+      description: Returns a single sprint by its ID
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Sprint ID (UUID)
+        in: path
+        name: sprintID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a sprint
+      tags:
+      - projects
+    put:
+      description: Modifies an existing sprint
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Sprint ID (UUID)
+        in: path
+        name: sprintID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerUpdateSprintRequest'
+                description: Updated sprint details
+                summary: body
+        description: Updated sprint details
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update a sprint
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/sprints/{sprintID}/complete:
+    post:
+      description: Transitions a sprint to completed status
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Sprint ID (UUID)
+        in: path
+        name: sprintID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Complete a sprint
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/sprints/{sprintID}/items:
+    get:
+      description: Returns all items assigned to a sprint
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Sprint ID (UUID)
+        in: path
+        name: sprintID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List sprint items
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/sprints/{sprintID}/start:
+    post:
+      description: Transitions a sprint to active status
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Sprint ID (UUID)
+        in: path
+        name: sprintID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Start a sprint
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/sprints/active:
+    get:
+      description: Returns the currently active sprint for a space
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get active sprint
+      tags:
+      - projects
+  /spaces/{spaceID}/tickets:
+    get:
+      description: Returns all tickets in the specified space.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.SwaggerTicketResponse'
+                type: array
+          description: List of tickets
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid space ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List tickets
+      tags:
+      - tickets
+    post:
+      description: Creates a new ticket in the specified space. Reporter is set from
+        the JWT.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateTicketRequest'
+                description: Ticket details
+                summary: body
+        description: Ticket details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerTicketResponse'
+          description: Ticket created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Create ticket
+      tags:
+      - tickets
+  /spaces/{spaceID}/tickets/{ticketID}:
+    delete:
+      description: Soft-deletes a ticket by ID.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Delete ticket
+      tags:
+      - tickets
+    get:
+      description: Returns a single ticket by ID.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerTicketResponse'
+          description: Ticket details
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Get ticket
+      tags:
+      - tickets
+    patch:
+      description: Updates an existing ticket's title, description, priority, and
+        labels.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerUpdateTicketRequest'
+                description: Updated fields
+                summary: body
+        description: Updated fields
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerTicketResponse'
+          description: Updated ticket
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Update ticket
+      tags:
+      - tickets
+  /spaces/{spaceID}/tickets/{ticketID}/assign:
+    delete:
+      description: Removes the current assignee from a ticket.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerTicketResponse'
+          description: Updated ticket
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Unassign ticket
+      tags:
+      - tickets
+    post:
+      description: Assigns a ticket to a user by ID.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerAssignRequest'
+                description: Assignee
+                summary: body
+        description: Assignee
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerTicketResponse'
+          description: Updated ticket
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Already assigned
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Assign ticket
+      tags:
+      - tickets
+  /spaces/{spaceID}/tickets/{ticketID}/status:
+    post:
+      description: Changes the status of a ticket (e.g. open -> in_progress -> resolved
+        -> closed).
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerTransitionRequest'
+                description: New status
+                summary: body
+        description: New status
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerTicketResponse'
+          description: Updated ticket
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid status
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid transition
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Transition ticket status
+      tags:
+      - tickets
+  /spaces/{spaceID}/tickets/kanban:
+    get:
+      description: Returns tickets grouped by status for kanban board display.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.SwaggerKanbanColumn'
+                type: array
+          description: Kanban columns
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid space ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Kanban board
+      tags:
+      - tickets
+  /spaces/{spaceID}/tickets/search:
+    get:
+      description: Full-text search on tickets in a space. Requires query parameter
+        'q'.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        schema:
+          type: string
+      - description: Max results (1-200, default 50)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.SwaggerTicketResponse'
+                type: array
+          description: Search results
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing query
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Search tickets
+      tags:
+      - tickets
+  /spaces/{spaceID}/wiki:
+    get:
+      description: Returns all pages in the specified space.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: List of pages
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid space ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List wiki pages
+      tags:
+      - wiki
+    post:
+      description: Creates a new wiki page. Author is set from the JWT.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreatePageRequest'
+                description: Page details
+                summary: body
+        description: Page details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created page
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Create wiki page
+      tags:
+      - wiki
+  /spaces/{spaceID}/wiki/{pageID}:
+    delete:
+      description: Soft-deletes a wiki page by ID.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Delete wiki page
+      tags:
+      - wiki
+    get:
+      description: Returns a single wiki page by ID.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Page details
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Get wiki page
+      tags:
+      - wiki
+    put:
+      description: Updates a page with optimistic locking. Returns 409 with conflict
+        details if version mismatch.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerUpdatePageRequest'
+                description: Updated fields
+                summary: body
+        description: Updated fields
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Updated page
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Version conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Update wiki page
+      tags:
+      - wiki
+  /spaces/{spaceID}/wiki/{pageID}/diff:
+    get:
+      description: Returns the diff between two page versions. Requires 'from' and
+        'to' query parameters.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      - description: From version number
+        in: query
+        name: from
+        required: true
+        schema:
+          type: integer
+      - description: To version number
+        in: query
+        name: to
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Diff result
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or invalid params
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Diff page versions
+      tags:
+      - wiki
+  /spaces/{spaceID}/wiki/{pageID}/move:
+    post:
+      description: Changes a page's parent or position in the tree hierarchy.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerMovePageRequest'
+                description: New position
+                summary: body
+        description: New position
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerMessageResponse'
+          description: Page moved
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Move wiki page
+      tags:
+      - wiki
+  /spaces/{spaceID}/wiki/{pageID}/render:
+    get:
+      description: Renders a page's markdown content as HTML.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            text/html:
+              schema:
+                type: string
+          description: Rendered HTML
+        "400":
+          content:
+            text/html:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            text/html:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            text/html:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            text/html:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Render page as HTML
+      tags:
+      - wiki
+  /spaces/{spaceID}/wiki/{pageID}/revisions:
+    get:
+      description: Returns the revision history for a wiki page.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Revision history
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List page revisions
+      tags:
+      - wiki
+  /spaces/{spaceID}/wiki/{pageID}/revisions/{version}:
+    get:
+      description: Returns a specific revision of a wiki page by version number.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      - description: Version number
+        in: path
+        name: version
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Revision details
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID or version
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Get page revision
+      tags:
+      - wiki
+  /spaces/{spaceID}/wiki/search:
+    get:
+      description: Full-text search on wiki pages in a space. Requires query parameter
+        'q'.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        schema:
+          type: string
+      - description: Max results (1-200, default 50)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Search results
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing query
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Search wiki pages
+      tags:
+      - wiki
+  /spaces/{spaceID}/wiki/tree:
+    get:
+      description: Returns the full page tree hierarchy for a space.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Page tree
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid space ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Page tree
+      tags:
+      - wiki
+servers:
+- url: localhost:8080/api/v1
