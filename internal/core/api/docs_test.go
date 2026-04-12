@@ -28,7 +28,7 @@ func TestDocsEndpoint_ServesSwaggerUI(t *testing.T) {
 	srv := newDocsTestServer(t)
 	resp, err := http.Get(srv.URL + "/api/docs")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, resp.Header.Get("Content-Type"), "text/html")
@@ -43,7 +43,7 @@ func TestDocsSpec_ServesOpenAPIYAML(t *testing.T) {
 	srv := newDocsTestServer(t)
 	resp, err := http.Get(srv.URL + "/api/docs/openapi.yaml")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Contains(t, resp.Header.Get("Content-Type"), "application/yaml")
@@ -61,7 +61,7 @@ func TestDocsSpec_ContainsRequiredPaths(t *testing.T) {
 	srv := newDocsTestServer(t)
 	resp, err := http.Get(srv.URL + "/api/docs/openapi.yaml")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var spec map[string]interface{}
 	require.NoError(t, yaml.NewDecoder(resp.Body).Decode(&spec))
@@ -118,7 +118,7 @@ func TestDocsSpec_AllProtectedEndpointsHaveSecurity(t *testing.T) {
 	srv := newDocsTestServer(t)
 	resp, err := http.Get(srv.URL + "/api/docs/openapi.yaml")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var spec map[string]interface{}
 	require.NoError(t, yaml.NewDecoder(resp.Body).Decode(&spec))
@@ -165,7 +165,7 @@ func TestDocsSpec_ValidOpenAPI3Structure(t *testing.T) {
 	srv := newDocsTestServer(t)
 	resp, err := http.Get(srv.URL + "/api/docs/openapi.yaml")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var spec map[string]interface{}
 	require.NoError(t, yaml.NewDecoder(resp.Body).Decode(&spec))
@@ -195,7 +195,7 @@ func TestDocsSpec_LoginEndpointHasNoSecurity(t *testing.T) {
 	srv := newDocsTestServer(t)
 	resp, err := http.Get(srv.URL + "/api/docs/openapi.yaml")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var spec map[string]interface{}
 	require.NoError(t, yaml.NewDecoder(resp.Body).Decode(&spec))

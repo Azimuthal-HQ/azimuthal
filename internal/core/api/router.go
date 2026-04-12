@@ -27,7 +27,7 @@ type RouterConfig struct {
 }
 
 // NewRouter builds the unified chi router with all routes and middleware.
-func NewRouter(cfg RouterConfig) http.Handler {
+func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup naturally grows with routes
 	r := chi.NewRouter()
 
 	// Global middleware stack
