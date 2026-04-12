@@ -109,3 +109,41 @@ export async function assertNoErrors(page: Page): Promise<void> {
   await expect(page.locator('text=invalid request body')).not.toBeVisible()
   await expect(page.locator('text=UNAUTHORIZED')).not.toBeVisible()
 }
+
+/**
+ * Gets the current user's org ID and user ID from the /auth/me endpoint.
+ */
+export async function getCurrentUser(page: Page): Promise<{ userId: string; orgId: string; displayName: string }> {
+  const token = await getAuthToken(page)
+  const response = await page.request.get('/api/v1/auth/me', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (response.status() !== 200) throw new Error(`GET /auth/me returned ${response.status()}`)
+  const user = await response.json()
+  return { userId: user.id, orgId: user.org_id, displayName: user.display_name }
+}
+
+/**
+ * Adds the current user as a member of the given space.
+ * Space creation does NOT auto-add the creator as a space member,
+ * so this must be called explicitly when tests need the members list
+ * to contain data (e.g. assignee dropdown, reporter lookup).
+ */
+export async function addCurrentUserAsSpaceMember(page: Page, orgId: string, spaceId: string): Promise<void> {
+  const token = await getAuthToken(page)
+  const { userId } = await getCurrentUser(page)
+  const response = await page.request.post(
+    `/api/v1/orgs/${orgId}/spaces/${spaceId}/members`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      data: { user_id: userId, role: 'member' },
+    },
+  )
+  if (response.status() !== 201) {
+    const body = await response.text()
+    throw new Error(`Failed to add space member: ${response.status()} ${body}`)
+  }
+}

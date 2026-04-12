@@ -83,6 +83,33 @@ test.describe('Projects', () => {
     await expect(page.locator('[class*="inline-flex"]:has-text("In Progress")').first()).toBeVisible({ timeout: 5000 })
   })
 
+  test('project item status change persists after page reload', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Status Persist Project', 'project')
+    await page.click('button:has-text("Create Item")')
+    await page.fill('#item-title', 'Status Persist Item')
+    await page.locator('[role="dialog"] button:has-text("Create Item")').click()
+    await expect(page.locator('text=Status Persist Item')).toBeVisible({ timeout: 5000 })
+    await page.click('text=Status Persist Item')
+    await expect(page).not.toHaveURL(/\/login/)
+
+    // Change status to In Progress
+    const statusSelect = page.locator('select').filter({ hasText: 'Open' }).first()
+    await expect(statusSelect).toBeVisible({ timeout: 5000 })
+    await statusSelect.selectOption('in_progress')
+
+    // Wait for save
+    await page.waitForTimeout(1000)
+
+    // Reload and verify status persisted — this is the critical check
+    await page.reload()
+    await expect(page).not.toHaveURL(/\/login/)
+
+    // Status select must show in_progress after reload — not revert to open
+    const statusAfterReload = page.locator('select').first()
+    await expect(statusAfterReload).toHaveValue('in_progress', { timeout: 5000 })
+  })
+
   test('no 404 errors in network tab when viewing project item detail', async ({ page }) => {
     const failedRequests: string[] = []
     page.on('response', response => {
