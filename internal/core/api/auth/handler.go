@@ -98,6 +98,18 @@ type userResponse struct {
 }
 
 // Login authenticates a user and returns a JWT token pair.
+//
+// @Summary      Authenticate user
+// @Description  Validates email and password, returns JWT access/refresh tokens and user profile with primary org.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      api.SwaggerLoginRequest  true  "Login credentials"
+// @Success      200   {object}  api.SwaggerLoginResponse       "Authenticated successfully"
+// @Failure      400   {object}  api.SwaggerErrorResponse       "Missing email or password"
+// @Failure      401   {object}  api.SwaggerErrorResponse       "Invalid credentials"
+// @Failure      500   {object}  api.SwaggerErrorResponse       "Internal error"
+// @Router       /auth/login [post]
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -180,6 +192,18 @@ func (h *Handler) provisionOrgForUser(ctx context.Context, displayName, email st
 // Register creates a new user account and returns a JWT token pair.
 // When an OrgProvisioner is configured, each new user gets a personal
 // organization and an owner membership in it.
+//
+// @Summary      Register new user
+// @Description  Creates a new user account with a personal organization, returns JWT tokens.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      api.SwaggerRegisterRequest  true  "Registration details"
+// @Success      201   {object}  api.SwaggerLoginResponse          "User created"
+// @Failure      400   {object}  api.SwaggerErrorResponse          "Validation error"
+// @Failure      409   {object}  api.SwaggerErrorResponse          "Email already in use"
+// @Failure      500   {object}  api.SwaggerErrorResponse          "Internal error"
+// @Router       /auth/register [post]
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -244,6 +268,18 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 // Refresh exchanges a refresh token for a new token pair.
+//
+// @Summary      Refresh tokens
+// @Description  Exchanges a valid refresh token for a new access/refresh token pair.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      api.SwaggerRefreshRequest   true  "Refresh token"
+// @Success      200   {object}  api.SwaggerRefreshResponse        "New token pair"
+// @Failure      400   {object}  api.SwaggerErrorResponse          "Missing refresh_token"
+// @Failure      401   {object}  api.SwaggerErrorResponse          "Invalid or expired refresh token"
+// @Failure      500   {object}  api.SwaggerErrorResponse          "Internal error"
+// @Router       /auth/refresh [post]
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req refreshRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -272,6 +308,16 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 // Logout invalidates all sessions for the current user. Requires authentication.
+//
+// @Summary      Logout user
+// @Description  Deletes all sessions for the current user.
+// @Tags         auth
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  api.SwaggerLogoutResponse  "Logged out"
+// @Failure      401  {object}  api.SwaggerErrorResponse   "Not authenticated"
+// @Failure      500  {object}  api.SwaggerErrorResponse   "Internal error"
+// @Router       /auth/logout [post]
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -288,6 +334,16 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // Me returns the current authenticated user's profile.
+//
+// @Summary      Get current user
+// @Description  Returns the profile of the currently authenticated user.
+// @Tags         auth
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  api.SwaggerUserResponse   "User profile"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /auth/me [get]
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {

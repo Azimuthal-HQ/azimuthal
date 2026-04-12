@@ -27,7 +27,7 @@ type RouterConfig struct {
 }
 
 // NewRouter builds the unified chi router with all routes and middleware.
-func NewRouter(cfg RouterConfig) http.Handler {
+func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup naturally grows with routes
 	r := chi.NewRouter()
 
 	// Global middleware stack
@@ -39,6 +39,9 @@ func NewRouter(cfg RouterConfig) http.Handler {
 	// Public endpoints (no auth required)
 	r.Get("/health", HandleHealth)
 	r.Get("/ready", HandleReady)
+
+	// API documentation (no auth required)
+	RegisterDocsRoutes(r)
 
 	// Auth endpoints (mostly public, /me is protected)
 	r.Route("/api/v1/auth", func(r chi.Router) {

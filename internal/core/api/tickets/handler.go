@@ -65,6 +65,18 @@ type assignRequest struct {
 }
 
 // List returns all tickets in a space.
+//
+// @Summary      List tickets
+// @Description  Returns all tickets in the specified space.
+// @Tags         tickets
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {array}   api.SwaggerTicketResponse  "List of tickets"
+// @Failure      400      {object}  api.SwaggerErrorResponse   "Invalid space ID"
+// @Failure      401      {object}  api.SwaggerErrorResponse   "Not authenticated"
+// @Failure      500      {object}  api.SwaggerErrorResponse   "Internal error"
+// @Router       /spaces/{spaceID}/tickets [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -81,6 +93,20 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Create creates a new ticket.
+//
+// @Summary      Create ticket
+// @Description  Creates a new ticket in the specified space. Reporter is set from the JWT.
+// @Tags         tickets
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string                        true  "Space ID (UUID)"
+// @Param        body     body      api.SwaggerCreateTicketRequest  true  "Ticket details"
+// @Success      201      {object}  api.SwaggerTicketResponse       "Ticket created"
+// @Failure      400      {object}  api.SwaggerErrorResponse        "Validation error"
+// @Failure      401      {object}  api.SwaggerErrorResponse        "Not authenticated"
+// @Failure      500      {object}  api.SwaggerErrorResponse        "Internal error"
+// @Router       /spaces/{spaceID}/tickets [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -117,6 +143,20 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // Get returns a single ticket by ID.
+//
+// @Summary      Get ticket
+// @Description  Returns a single ticket by ID.
+// @Tags         tickets
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string  true  "Space ID (UUID)"
+// @Param        ticketID  path      string  true  "Ticket ID (UUID)"
+// @Success      200       {object}  api.SwaggerTicketResponse  "Ticket details"
+// @Failure      400       {object}  api.SwaggerErrorResponse   "Invalid ID"
+// @Failure      401       {object}  api.SwaggerErrorResponse   "Not authenticated"
+// @Failure      404       {object}  api.SwaggerErrorResponse   "Not found"
+// @Failure      500       {object}  api.SwaggerErrorResponse   "Internal error"
+// @Router       /spaces/{spaceID}/tickets/{ticketID} [get]
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	id, err := ticketIDFromURL(r)
 	if err != nil {
@@ -133,6 +173,22 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Update modifies an existing ticket.
+//
+// @Summary      Update ticket
+// @Description  Updates an existing ticket's title, description, priority, and labels.
+// @Tags         tickets
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string                          true  "Space ID (UUID)"
+// @Param        ticketID  path      string                          true  "Ticket ID (UUID)"
+// @Param        body      body      api.SwaggerUpdateTicketRequest  true  "Updated fields"
+// @Success      200       {object}  api.SwaggerTicketResponse       "Updated ticket"
+// @Failure      400       {object}  api.SwaggerErrorResponse        "Validation error"
+// @Failure      401       {object}  api.SwaggerErrorResponse        "Not authenticated"
+// @Failure      404       {object}  api.SwaggerErrorResponse        "Not found"
+// @Failure      500       {object}  api.SwaggerErrorResponse        "Internal error"
+// @Router       /spaces/{spaceID}/tickets/{ticketID} [patch]
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := ticketIDFromURL(r)
 	if err != nil {
@@ -165,6 +221,19 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete soft-deletes a ticket.
+//
+// @Summary      Delete ticket
+// @Description  Soft-deletes a ticket by ID.
+// @Tags         tickets
+// @Security     BearerAuth
+// @Param        spaceID   path  string  true  "Space ID (UUID)"
+// @Param        ticketID  path  string  true  "Ticket ID (UUID)"
+// @Success      204  "Deleted"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /spaces/{spaceID}/tickets/{ticketID} [delete]
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := ticketIDFromURL(r)
 	if err != nil {
@@ -180,6 +249,23 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // TransitionStatus changes the status of a ticket.
+//
+// @Summary      Transition ticket status
+// @Description  Changes the status of a ticket (e.g. open -> in_progress -> resolved -> closed).
+// @Tags         tickets
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string                          true  "Space ID (UUID)"
+// @Param        ticketID  path      string                          true  "Ticket ID (UUID)"
+// @Param        body      body      api.SwaggerTransitionRequest    true  "New status"
+// @Success      200       {object}  api.SwaggerTicketResponse       "Updated ticket"
+// @Failure      400       {object}  api.SwaggerErrorResponse        "Invalid status"
+// @Failure      401       {object}  api.SwaggerErrorResponse        "Not authenticated"
+// @Failure      404       {object}  api.SwaggerErrorResponse        "Not found"
+// @Failure      409       {object}  api.SwaggerErrorResponse        "Invalid transition"
+// @Failure      500       {object}  api.SwaggerErrorResponse        "Internal error"
+// @Router       /spaces/{spaceID}/tickets/{ticketID}/status [post]
 func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := ticketIDFromURL(r)
 	if err != nil {
@@ -202,6 +288,23 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // Assign assigns a ticket to a user.
+//
+// @Summary      Assign ticket
+// @Description  Assigns a ticket to a user by ID.
+// @Tags         tickets
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string                     true  "Space ID (UUID)"
+// @Param        ticketID  path      string                     true  "Ticket ID (UUID)"
+// @Param        body      body      api.SwaggerAssignRequest   true  "Assignee"
+// @Success      200       {object}  api.SwaggerTicketResponse  "Updated ticket"
+// @Failure      400       {object}  api.SwaggerErrorResponse   "Invalid request"
+// @Failure      401       {object}  api.SwaggerErrorResponse   "Not authenticated"
+// @Failure      404       {object}  api.SwaggerErrorResponse   "Not found"
+// @Failure      409       {object}  api.SwaggerErrorResponse   "Already assigned"
+// @Failure      500       {object}  api.SwaggerErrorResponse   "Internal error"
+// @Router       /spaces/{spaceID}/tickets/{ticketID}/assign [post]
 func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 	id, err := ticketIDFromURL(r)
 	if err != nil {
@@ -224,6 +327,20 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 }
 
 // Unassign removes the assignee from a ticket.
+//
+// @Summary      Unassign ticket
+// @Description  Removes the current assignee from a ticket.
+// @Tags         tickets
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string  true  "Space ID (UUID)"
+// @Param        ticketID  path      string  true  "Ticket ID (UUID)"
+// @Success      200       {object}  api.SwaggerTicketResponse  "Updated ticket"
+// @Failure      400       {object}  api.SwaggerErrorResponse   "Invalid ID"
+// @Failure      401       {object}  api.SwaggerErrorResponse   "Not authenticated"
+// @Failure      404       {object}  api.SwaggerErrorResponse   "Not found"
+// @Failure      500       {object}  api.SwaggerErrorResponse   "Internal error"
+// @Router       /spaces/{spaceID}/tickets/{ticketID}/assign [delete]
 func (h *Handler) Unassign(w http.ResponseWriter, r *http.Request) {
 	id, err := ticketIDFromURL(r)
 	if err != nil {
@@ -240,6 +357,20 @@ func (h *Handler) Unassign(w http.ResponseWriter, r *http.Request) {
 }
 
 // Search performs full-text search on tickets.
+//
+// @Summary      Search tickets
+// @Description  Full-text search on tickets in a space. Requires query parameter 'q'.
+// @Tags         tickets
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true   "Space ID (UUID)"
+// @Param        q        query     string  true   "Search query"
+// @Param        limit    query     int     false  "Max results (1-200, default 50)"
+// @Success      200      {array}   api.SwaggerTicketResponse  "Search results"
+// @Failure      400      {object}  api.SwaggerErrorResponse   "Missing query"
+// @Failure      401      {object}  api.SwaggerErrorResponse   "Not authenticated"
+// @Failure      500      {object}  api.SwaggerErrorResponse   "Internal error"
+// @Router       /spaces/{spaceID}/tickets/search [get]
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -270,6 +401,18 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 // Kanban returns the kanban board view grouped by status.
+//
+// @Summary      Kanban board
+// @Description  Returns tickets grouped by status for kanban board display.
+// @Tags         tickets
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {array}   api.SwaggerKanbanColumn    "Kanban columns"
+// @Failure      400      {object}  api.SwaggerErrorResponse   "Invalid space ID"
+// @Failure      401      {object}  api.SwaggerErrorResponse   "Not authenticated"
+// @Failure      500      {object}  api.SwaggerErrorResponse   "Internal error"
+// @Router       /spaces/{spaceID}/tickets/kanban [get]
 func (h *Handler) Kanban(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {

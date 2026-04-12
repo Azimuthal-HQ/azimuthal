@@ -153,6 +153,18 @@ type createLabelRequest struct {
 // --- Item handlers ---
 
 // ListItems returns all items in a space.
+//
+// @Summary      List project items
+// @Description  Returns all items in a project space
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {array}   map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items [get]
 func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -169,6 +181,20 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateItem creates a new project item.
+//
+// @Summary      Create a project item
+// @Description  Creates a new item in a project space
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string                      true  "Space ID (UUID)"
+// @Param        body     body      api.SwaggerCreateItemRequest  true  "Item details"
+// @Success      201      {object}  map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items [post]
 func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -210,6 +236,20 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetItem returns a single item by ID.
+//
+// @Summary      Get a project item
+// @Description  Returns a single project item by its ID
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        itemID   path      string  true  "Item ID (UUID)"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items/{itemID} [get]
 func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 	id, err := itemIDFromURL(r)
 	if err != nil {
@@ -226,6 +266,22 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateItem modifies an existing item.
+//
+// @Summary      Update a project item
+// @Description  Modifies an existing project item
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string                        true  "Space ID (UUID)"
+// @Param        itemID   path      string                        true  "Item ID (UUID)"
+// @Param        body     body      api.SwaggerUpdateItemRequest   true  "Updated item details"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items/{itemID} [patch]
 func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	id, err := itemIDFromURL(r)
 	if err != nil {
@@ -261,6 +317,20 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteItem soft-deletes an item.
+//
+// @Summary      Delete a project item
+// @Description  Soft-deletes a project item
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        itemID   path      string  true  "Item ID (UUID)"
+// @Success      204      "No Content"
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items/{itemID} [delete]
 func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 	id, err := itemIDFromURL(r)
 	if err != nil {
@@ -276,6 +346,23 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateItemStatus changes the status of an item.
+//
+// @Summary      Update item status
+// @Description  Changes the status of a project item
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string                    true  "Space ID (UUID)"
+// @Param        itemID   path      string                    true  "Item ID (UUID)"
+// @Param        body     body      api.SwaggerStatusRequest   true  "New status"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      409      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items/{itemID}/status [post]
 func (h *Handler) UpdateItemStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := itemIDFromURL(r)
 	if err != nil {
@@ -298,6 +385,22 @@ func (h *Handler) UpdateItemStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // AssignToSprint assigns an item to a sprint.
+//
+// @Summary      Assign item to sprint
+// @Description  Assigns a project item to a sprint
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string                          true  "Space ID (UUID)"
+// @Param        itemID   path      string                          true  "Item ID (UUID)"
+// @Param        body     body      api.SwaggerSprintAssignRequest   true  "Sprint assignment"
+// @Success      200      {object}  api.SwaggerMessageResponse
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items/{itemID}/sprint [post]
 func (h *Handler) AssignToSprint(w http.ResponseWriter, r *http.Request) {
 	id, err := itemIDFromURL(r)
 	if err != nil {
@@ -319,6 +422,20 @@ func (h *Handler) AssignToSprint(w http.ResponseWriter, r *http.Request) {
 }
 
 // SearchItems performs full-text search on items.
+//
+// @Summary      Search project items
+// @Description  Performs full-text search on project items
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true   "Space ID (UUID)"
+// @Param        q        query     string  true   "Search query"
+// @Param        limit    query     int     false  "Maximum results (default 50, max 200)"
+// @Success      200      {array}   map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items/search [get]
 func (h *Handler) SearchItems(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -351,6 +468,19 @@ func (h *Handler) SearchItems(w http.ResponseWriter, r *http.Request) {
 // --- Relation handlers ---
 
 // ListRelations returns all relations for an item.
+//
+// @Summary      List item relations
+// @Description  Returns all relations for a project item
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        itemID   path      string  true  "Item ID (UUID)"
+// @Success      200      {array}   map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items/{itemID}/relations [get]
 func (h *Handler) ListRelations(w http.ResponseWriter, r *http.Request) {
 	id, err := itemIDFromURL(r)
 	if err != nil {
@@ -367,6 +497,21 @@ func (h *Handler) ListRelations(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateRelation creates a new relation from an item.
+//
+// @Summary      Create item relation
+// @Description  Creates a new relation from a project item to another item
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string                           true  "Space ID (UUID)"
+// @Param        itemID   path      string                           true  "Item ID (UUID)"
+// @Param        body     body      api.SwaggerCreateRelationRequest  true  "Relation details"
+// @Success      201      {object}  map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items/{itemID}/relations [post]
 func (h *Handler) CreateRelation(w http.ResponseWriter, r *http.Request) {
 	fromID, err := itemIDFromURL(r)
 	if err != nil {
@@ -402,6 +547,19 @@ func (h *Handler) CreateRelation(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteRelation removes a relation.
+//
+// @Summary      Delete a relation
+// @Description  Removes a relation between project items
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID     path      string  true  "Space ID (UUID)"
+// @Param        relationID  path      string  true  "Relation ID (UUID)"
+// @Success      204         "No Content"
+// @Failure      400         {object}  api.SwaggerErrorResponse
+// @Failure      401         {object}  api.SwaggerErrorResponse
+// @Failure      500         {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/relations/{relationID} [delete]
 func (h *Handler) DeleteRelation(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "relationID"))
 	if err != nil {
@@ -419,6 +577,18 @@ func (h *Handler) DeleteRelation(w http.ResponseWriter, r *http.Request) {
 // --- Sprint handlers ---
 
 // ListSprints returns all sprints in a space.
+//
+// @Summary      List sprints
+// @Description  Returns all sprints in a project space
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {array}   map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/sprints [get]
 func (h *Handler) ListSprints(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -435,6 +605,20 @@ func (h *Handler) ListSprints(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateSprint creates a new sprint.
+//
+// @Summary      Create a sprint
+// @Description  Creates a new sprint in a project space
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string                          true  "Space ID (UUID)"
+// @Param        body     body      api.SwaggerCreateSprintRequest   true  "Sprint details"
+// @Success      201      {object}  map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/sprints [post]
 func (h *Handler) CreateSprint(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -472,6 +656,20 @@ func (h *Handler) CreateSprint(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSprint returns a single sprint.
+//
+// @Summary      Get a sprint
+// @Description  Returns a single sprint by its ID
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string  true  "Space ID (UUID)"
+// @Param        sprintID  path      string  true  "Sprint ID (UUID)"
+// @Success      200       {object}  map[string]interface{}
+// @Failure      400       {object}  api.SwaggerErrorResponse
+// @Failure      401       {object}  api.SwaggerErrorResponse
+// @Failure      404       {object}  api.SwaggerErrorResponse
+// @Failure      500       {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/sprints/{sprintID} [get]
 func (h *Handler) GetSprint(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "sprintID"))
 	if err != nil {
@@ -488,6 +686,22 @@ func (h *Handler) GetSprint(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateSprint modifies an existing sprint.
+//
+// @Summary      Update a sprint
+// @Description  Modifies an existing sprint
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string                          true  "Space ID (UUID)"
+// @Param        sprintID  path      string                          true  "Sprint ID (UUID)"
+// @Param        body      body      api.SwaggerUpdateSprintRequest   true  "Updated sprint details"
+// @Success      200       {object}  map[string]interface{}
+// @Failure      400       {object}  api.SwaggerErrorResponse
+// @Failure      401       {object}  api.SwaggerErrorResponse
+// @Failure      404       {object}  api.SwaggerErrorResponse
+// @Failure      500       {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/sprints/{sprintID} [put]
 func (h *Handler) UpdateSprint(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "sprintID"))
 	if err != nil {
@@ -521,6 +735,21 @@ func (h *Handler) UpdateSprint(w http.ResponseWriter, r *http.Request) {
 }
 
 // StartSprint transitions a sprint to active.
+//
+// @Summary      Start a sprint
+// @Description  Transitions a sprint to active status
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string  true  "Space ID (UUID)"
+// @Param        sprintID  path      string  true  "Sprint ID (UUID)"
+// @Success      200       {object}  map[string]interface{}
+// @Failure      400       {object}  api.SwaggerErrorResponse
+// @Failure      401       {object}  api.SwaggerErrorResponse
+// @Failure      404       {object}  api.SwaggerErrorResponse
+// @Failure      409       {object}  api.SwaggerErrorResponse
+// @Failure      500       {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/sprints/{sprintID}/start [post]
 func (h *Handler) StartSprint(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "sprintID"))
 	if err != nil {
@@ -537,6 +766,21 @@ func (h *Handler) StartSprint(w http.ResponseWriter, r *http.Request) {
 }
 
 // CompleteSprint transitions a sprint to completed.
+//
+// @Summary      Complete a sprint
+// @Description  Transitions a sprint to completed status
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string  true  "Space ID (UUID)"
+// @Param        sprintID  path      string  true  "Sprint ID (UUID)"
+// @Success      200       {object}  map[string]interface{}
+// @Failure      400       {object}  api.SwaggerErrorResponse
+// @Failure      401       {object}  api.SwaggerErrorResponse
+// @Failure      404       {object}  api.SwaggerErrorResponse
+// @Failure      409       {object}  api.SwaggerErrorResponse
+// @Failure      500       {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/sprints/{sprintID}/complete [post]
 func (h *Handler) CompleteSprint(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "sprintID"))
 	if err != nil {
@@ -553,6 +797,19 @@ func (h *Handler) CompleteSprint(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListSprintItems returns items assigned to a sprint.
+//
+// @Summary      List sprint items
+// @Description  Returns all items assigned to a sprint
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID   path      string  true  "Space ID (UUID)"
+// @Param        sprintID  path      string  true  "Sprint ID (UUID)"
+// @Success      200       {array}   map[string]interface{}
+// @Failure      400       {object}  api.SwaggerErrorResponse
+// @Failure      401       {object}  api.SwaggerErrorResponse
+// @Failure      500       {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/sprints/{sprintID}/items [get]
 func (h *Handler) ListSprintItems(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "sprintID"))
 	if err != nil {
@@ -569,6 +826,19 @@ func (h *Handler) ListSprintItems(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetActiveSprint returns the active sprint for a space.
+//
+// @Summary      Get active sprint
+// @Description  Returns the currently active sprint for a space
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/sprints/active [get]
 func (h *Handler) GetActiveSprint(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -587,6 +857,18 @@ func (h *Handler) GetActiveSprint(w http.ResponseWriter, r *http.Request) {
 // --- Backlog handlers ---
 
 // GetBacklog returns the unassigned backlog for a space.
+//
+// @Summary      Get backlog
+// @Description  Returns the unassigned backlog items for a space
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {array}   map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/backlog [get]
 func (h *Handler) GetBacklog(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -603,6 +885,21 @@ func (h *Handler) GetBacklog(w http.ResponseWriter, r *http.Request) {
 }
 
 // MoveToSprint moves an item from backlog to a sprint.
+//
+// @Summary      Move item to sprint
+// @Description  Moves an item from the backlog to a sprint
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string                         true  "Space ID (UUID)"
+// @Param        body     body      api.SwaggerMoveToSprintRequest  true  "Move details"
+// @Success      200      {object}  api.SwaggerMessageResponse
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/backlog/move-to-sprint [post]
 func (h *Handler) MoveToSprint(w http.ResponseWriter, r *http.Request) {
 	var req moveToSprintRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -618,6 +915,21 @@ func (h *Handler) MoveToSprint(w http.ResponseWriter, r *http.Request) {
 }
 
 // MoveToBacklog moves an item from a sprint back to the backlog.
+//
+// @Summary      Move item to backlog
+// @Description  Moves an item from a sprint back to the backlog
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string                          true  "Space ID (UUID)"
+// @Param        body     body      api.SwaggerMoveToBacklogRequest  true  "Move details"
+// @Success      200      {object}  api.SwaggerMessageResponse
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/backlog/move-to-backlog [post]
 func (h *Handler) MoveToBacklog(w http.ResponseWriter, r *http.Request) {
 	var req moveToBacklogRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -635,6 +947,20 @@ func (h *Handler) MoveToBacklog(w http.ResponseWriter, r *http.Request) {
 // --- Roadmap handlers ---
 
 // GetRoadmap returns items with due dates in a range.
+//
+// @Summary      Get roadmap
+// @Description  Returns items with due dates in a date range
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        from     query     string  true  "Start date (YYYY-MM-DD)"
+// @Param        to       query     string  true  "End date (YYYY-MM-DD)"
+// @Success      200      {array}   map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/roadmap [get]
 func (h *Handler) GetRoadmap(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -657,6 +983,18 @@ func (h *Handler) GetRoadmap(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetOverdueItems returns items past their due date.
+//
+// @Summary      Get overdue items
+// @Description  Returns items that are past their due date
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {array}   map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/roadmap/overdue [get]
 func (h *Handler) GetOverdueItems(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -673,6 +1011,18 @@ func (h *Handler) GetOverdueItems(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSprintRoadmap returns sprints with their items for roadmap view.
+//
+// @Summary      Get sprint roadmap
+// @Description  Returns sprints with their items for roadmap view
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {array}   map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/roadmap/sprints [get]
 func (h *Handler) GetSprintRoadmap(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -691,6 +1041,18 @@ func (h *Handler) GetSprintRoadmap(w http.ResponseWriter, r *http.Request) {
 // --- Label handlers ---
 
 // ListLabels returns all labels for an organization.
+//
+// @Summary      List labels
+// @Description  Returns all labels for an organization
+// @Tags         labels
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string  true  "Organization ID (UUID)"
+// @Success      200    {array}   map[string]interface{}
+// @Failure      400    {object}  api.SwaggerErrorResponse
+// @Failure      401    {object}  api.SwaggerErrorResponse
+// @Failure      500    {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/labels [get]
 func (h *Handler) ListLabels(w http.ResponseWriter, r *http.Request) {
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
@@ -707,6 +1069,21 @@ func (h *Handler) ListLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateLabel creates a new label.
+//
+// @Summary      Create a label
+// @Description  Creates a new label for an organization
+// @Tags         labels
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string                         true  "Organization ID (UUID)"
+// @Param        body   body      api.SwaggerCreateLabelRequest   true  "Label details"
+// @Success      201    {object}  map[string]interface{}
+// @Failure      400    {object}  api.SwaggerErrorResponse
+// @Failure      401    {object}  api.SwaggerErrorResponse
+// @Failure      409    {object}  api.SwaggerErrorResponse
+// @Failure      500    {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/labels [post]
 func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
@@ -735,6 +1112,19 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteLabel removes a label.
+//
+// @Summary      Delete a label
+// @Description  Removes a label from an organization
+// @Tags         labels
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        labelID  path      string  true  "Label ID (UUID)"
+// @Success      204      "No Content"
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/labels/{labelID} [delete]
 func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "labelID"))
 	if err != nil {

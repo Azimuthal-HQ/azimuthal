@@ -438,11 +438,116 @@ jobs:
 
 
   # ─────────────────────────────────────────────────────────────
+  # GATE 6: API Docs Check
+  # ─────────────────────────────────────────────────────────────
+  docs-check:
+    name: API Docs Check
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install swag v2
+        run: go install github.com/swaggo/swag/v2/cmd/swag@latest
+
+      - name: Install PyYAML for validation
+        run: pip install pyyaml --break-system-packages
+
+      - name: Verify API spec is up to date with code
+        run: |
+          # Save current committed spec
+          cp docs/api/openapi.yaml /tmp/committed-spec.yaml
+
+          # Regenerate from annotations
+          make docs
+
+          # Compare — fail if spec differs from committed version
+          if ! diff -q docs/api/openapi.yaml /tmp/committed-spec.yaml > /dev/null 2>&1; then
+            echo "❌ API spec is out of sync with handler annotations"
+            echo ""
+            echo "A handler was modified without regenerating the spec."
+            echo "Run 'make docs' locally and commit docs/api/openapi.yaml"
+            echo ""
+            echo "Diff:"
+            diff /tmp/committed-spec.yaml docs/api/openapi.yaml || true
+            exit 1
+          fi
+          echo "✅ API spec is up to date"
+
+      - name: Validate OpenAPI 3.0 structure
+        run: |
+          python3 << 'EOF'
+          import yaml, sys
+
+          spec = yaml.safe_load(open('docs/api/openapi.yaml'))
+          errors = []
+
+          # Must be OpenAPI 3.x
+          if not spec.get('openapi', '').startswith('3.'):
+              errors.append(f"Not OAS3: openapi field is '{spec.get('openapi')}'")
+
+          # Must have title and version
+          info = spec.get('info', {})
+          if not info.get('title'):
+              errors.append("info.title is empty")
+          if not info.get('version'):
+              errors.append("info.version is empty")
+
+          # Must have BearerAuth security scheme
+          schemes = spec.get('components', {}).get('securitySchemes', {})
+          if 'BearerAuth' not in schemes:
+              errors.append("BearerAuth not found in components.securitySchemes")
+
+          # Must have required paths
+          paths = spec.get('paths', {})
+          required = ['/auth/login', '/auth/me']
+          for p in required:
+              if p not in paths:
+                  errors.append(f"Required path missing: {p}")
+
+          # All non-public endpoints must have security defined
+          public = [('/auth/login', 'post'), ('/auth/register', 'post'),
+                    ('/auth/refresh', 'post'),
+                    ('/health', 'get'), ('/ready', 'get')]
+          for path, methods in paths.items():
+              for method, op in methods.items():
+                  if method == 'parameters' or not isinstance(op, dict):
+                      continue
+                  if (path, method) in public:
+                      continue
+                  if not op.get('security'):
+                      errors.append(f"Missing security on {method.upper()} {path}")
+
+          if errors:
+              print(f"❌ OpenAPI spec validation failed ({len(errors)} errors):")
+              for e in errors:
+                  print(f"  - {e}")
+              sys.exit(1)
+
+          print(f"✅ OpenAPI 3.0 spec valid")
+          print(f"   Version: {spec['openapi']}")
+          print(f"   Endpoints: {len(paths)}")
+          tags = set()
+          for p in paths.values():
+              for m in p.values():
+                  if isinstance(m, dict):
+                      tags.update(m.get('tags', []))
+          print(f"   Tags: {sorted(tags)}")
+          EOF
+
+
+  # ─────────────────────────────────────────────────────────────
   # FINAL GATE
   # ─────────────────────────────────────────────────────────────
   all-checks:
     name: All Gates Passed
-    needs: [build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e]
+    needs: [build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check]
     runs-on: ubuntu-latest
     if: always()
     steps:

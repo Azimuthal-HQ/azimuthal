@@ -220,6 +220,22 @@ docker compose -f build/docker-compose.dev.yml down
 
 ---
 
+## API Documentation Rule — Non-Negotiable
+
+Any PR that adds, removes, or modifies an API endpoint MUST:
+
+1. Add or update swag annotations on the handler function
+2. Run `make docs` to regenerate `docs/api/openapi.yaml`
+3. Commit the updated `docs/api/openapi.yaml` in the same PR
+
+The `docs-check` CI gate will fail if the spec is out of sync.
+`make pre-push` includes this check automatically.
+
+Annotations must document what the endpoint actually does —
+not what it was intended to do. Read the handler code first.
+
+---
+
 ## Local Test Database
 
 A real Postgres + MinIO test environment is available for integration testing.

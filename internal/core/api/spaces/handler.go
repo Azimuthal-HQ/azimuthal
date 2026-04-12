@@ -59,6 +59,18 @@ type addMemberRequest struct {
 }
 
 // GetOrg returns an organization by ID.
+//
+// @Summary      Get organization
+// @Description  Returns an organization by its ID.
+// @Tags         spaces
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string  true  "Organization ID (UUID)"
+// @Success      200    {object}  map[string]interface{}      "Organization details"
+// @Failure      400    {object}  api.SwaggerErrorResponse    "Invalid org ID"
+// @Failure      401    {object}  api.SwaggerErrorResponse    "Not authenticated"
+// @Failure      404    {object}  api.SwaggerErrorResponse    "Not found"
+// @Router       /orgs/{orgID} [get]
 func (h *Handler) GetOrg(w http.ResponseWriter, r *http.Request) {
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
@@ -80,6 +92,21 @@ type updateOrgRequest struct {
 }
 
 // UpdateOrg updates an organization's details.
+//
+// @Summary      Update organization
+// @Description  Updates an organization's name and description (preserves plan).
+// @Tags         spaces
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string                      true  "Organization ID (UUID)"
+// @Param        body   body      api.SwaggerUpdateOrgRequest true  "Updated org fields"
+// @Success      200    {object}  map[string]interface{}      "Updated organization"
+// @Failure      400    {object}  api.SwaggerErrorResponse    "Validation error"
+// @Failure      401    {object}  api.SwaggerErrorResponse    "Not authenticated"
+// @Failure      404    {object}  api.SwaggerErrorResponse    "Not found"
+// @Failure      500    {object}  api.SwaggerErrorResponse    "Internal error"
+// @Router       /orgs/{orgID} [patch]
 func (h *Handler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
@@ -119,6 +146,18 @@ func (h *Handler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 // List returns all spaces for the organization.
+//
+// @Summary      List spaces
+// @Description  Returns all spaces belonging to the specified organization.
+// @Tags         spaces
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string  true  "Organization ID (UUID)"
+// @Success      200    {array}   map[string]interface{}    "List of spaces"
+// @Failure      400    {object}  api.SwaggerErrorResponse  "Invalid org ID"
+// @Failure      401    {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      500    {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /orgs/{orgID}/spaces [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
@@ -135,6 +174,20 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Create creates a new space.
+//
+// @Summary      Create space
+// @Description  Creates a new space in the organization. Type must be 'project', 'wiki', or 'service_desk'.
+// @Tags         spaces
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string                         true  "Organization ID (UUID)"
+// @Param        body   body      api.SwaggerCreateSpaceRequest  true  "Space details"
+// @Success      201    {object}  map[string]interface{}          "Created space"
+// @Failure      400    {object}  api.SwaggerErrorResponse        "Validation error"
+// @Failure      401    {object}  api.SwaggerErrorResponse        "Not authenticated"
+// @Failure      500    {object}  api.SwaggerErrorResponse        "Internal error"
+// @Router       /orgs/{orgID}/spaces [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
@@ -178,6 +231,19 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // Get returns a single space by ID.
+//
+// @Summary      Get space
+// @Description  Returns a single space by ID.
+// @Tags         spaces
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {object}  map[string]interface{}    "Space details"
+// @Failure      400      {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404      {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/spaces/{spaceID} [get]
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	id, err := spaceIDFromURL(r)
 	if err != nil {
@@ -194,6 +260,21 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Update modifies an existing space.
+//
+// @Summary      Update space
+// @Description  Updates a space's name, description, icon, and privacy setting.
+// @Tags         spaces
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string                          true  "Organization ID (UUID)"
+// @Param        spaceID  path      string                          true  "Space ID (UUID)"
+// @Param        body     body      api.SwaggerUpdateSpaceRequest   true  "Updated fields"
+// @Success      200      {object}  map[string]interface{}           "Updated space"
+// @Failure      400      {object}  api.SwaggerErrorResponse         "Validation error"
+// @Failure      401      {object}  api.SwaggerErrorResponse         "Not authenticated"
+// @Failure      500      {object}  api.SwaggerErrorResponse         "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID} [put]
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := spaceIDFromURL(r)
 	if err != nil {
@@ -227,6 +308,18 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete soft-deletes a space.
+//
+// @Summary      Delete space
+// @Description  Soft-deletes a space by ID.
+// @Tags         spaces
+// @Security     BearerAuth
+// @Param        orgID    path  string  true  "Organization ID (UUID)"
+// @Param        spaceID  path  string  true  "Space ID (UUID)"
+// @Success      204  "Deleted"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID} [delete]
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := spaceIDFromURL(r)
 	if err != nil {
@@ -242,6 +335,19 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListMembers returns all members of a space.
+//
+// @Summary      List space members
+// @Description  Returns all members of the specified space.
+// @Tags         members
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {array}   map[string]interface{}    "List of members"
+// @Failure      400      {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      500      {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/members [get]
 func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	id, err := spaceIDFromURL(r)
 	if err != nil {
@@ -258,6 +364,21 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 // AddMember adds a user to a space.
+//
+// @Summary      Add space member
+// @Description  Adds a user as a member of the specified space.
+// @Tags         members
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string                       true  "Organization ID (UUID)"
+// @Param        spaceID  path      string                       true  "Space ID (UUID)"
+// @Param        body     body      api.SwaggerAddMemberRequest  true  "Member details"
+// @Success      201      {object}  map[string]interface{}        "Member added"
+// @Failure      400      {object}  api.SwaggerErrorResponse      "Validation error"
+// @Failure      401      {object}  api.SwaggerErrorResponse      "Not authenticated"
+// @Failure      500      {object}  api.SwaggerErrorResponse      "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/members [post]
 func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -290,6 +411,19 @@ func (h *Handler) AddMember(w http.ResponseWriter, r *http.Request) {
 }
 
 // RemoveMember removes a user from a space.
+//
+// @Summary      Remove space member
+// @Description  Removes a user from the specified space.
+// @Tags         members
+// @Security     BearerAuth
+// @Param        orgID    path  string  true  "Organization ID (UUID)"
+// @Param        spaceID  path  string  true  "Space ID (UUID)"
+// @Param        userID   path  string  true  "User ID (UUID)"
+// @Success      204  "Removed"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/members/{userID} [delete]
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {

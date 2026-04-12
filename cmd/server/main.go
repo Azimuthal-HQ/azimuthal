@@ -1,5 +1,44 @@
 // Package main is the single binary entrypoint for Azimuthal.
 // It wires together config, database, background jobs, and the HTTP server.
+//
+// @title           Azimuthal API
+// @version         1.0
+// @description     The fully open-source alternative to Jira, Confluence, and Jira Service Desk.
+// @description     Self-hostable, single binary, Apache 2.0 licensed.
+// @description
+// @description     ## Authentication
+// @description     All endpoints except /auth/login and /auth/register require a Bearer JWT token.
+// @description     Obtain a token via POST /api/v1/auth/login, then include it as:
+// @description     `Authorization: Bearer <your-token>`
+//
+// @contact.name    Azimuthal HQ
+// @contact.url     https://azimuthalhq.com
+// @contact.email   hello@azimuthalhq.com
+//
+// @license.name    Apache 2.0
+// @license.url     https://www.apache.org/licenses/LICENSE-2.0.html
+// @host            localhost:8080
+// @BasePath        /api/v1
+// @securityDefinitions.apikey  BearerAuth
+// @in                          header
+// @name                        Authorization
+// @description                 JWT Bearer token. Format: "Bearer <token>". Obtain via POST /api/v1/auth/login
+// @tag.name        auth
+// @tag.description Authentication — login, logout, register, get current user
+// @tag.name        spaces
+// @tag.description Spaces — containers for service desks, wikis, and projects
+// @tag.name        tickets
+// @tag.description Service Desk — create and manage tickets and kanban items
+// @tag.name        wiki
+// @tag.description Wiki — create and manage documentation pages
+// @tag.name        projects
+// @tag.description Projects — manage backlogs, sprints, and roadmaps
+// @tag.name        comments
+// @tag.description Comments — unified comment system across tickets and wiki pages
+// @tag.name        members
+// @tag.description Members — space membership management
+// @tag.name        labels
+// @tag.description Labels — organization-scoped labels for items
 package main
 
 import (

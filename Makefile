@@ -5,7 +5,7 @@
         dev migrate rollback sqlc clean pre-push verify-api \
         frontend frontend-install frontend-type-check \
         test-db-up test-db-down test-db-reset test-live test-live-verbose \
-        e2e-test e2e-report e2e-headed
+        e2e-test e2e-report e2e-headed docs docs-check
 
 # ── Config ────────────────────────────────────────────────────
 BINARY_NAME    := azimuthal
@@ -175,8 +175,34 @@ verify-api: build
 	@./scripts/verify-api.sh
 	@echo "✓ API verification complete"
 
+# ── Documentation ────────────────────────────────────────────────────────────
+
+docs: ## Generate OpenAPI 3.0 spec from handler annotations
+	@echo "→ Generating OpenAPI 3.0 spec..."
+	@which swag > /dev/null 2>&1 || (echo "swag not installed. Run: go install github.com/swaggo/swag/v2/cmd/swag@latest" && exit 1)
+	@swag init \
+		--generalInfo main.go \
+		--dir ./cmd/server,./internal/core/api,./internal/core/api/auth,./internal/core/api/tickets,./internal/core/api/wiki,./internal/core/api/projects,./internal/core/api/spaces,./internal/core/api/comments \
+		--output docs/api \
+		--outputTypes yaml \
+		--v3.1 \
+		--parseInternal \
+		--parseDependencyLevel 1
+	@mv docs/api/swagger.yaml docs/api/openapi.yaml 2>/dev/null || true
+	@rm -f docs/api/docs.go docs/api/swagger.json
+	@echo "✓ Spec generated: docs/api/openapi.yaml"
+	@echo "  View at: http://localhost:8080/api/docs"
+
+docs-check: ## Verify OpenAPI spec is in sync with code (fails if out of date)
+	@cp docs/api/openapi.yaml /tmp/check-spec.yaml
+	@$(MAKE) docs --quiet
+	@diff -q docs/api/openapi.yaml /tmp/check-spec.yaml > /dev/null 2>&1 \
+		&& echo "✅ API spec is up to date" \
+		|| (echo "❌ API spec out of sync — run 'make docs' and commit the result" && cp /tmp/check-spec.yaml docs/api/openapi.yaml && exit 1)
+	@cp /tmp/check-spec.yaml docs/api/openapi.yaml
+
 # ── Pre-push (run before git push) ───────────────────────────
-pre-push: fmt lint test scan
+pre-push: fmt lint test scan docs-check
 	@echo ""
 	@echo "✅ All local checks passed — safe to push to Azimuthal"
 
