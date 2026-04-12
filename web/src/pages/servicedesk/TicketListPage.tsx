@@ -40,18 +40,20 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
   closed: 'Closed',
 };
 
-const PRIORITY_VARIANT: Record<number, BadgeProps['variant']> = {
-  0: 'danger',
-  1: 'warning',
-  2: 'secondary',
-  3: 'outline',
+const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
+  critical: 'danger',
+  urgent: 'danger',
+  high: 'warning',
+  medium: 'secondary',
+  low: 'outline',
 };
 
-const PRIORITY_LABEL: Record<number, string> = {
-  0: 'Critical',
-  1: 'High',
-  2: 'Medium',
-  3: 'Low',
+const PRIORITY_LABEL: Record<string, string> = {
+  critical: 'Critical',
+  urgent: 'Critical',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
 };
 
 const PRIORITY_ICON: Record<TicketPriority, typeof AlertTriangle> = {
@@ -79,7 +81,7 @@ export function TicketListPage() {
   const createTicketMutation = useCreateTicket(spaceId);
 
   const [statusFilter, setStatusFilter] = useState<TicketStatus | 'all'>('all');
-  const [priorityFilter, setPriorityFilter] = useState<number | 'all'>('all');
+  const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
 
   // Modal state
@@ -100,8 +102,8 @@ export function TicketListPage() {
 
     const body = {
       title,
-      description: formDescription.trim() || undefined,
-      priority: PRIORITY_NAME_TO_API[formPriority],
+      description: formDescription.trim() || '',
+      priority: PRIORITY_NAME_TO_API[formPriority] || 'medium',
     };
     console.log('[TicketListPage] Creating ticket:', JSON.stringify(body));
 
@@ -118,7 +120,7 @@ export function TicketListPage() {
     if (!tickets) return [];
     return tickets.filter((t) => {
       if (statusFilter !== 'all' && t.status !== statusFilter) return false;
-      if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
+      if (priorityFilter !== 'all' && String(t.priority).toLowerCase() !== priorityFilter) return false;
       if (search && !t.title.toLowerCase().includes(search.toLowerCase()) && !t.id.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
@@ -167,10 +169,7 @@ export function TicketListPage() {
 
         <select
           value={priorityFilter}
-          onChange={(e) => {
-            const val = e.target.value;
-            setPriorityFilter(val === 'all' ? 'all' : Number(val));
-          }}
+          onChange={(e) => setPriorityFilter(e.target.value)}
           className={cn(
             'h-9 rounded-[var(--radius-md)] border border-[var(--color-border)]',
             'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
@@ -178,10 +177,10 @@ export function TicketListPage() {
           )}
         >
           <option value="all">All Priorities</option>
-          <option value="0">Critical</option>
-          <option value="1">High</option>
-          <option value="2">Medium</option>
-          <option value="3">Low</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
         </select>
       </div>
 
@@ -229,7 +228,7 @@ export function TicketListPage() {
                         className="font-[var(--font-mono)] text-[var(--color-primary)] hover:underline"
                         style={{ fontFamily: 'var(--font-mono)' }}
                       >
-                        {(ticket.id ?? '').slice(0, 8)}
+                        {ticket.number ? `SD-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-[var(--color-text)]">
@@ -243,8 +242,8 @@ export function TicketListPage() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={PRIORITY_VARIANT[ticket.priority] ?? 'secondary'}>
-                        {PRIORITY_LABEL[ticket.priority] ?? 'Unknown'}
+                      <Badge variant={PRIORITY_VARIANT[String(ticket.priority).toLowerCase()] ?? 'secondary'}>
+                        {PRIORITY_LABEL[String(ticket.priority).toLowerCase()] ?? 'Medium'}
                       </Badge>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-[var(--color-text-muted)]">

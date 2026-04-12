@@ -139,10 +139,11 @@ export interface User {
 export interface Ticket {
   id: string;
   space_id: string;
+  number: number | null;
   title: string;
   description: string;
   status: TicketStatus;
-  priority: number;
+  priority: string;
   assignee_id: string | null;
   reporter_id: string;
   label_ids: string[];
@@ -164,11 +165,13 @@ export interface WikiPage {
 export interface ProjectItem {
   id: string;
   space_id: string;
+  number: number | null;
   title: string;
   description: string;
   status: string;
-  priority: number;
+  priority: string;
   assignee_id: string | null;
+  reporter_id: string;
   sprint_id: string | null;
   sort_order: number;
   label_ids: string[];
@@ -202,9 +205,19 @@ export interface Comment {
   entity_type: string;
   entity_id: string;
   author_id: string;
+  author_name?: string;
   body: string;
+  content?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface Member {
+  user_id: string;
+  org_id: string;
+  display_name: string;
+  email: string;
+  role: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +328,8 @@ interface UpdateTicketRequest {
   title?: string;
   description?: string;
   priority?: string;
+  assignee_id?: string | null;
+  status?: string;
   labels?: string[];
 }
 
@@ -422,6 +437,7 @@ interface UpdateProjectItemRequest {
   description?: string;
   priority?: string;
   assignee_id?: string | null;
+  status?: string;
   labels?: string[];
 }
 
@@ -510,6 +526,35 @@ async function fetchMe(): Promise<User> {
 }
 
 // ---------------------------------------------------------------------------
+// Member API functions
+// ---------------------------------------------------------------------------
+
+async function fetchMembers(orgId: string): Promise<Member[]> {
+  const data = await apiFetch<Member[] | Member>(`/orgs/${orgId}/members`);
+  return Array.isArray(data) ? data : [data];
+}
+
+// ---------------------------------------------------------------------------
+// Comment API functions
+// ---------------------------------------------------------------------------
+
+async function fetchComments(spaceId: string, itemId: string): Promise<Comment[]> {
+  const data = await apiFetch<Comment[] | Comment>(`/spaces/${spaceId}/items/${itemId}/comments`);
+  return Array.isArray(data) ? data : [data];
+}
+
+interface CreateCommentRequest {
+  content: string;
+}
+
+async function createComment(spaceId: string, itemId: string, req: CreateCommentRequest): Promise<Comment> {
+  return apiFetch<Comment>(`/spaces/${spaceId}/items/${itemId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Query key factories
 // ---------------------------------------------------------------------------
 
@@ -525,6 +570,8 @@ export const queryKeys = {
   projectItem: (spaceId: string, itemId: string) => ['projectItems', spaceId, itemId] as const,
   sprints: (spaceId: string) => ['sprints', spaceId] as const,
   labels: (orgId: string) => ['labels', orgId] as const,
+  members: (orgId: string) => ['members', orgId] as const,
+  comments: (spaceId: string, itemId: string) => ['comments', spaceId, itemId] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -630,6 +677,25 @@ export function useLabels(orgId: string, opts?: QueryOpts<Label[]>) {
     ...opts,
   });
 }
+
+export function useMembers(orgId: string, opts?: QueryOpts<Member[]>) {
+  return useQuery<Member[], APIError>({
+    queryKey: queryKeys.members(orgId),
+    queryFn: () => fetchMembers(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function useComments(spaceId: string, itemId: string, opts?: QueryOpts<Comment[]>) {
+  return useQuery<Comment[], APIError>({
+    queryKey: queryKeys.comments(spaceId, itemId),
+    queryFn: () => fetchComments(spaceId, itemId),
+    enabled: !!spaceId && !!itemId,
+    ...opts,
+  });
+}
+
 
 // ---------------------------------------------------------------------------
 // Mutation hooks
@@ -749,6 +815,16 @@ export function useUpdateProjectItem(spaceId: string, itemId: string) {
   });
 }
 
+export function useCreateComment(spaceId: string, itemId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Comment, APIError, CreateCommentRequest>({
+    mutationFn: (req) => createComment(spaceId, itemId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.comments(spaceId, itemId) });
+    },
+  });
+}
+
 // Re-export create helpers for direct use
 export {
   createSpace,
@@ -771,4 +847,5 @@ export {
   type LoginRequest,
   type RegisterRequest,
   type AuthResponse,
+  type CreateCommentRequest,
 };
