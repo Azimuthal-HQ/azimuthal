@@ -149,7 +149,7 @@ test.describe('Service Desk', () => {
 
     // Comments/Activity section must be visible and not show errors
     await expect(
-      page.locator('text=Activity').or(page.locator('text=Comments'))
+      page.locator('text=Activity').first().or(page.locator('text=Comments').first())
     ).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=404')).not.toBeVisible()
     await expect(page.locator('text=Something went wrong')).not.toBeVisible()
