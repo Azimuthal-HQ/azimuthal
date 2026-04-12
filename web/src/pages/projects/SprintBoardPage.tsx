@@ -43,8 +43,11 @@ const COLUMNS: ColumnDef[] = [
   { id: 'done', label: 'Done' },
 ];
 
-const PRIORITY_VARIANT: Record<number, BadgeProps['variant']> = {
-  0: 'danger', 1: 'warning', 2: 'secondary', 3: 'outline',
+const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
+  critical: 'danger', urgent: 'danger', high: 'warning', medium: 'secondary', low: 'outline',
+};
+const PRIORITY_LABEL: Record<string, string> = {
+  critical: 'Critical', urgent: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
 };
 
 // ---------------------------------------------------------------------------
@@ -77,6 +80,7 @@ function SortableItemCard({ item, onItemClick }: { item: ProjectItem; onItemClic
 }
 
 function ItemCard({ item, overlay, onItemClick }: { item: ProjectItem; overlay?: boolean; onItemClick?: (id: string) => void }) {
+  const priorityKey = String(item.priority ?? '').toLowerCase();
   return (
     <Card
       className={cn(
@@ -87,17 +91,17 @@ function ItemCard({ item, overlay, onItemClick }: { item: ProjectItem; overlay?:
     >
       <CardContent className="space-y-2 p-3">
         <span
-          className="text-[var(--text-xs)] font-medium text-[var(--color-primary)]"
+          className="text-[var(--text-xs)] font-medium text-[var(--color-text-muted)]"
           style={{ fontFamily: 'var(--font-mono)' }}
         >
-          {(item.id ?? '').slice(0, 8)}
+          {item.number ? `PROJ-${item.number}` : (item.id ?? '').slice(0, 8)}
         </span>
         <p className="text-[var(--text-sm)] leading-snug text-[var(--color-text)]">
           {item.title}
         </p>
         <div className="flex items-center justify-between">
-          <Badge variant={PRIORITY_VARIANT[item.priority] ?? 'secondary'}>
-            {item.priority === 0 ? 'Critical' : item.priority === 1 ? 'High' : item.priority === 2 ? 'Medium' : 'Low'}
+          <Badge variant={PRIORITY_VARIANT[priorityKey] ?? 'secondary'}>
+            {PRIORITY_LABEL[priorityKey] ?? 'Medium'}
           </Badge>
         </div>
       </CardContent>

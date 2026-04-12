@@ -43,18 +43,20 @@ const COLUMNS: ColumnDef[] = [
   { id: 'closed', label: 'Closed' },
 ];
 
-const PRIORITY_VARIANT: Record<number, BadgeProps['variant']> = {
-  0: 'danger',
-  1: 'warning',
-  2: 'secondary',
-  3: 'outline',
+const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
+  critical: 'danger',
+  urgent: 'danger',
+  high: 'warning',
+  medium: 'secondary',
+  low: 'outline',
 };
 
-const PRIORITY_LABEL: Record<number, string> = {
-  0: 'Critical',
-  1: 'High',
-  2: 'Medium',
-  3: 'Low',
+const PRIORITY_LABEL: Record<string, string> = {
+  critical: 'Critical',
+  urgent: 'Critical',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
 };
 
 // ---------------------------------------------------------------------------
@@ -94,6 +96,7 @@ function SortableTicketCard({ ticket, spaceId }: { ticket: Ticket; spaceId?: str
 
 function TicketCard({ ticket, overlay, spaceId }: SortableTicketCardProps) {
   const ticketPath = `/spaces/${spaceId}/tickets/${ticket.id}`;
+  const priorityKey = String(ticket.priority ?? '').toLowerCase();
   return (
     <Card
       className={cn(
@@ -104,17 +107,17 @@ function TicketCard({ ticket, overlay, spaceId }: SortableTicketCardProps) {
       <CardContent className="space-y-2 p-3">
         <Link
           to={ticketPath}
-          className="text-[var(--text-xs)] font-medium text-[var(--color-primary)] hover:underline"
+          className="text-[var(--text-xs)] font-medium text-[var(--color-text-muted)] hover:underline"
           style={{ fontFamily: 'var(--font-mono)' }}
         >
-          {(ticket.id ?? '').slice(0, 8)}
+          {ticket.number ? `SD-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
         </Link>
         <p className="text-[var(--text-sm)] leading-snug text-[var(--color-text)]">
           {ticket.title}
         </p>
         <div className="flex items-center justify-between">
-          <Badge variant={PRIORITY_VARIANT[ticket.priority] ?? 'secondary'}>
-            {PRIORITY_LABEL[ticket.priority] ?? 'Unknown'}
+          <Badge variant={PRIORITY_VARIANT[priorityKey] ?? 'secondary'}>
+            {PRIORITY_LABEL[priorityKey] ?? 'Medium'}
           </Badge>
         </div>
       </CardContent>

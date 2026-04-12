@@ -20,11 +20,11 @@ import { useProjectItems, useCreateProjectItem, type ProjectItem } from '../../l
 // Badge helpers
 // ---------------------------------------------------------------------------
 
-const PRIORITY_VARIANT: Record<number, BadgeProps['variant']> = {
-  0: 'danger', 1: 'warning', 2: 'secondary', 3: 'outline',
+const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
+  critical: 'danger', urgent: 'danger', high: 'warning', medium: 'secondary', low: 'outline',
 };
-const PRIORITY_LABEL: Record<number, string> = {
-  0: 'Critical', 1: 'High', 2: 'Medium', 3: 'Low',
+const PRIORITY_LABEL: Record<string, string> = {
+  critical: 'Critical', urgent: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
 };
 const STATUS_LABEL: Record<string, string> = {
   todo: 'To Do', in_progress: 'In Progress', in_review: 'In Review', done: 'Done',
@@ -65,9 +65,9 @@ export function BacklogPage() {
 
     const body = {
       title,
-      description: formDescription.trim() || undefined,
+      description: formDescription.trim() || '',
       kind: formKind,
-      priority: formPriority,
+      priority: formPriority || 'medium',
     };
     console.log('[BacklogPage] Creating item:', JSON.stringify(body));
 
@@ -180,13 +180,13 @@ export function BacklogPage() {
                     <tr key={item.id} className="border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors">
                       <td className="whitespace-nowrap px-4 py-3">
                         <Link to={itemPath} className="font-medium text-[var(--color-primary)] hover:underline" style={{ fontFamily: 'var(--font-mono)' }}>
-                          {(item.id ?? '').slice(0, 8)}
+                          {item.number ? `PROJ-${item.number}` : (item.id ?? '').slice(0, 8)}
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-[var(--color-text)]">
                         <Link to={itemPath} className="hover:underline">{item.title}</Link>
                       </td>
-                      <td className="px-4 py-3"><Badge variant={PRIORITY_VARIANT[item.priority] ?? 'secondary'}>{PRIORITY_LABEL[item.priority] ?? 'Unknown'}</Badge></td>
+                      <td className="px-4 py-3"><Badge variant={PRIORITY_VARIANT[String(item.priority).toLowerCase()] ?? 'secondary'}>{PRIORITY_LABEL[String(item.priority).toLowerCase()] ?? 'Medium'}</Badge></td>
                       <td className="px-4 py-3"><Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>{STATUS_LABEL[item.status] ?? item.status}</Badge></td>
                     </tr>
                   );
@@ -240,22 +240,24 @@ export function BacklogPage() {
               </div>
 
               <div className="space-y-2 flex-1">
-                <label htmlFor="item-priority" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Priority</label>
-                <select
-                  id="item-priority"
-                  value={formPriority}
-                  onChange={(e) => setFormPriority(e.target.value)}
-                  className={cn(
-                    'flex h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                    'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
-                  )}
-                >
-                  <option value="urgent">Urgent</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
+                <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Priority</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {(['critical', 'high', 'medium', 'low'] as const).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setFormPriority(p)}
+                      className={cn(
+                        'rounded-[var(--radius-md)] border px-2 py-1.5 text-[var(--text-sm)] capitalize transition-colors',
+                        formPriority === p
+                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-medium'
+                          : 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]',
+                      )}
+                    >
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
