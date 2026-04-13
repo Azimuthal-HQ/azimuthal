@@ -8,6 +8,7 @@ import { cn } from '../../lib/utils';
 import {
   useProjectItem,
   useUpdateProjectItem,
+  useTransitionProjectItemStatus,
   useMembers,
   useComments,
   useCreateComment,
@@ -44,9 +45,10 @@ export function ItemDetailPage() {
 
   const { data: item, isLoading, error, refetch: refetchItem } = useProjectItem(spaceId, itemId);
   const updateMutation = useUpdateProjectItem(spaceId, itemId);
+  const statusMutation = useTransitionProjectItemStatus(spaceId, itemId);
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
-  const { data: members } = useMembers(orgId);
+  const { data: members } = useMembers(orgId, spaceId);
   const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, itemId);
   const createCommentMutation = useCreateComment(orgId, spaceId, itemId);
 
@@ -55,7 +57,7 @@ export function ItemDetailPage() {
   const backlogPath = `/spaces/${spaceId}/backlog`;
 
   async function handleStatusChange(newStatus: string) {
-    await updateMutation.mutateAsync({ status: newStatus });
+    await statusMutation.mutateAsync(newStatus);
     refetchItem();
   }
 
