@@ -204,17 +204,17 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	dstDBName := "azim_brt_dst_" + suffix
 
 	createDB := func(name string) {
-		// G202 doesn't apply: name is generated locally from a UUID, not
-		// from request data. Identifiers cannot be parameterised in
-		// CREATE/DROP DATABASE.
-		_, execErr := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %q", name)) //nolint:gosec
+		// `name` is generated locally from a UUID; identifiers cannot be
+		// parameterised in CREATE/DROP DATABASE so a local-format string
+		// is the only way to spell this. Trusted input.
+		_, execErr := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %q", name))
 		require.NoError(t, execErr, "creating database %q", name)
 	}
 	dropDB := func(name string) {
 		// Disconnect any other sessions before dropping; ignore errors here.
 		_, _ = adminPool.Exec(ctx,
 			fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, name))
-		_, _ = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %q", name)) //nolint:gosec
+		_, _ = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %q", name))
 	}
 
 	createDB(srcDBName)
@@ -367,6 +367,8 @@ func seedRoundTripFixtures(t *testing.T, ctx context.Context, q *generated.Queri
 		Status:      "open",
 		Priority:    "medium",
 		ReporterID:  user.ID,
+		Labels:      []string{},
+		Rank:        "a0",
 	})
 	require.NoError(t, err)
 

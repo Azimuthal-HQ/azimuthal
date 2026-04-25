@@ -166,7 +166,7 @@ func restoreStorage(cfg *config.Config, entries map[string][]byte) error {
 // restorePostgres runs the SQL dump through psql to restore the database.
 // Uses --clean and --if-exists in the dump, making this idempotent.
 func restorePostgres(databaseURL string, dump []byte) error {
-	cmd := exec.Command("psql", databaseURL) // #nosec G204 -- trusted config value
+	cmd := exec.Command("psql", databaseURL) // #nosec G204,G702 -- trusted config value
 	cmd.Stdin = bytes.NewReader(dump)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = os.Stderr

@@ -111,12 +111,12 @@ func runBackup(_ *cobra.Command, _ []string) error {
 // dumpPostgres runs pg_dump and returns the SQL dump bytes and the postgres version.
 func dumpPostgres(databaseURL string) ([]byte, string, error) {
 	// Get postgres version
-	versionCmd := exec.Command("psql", databaseURL, "-t", "-c", "SELECT version();") // #nosec G204 -- trusted config value
+	versionCmd := exec.Command("psql", databaseURL, "-t", "-c", "SELECT version();") // #nosec G204,G702 -- trusted config value
 	versionOut, _ := versionCmd.Output()
 	pgVersion := string(versionOut)
 
 	// Run pg_dump
-	cmd := exec.Command("pg_dump", "--no-owner", "--no-acl", "--clean", "--if-exists", databaseURL) // #nosec G204 -- trusted config value
+	cmd := exec.Command("pg_dump", "--no-owner", "--no-acl", "--clean", "--if-exists", databaseURL) // #nosec G204,G702 -- trusted config value
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
