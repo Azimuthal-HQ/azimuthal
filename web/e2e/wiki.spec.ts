@@ -36,21 +36,21 @@ test.describe('Wiki', () => {
     await expect(page).toHaveURL('/')
   })
 
-  test.skip('wiki edit button opens editor — KNOWN GAP', async () => {
-    // See docs/project-state.md Section 3 — Known Gaps
-    // File: web/src/pages/wiki/WikiPage.tsx around line 150
-    // Edit button exists with pencil icon but has no onClick handler
-    // Re-enable after TipTap editor is implemented
+  test.fixme('wiki edit button opens editor', async () => {
+    // FEATURE GAP (not a bug): the wiki edit pencil button has no onClick handler because the TipTap-based editor component has not been built yet.
+    // Audit ref: testing-audit.md §3.3
+    // Re-enable when: the editor component is wired and pointed at PUT /api/v1/spaces/{spaceID}/wiki/{pageID}.
   })
 
-  test.skip('wiki page tree shows hierarchy — KNOWN GAP', async () => {
-    // See docs/project-state.md Section 3 — Known Gaps
-    // File: web/src/pages/wiki/WikiPage.tsx around line 91-135
-    // Backend supports parent/child but frontend renders flat list only
+  test.fixme('wiki page tree shows hierarchy', async () => {
+    // FEATURE GAP (not a bug): the wiki sidebar renders a flat list even though pages.parent_id supports nesting.
+    // Audit ref: testing-audit.md §3.3
+    // Re-enable when: the frontend renders parent_id as a tree instead of a flat list.
   })
 
-  test.skip('wiki page comments are visible — KNOWN GAP', async () => {
-    // See docs/project-state.md Section 3 — Known Gaps
-    // Comments backend exists but frontend wiring unconfirmed
+  test.fixme('wiki page comments are visible', async () => {
+    // FEATURE GAP (not a bug): the wiki page does not call the comments endpoint or render a comment thread.
+    // Audit ref: testing-audit.md §3.3
+    // Re-enable when: the frontend posts to and renders from /api/v1/orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments.
   })
 })

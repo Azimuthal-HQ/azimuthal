@@ -463,6 +463,13 @@ components:
         status:
           type: string
       type: object
+    auth.updateMeRequest:
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+      type: object
   securitySchemes:
     BearerAuth:
       description: 'JWT Bearer token. Format: "Bearer <token>". Obtain via POST /api/v1/auth/login'
@@ -587,6 +594,50 @@ paths:
       security:
       - BearerAuth: []
       summary: Get current user
+      tags:
+      - auth
+    patch:
+      description: Updates the display name and email of the currently authenticated
+        user.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/auth.updateMeRequest'
+                description: Profile fields
+                summary: body
+        description: Profile fields
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerUserResponse'
+          description: Updated profile
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Update current user
       tags:
       - auth
   /auth/refresh:

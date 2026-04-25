@@ -817,3 +817,58 @@ func TestIntegration_Register_DuplicateEmail(t *testing.T) {
 	require.True(t, r.StatusCode == http.StatusConflict || r.StatusCode == http.StatusInternalServerError,
 		"expected 409 or 500, got %d", r.StatusCode)
 }
+
+// --- Org management routes ---
+// Audit ref: testing-audit.md §3.2 — org #10/#11 had zero coverage.
+
+// TestOrg_GetReturnsOrg verifies GET /api/v1/orgs/{orgID} returns the org JSON.
+func TestOrg_GetReturnsOrg(t *testing.T) {
+	ts := newTestServer(t)
+
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s", ts.OrgID), true)
+
+	require.Equal(t, http.StatusOK, r.StatusCode, "GET org: %s", r.Body)
+	require.Contains(t, r.ContentType, "application/json")
+
+	var org map[string]any
+	require.NoError(t, json.Unmarshal(r.Body, &org))
+	require.Equal(t, ts.OrgID.String(), org["id"], "must return the requested org")
+	require.NotEmpty(t, org["slug"], "org slug must be returned")
+	require.NotEmpty(t, org["name"], "org name must be returned")
+}
+
+// TestOrg_PatchUpdatesNameAndDescription verifies PATCH /api/v1/orgs/{orgID}
+// updates the org and returns the updated record.
+func TestOrg_PatchUpdatesNameAndDescription(t *testing.T) {
+	ts := newTestServer(t)
+
+	desc := "Renamed by integration test"
+	body := map[string]any{
+		"name":        "Renamed Org",
+		"description": desc,
+	}
+	r := ts.patch(t, fmt.Sprintf("/api/v1/orgs/%s", ts.OrgID), body, true)
+
+	require.Equal(t, http.StatusOK, r.StatusCode, "PATCH org: %s", r.Body)
+	require.Contains(t, r.ContentType, "application/json")
+
+	var updated map[string]any
+	require.NoError(t, json.Unmarshal(r.Body, &updated))
+	require.Equal(t, "Renamed Org", updated["name"], "name must be updated")
+
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s", ts.OrgID), true)
+	require.Equal(t, http.StatusOK, r.StatusCode)
+	var refetched map[string]any
+	require.NoError(t, json.Unmarshal(r.Body, &refetched))
+	require.Equal(t, "Renamed Org", refetched["name"], "rename must persist")
+}
+
+// TestOrg_GetRequiresAuth verifies GET /api/v1/orgs/{orgID} returns 401 when unauthenticated.
+func TestOrg_GetRequiresAuth(t *testing.T) {
+	ts := newTestServer(t)
+
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s", ts.OrgID), false)
+
+	require.Equal(t, http.StatusUnauthorized, r.StatusCode)
+	require.Contains(t, r.ContentType, "application/json")
+}

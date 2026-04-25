@@ -24,6 +24,9 @@ type RouterConfig struct {
 	SpaceHandler   *spacesapi.Handler
 	CommentHandler *commentsapi.Handler
 	SPAHandler     http.Handler // serves the embedded frontend; nil disables SPA serving
+	// AllowedOrigins is the explicit CORS allow-list. nil falls back to the
+	// permissive wildcard for backwards compatibility with existing tests.
+	AllowedOrigins []string
 }
 
 // NewRouter builds the unified chi router with all routes and middleware.
@@ -34,7 +37,11 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	r.Use(Recoverer)
 	r.Use(RequestID)
 	r.Use(Logging)
-	r.Use(CORS)
+	if cfg.AllowedOrigins == nil {
+		r.Use(CORS)
+	} else {
+		r.Use(NewCORS(cfg.AllowedOrigins))
+	}
 
 	// Public endpoints (no auth required)
 	r.Get("/health", HandleHealth)
@@ -52,6 +59,7 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 		r.Group(func(r chi.Router) {
 			r.Use(cfg.Authenticator.RequireAuth)
 			r.Get("/me", cfg.AuthHandler.Me)
+			r.Patch("/me", cfg.AuthHandler.UpdateMe)
 		})
 	})
 

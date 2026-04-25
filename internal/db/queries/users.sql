@@ -29,6 +29,12 @@ SET display_name = $2, avatar_url = $3, role = $4, is_active = $5
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
+-- name: UpdateUserProfile :one
+UPDATE users
+SET display_name = $2, email = $3
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
 -- name: UpdateUserPasswordHash :exec
 UPDATE users SET password_hash = $2 WHERE id = $1 AND deleted_at IS NULL;
 

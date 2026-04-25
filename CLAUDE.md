@@ -128,7 +128,7 @@ echo "Got token: ${TOKEN:0:20}..."
 
 ### Step 5 — Get org ID
 ```bash
-ORG_ID=$(curl -s http://localhost:8080/api/v1/me \
+ORG_ID=$(curl -fsS http://localhost:8080/api/v1/auth/me \
   -H "Authorization: Bearer $TOKEN" \
   | grep -o '"org_id":"[^"]*"' | cut -d'"' -f4)
 
@@ -138,7 +138,7 @@ echo "Org ID: $ORG_ID"
 ### Step 6 — Test create operations with MINIMUM required fields
 ```bash
 # Create a service desk space
-SPACE=$(curl -s -X POST \
+SPACE=$(curl -fsS -X POST \
   "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -147,15 +147,15 @@ SPACE_ID=$(echo $SPACE | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 echo "Space ID: $SPACE_ID"
 
 # Create a ticket with minimum fields only
-curl -s -X POST \
-  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/items" \
+curl -fsS -X POST \
+  "http://localhost:8080/api/v1/spaces/$SPACE_ID/tickets" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Test ticket","type":"ticket","status":"open","priority":"medium"}' \
-  | grep -v '"error"' && echo "✅ Ticket created" || echo "❌ Ticket failed"
+  -d '{"title":"Test ticket","priority":"medium"}' \
+  > /dev/null && echo "✅ Ticket created" || echo "❌ Ticket failed"
 
 # Create a wiki space
-WIKI=$(curl -s -X POST \
+WIKI=$(curl -fsS -X POST \
   "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -163,15 +163,15 @@ WIKI=$(curl -s -X POST \
 WIKI_ID=$(echo $WIKI | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Create a page with minimum fields only
-curl -s -X POST \
-  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces/$WIKI_ID/pages" \
+curl -fsS -X POST \
+  "http://localhost:8080/api/v1/spaces/$WIKI_ID/wiki" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Test page","slug":"test-page","content":""}' \
-  | grep -v '"error"' && echo "✅ Page created" || echo "❌ Page failed"
+  -d '{"title":"Test page","content":""}' \
+  > /dev/null && echo "✅ Page created" || echo "❌ Page failed"
 
 # Create a project space
-PROJ=$(curl -s -X POST \
+PROJ=$(curl -fsS -X POST \
   "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -179,26 +179,26 @@ PROJ=$(curl -s -X POST \
 PROJ_ID=$(echo $PROJ | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Create an item with minimum fields only
-curl -s -X POST \
-  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces/$PROJ_ID/items" \
+curl -fsS -X POST \
+  "http://localhost:8080/api/v1/spaces/$PROJ_ID/projects/items" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Test item","type":"task","status":"open","priority":"medium"}' \
-  | grep -v '"error"' && echo "✅ Item created" || echo "❌ Item failed"
+  -d '{"title":"Test item","kind":"task","priority":"medium"}' \
+  > /dev/null && echo "✅ Item created" || echo "❌ Item failed"
 ```
 
 ### Step 7 — Verify API routes return correct Content-Type
 ```bash
 # API routes must return application/json
-CT=$(curl -s -I \
-  "http://localhost:8080/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/items" \
+CT=$(curl -fsS -I \
+  "http://localhost:8080/api/v1/spaces/$SPACE_ID/tickets" \
   -H "Authorization: Bearer $TOKEN" \
   | grep -i content-type)
 echo "API Content-Type: $CT"
 echo $CT | grep "application/json" && echo "✅ API returns JSON" || echo "❌ API returning wrong content type"
 
 # Frontend routes must return text/html
-CT=$(curl -s -I "http://localhost:8080/spaces/$SPACE_ID/tickets" \
+CT=$(curl -sS -I "http://localhost:8080/spaces/$SPACE_ID/tickets" \
   | grep -i content-type)
 echo "Frontend Content-Type: $CT"
 echo $CT | grep "text/html" && echo "✅ Frontend returns HTML" || echo "❌ Frontend routing broken"

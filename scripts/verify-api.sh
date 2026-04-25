@@ -7,6 +7,8 @@
 # Runs Steps 4-7 from the Testing Requirements in CLAUDE.md.
 # Expects the server to NOT be running — this script builds, starts,
 # tests, and stops it automatically.
+#
+# Audit ref: testing-audit.md §3.6 — URLs corrected to match the live router.
 
 set -euo pipefail
 
@@ -24,17 +26,6 @@ cleanup() {
   rm -f /tmp/azimuthal-test
 }
 trap cleanup EXIT
-
-check() {
-  local label="$1"
-  shift
-  if "$@"; then
-    echo "  $label"
-  else
-    echo "  $label"
-    FAILURES=$((FAILURES + 1))
-  fi
-}
 
 # ── Defaults ─────────────────────────────────────────────────
 : "${DATABASE_URL:=postgres://azimuthal:dev@localhost:5432/azimuthal_dev?sslmode=disable}"
@@ -76,7 +67,7 @@ echo "=== Step 4 — Create test user and get JWT ==="
   --name "Test User" \
   --password testpassword123 2>/dev/null || true
 
-TOKEN=$(curl -s -X POST "${BASE_URL}/api/v1/auth/login" \
+TOKEN=$(curl -fsS -X POST "${BASE_URL}/api/v1/auth/login" \
   -H "Content-Type: application/json" \
   -d '{"email":"test@azimuthal.dev","password":"testpassword123"}' \
   | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
@@ -91,7 +82,7 @@ echo "Got token: ${TOKEN:0:20}..."
 # ── Step 5 — Get org ID ─────────────────────────────────────
 echo ""
 echo "=== Step 5 — Get org ID ==="
-ORG_ID=$(curl -s "${BASE_URL}/api/v1/me" \
+ORG_ID=$(curl -fsS "${BASE_URL}/api/v1/auth/me" \
   -H "Authorization: Bearer $TOKEN" \
   | grep -o '"org_id":"[^"]*"' | cut -d'"' -f4)
 
@@ -107,7 +98,7 @@ echo ""
 echo "=== Step 6 — Test create operations (minimum fields) ==="
 
 # Service desk space
-SPACE=$(curl -s -X POST \
+SPACE=$(curl -fsS -X POST \
   "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -115,13 +106,12 @@ SPACE=$(curl -s -X POST \
 SPACE_ID=$(echo "$SPACE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 echo "Space ID: $SPACE_ID"
 
-# Ticket with minimum fields
-TICKET_RESULT=$(curl -s -X POST \
-  "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/items" \
+# Ticket with minimum fields — uses /api/v1/spaces/{spaceID}/tickets per the live router.
+if curl -fsS -X POST \
+  "${BASE_URL}/api/v1/spaces/$SPACE_ID/tickets" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Test ticket","type":"ticket","status":"open","priority":"medium"}')
-if echo "$TICKET_RESULT" | grep -qv '"error"'; then
+  -d '{"title":"Test ticket","priority":"medium"}' >/dev/null; then
   echo "  Ticket created"
 else
   echo "  Ticket failed"
@@ -129,20 +119,19 @@ else
 fi
 
 # Wiki space
-WIKI=$(curl -s -X POST \
+WIKI=$(curl -fsS -X POST \
   "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"Test Wiki","type":"wiki","slug":"test-wiki"}')
 WIKI_ID=$(echo "$WIKI" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
-# Page with minimum fields
-PAGE_RESULT=$(curl -s -X POST \
-  "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$WIKI_ID/pages" \
+# Page with minimum fields — uses /api/v1/spaces/{spaceID}/wiki per the live router.
+if curl -fsS -X POST \
+  "${BASE_URL}/api/v1/spaces/$WIKI_ID/wiki" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Test page","slug":"test-page","content":""}')
-if echo "$PAGE_RESULT" | grep -qv '"error"'; then
+  -d '{"title":"Test page","content":""}' >/dev/null; then
   echo "  Page created"
 else
   echo "  Page failed"
@@ -150,20 +139,19 @@ else
 fi
 
 # Project space
-PROJ=$(curl -s -X POST \
+PROJ=$(curl -fsS -X POST \
   "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"Test Project","type":"project","slug":"test-project"}')
 PROJ_ID=$(echo "$PROJ" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
-# Item with minimum fields
-ITEM_RESULT=$(curl -s -X POST \
-  "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$PROJ_ID/items" \
+# Item with minimum fields — uses /api/v1/spaces/{spaceID}/projects/items per the live router.
+if curl -fsS -X POST \
+  "${BASE_URL}/api/v1/spaces/$PROJ_ID/projects/items" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"title":"Test item","type":"task","status":"open","priority":"medium"}')
-if echo "$ITEM_RESULT" | grep -qv '"error"'; then
+  -d '{"title":"Test item","kind":"task","priority":"medium"}' >/dev/null; then
   echo "  Item created"
 else
   echo "  Item failed"
@@ -174,9 +162,9 @@ fi
 echo ""
 echo "=== Step 7 — Verify API routes return correct Content-Type ==="
 
-# API routes must return application/json
-CT_API=$(curl -s -I \
-  "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/items" \
+# API routes must return application/json (use a corrected ticket-list path).
+CT_API=$(curl -fsS -I \
+  "${BASE_URL}/api/v1/spaces/$SPACE_ID/tickets" \
   -H "Authorization: Bearer $TOKEN" \
   | grep -i content-type || true)
 echo "API Content-Type: $CT_API"
@@ -188,7 +176,7 @@ else
 fi
 
 # Frontend routes must return text/html
-CT_FE=$(curl -s -I "${BASE_URL}/spaces/$SPACE_ID/tickets" \
+CT_FE=$(curl -sS -I "${BASE_URL}/spaces/$SPACE_ID/tickets" \
   | grep -i content-type || true)
 echo "Frontend Content-Type: $CT_FE"
 if echo "$CT_FE" | grep -qi "text/html"; then

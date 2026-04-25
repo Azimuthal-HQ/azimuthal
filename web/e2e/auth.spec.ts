@@ -49,9 +49,10 @@ test.describe('Authentication', () => {
     expect(response.headers()['content-type']).toContain('application/json')
   })
 
-  test.fixme('logout clears session and redirects to login', async ({ page }) => {
-    // APP BUG: Shell component renders without onLogout prop — logout button is a no-op
-    // Fix: App.tsx must pass useAuth().logout to Shell's onLogout prop
+  test('logout clears session and redirects to login', async ({ page }) => {
+    // Audit ref: testing-audit.md §3.3.
+    // App.tsx now wraps Shell in AppShell, which passes useAuth().logout
+    // as the onLogout prop so the TopNav menu button is wired.
     await createUserAndLogin(page)
 
     // Open user menu — use aria-label from TopNav.tsx
@@ -88,9 +89,10 @@ test.describe('Authentication', () => {
     expect(token).toBeNull()
   })
 
-  test.fixme('after logout, navigating to / redirects to login', async ({ page }) => {
-    // APP BUG: Shell component renders without onLogout prop — logout button is a no-op
-    // Fix: App.tsx must pass useAuth().logout to Shell's onLogout prop
+  test('after logout, navigating to / redirects to login', async ({ page }) => {
+    // Audit ref: testing-audit.md §3.3.
+    // App.tsx now wraps Shell in AppShell, which passes useAuth().logout
+    // as the onLogout prop so the TopNav menu button is wired.
     await createUserAndLogin(page)
 
     // Open user menu

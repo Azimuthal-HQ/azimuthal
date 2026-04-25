@@ -68,6 +68,19 @@ func (a *UserAdapter) Update(ctx context.Context, u *auth.User) error {
 	return nil
 }
 
+// UpdateProfile updates the display name and email for a user.
+func (a *UserAdapter) UpdateProfile(ctx context.Context, id uuid.UUID, displayName, email string) (*auth.User, error) {
+	row, err := a.q.UpdateUserProfile(ctx, generated.UpdateUserProfileParams{
+		ID:          id,
+		DisplayName: displayName,
+		Email:       email,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("user adapter update profile: %w", err)
+	}
+	return dbUserToDomain(row), nil
+}
+
 // Delete soft-deletes a user by setting deleted_at.
 func (a *UserAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := a.q.SoftDeleteUser(ctx, id); err != nil {

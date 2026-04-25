@@ -33,6 +33,8 @@ type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	// Update persists changes to an existing user record.
 	Update(ctx context.Context, u *User) error
+	// UpdateProfile persists changes to a user's display name and email.
+	UpdateProfile(ctx context.Context, id uuid.UUID, displayName, email string) (*User, error)
 	// Delete soft-deletes a user by setting deleted_at.
 	Delete(ctx context.Context, id uuid.UUID) error
 }
@@ -111,6 +113,16 @@ func (s *UserService) UpdateUser(ctx context.Context, u *User) error {
 		return fmt.Errorf("updating user: %w", err)
 	}
 	return nil
+}
+
+// UpdateProfile persists changes to a user's display name and email.
+// Returns the updated user.
+func (s *UserService) UpdateProfile(ctx context.Context, id uuid.UUID, displayName, email string) (*User, error) {
+	u, err := s.repo.UpdateProfile(ctx, id, displayName, email)
+	if err != nil {
+		return nil, fmt.Errorf("updating profile: %w", err)
+	}
+	return u, nil
 }
 
 // DeactivateUser soft-deletes a user account.

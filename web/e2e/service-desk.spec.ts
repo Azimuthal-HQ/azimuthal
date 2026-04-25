@@ -30,8 +30,10 @@ test.describe('Service Desk', () => {
     await expect(page.locator('text=E2E Test Ticket')).toBeVisible({ timeout: 5000 })
   })
 
-  test.fixme('created ticket shows correct priority — not Unknown', async ({ page }) => {
-    // KNOWN BUG: priority badge shows "Unknown" instead of "Medium" for new tickets
+  test('created ticket shows correct priority — not Unknown', async ({ page }) => {
+    // Audit ref: testing-audit.md §3.3.
+    // PRIORITY_LABEL maps "medium" → "Medium" with a "Medium" fallback (no
+    // "Unknown" string is rendered for unmapped values).
     await createUserAndLogin(page)
     await createSpace(page, 'Priority Display Test', 'service_desk')
 
@@ -45,8 +47,9 @@ test.describe('Service Desk', () => {
     await expect(page.locator('text=Medium').first()).toBeVisible()
   })
 
-  test.fixme('created ticket shows correct status — not blank', async ({ page }) => {
-    // KNOWN BUG: status badge display issue — depends on priority bug fix
+  test('created ticket shows correct status — not blank', async ({ page }) => {
+    // Audit ref: testing-audit.md §3.3.
+    // STATUS_LABEL["open"] resolves to "Open" — the default for new tickets.
     await createUserAndLogin(page)
     await createSpace(page, 'Status Display Test', 'service_desk')
 

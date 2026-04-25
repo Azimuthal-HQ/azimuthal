@@ -59,6 +59,17 @@ func (m *mockUserRepo) Update(_ context.Context, u *auth.User) error {
 	return nil
 }
 
+func (m *mockUserRepo) UpdateProfile(_ context.Context, id uuid.UUID, displayName, email string) (*auth.User, error) {
+	u, ok := m.users[id]
+	if !ok {
+		return nil, auth.ErrNotFound
+	}
+	u.DisplayName = displayName
+	u.Email = email
+	m.users[id] = u
+	return u, nil
+}
+
 func (m *mockUserRepo) Delete(_ context.Context, id uuid.UUID) error {
 	delete(m.users, id)
 	return nil
