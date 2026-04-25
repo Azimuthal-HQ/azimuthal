@@ -233,7 +233,7 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	require.NoError(t, db.Migrate(ctx, srcPool), "migrating source DB")
 
 	srcQueries := generated.New(srcPool)
-	seed := seedRoundTripFixtures(t, ctx, srcQueries)
+	seed := seedRoundTripFixtures(ctx, t, srcQueries)
 	srcPool.Close()
 
 	// 2. Dump the source DB.
@@ -309,7 +309,7 @@ type seedFixtures struct {
 }
 
 // seedRoundTripFixtures inserts one of each entity into the source DB.
-func seedRoundTripFixtures(t *testing.T, ctx context.Context, q *generated.Queries) seedFixtures {
+func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queries) seedFixtures {
 	t.Helper()
 
 	suffix := uuid.New().String()[:8]
