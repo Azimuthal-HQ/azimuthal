@@ -286,7 +286,11 @@ export async function refreshAccessToken(): Promise<RefreshResponse> {
 // ---------------------------------------------------------------------------
 
 async function fetchSpaces(orgId: string): Promise<Space[]> {
-  const data = await apiFetch<Space[] | Space>(`/orgs/${orgId}/spaces`);
+  // Audit ref: testing-audit.md §7.5 — list endpoints occasionally return
+  // literal `null` instead of `[]`. Treat null/undefined as empty so list
+  // pages do not crash on .filter/.map.
+  const data = await apiFetch<Space[] | Space | null>(`/orgs/${orgId}/spaces`);
+  if (data == null) return [];
   return Array.isArray(data) ? data : [data];
 }
 
@@ -309,7 +313,9 @@ async function createSpace(orgId: string, req: CreateSpaceRequest): Promise<Spac
 // ---------------------------------------------------------------------------
 
 async function fetchTickets(spaceId: string): Promise<Ticket[]> {
-  const data = await apiFetch<Ticket[] | Ticket>(`/spaces/${spaceId}/tickets`);
+  // Audit ref: testing-audit.md §7.5 — null-instead-of-[] regression.
+  const data = await apiFetch<Ticket[] | Ticket | null>(`/spaces/${spaceId}/tickets`);
+  if (data == null) return [];
   return Array.isArray(data) ? data : [data];
 }
 
@@ -368,7 +374,9 @@ async function transitionTicketStatus(
 // ---------------------------------------------------------------------------
 
 async function fetchWikiPages(spaceId: string): Promise<WikiPage[]> {
-  const data = await apiFetch<WikiPage[] | WikiPage>(`/spaces/${spaceId}/wiki`);
+  // Audit ref: testing-audit.md §7.5 — null-instead-of-[] regression.
+  const data = await apiFetch<WikiPage[] | WikiPage | null>(`/spaces/${spaceId}/wiki`);
+  if (data == null) return [];
   return Array.isArray(data) ? data : [data];
 }
 
@@ -412,7 +420,9 @@ async function updateWikiPage(
 // ---------------------------------------------------------------------------
 
 async function fetchProjectItems(spaceId: string): Promise<ProjectItem[]> {
-  const data = await apiFetch<ProjectItem[] | ProjectItem>(`/spaces/${spaceId}/projects/items`);
+  // Audit ref: testing-audit.md §7.5 — null-instead-of-[] regression.
+  const data = await apiFetch<ProjectItem[] | ProjectItem | null>(`/spaces/${spaceId}/projects/items`);
+  if (data == null) return [];
   return Array.isArray(data) ? data : [data];
 }
 
