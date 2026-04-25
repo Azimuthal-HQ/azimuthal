@@ -39,7 +39,6 @@ func TestAdminCreateUser_CreatesUserOrgAndOwnerMembership(t *testing.T) {
 	require.NoError(t, err, "CreateUser must succeed")
 	require.Equal(t, email, user.Email)
 	require.Equal(t, displayName, user.DisplayName)
-	require.Equal(t, orgID, user.OrgID, "user must be created in the new org")
 
 	_, err = queries.CreateMembership(ctx, generated.CreateMembershipParams{
 		ID:        uuid.New(),
@@ -54,6 +53,7 @@ func TestAdminCreateUser_CreatesUserOrgAndOwnerMembership(t *testing.T) {
 	gotUser, err := queries.GetUserByID(ctx, user.ID)
 	require.NoError(t, err, "user row must be readable")
 	require.Equal(t, email, gotUser.Email)
+	require.Equal(t, orgID, gotUser.OrgID, "user must be persisted into the new org")
 
 	gotOrg, err := queries.GetOrganizationByID(ctx, orgID)
 	require.NoError(t, err, "org row must be readable")

@@ -162,8 +162,9 @@ fi
 echo ""
 echo "=== Step 7 — Verify API routes return correct Content-Type ==="
 
-# API routes must return application/json (use a corrected ticket-list path).
-CT_API=$(curl -fsS -I \
+# API routes must return application/json — use GET and discard body so the
+# router's response Content-Type is captured (chi returns 405 on HEAD).
+CT_API=$(curl -fsS -D - -o /dev/null \
   "${BASE_URL}/api/v1/spaces/$SPACE_ID/tickets" \
   -H "Authorization: Bearer $TOKEN" \
   | grep -i content-type || true)
@@ -176,7 +177,7 @@ else
 fi
 
 # Frontend routes must return text/html
-CT_FE=$(curl -sS -I "${BASE_URL}/spaces/$SPACE_ID/tickets" \
+CT_FE=$(curl -sS -D - -o /dev/null "${BASE_URL}/spaces/$SPACE_ID/tickets" \
   | grep -i content-type || true)
 echo "Frontend Content-Type: $CT_FE"
 if echo "$CT_FE" | grep -qi "text/html"; then

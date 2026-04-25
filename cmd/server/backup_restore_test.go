@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -151,15 +149,13 @@ func TestBackupRestore_FixturesAreReadable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, space.Slug, gotSpace.Slug)
 
-	// Sanity: a membership for owner can be created and re-read.
-	_, err = queries.CreateMembership(ctx, generated.CreateMembershipParams{
-		ID:        uuid.New(),
-		OrgID:     org.ID,
-		UserID:    user.ID,
-		Role:      "owner",
-		InvitedBy: pgtype.UUID{},
+	// Sanity: the membership that CreateTestUser added is reachable.
+	membership, err := queries.GetMembership(ctx, generated.GetMembershipParams{
+		OrgID:  org.ID,
+		UserID: user.ID,
 	})
 	require.NoError(t, err)
+	require.Equal(t, "owner", membership.Role)
 }
 
 // TestBackupRestore_PostgresRoundTrip is the full round-trip the audit

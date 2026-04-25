@@ -606,7 +606,9 @@ jobs:
       - name: Frontend bundle is served at /
         run: |
           BODY=$(curl -fsS http://localhost:8080/)
-          echo "$BODY" | grep -q '<script type="module" src="/assets/' \
+          # Vite emits <script type="module" crossorigin src="/assets/...">; allow
+          # any attributes between "module" and the src=/assets/ marker.
+          echo "$BODY" | grep -Eq 'type="module"[^>]*src="/assets/' \
             || (echo "❌ root response missing compiled JS bundle marker"; echo "$BODY" | head -40; exit 1)
           echo "✅ root serves a compiled JS bundle"
 

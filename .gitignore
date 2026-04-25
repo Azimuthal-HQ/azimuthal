@@ -36,6 +36,12 @@ bin/
 
 # Frontend
 web/node_modules/
+web/playwright-report/
+web/test-results/
+
+# Local data dirs (RSA key persistence path)
+data/
+cmd/server/data/
 
 # Claude Code worktrees
 .claude/
