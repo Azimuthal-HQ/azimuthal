@@ -30,8 +30,11 @@ test.describe('Projects', () => {
     await expect(page.locator('text=E2E Test Item')).toBeVisible({ timeout: 5000 })
   })
 
-  test.fixme('created item shows correct priority — not Unknown', async ({ page }) => {
-    // KNOWN BUG: priority badge shows "Unknown" instead of "Medium" for new items
+  test('created item shows correct priority — not Unknown', async ({ page }) => {
+    // Audit ref: testing-audit.md §3.3.
+    // BacklogPage's STATUS_LABEL/PRIORITY_LABEL now cover the keys the
+    // backend actually returns ("open", "medium"), so unmapped fallbacks
+    // never surface as "Unknown".
     await createUserAndLogin(page)
     await createSpace(page, 'Priority Project', 'project')
 
@@ -57,10 +60,10 @@ test.describe('Projects', () => {
     await expect(page).toHaveURL('/')
   })
 
-  test.skip('clicking a backlog item opens detail view — KNOWN GAP', async () => {
-    // See docs/project-state.md Section 3 — Known Gaps
-    // File: web/src/pages/projects/ItemDetailPage.tsx
-    // Detail view exists but is read-only with no edit capability
+  test.fixme('clicking a backlog item opens detail view with edit capability', async () => {
+    // FEATURE GAP (not a bug): the project item detail view is read-only — no editable fields and no save action.
+    // Audit ref: testing-audit.md §3.3
+    // Re-enable when: the item detail view exposes editable fields and a save action.
   })
 
   test('project item status can be changed', async ({ page }) => {

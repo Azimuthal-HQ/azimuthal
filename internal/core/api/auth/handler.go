@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -364,5 +366,69 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		OrgID:       user.OrgID.String(),
 		Role:        user.Role,
 		IsActive:    user.IsActive,
+	})
+}
+
+type updateMeRequest struct {
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+}
+
+// UpdateMe updates the current authenticated user's display name and email.
+//
+// @Summary      Update current user
+// @Description  Updates the display name and email of the currently authenticated user.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      auth.updateMeRequest      true  "Profile fields"
+// @Success      200   {object}  api.SwaggerUserResponse   "Updated profile"
+// @Failure      400   {object}  api.SwaggerErrorResponse  "Validation error"
+// @Failure      401   {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      500   {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /auth/me [patch]
+func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return
+	}
+
+	var req updateMeRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+
+	displayName := strings.TrimSpace(req.DisplayName)
+	email := strings.TrimSpace(req.Email)
+
+	if displayName == "" {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "display_name is required")
+		return
+	}
+	if email == "" {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "email is required")
+		return
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "invalid email address")
+		return
+	}
+
+	updated, err := h.users.UpdateProfile(r.Context(), claims.UserID, displayName, email)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to update profile")
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, userResponse{
+		ID:          updated.ID,
+		Email:       updated.Email,
+		DisplayName: updated.DisplayName,
+		OrgID:       updated.OrgID.String(),
+		Role:        updated.Role,
+		IsActive:    updated.IsActive,
 	})
 }

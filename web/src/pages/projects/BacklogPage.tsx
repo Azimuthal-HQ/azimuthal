@@ -26,11 +26,14 @@ const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
 const PRIORITY_LABEL: Record<string, string> = {
   critical: 'Critical', urgent: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
 };
+// Audit ref: testing-audit.md §3.3 — keys aligned with the values the
+// backend actually returns from internal/core/projects/item.go
+// (default status is "open", not "todo").
 const STATUS_LABEL: Record<string, string> = {
-  todo: 'To Do', in_progress: 'In Progress', in_review: 'In Review', done: 'Done',
+  open: 'Open', todo: 'To Do', in_progress: 'In Progress', in_review: 'In Review', done: 'Done', closed: 'Closed',
 };
 const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
-  todo: 'secondary', in_progress: 'warning', in_review: 'default', done: 'success',
+  open: 'default', todo: 'secondary', in_progress: 'warning', in_review: 'default', done: 'success', closed: 'secondary',
 };
 
 // ---------------------------------------------------------------------------

@@ -66,7 +66,9 @@ func Logging(next http.Handler) http.Handler {
 	})
 }
 
-// CORS is middleware that sets permissive CORS headers for development.
+// CORS is the legacy permissive middleware. It echoes Access-Control-Allow-Origin: *
+// on every request and is preserved for tests and existing wiring that builds
+// the router without an allow-list. Use NewCORS for production-safe behavior.
 func CORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -81,6 +83,67 @@ func CORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// NewCORS returns a CORS middleware that only echoes Access-Control-Allow-Origin
+// when the request's Origin matches one of allowedOrigins. The wildcard "*"
+// in allowedOrigins permits any origin (development default). An empty list
+// rejects all cross-origin requests, which is the production default driven by
+// AZIMUTHAL_ALLOWED_ORIGINS — audit ref: testing-audit.md §3.3.
+func NewCORS(allowedOrigins []string) func(http.Handler) http.Handler {
+	allowAny, allowSet := buildOriginAllowList(allowedOrigins)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			allowed := resolveAllowedOrigin(origin, allowAny, allowSet)
+			if allowed != "" {
+				writeCORSHeaders(w, allowed)
+			}
+			if r.Method == http.MethodOptions {
+				if allowed == "" && origin != "" {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func buildOriginAllowList(origins []string) (bool, map[string]struct{}) {
+	allowAny := false
+	set := make(map[string]struct{}, len(origins))
+	for _, o := range origins {
+		if o == "*" {
+			allowAny = true
+		}
+		set[o] = struct{}{}
+	}
+	return allowAny, set
+}
+
+func resolveAllowedOrigin(origin string, allowAny bool, allowSet map[string]struct{}) string {
+	if origin == "" {
+		return ""
+	}
+	if allowAny {
+		return origin
+	}
+	if _, ok := allowSet[origin]; ok {
+		return origin
+	}
+	return ""
+}
+
+func writeCORSHeaders(w http.ResponseWriter, allowed string) {
+	w.Header().Set("Access-Control-Allow-Origin", allowed)
+	w.Header().Set("Vary", "Origin")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-Request-ID")
+	w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+	w.Header().Set("Access-Control-Max-Age", "86400")
 }
 
 // Recoverer is middleware that recovers from panics and returns a 500 error.

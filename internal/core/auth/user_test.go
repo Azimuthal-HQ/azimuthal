@@ -51,6 +51,20 @@ func (r *stubUserRepo) Update(_ context.Context, u *User) error {
 	return nil
 }
 
+func (r *stubUserRepo) UpdateProfile(_ context.Context, id uuid.UUID, displayName, email string) (*User, error) {
+	for oldEmail, u := range r.users {
+		if u.ID == id {
+			u.DisplayName = displayName
+			u.Email = email
+			u.UpdatedAt = time.Now().UTC()
+			delete(r.users, oldEmail)
+			r.users[email] = u
+			return u, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
 func (r *stubUserRepo) Delete(_ context.Context, id uuid.UUID) error {
 	for email, u := range r.users {
 		if u.ID == id {

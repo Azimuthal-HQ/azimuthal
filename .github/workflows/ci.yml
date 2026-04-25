@@ -117,7 +117,7 @@ jobs:
             -timeout=120s \
             ./...
 
-      - name: Enforce minimum coverage (60%)
+      - name: Enforce minimum coverage (80%)
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
@@ -543,11 +543,96 @@ jobs:
 
 
   # ─────────────────────────────────────────────────────────────
+  # GATE 7: Docker image boots and serves the app
+  # Audit ref: testing-audit.md §7.3 — would have caught v0.1.1 directly.
+  # ─────────────────────────────────────────────────────────────
+  docker-e2e:
+    name: Docker image boot
+    needs: build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: azimuthal_test
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: azimuthal_test
+        ports:
+          - "5433:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg VERSION=ci-${{ github.sha }} \
+            -t ${{ env.BINARY_NAME }}:boot-${{ github.sha }} \
+            -f build/Dockerfile \
+            .
+
+      - name: Run image and wait for /health
+        run: |
+          docker run -d \
+            --name azimuthal-boot \
+            --network host \
+            -e DATABASE_URL=postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable \
+            -e JWT_SECRET=ci-docker-boot-secret-32-chars-min \
+            -e STORAGE_ENDPOINT=http://localhost:9001 \
+            -e STORAGE_ACCESS_KEY=minioadmin \
+            -e STORAGE_SECRET_KEY=minioadmin \
+            -e STORAGE_BUCKET=azimuthal-test \
+            -e APP_ENV=test \
+            -e APP_PORT=8080 \
+            ${{ env.BINARY_NAME }}:boot-${{ github.sha }}
+
+          deadline=$((SECONDS + 60))
+          until curl -fsS http://localhost:8080/health > /dev/null 2>&1; do
+            if [ $SECONDS -ge $deadline ]; then
+              echo "❌ /health did not return 200 within 60s"
+              docker logs azimuthal-boot || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "✅ /health returned 200"
+
+      - name: Frontend bundle is served at /
+        run: |
+          BODY=$(curl -fsS http://localhost:8080/)
+          # Vite emits <script type="module" crossorigin src="/assets/...">; allow
+          # any attributes between "module" and the src=/assets/ marker.
+          echo "$BODY" | grep -Eq 'type="module"[^>]*src="/assets/' \
+            || (echo "❌ root response missing compiled JS bundle marker"; echo "$BODY" | head -40; exit 1)
+          echo "✅ root serves a compiled JS bundle"
+
+      - name: API health endpoint returns JSON
+        run: |
+          CT=$(curl -fsS -o /dev/null -w '%{content_type}' http://localhost:8080/health)
+          echo "$CT" | grep -q "application/json" \
+            || (echo "❌ /health Content-Type is $CT, expected application/json"; exit 1)
+          echo "✅ /health returns application/json"
+
+      - name: Tear down image
+        if: always()
+        run: |
+          docker stop azimuthal-boot || true
+          docker rm azimuthal-boot || true
+          docker rmi ${{ env.BINARY_NAME }}:boot-${{ github.sha }} || true
+
+
+  # ─────────────────────────────────────────────────────────────
   # FINAL GATE
   # ─────────────────────────────────────────────────────────────
   all-checks:
     name: All Gates Passed
-    needs: [build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check]
+    needs: [build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e]
     runs-on: ubuntu-latest
     if: always()
     steps:

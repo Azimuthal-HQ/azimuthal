@@ -76,6 +76,12 @@ func NewTestDB(t *testing.T) *TestDB {
 		_, _ = pool.Exec(context.Background(),
 			fmt.Sprintf("DROP SCHEMA IF EXISTS %q CASCADE", schema))
 		pool.Close()
+		// Reset goose's package-level table-name so later tests in the same
+		// binary that call db.Migrate(ctx, ...) directly do not inherit our
+		// schema-qualified setting and hit "schema does not exist".
+		gooseMu.Lock()
+		goose.SetTableName("goose_db_version")
+		gooseMu.Unlock()
 	})
 
 	return tdb

@@ -527,3 +527,36 @@ func (q *Queries) UpdateUserPasswordHash(ctx context.Context, arg UpdateUserPass
 	_, err := q.db.Exec(ctx, updateUserPasswordHash, arg.ID, arg.PasswordHash)
 	return err
 }
+
+const updateUserProfile = `-- name: UpdateUserProfile :one
+UPDATE users
+SET display_name = $2, email = $3
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at
+`
+
+type UpdateUserProfileParams struct {
+	ID          uuid.UUID `json:"id"`
+	DisplayName string    `json:"display_name"`
+	Email       string    `json:"email"`
+}
+
+func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserProfile, arg.ID, arg.DisplayName, arg.Email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Email,
+		&i.DisplayName,
+		&i.AvatarUrl,
+		&i.PasswordHash,
+		&i.Role,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.LastLoginAt,
+	)
+	return i, err
+}

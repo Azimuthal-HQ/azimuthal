@@ -24,8 +24,13 @@ type Config struct {
 	StorageUseSSL    bool
 
 	// Auth
-	JWTSecret string
-	JWTExpiry time.Duration
+	JWTSecret         string
+	JWTExpiry         time.Duration
+	JWTPrivateKeyPath string
+
+	// CORS — explicit list of allowed origins. Empty list in production
+	// rejects all cross-origin requests; "*" matches any origin.
+	AllowedOrigins []string
 
 	// Email
 	SMTPHost string
@@ -47,6 +52,7 @@ func Load() (*Config, error) {
 
 	// Sensible defaults
 	v.SetDefault("JWT_EXPIRY", "24h")
+	v.SetDefault("JWT_PRIVATE_KEY_PATH", "./data/jwt-private.pem")
 	v.SetDefault("SMTP_HOST", "localhost")
 	v.SetDefault("SMTP_PORT", 1025)
 	v.SetDefault("SMTP_FROM", "azimuthal@localhost")
@@ -58,20 +64,22 @@ func Load() (*Config, error) {
 	v.SetDefault("STORAGE_USE_SSL", false)
 
 	cfg := &Config{
-		DatabaseURL:      v.GetString("DATABASE_URL"),
-		StorageEndpoint:  v.GetString("STORAGE_ENDPOINT"),
-		StorageAccessKey: v.GetString("STORAGE_ACCESS_KEY"),
-		StorageSecretKey: v.GetString("STORAGE_SECRET_KEY"),
-		StorageBucket:    v.GetString("STORAGE_BUCKET"),
-		StorageUseSSL:    v.GetBool("STORAGE_USE_SSL"),
-		JWTSecret:        v.GetString("JWT_SECRET"),
-		SMTPHost:         v.GetString("SMTP_HOST"),
-		SMTPPort:         v.GetInt("SMTP_PORT"),
-		SMTPFrom:         v.GetString("SMTP_FROM"),
-		AppEnv:           v.GetString("APP_ENV"),
-		AppPort:          v.GetInt("APP_PORT"),
-		AppBaseURL:       v.GetString("APP_BASE_URL"),
-		LogLevel:         v.GetString("LOG_LEVEL"),
+		DatabaseURL:       v.GetString("DATABASE_URL"),
+		StorageEndpoint:   v.GetString("STORAGE_ENDPOINT"),
+		StorageAccessKey:  v.GetString("STORAGE_ACCESS_KEY"),
+		StorageSecretKey:  v.GetString("STORAGE_SECRET_KEY"),
+		StorageBucket:     v.GetString("STORAGE_BUCKET"),
+		StorageUseSSL:     v.GetBool("STORAGE_USE_SSL"),
+		JWTSecret:         v.GetString("JWT_SECRET"),
+		JWTPrivateKeyPath: v.GetString("JWT_PRIVATE_KEY_PATH"),
+		AllowedOrigins:    parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS"), v.GetString("APP_ENV")),
+		SMTPHost:          v.GetString("SMTP_HOST"),
+		SMTPPort:          v.GetInt("SMTP_PORT"),
+		SMTPFrom:          v.GetString("SMTP_FROM"),
+		AppEnv:            v.GetString("APP_ENV"),
+		AppPort:           v.GetInt("APP_PORT"),
+		AppBaseURL:        v.GetString("APP_BASE_URL"),
+		LogLevel:          v.GetString("LOG_LEVEL"),
 	}
 
 	expiryStr := v.GetString("JWT_EXPIRY")
@@ -96,6 +104,32 @@ func (c *Config) IsTest() bool {
 // IsDevelopment reports whether the application is running in development mode.
 func (c *Config) IsDevelopment() bool {
 	return c.AppEnv == "development"
+}
+
+// IsProduction reports whether the application is running in production mode.
+func (c *Config) IsProduction() bool {
+	return c.AppEnv == "production"
+}
+
+// parseAllowedOrigins splits a comma-separated origin list. When the env var
+// is unset the default depends on AppEnv: development and test allow all
+// origins ("*"); production denies all by default and forces the operator to
+// configure AZIMUTHAL_ALLOWED_ORIGINS explicitly.
+func parseAllowedOrigins(raw, appEnv string) []string {
+	if raw == "" {
+		if appEnv == "production" {
+			return []string{}
+		}
+		return []string{"*"}
+	}
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return origins
 }
 
 // validate checks that all required configuration is present.

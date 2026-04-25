@@ -28,9 +28,11 @@ test.describe('Dashboard', () => {
     expect(appErrors).toHaveLength(0)
   })
 
-  test.fixme('API calls return JSON not HTML', async ({ page }) => {
-    // KNOWN ISSUE: /api/v1/auth/me returns 401 despite valid token in localStorage
-    // Needs investigation — may be a JWT validation or middleware issue
+  test('API calls return JSON not HTML', async ({ page }) => {
+    // Audit ref: testing-audit.md §3.3.
+    // The /auth/me route is registered in the authenticated group in
+    // internal/core/api/router.go and verified by
+    // TestAuthMe_ValidToken_Returns200 in routes_integration_test.go.
     await createUserAndLogin(page)
     const token = await getAuthToken(page)
 

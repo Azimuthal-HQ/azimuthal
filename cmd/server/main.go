@@ -43,8 +43,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -122,9 +120,9 @@ func newServer(cfg *config.Config) (*http.Server, func(), error) {
 // buildRouter constructs all domain services with DB-backed adapters and
 // returns the fully wired API router.
 func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	privateKey, err := auth.LoadOrGenerateRSAKey(cfg.JWTPrivateKeyPath)
 	if err != nil {
-		return nil, fmt.Errorf("generating RSA key: %w", err)
+		return nil, fmt.Errorf("loading RSA signing key: %w", err)
 	}
 
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
@@ -165,6 +163,7 @@ func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, 
 		SpaceHandler:   spacesapi.NewHandler(queries),
 		CommentHandler: commentsapi.NewHandler(queries),
 		SPAHandler:     spaHandler,
+		AllowedOrigins: cfg.AllowedOrigins,
 	}), nil
 }
 

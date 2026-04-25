@@ -30,8 +30,12 @@ test.describe('Service Desk', () => {
     await expect(page.locator('text=E2E Test Ticket')).toBeVisible({ timeout: 5000 })
   })
 
-  test.fixme('created ticket shows correct priority — not Unknown', async ({ page }) => {
-    // KNOWN BUG: priority badge shows "Unknown" instead of "Medium" for new tickets
+  test('created ticket shows correct priority — not Unknown', async ({ page }) => {
+    // Audit ref: testing-audit.md §3.3.
+    // PRIORITY_LABEL maps "medium" → "Medium" with a "Medium" fallback (no
+    // "Unknown" string is rendered for unmapped values). The original
+    // `text=Medium`.first() locator picked the hidden filter `<option>` in
+    // the toolbar; scope to the row to assert the badge text exactly.
     await createUserAndLogin(page)
     await createSpace(page, 'Priority Display Test', 'service_desk')
 
@@ -41,12 +45,21 @@ test.describe('Service Desk', () => {
 
     await expect(page.locator('text=Priority Check Ticket')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=Unknown')).not.toBeVisible()
-    // Medium is the default priority
-    await expect(page.locator('text=Medium').first()).toBeVisible()
+    // Priority cell of the row for the new ticket. Medium is the default
+    // priority so the badge text must equal exactly "Medium".
+    const priorityCell = page
+      .locator('table tbody tr')
+      .filter({ hasText: 'Priority Check Ticket' })
+      .locator('td')
+      .nth(3)
+    await expect(priorityCell).toHaveText('Medium')
   })
 
-  test.fixme('created ticket shows correct status — not blank', async ({ page }) => {
-    // KNOWN BUG: status badge display issue — depends on priority bug fix
+  test('created ticket shows correct status — not blank', async ({ page }) => {
+    // Audit ref: testing-audit.md §3.3.
+    // STATUS_LABEL["open"] resolves to "Open" — the default for new tickets.
+    // Scope to the row's status cell so the assertion does not match the
+    // hidden filter `<option value="open">Open</option>` in the toolbar.
     await createUserAndLogin(page)
     await createSpace(page, 'Status Display Test', 'service_desk')
 
@@ -55,8 +68,12 @@ test.describe('Service Desk', () => {
     await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
 
     await expect(page.locator('text=Status Check Ticket')).toBeVisible({ timeout: 5000 })
-    // Status should be Open by default
-    await expect(page.locator('text=Open').first()).toBeVisible()
+    const statusCell = page
+      .locator('table tbody tr')
+      .filter({ hasText: 'Status Check Ticket' })
+      .locator('td')
+      .nth(2)
+    await expect(statusCell).toHaveText('Open')
   })
 
   test('ticket creation is confirmed by API', async ({ page }) => {
