@@ -12,18 +12,24 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 )
 
 // Handler holds the dependencies for wiki HTTP handlers.
 type Handler struct {
-	svc *wiki.Service
+	svc   *wiki.Service
+	audit audit.Recorder
 }
 
-// NewHandler creates a wiki Handler.
-func NewHandler(svc *wiki.Service) *Handler {
-	return &Handler{svc: svc}
+// NewHandler creates a wiki Handler. A nil recorder is replaced with the
+// no-op default.
+func NewHandler(svc *wiki.Service, recorder audit.Recorder) *Handler {
+	if recorder == nil {
+		recorder = audit.NewLogger()
+	}
+	return &Handler{svc: svc, audit: recorder}
 }
 
 // Routes returns a chi.Router with all wiki endpoints mounted.
@@ -140,6 +146,14 @@ func (h *Handler) CreatePage(w http.ResponseWriter, r *http.Request) {
 		handleWikiError(w, r, err)
 		return
 	}
+	_ = h.audit.Log(r.Context(), audit.Event{
+		Type:         audit.EventTypePageCreated,
+		ActorID:      claims.UserID.String(),
+		OrgID:        claims.OrgID,
+		ResourceType: "page",
+		ResourceID:   page.ID.String(),
+		Metadata:     map[string]string{"space_id": spaceID.String()},
+	})
 	respond.JSON(w, http.StatusCreated, page)
 }
 
@@ -225,6 +239,13 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 		respond.JSON(w, http.StatusConflict, conflict)
 		return
 	}
+	_ = h.audit.Log(r.Context(), audit.Event{
+		Type:         audit.EventTypePageUpdated,
+		ActorID:      claims.UserID.String(),
+		OrgID:        claims.OrgID,
+		ResourceType: "page",
+		ResourceID:   id.String(),
+	})
 	respond.JSON(w, http.StatusOK, page)
 }
 
@@ -252,6 +273,15 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.DeletePage(r.Context(), id); err != nil {
 		handleWikiError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypePageDeleted,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "page",
+			ResourceID:   id.String(),
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -297,6 +327,21 @@ func (h *Handler) MovePage(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.MovePage(r.Context(), input); err != nil {
 		handleWikiError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		md := map[string]string{}
+		if req.ParentID != nil {
+			md["parent_id"] = req.ParentID.String()
+		}
+		md["position"] = strconv.FormatInt(int64(req.Position), 10)
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypePageMoved,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "page",
+			ResourceID:   id.String(),
+			Metadata:     md,
+		})
 	}
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "page moved"})
 }

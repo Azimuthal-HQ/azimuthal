@@ -7,6 +7,7 @@ import (
 
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	notifyapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
@@ -16,17 +17,20 @@ import (
 
 // RouterConfig holds all the dependencies needed to build the API router.
 type RouterConfig struct {
-	Authenticator  *auth.Authenticator
-	AuthHandler    *authapi.Handler
-	TicketHandler  *ticketsapi.Handler
-	WikiHandler    *wikiapi.Handler
-	ProjectHandler *projectsapi.Handler
-	SpaceHandler   *spacesapi.Handler
-	CommentHandler *commentsapi.Handler
-	SPAHandler     http.Handler // serves the embedded frontend; nil disables SPA serving
+	Authenticator       *auth.Authenticator
+	AuthHandler         *authapi.Handler
+	TicketHandler       *ticketsapi.Handler
+	WikiHandler         *wikiapi.Handler
+	ProjectHandler      *projectsapi.Handler
+	SpaceHandler        *spacesapi.Handler
+	CommentHandler      *commentsapi.Handler
+	NotificationHandler *notifyapi.Handler
+	SPAHandler          http.Handler // serves the embedded frontend; nil disables SPA serving
 	// AllowedOrigins is the explicit CORS allow-list. nil falls back to the
 	// permissive wildcard for backwards compatibility with existing tests.
 	AllowedOrigins []string
+	// HealthProvider, when set, supplies extended health details for /health.
+	HealthProvider HealthProvider
 }
 
 // NewRouter builds the unified chi router with all routes and middleware.
@@ -44,7 +48,11 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	}
 
 	// Public endpoints (no auth required)
-	r.Get("/health", HandleHealth)
+	if cfg.HealthProvider != nil {
+		r.Get("/health", HandleHealthWith(cfg.HealthProvider))
+	} else {
+		r.Get("/health", HandleHealth)
+	}
 	r.Get("/ready", HandleReady)
 
 	// API documentation (no auth required)
@@ -89,6 +97,13 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			r.Post("/", cfg.ProjectHandler.CreateLabel)
 			r.Delete("/{labelID}", cfg.ProjectHandler.DeleteLabel)
 		})
+
+		// Notifications (current user only — owner-scoped at handler)
+		if cfg.NotificationHandler != nil {
+			r.Route("/notifications", func(r chi.Router) {
+				r.Mount("/", cfg.NotificationHandler.Routes())
+			})
+		}
 
 		// Tickets (scoped by space)
 		r.Route("/spaces/{spaceID}/tickets", func(r chi.Router) {

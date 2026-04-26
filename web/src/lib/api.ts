@@ -228,6 +228,27 @@ export interface Member {
   role: string;
 }
 
+export type NotificationKind = 'assigned' | 'mentioned' | 'commented';
+export type NotificationEntityKind = 'ticket' | 'item' | 'page' | 'comment' | '';
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  kind: NotificationKind;
+  title: string;
+  body?: string;
+  entity_kind?: NotificationEntityKind;
+  entity_id?: string;
+  is_read: boolean;
+  created_at: string;
+  read_at?: string;
+}
+
+export interface NotificationListResponse {
+  notifications: Notification[];
+  unread_count: number;
+}
+
 // ---------------------------------------------------------------------------
 // Auth types
 // ---------------------------------------------------------------------------
@@ -584,6 +605,28 @@ async function createComment(orgId: string, spaceId: string, itemId: string, req
 }
 
 // ---------------------------------------------------------------------------
+// Notification API functions
+// ---------------------------------------------------------------------------
+
+async function fetchNotifications(): Promise<NotificationListResponse> {
+  const data = await apiFetch<NotificationListResponse | null>('/notifications');
+  if (data == null) return { notifications: [], unread_count: 0 };
+  // Defensive: backend should always send a non-null array, but guard anyway.
+  return {
+    notifications: Array.isArray(data.notifications) ? data.notifications : [],
+    unread_count: typeof data.unread_count === 'number' ? data.unread_count : 0,
+  };
+}
+
+async function markNotificationRead(notificationId: string): Promise<void> {
+  await apiFetch<void>(`/notifications/${notificationId}/read`, { method: 'POST' });
+}
+
+async function markAllNotificationsRead(): Promise<void> {
+  await apiFetch<void>('/notifications/read-all', { method: 'POST' });
+}
+
+// ---------------------------------------------------------------------------
 // Query key factories
 // ---------------------------------------------------------------------------
 
@@ -601,6 +644,7 @@ export const queryKeys = {
   labels: (orgId: string) => ['labels', orgId] as const,
   members: (orgId: string, spaceId: string) => ['members', orgId, spaceId] as const,
   comments: (spaceId: string, itemId: string) => ['comments', spaceId, itemId] as const,
+  notifications: () => ['notifications'] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -860,6 +904,36 @@ export function useTransitionProjectItemStatus(spaceId: string, itemId: string) 
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItem(spaceId, itemId) });
+    },
+  });
+}
+
+export function useNotifications(opts?: QueryOpts<NotificationListResponse>) {
+  return useQuery<NotificationListResponse, APIError>({
+    queryKey: queryKeys.notifications(),
+    queryFn: fetchNotifications,
+    refetchInterval: 30000,
+    refetchOnWindowFocus: true,
+    ...opts,
+  });
+}
+
+export function useMarkNotificationRead() {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: markNotificationRead,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
+    },
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, void>({
+    mutationFn: markAllNotificationsRead,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
     },
   });
 }

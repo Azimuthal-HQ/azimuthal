@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 )
 
@@ -39,11 +40,17 @@ type Handler struct {
 	sessions    *auth.SessionService
 	memberships MembershipResolver
 	orgs        OrgProvisioner
+	audit       audit.Recorder
 }
 
-// NewHandler creates an auth Handler.
-func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner) *Handler {
-	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs}
+// NewHandler creates an auth Handler. A nil recorder falls back to the
+// no-op default — handlers always call through Recorder so unit tests do
+// not need to inject one.
+func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner, recorder audit.Recorder) *Handler {
+	if recorder == nil {
+		recorder = audit.NewLogger()
+	}
+	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs, audit: recorder}
 }
 
 // Routes returns a chi.Router with all auth endpoints mounted.
@@ -99,6 +106,26 @@ type userResponse struct {
 	IsActive    bool      `json:"is_active"`
 }
 
+// recordLoginSuccess emits the user.login + user.token_issued audit
+// pair. Errors from the recorder are intentionally swallowed — audit
+// must never break a successful login.
+func (h *Handler) recordLoginSuccess(ctx context.Context, userID, orgID string) {
+	_ = h.audit.Log(ctx, audit.Event{
+		Type:         audit.EventTypeUserLogin,
+		ActorID:      userID,
+		OrgID:        orgID,
+		ResourceType: "user",
+		ResourceID:   userID,
+	})
+	_ = h.audit.Log(ctx, audit.Event{
+		Type:         audit.EventTypeUserTokenIssued,
+		ActorID:      userID,
+		OrgID:        orgID,
+		ResourceType: "session",
+		ResourceID:   userID,
+	})
+}
+
 // Login authenticates a user and returns a JWT token pair.
 //
 // @Summary      Authenticate user
@@ -126,6 +153,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	user, err := h.users.Authenticate(r.Context(), req.Email, req.Password)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) || errors.Is(err, auth.ErrAccountInactive) {
+			_ = h.audit.Log(r.Context(), audit.Event{
+				Type:         audit.EventTypeUserLoginFailed,
+				ResourceType: "user",
+				Metadata:     map[string]string{"email": req.Email},
+			})
 			respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "invalid email or password")
 			return
 		}
@@ -149,7 +181,14 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respond.JSON(w, http.StatusOK, loginResponse{
+	h.recordLoginSuccess(r.Context(), user.ID.String(), orgID.String())
+	respond.JSON(w, http.StatusOK, buildLoginResponse(user, pair, orgID, orgSlug, orgName))
+}
+
+// buildLoginResponse projects the User + token pair + primary org into
+// the JSON body returned by Login and Register.
+func buildLoginResponse(user *auth.User, pair *auth.TokenPair, orgID uuid.UUID, orgSlug, orgName string) loginResponse {
+	return loginResponse{
 		AccessToken:  pair.AccessToken,
 		RefreshToken: pair.RefreshToken,
 		Token:        pair.AccessToken,
@@ -161,12 +200,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 			Role:        user.Role,
 			IsActive:    user.IsActive,
 		},
-		Org: &orgResponse{
-			ID:   orgID,
-			Slug: orgSlug,
-			Name: orgName,
-		},
-	})
+		Org: &orgResponse{ID: orgID, Slug: orgSlug, Name: orgName},
+	}
 }
 
 // provisionOrgForUser creates a personal org and membership if an OrgProvisioner
@@ -249,24 +284,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respond.JSON(w, http.StatusCreated, loginResponse{
-		AccessToken:  pair.AccessToken,
-		RefreshToken: pair.RefreshToken,
-		Token:        pair.AccessToken,
-		User: userResponse{
-			ID:          user.ID,
-			Email:       user.Email,
-			DisplayName: user.DisplayName,
-			OrgID:       user.OrgID.String(),
-			Role:        user.Role,
-			IsActive:    user.IsActive,
-		},
-		Org: &orgResponse{
-			ID:   orgID,
-			Slug: orgSlug,
-			Name: req.DisplayName,
-		},
-	})
+	respond.JSON(w, http.StatusCreated, buildLoginResponse(user, pair, orgID, orgSlug, req.DisplayName))
 }
 
 // Refresh exchanges a refresh token for a new token pair.
@@ -331,6 +349,14 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to logout")
 		return
 	}
+
+	_ = h.audit.Log(r.Context(), audit.Event{
+		Type:         audit.EventTypeUserLogout,
+		ActorID:      claims.UserID.String(),
+		OrgID:        claims.OrgID,
+		ResourceType: "session",
+		ResourceID:   claims.UserID.String(),
+	})
 
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }

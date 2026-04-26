@@ -1,5 +1,15 @@
 components:
   schemas:
+    api.QueueStatus:
+      enum:
+      - ok
+      - disabled
+      - error
+      type: string
+      x-enum-varnames:
+      - QueueStatusOK
+      - QueueStatusDisabled
+      - QueueStatusError
     api.SwaggerAddMemberRequest:
       properties:
         role:
@@ -252,6 +262,48 @@ components:
           example: b2c3d4e5-f6a7-8901-bcde-f12345678901
           type: string
       type: object
+    api.SwaggerNotification:
+      properties:
+        body:
+          example: ""
+          type: string
+        created_at:
+          example: "2026-04-26T10:00:00Z"
+          type: string
+        entity_id:
+          type: string
+        entity_kind:
+          example: ticket
+          type: string
+        id:
+          example: d4e5f6a7-b8c9-0123-def0-456789abcdef
+          type: string
+        is_read:
+          example: false
+          type: boolean
+        kind:
+          example: assigned
+          type: string
+        read_at:
+          type: string
+        title:
+          example: 'Assigned: bug fix'
+          type: string
+        user_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+      type: object
+    api.SwaggerNotificationListResponse:
+      properties:
+        notifications:
+          items:
+            $ref: '#/components/schemas/api.SwaggerNotification'
+          type: array
+          uniqueItems: false
+        unread_count:
+          example: 3
+          type: integer
+      type: object
     api.SwaggerOrgResponse:
       properties:
         id:
@@ -460,6 +512,8 @@ components:
       type: object
     api.healthResponse:
       properties:
+        queue:
+          $ref: '#/components/schemas/api.QueueStatus'
         status:
           type: string
       type: object
@@ -739,6 +793,104 @@ paths:
       summary: Liveness probe
       tags:
       - health
+  /notifications:
+    get:
+      description: Returns the current user's notifications ordered most-recent first,
+        plus an unread count.
+      parameters:
+      - description: Page size (1-200, default 50)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: Offset (default 0)
+        in: query
+        name: offset
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerNotificationListResponse'
+          description: Notification list
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List notifications
+      tags:
+      - notifications
+  /notifications/{notificationID}/read:
+    post:
+      description: Marks a single notification as read for the current user.
+      parameters:
+      - description: Notification ID (UUID)
+        in: path
+        name: notificationID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Marked read
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid id
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Mark notification read
+      tags:
+      - notifications
+  /notifications/read-all:
+    post:
+      description: Marks every unread notification for the current user as read.
+      responses:
+        "204":
+          description: Marked all read
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Mark all notifications read
+      tags:
+      - notifications
   /orgs/{orgID}:
     get:
       description: Returns an organization by its ID.

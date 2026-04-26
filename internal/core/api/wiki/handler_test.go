@@ -55,7 +55,7 @@ func (m *mockPageStore) SearchPages(_ context.Context, _ generated.SearchPagesPa
 
 func setupWikiHandler() *wikiapi.Handler {
 	svc := wiki.NewService(&mockPageStore{})
-	return wikiapi.NewHandler(svc)
+	return wikiapi.NewHandler(svc, nil)
 }
 
 func withParam(r *http.Request, key, val string) *http.Request {

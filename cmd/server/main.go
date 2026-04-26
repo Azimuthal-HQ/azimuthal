@@ -39,34 +39,46 @@
 // @tag.description Members — space membership management
 // @tag.name        labels
 // @tag.description Labels — organization-scoped labels for items
+// @tag.name        notifications
+// @tag.description Notifications — in-app alerts for the current user
+// @tag.name        health
+// @tag.description Health — liveness and readiness probes
 package main
 
 import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	notifyapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/notifications"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 	"github.com/Azimuthal-HQ/azimuthal/web"
 )
 
@@ -80,13 +92,36 @@ func main() {
 	Execute()
 }
 
+// queueHealthProvider tracks the current state of the background job queue
+// for /health. It is safe for concurrent reads via atomic.Value.
+type queueHealthProvider struct {
+	state atomic.Value // api.QueueStatus
+}
+
+func newQueueHealthProvider(initial api.QueueStatus) *queueHealthProvider {
+	p := &queueHealthProvider{}
+	p.state.Store(initial)
+	return p
+}
+
+func (p *queueHealthProvider) set(s api.QueueStatus) { p.state.Store(s) }
+
+// QueueStatus returns the most recently observed queue state.
+func (p *queueHealthProvider) QueueStatus() api.QueueStatus {
+	if v, ok := p.state.Load().(api.QueueStatus); ok {
+		return v
+	}
+	return api.QueueStatusError
+}
+
 // newServer builds an http.Server with the full API router backed by the
 // database. It connects to the database, runs migrations, constructs all
 // services with their DB-backed adapters, and calls api.NewRouter with the
-// full RouterConfig.
-func newServer(cfg *config.Config) (*http.Server, func(), error) {
+// full RouterConfig. The returned cleanup function closes the pool and
+// drains the background job queue.
+func newServer(cfg *config.Config) (*http.Server, func(context.Context), error) {
 	ctx := context.Background()
-	noop := func() {}
+	noop := func(context.Context) {}
 
 	pool, err := db.Connect(ctx, db.DefaultConfig(cfg.DatabaseURL))
 	if err != nil {
@@ -99,9 +134,23 @@ func newServer(cfg *config.Config) (*http.Server, func(), error) {
 	}
 
 	queries := generated.New(pool)
+	auditRecorder := audit.NewDBLogger(queries)
+	notifyService := notifications.NewService(queries)
 
-	handler, err := buildRouter(cfg, queries)
+	healthProvider := newQueueHealthProvider(api.QueueStatusDisabled)
+	queue, queueErr := startQueue(ctx, cfg, pool, notifyService, healthProvider)
+	if queueErr != nil {
+		// Queue failure is logged and surfaced via /health, but does not
+		// abort startup — sync paths (audit, notifications API) still work.
+		slog.Error("queue startup failed", "error", queueErr)
+		healthProvider.set(api.QueueStatusError)
+	}
+
+	handler, err := buildRouter(cfg, queries, auditRecorder, notifyService, healthProvider)
 	if err != nil {
+		if queue != nil {
+			_ = queue.Stop(ctx)
+		}
 		pool.Close()
 		return nil, noop, err
 	}
@@ -114,12 +163,49 @@ func newServer(cfg *config.Config) (*http.Server, func(), error) {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	return srv, func() { pool.Close() }, nil
+	cleanup := func(shutdownCtx context.Context) {
+		if queue != nil {
+			if err := queue.Stop(shutdownCtx); err != nil {
+				slog.Error("queue drain failed", "error", err)
+			}
+		}
+		pool.Close()
+	}
+
+	return srv, cleanup, nil
+}
+
+// startQueue applies River's schema migrations and starts the background
+// queue when AZIMUTHAL_QUEUE_ENABLED is true (the default). When disabled,
+// the function logs a warning and returns (nil, nil) so the caller proceeds
+// without async workers. Any failure leaves the queue unstarted but does
+// not abort startup.
+func startQueue(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, notifier notifications.Recorder, health *queueHealthProvider) (*jobs.Queue, error) {
+	if !cfg.QueueEnabled {
+		slog.Warn("background job queue disabled (AZIMUTHAL_QUEUE_ENABLED=false)")
+		health.set(api.QueueStatusDisabled)
+		return nil, nil
+	}
+
+	if err := jobs.Migrate(ctx, pool); err != nil {
+		return nil, fmt.Errorf("river schema migrations: %w", err)
+	}
+
+	queue, err := jobs.NewQueue(ctx, pool, &email.NoopSender{}, notifier)
+	if err != nil {
+		return nil, fmt.Errorf("creating queue: %w", err)
+	}
+	if err := queue.Start(ctx); err != nil {
+		return nil, fmt.Errorf("starting queue: %w", err)
+	}
+	health.set(api.QueueStatusOK)
+	slog.Info("background job queue started")
+	return queue, nil
 }
 
 // buildRouter constructs all domain services with DB-backed adapters and
 // returns the fully wired API router.
-func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, error) {
+func buildRouter(cfg *config.Config, queries *generated.Queries, recorder audit.Recorder, notifyService *notifications.Service, health api.HealthProvider) (http.Handler, error) {
 	privateKey, err := auth.LoadOrGenerateRSAKey(cfg.JWTPrivateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("loading RSA signing key: %w", err)
@@ -155,15 +241,17 @@ func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, 
 	}
 
 	return api.NewRouter(api.RouterConfig{
-		Authenticator:  authenticator,
-		AuthHandler:    authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner),
-		TicketHandler:  ticketsapi.NewHandler(ticketSvc),
-		WikiHandler:    wikiapi.NewHandler(wikiSvc),
-		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))),
-		SpaceHandler:   spacesapi.NewHandler(queries),
-		CommentHandler: commentsapi.NewHandler(queries),
-		SPAHandler:     spaHandler,
-		AllowedOrigins: cfg.AllowedOrigins,
+		Authenticator:       authenticator,
+		AuthHandler:         authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner, recorder),
+		TicketHandler:       ticketsapi.NewHandler(ticketSvc, recorder, notifyService),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc, recorder),
+		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries)), recorder, notifyService),
+		SpaceHandler:        spacesapi.NewHandler(queries),
+		CommentHandler:      commentsapi.NewHandler(queries, recorder, notifyService),
+		NotificationHandler: notifyapi.NewHandler(notifyService),
+		SPAHandler:          spaHandler,
+		AllowedOrigins:      cfg.AllowedOrigins,
+		HealthProvider:      health,
 	}), nil
 }
 

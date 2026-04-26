@@ -2,6 +2,7 @@
 package projects
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/notifications"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 )
 
@@ -24,9 +27,12 @@ type Handler struct {
 	roadmap   *projects.RoadmapService
 	relations *projects.RelationService
 	labels    *projects.LabelService
+	audit     audit.Recorder
+	notifyRec notifications.Recorder
 }
 
-// NewHandler creates a project Handler.
+// NewHandler creates a project Handler. A nil recorder/notifier is replaced
+// with the no-op default so test callers do not need to wire them.
 func NewHandler(
 	items *projects.ItemService,
 	sprints *projects.SprintService,
@@ -34,7 +40,12 @@ func NewHandler(
 	roadmap *projects.RoadmapService,
 	relations *projects.RelationService,
 	labels *projects.LabelService,
+	recorder audit.Recorder,
+	notifyRec notifications.Recorder,
 ) *Handler {
+	if recorder == nil {
+		recorder = audit.NewLogger()
+	}
 	return &Handler{
 		items:     items,
 		sprints:   sprints,
@@ -42,6 +53,8 @@ func NewHandler(
 		roadmap:   roadmap,
 		relations: relations,
 		labels:    labels,
+		audit:     recorder,
+		notifyRec: notifyRec,
 	}
 }
 
@@ -232,6 +245,17 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		handleProjectError(w, r, err)
 		return
 	}
+	_ = h.audit.Log(r.Context(), audit.Event{
+		Type:         audit.EventTypeProjectItemCreated,
+		ActorID:      claims.UserID.String(),
+		OrgID:        claims.OrgID,
+		ResourceType: "project_item",
+		ResourceID:   created.ID.String(),
+		Metadata:     map[string]string{"space_id": spaceID.String(), "kind": created.Kind, "priority": created.Priority},
+	})
+	if created.AssigneeID != nil {
+		h.notifyAssigned(r.Context(), claims.UserID, *created.AssigneeID, created.ID, created.Title, "item")
+	}
 	respond.JSON(w, http.StatusCreated, created)
 }
 
@@ -301,6 +325,8 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	prevAssignee := existing.AssigneeID
+
 	existing.Title = req.Title
 	existing.Description = req.Description
 	existing.Priority = req.Priority
@@ -312,6 +338,19 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeProjectItemUpdated,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "project_item",
+			ResourceID:   id.String(),
+		})
+		// If assignee changed to a non-nil different user, notify the new assignee.
+		if updated.AssigneeID != nil && (prevAssignee == nil || *prevAssignee != *updated.AssigneeID) {
+			h.notifyAssigned(r.Context(), claims.UserID, *updated.AssigneeID, updated.ID, updated.Title, "item")
+		}
 	}
 	respond.JSON(w, http.StatusOK, updated)
 }
@@ -341,6 +380,15 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 	if err := h.items.DeleteItem(r.Context(), id); err != nil {
 		handleProjectError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeProjectItemDeleted,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "project_item",
+			ResourceID:   id.String(),
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -376,10 +424,26 @@ func (h *Handler) UpdateItemStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	prev, _ := h.items.GetItem(r.Context(), id)
+
 	item, err := h.items.UpdateItemStatus(r.Context(), id, req.Status)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		from := ""
+		if prev != nil {
+			from = prev.Status
+		}
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeProjectItemStatus,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "project_item",
+			ResourceID:   id.String(),
+			Metadata:     map[string]string{"from": from, "to": req.Status},
+		})
 	}
 	respond.JSON(w, http.StatusOK, item)
 }
@@ -417,6 +481,22 @@ func (h *Handler) AssignToSprint(w http.ResponseWriter, r *http.Request) {
 	if err := h.items.AssignToSprint(r.Context(), id, req.SprintID); err != nil {
 		handleProjectError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		md := map[string]string{}
+		if req.SprintID != nil {
+			md["sprint_id"] = req.SprintID.String()
+		} else {
+			md["sprint_id"] = ""
+		}
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeProjectItemSprintMoved,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "project_item",
+			ResourceID:   id.String(),
+			Metadata:     md,
+		})
 	}
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "item assigned to sprint"})
 }
@@ -652,6 +732,14 @@ func (h *Handler) CreateSprint(w http.ResponseWriter, r *http.Request) {
 		handleProjectError(w, r, err)
 		return
 	}
+	_ = h.audit.Log(r.Context(), audit.Event{
+		Type:         audit.EventTypeSprintCreated,
+		ActorID:      claims.UserID.String(),
+		OrgID:        claims.OrgID,
+		ResourceType: "sprint",
+		ResourceID:   created.ID.String(),
+		Metadata:     map[string]string{"space_id": spaceID.String()},
+	})
 	respond.JSON(w, http.StatusCreated, created)
 }
 
@@ -762,6 +850,15 @@ func (h *Handler) StartSprint(w http.ResponseWriter, r *http.Request) {
 		handleProjectError(w, r, err)
 		return
 	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeSprintStarted,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "sprint",
+			ResourceID:   id.String(),
+		})
+	}
 	respond.JSON(w, http.StatusOK, sprint)
 }
 
@@ -792,6 +889,15 @@ func (h *Handler) CompleteSprint(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeSprintCompleted,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "sprint",
+			ResourceID:   id.String(),
+		})
 	}
 	respond.JSON(w, http.StatusOK, sprint)
 }
@@ -1140,6 +1246,22 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Helpers ---
+
+// notifyAssigned writes an in-app "assigned" notification to recipientID
+// when it differs from actorID. Errors are intentionally swallowed: a
+// missing notification must not abort the assignment.
+func (h *Handler) notifyAssigned(ctx context.Context, actorID, recipientID, entityID uuid.UUID, title, entityKind string) {
+	if h.notifyRec == nil || recipientID == uuid.Nil || recipientID == actorID {
+		return
+	}
+	_, _ = h.notifyRec.Create(ctx, notifications.CreateInput{
+		UserID:     recipientID,
+		Kind:       notifications.KindAssigned,
+		Title:      "Assigned: " + title,
+		EntityKind: notifications.EntityKind(entityKind),
+		EntityID:   entityID,
+	})
+}
 
 func itemIDFromURL(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "itemID"))

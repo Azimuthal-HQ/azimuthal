@@ -88,6 +88,8 @@ func setupHandler() *projectsapi.Handler {
 		projects.NewRoadmapService(ir, sr),
 		projects.NewRelationService(&mockRelationRepo{}),
 		projects.NewLabelService(&mockLabelRepo{}),
+		nil,
+		nil,
 	)
 }
 
