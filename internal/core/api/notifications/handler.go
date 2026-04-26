@@ -60,18 +60,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := int32(50)
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 32); err == nil && n > 0 && n <= 200 {
-			limit = int32(n)
-		}
-	}
-	offset := int32(0)
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 32); err == nil && n >= 0 {
-			offset = int32(n)
-		}
-	}
+	limit, offset := paginationFromQuery(r)
 
 	rows, err := h.svc.List(r.Context(), claims.UserID, limit, offset)
 	if err != nil {
@@ -84,6 +73,24 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.JSON(w, http.StatusOK, listResponse{Notifications: rows, UnreadCount: count})
+}
+
+// paginationFromQuery reads ?limit and ?offset off the request, falling
+// back to the defaults (50 / 0) when missing or out of range.
+func paginationFromQuery(r *http.Request) (int32, int32) {
+	limit := int32(50)
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 32); err == nil && n > 0 && n <= 200 {
+			limit = int32(n)
+		}
+	}
+	offset := int32(0)
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 32); err == nil && n >= 0 {
+			offset = int32(n)
+		}
+	}
+	return limit, offset
 }
 
 // MarkRead clears the unread flag on a single notification owned by the

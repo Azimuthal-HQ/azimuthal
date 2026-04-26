@@ -140,7 +140,6 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
 		return
 	}
-
 	if req.Content == "" {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "content is required")
 		return
@@ -157,13 +156,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch the author name for the response.
-	user, err := h.queries.GetUserByID(r.Context(), claims.UserID)
-	authorName := ""
-	if err == nil {
-		authorName = user.DisplayName
-	}
-
+	authorName := h.lookupAuthorName(r.Context(), claims.UserID)
 	itemIDStr := ""
 	if comment.ItemID.Valid {
 		itemIDStr = uuid.UUID(comment.ItemID.Bytes).String()
@@ -177,19 +170,34 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		ResourceID:   comment.ID.String(),
 		Metadata:     map[string]string{"item_id": itemIDStr},
 	})
-
 	h.notifyCommented(r.Context(), claims.UserID, itemID, comment.ID, authorName)
 
-	respond.JSON(w, http.StatusCreated, commentResponse{
-		ID:         comment.ID,
+	respond.JSON(w, http.StatusCreated, toCommentResponse(comment, authorName, itemIDStr))
+}
+
+// lookupAuthorName returns the comment author's display name, or "" when
+// the user lookup fails (the response field is best-effort).
+func (h *Handler) lookupAuthorName(ctx context.Context, userID uuid.UUID) string {
+	user, err := h.queries.GetUserByID(ctx, userID)
+	if err != nil {
+		return ""
+	}
+	return user.DisplayName
+}
+
+// toCommentResponse projects a generated.Comment into the API response
+// shape. Kept package-private — Create is the only caller.
+func toCommentResponse(c generated.Comment, authorName, itemIDStr string) commentResponse {
+	return commentResponse{
+		ID:         c.ID,
 		ItemID:     itemIDStr,
-		AuthorID:   comment.AuthorID,
+		AuthorID:   c.AuthorID,
 		AuthorName: authorName,
-		Body:       comment.Body,
-		Content:    comment.Body,
-		CreatedAt:  comment.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:  comment.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
-	})
+		Body:       c.Body,
+		Content:    c.Body,
+		CreatedAt:  c.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:  c.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
+	}
 }
 
 // notifyCommented sends "commented" notifications to the item's reporter
