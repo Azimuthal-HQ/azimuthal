@@ -292,3 +292,25 @@ type SwaggerCommentResponse struct {
 type SwaggerMessageResponse struct {
 	Message string `json:"message" example:"operation completed"`
 }
+
+// --- Notifications (P1.3) ---
+
+// SwaggerNotification matches notifications.Notification.
+type SwaggerNotification struct {
+	ID         uuid.UUID `json:"id" example:"d4e5f6a7-b8c9-0123-def0-456789abcdef"`
+	UserID     uuid.UUID `json:"user_id" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
+	Kind       string    `json:"kind" example:"assigned"`
+	Title      string    `json:"title" example:"Assigned: bug fix"`
+	Body       string    `json:"body,omitempty" example:""`
+	EntityKind string    `json:"entity_kind,omitempty" example:"ticket"`
+	EntityID   uuid.UUID `json:"entity_id,omitempty"`
+	IsRead     bool      `json:"is_read" example:"false"`
+	CreatedAt  string    `json:"created_at" example:"2026-04-26T10:00:00Z"`
+	ReadAt     string    `json:"read_at,omitempty"`
+}
+
+// SwaggerNotificationListResponse matches the listResponse in the notifications handler.
+type SwaggerNotificationListResponse struct {
+	Notifications []SwaggerNotification `json:"notifications"`
+	UnreadCount   int64                 `json:"unread_count" example:"3"`
+}

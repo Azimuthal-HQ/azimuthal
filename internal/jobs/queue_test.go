@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
@@ -26,7 +27,7 @@ func TestNewQueue_Integration(t *testing.T) {
 	}
 	defer pool.Close()
 
-	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{})
+	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{}, nil)
 	if err != nil {
 		t.Fatalf("NewQueue: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestQueue_EnqueueRequiresDB(t *testing.T) {
 	}
 	defer pool.Close()
 
-	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{})
+	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{}, nil)
 	if err != nil {
 		t.Fatalf("NewQueue: %v", err)
 	}
@@ -72,9 +73,9 @@ func TestQueue_EnqueueRequiresDB(t *testing.T) {
 	}
 
 	err = q.EnqueueNotification(ctx, jobs.NotificationArgs{
-		UserID:    "user-1",
-		EventKind: "test",
-		Message:   "hello",
+		UserID:    uuid.New().String(),
+		EventKind: "assigned",
+		Title:     "hello",
 	})
 	if err == nil {
 		t.Log("EnqueueNotification succeeded (river tables exist in test DB)")
@@ -99,7 +100,7 @@ func TestQueue_Start(t *testing.T) {
 	}
 	defer pool.Close()
 
-	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{})
+	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{}, nil)
 	if err != nil {
 		t.Fatalf("NewQueue: %v", err)
 	}

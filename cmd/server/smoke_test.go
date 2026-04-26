@@ -42,7 +42,7 @@ func TestSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating server: %v", err)
 	}
-	defer cleanup()
+	defer cleanup(context.Background())
 
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()

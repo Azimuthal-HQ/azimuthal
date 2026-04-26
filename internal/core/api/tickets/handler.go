@@ -2,6 +2,7 @@
 package tickets
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,18 +12,26 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/notifications"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 )
 
 // Handler holds the dependencies for ticket HTTP handlers.
 type Handler struct {
-	svc *tickets.TicketService
+	svc       *tickets.TicketService
+	audit     audit.Recorder
+	notifyRec notifications.Recorder
 }
 
-// NewHandler creates a ticket Handler.
-func NewHandler(svc *tickets.TicketService) *Handler {
-	return &Handler{svc: svc}
+// NewHandler creates a ticket Handler. A nil recorder/notifier is replaced
+// with a no-op so callers in tests do not need to wire one.
+func NewHandler(svc *tickets.TicketService, recorder audit.Recorder, notifyRec notifications.Recorder) *Handler {
+	if recorder == nil {
+		recorder = audit.NewLogger()
+	}
+	return &Handler{svc: svc, audit: recorder, notifyRec: notifyRec}
 }
 
 // Routes returns a chi.Router with all ticket endpoints mounted.
@@ -139,6 +148,17 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
+	_ = h.audit.Log(r.Context(), audit.Event{
+		Type:         audit.EventTypeTicketCreated,
+		ActorID:      claims.UserID.String(),
+		OrgID:        claims.OrgID,
+		ResourceType: "ticket",
+		ResourceID:   ticket.ID.String(),
+		Metadata:     map[string]string{"space_id": spaceID.String(), "priority": string(ticket.Priority)},
+	})
+	if ticket.AssigneeID != nil {
+		h.notifyAssigned(r.Context(), claims.UserID, *ticket.AssigneeID, ticket.ID, ticket.Title, "ticket")
+	}
 	respond.JSON(w, http.StatusCreated, ticket)
 }
 
@@ -217,6 +237,17 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
+
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeTicketUpdated,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "ticket",
+			ResourceID:   id.String(),
+		})
+	}
 	respond.JSON(w, http.StatusOK, existing)
 }
 
@@ -244,6 +275,15 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.Delete(r.Context(), id); err != nil {
 		handleTicketError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeTicketDeleted,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "ticket",
+			ResourceID:   id.String(),
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -279,10 +319,26 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	prev, _ := h.svc.Get(r.Context(), id)
+
 	ticket, err := h.svc.TransitionStatus(r.Context(), id, req.Status)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		from := ""
+		if prev != nil {
+			from = string(prev.Status)
+		}
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeTicketStatus,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "ticket",
+			ResourceID:   id.String(),
+			Metadata:     map[string]string{"from": from, "to": string(req.Status)},
+		})
 	}
 	respond.JSON(w, http.StatusOK, ticket)
 }
@@ -323,6 +379,17 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeTicketAssigned,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "ticket",
+			ResourceID:   id.String(),
+			Metadata:     map[string]string{"assignee_id": req.AssigneeID.String()},
+		})
+		h.notifyAssigned(r.Context(), claims.UserID, req.AssigneeID, id, ticket.Title, "ticket")
+	}
 	respond.JSON(w, http.StatusOK, ticket)
 }
 
@@ -352,6 +419,15 @@ func (h *Handler) Unassign(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+		_ = h.audit.Log(r.Context(), audit.Event{
+			Type:         audit.EventTypeTicketUnassign,
+			ActorID:      claims.UserID.String(),
+			OrgID:        claims.OrgID,
+			ResourceType: "ticket",
+			ResourceID:   id.String(),
+		})
 	}
 	respond.JSON(w, http.StatusOK, ticket)
 }
@@ -426,6 +502,22 @@ func (h *Handler) Kanban(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.JSON(w, http.StatusOK, board)
+}
+
+// notifyAssigned writes an in-app "assigned" notification to recipientID
+// when it differs from actorID. Failures are logged but never bubble up —
+// notifications must never break the assignment.
+func (h *Handler) notifyAssigned(ctx context.Context, actorID, recipientID, entityID uuid.UUID, title, entityKind string) {
+	if h.notifyRec == nil || recipientID == uuid.Nil || recipientID == actorID {
+		return
+	}
+	_, _ = h.notifyRec.Create(ctx, notifications.CreateInput{
+		UserID:     recipientID,
+		Kind:       notifications.KindAssigned,
+		Title:      "Assigned: " + title,
+		EntityKind: notifications.EntityKind(entityKind),
+		EntityID:   entityID,
+	})
 }
 
 func ticketIDFromURL(r *http.Request) (uuid.UUID, error) {

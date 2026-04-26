@@ -2,6 +2,7 @@
 package comments
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -10,18 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/notifications"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
 
 // Handler holds the dependencies for comment HTTP handlers.
 type Handler struct {
-	queries *generated.Queries
+	queries   *generated.Queries
+	audit     audit.Recorder
+	notifyRec notifications.Recorder
 }
 
-// NewHandler creates a comment Handler.
-func NewHandler(queries *generated.Queries) *Handler {
-	return &Handler{queries: queries}
+// NewHandler creates a comment Handler. A nil recorder/notifier is replaced
+// with a no-op so test callers do not need to wire one.
+func NewHandler(queries *generated.Queries, recorder audit.Recorder, notifyRec notifications.Recorder) *Handler {
+	if recorder == nil {
+		recorder = audit.NewLogger()
+	}
+	return &Handler{queries: queries, audit: recorder, notifyRec: notifyRec}
 }
 
 // Routes returns a chi.Router with comment endpoints mounted.
@@ -160,6 +169,17 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		itemIDStr = uuid.UUID(comment.ItemID.Bytes).String()
 	}
 
+	_ = h.audit.Log(r.Context(), audit.Event{
+		Type:         audit.EventTypeCommentCreated,
+		ActorID:      claims.UserID.String(),
+		OrgID:        claims.OrgID,
+		ResourceType: "comment",
+		ResourceID:   comment.ID.String(),
+		Metadata:     map[string]string{"item_id": itemIDStr},
+	})
+
+	h.notifyCommented(r.Context(), claims.UserID, itemID, comment.ID, authorName)
+
 	respond.JSON(w, http.StatusCreated, commentResponse{
 		ID:         comment.ID,
 		ItemID:     itemIDStr,
@@ -170,6 +190,39 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:  comment.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:  comment.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
 	})
+}
+
+// notifyCommented sends "commented" notifications to the item's reporter
+// and current assignee, skipping the actor and skipping zero UUIDs. The
+// notification's entity_kind/id point at the parent item (not the comment)
+// so frontend click-through lands on the entity detail page.
+func (h *Handler) notifyCommented(ctx context.Context, actor, itemID, _ uuid.UUID, _ string) {
+	if h.notifyRec == nil || itemID == uuid.Nil {
+		return
+	}
+	item, err := h.queries.GetItemByID(ctx, itemID)
+	if err != nil {
+		return
+	}
+	recipients := map[uuid.UUID]struct{}{}
+	if item.ReporterID != uuid.Nil && item.ReporterID != actor {
+		recipients[item.ReporterID] = struct{}{}
+	}
+	if item.AssigneeID.Valid {
+		assignee := uuid.UUID(item.AssigneeID.Bytes)
+		if assignee != actor {
+			recipients[assignee] = struct{}{}
+		}
+	}
+	for uid := range recipients {
+		_, _ = h.notifyRec.Create(ctx, notifications.CreateInput{
+			UserID:     uid,
+			Kind:       notifications.KindCommented,
+			Title:      "New comment on " + item.Title,
+			EntityKind: notifications.EntityItem,
+			EntityID:   itemID,
+		})
+	}
 }
 
 func itemIDFromURL(r *http.Request) (uuid.UUID, error) {

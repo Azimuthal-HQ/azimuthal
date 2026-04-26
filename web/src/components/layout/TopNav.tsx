@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, ChevronDown, LogOut, Settings, User } from 'lucide-react';
+import { ChevronDown, LogOut, Settings, User } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Logo } from './Logo';
 import { DarkModeToggle } from '../theme/DarkModeToggle';
+import { NotificationsBell } from './NotificationsBell';
 
 export interface Space {
   id: string;
@@ -137,18 +138,7 @@ export function TopNav({
         <DarkModeToggle />
 
         {/* Notification bell */}
-        <button
-          type="button"
-          className={cn(
-            'inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)]',
-            'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-            'hover:bg-[var(--color-surface-hover)] transition-colors duration-200',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
-          )}
-          aria-label="Notifications"
-        >
-          <Bell className="h-[18px] w-[18px]" />
-        </button>
+        <NotificationsBell />
 
         {/* User menu */}
         <div className="relative" ref={userMenuRef}>

@@ -506,10 +506,10 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	relationSvc := projects.NewRelationService(&mockRelationRepo{})
 	labelSvc := projects.NewLabelService(&mockLabelRepo{})
 
-	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil)
-	ticketHandler := ticketsapi.NewHandler(ticketSvc)
-	wikiHandler := wikiapi.NewHandler(wikiSvc)
-	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc)
+	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil)
+	ticketHandler := ticketsapi.NewHandler(ticketSvc, nil, nil)
+	wikiHandler := wikiapi.NewHandler(wikiSvc, nil)
+	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc, nil, nil)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
 	spaceHandler := spacesapi.NewHandler(nil)
 

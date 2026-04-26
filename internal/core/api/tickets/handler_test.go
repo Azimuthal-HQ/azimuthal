@@ -72,7 +72,7 @@ func (m *mockTicketRepo) Search(_ context.Context, _ uuid.UUID, _ string, _ int3
 
 func setupTicketHandler() *ticketsapi.Handler {
 	svc := tickets.NewTicketService(newMockTicketRepo())
-	return ticketsapi.NewHandler(svc)
+	return ticketsapi.NewHandler(svc, nil, nil)
 }
 
 func withChiParam(r *http.Request, key, value string) *http.Request {

@@ -150,6 +150,10 @@ func findMigrationsDir() string {
 }
 
 // sanitizeTestName converts a test name to a valid postgres identifier.
+// The schema name is "test_" + this output; River uses LISTEN/NOTIFY with
+// channels of the form "<schema>.river_leadership" capped at 63 bytes,
+// so callers that exercise the queue should keep their test names ≤ 40
+// chars after sanitisation.
 func sanitizeTestName(name string) string {
 	var b strings.Builder
 	b.Grow(len(name))

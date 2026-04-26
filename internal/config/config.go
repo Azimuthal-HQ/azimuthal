@@ -42,6 +42,11 @@ type Config struct {
 	AppPort    int
 	AppBaseURL string
 	LogLevel   string
+
+	// QueueEnabled controls whether the background River job queue starts at
+	// boot. Default true. Set AZIMUTHAL_QUEUE_ENABLED=false to disable for
+	// self-hosters who do not need async workers.
+	QueueEnabled bool
 }
 
 // Load reads configuration from environment variables and returns a validated Config.
@@ -62,6 +67,7 @@ func Load() (*Config, error) {
 	v.SetDefault("LOG_LEVEL", "info")
 	v.SetDefault("STORAGE_BUCKET", "azimuthal")
 	v.SetDefault("STORAGE_USE_SSL", false)
+	v.SetDefault("AZIMUTHAL_QUEUE_ENABLED", true)
 
 	cfg := &Config{
 		DatabaseURL:       v.GetString("DATABASE_URL"),
@@ -80,6 +86,7 @@ func Load() (*Config, error) {
 		AppPort:           v.GetInt("APP_PORT"),
 		AppBaseURL:        v.GetString("APP_BASE_URL"),
 		LogLevel:          v.GetString("LOG_LEVEL"),
+		QueueEnabled:      v.GetBool("AZIMUTHAL_QUEUE_ENABLED"),
 	}
 
 	expiryStr := v.GetString("JWT_EXPIRY")

@@ -91,12 +91,12 @@ func newTestServer(t *testing.T) *testServer {
 
 	router := api.NewRouter(api.RouterConfig{
 		Authenticator:  authenticator,
-		AuthHandler:    authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner),
-		TicketHandler:  ticketsapi.NewHandler(ticketSvc),
-		WikiHandler:    wikiapi.NewHandler(wikiSvc),
-		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
+		AuthHandler:    authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner, nil),
+		TicketHandler:  ticketsapi.NewHandler(ticketSvc, nil, nil),
+		WikiHandler:    wikiapi.NewHandler(wikiSvc, nil),
+		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc, nil, nil),
 		SpaceHandler:   spacesapi.NewHandler(queries),
-		CommentHandler: commentsapi.NewHandler(queries),
+		CommentHandler: commentsapi.NewHandler(queries, nil, nil),
 		SPAHandler:     nil,
 	})
 

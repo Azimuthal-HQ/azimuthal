@@ -43,7 +43,6 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer cleanup()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -62,9 +61,14 @@ func runServe(_ *cobra.Command, _ []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Stop accepting new HTTP requests, then drain in-flight jobs and close
+	// the DB pool. Order matters: the queue must finish before the pool
+	// closes since workers acquire connections from it.
 	if err := srv.Shutdown(shutdownCtx); err != nil {
+		cleanup(shutdownCtx)
 		return fmt.Errorf("shutting down server: %w", err)
 	}
+	cleanup(shutdownCtx)
 
 	slog.Info("shutdown complete")
 	return nil
