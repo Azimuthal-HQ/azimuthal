@@ -8,6 +8,7 @@
 #   docs/github-setup-checklist.md     — internal setup checklist
 #   docs/project-state.md              — internal project state
 #   docs/regression-test-checklist.md  — internal regression tracker
+#   scripts/local-test.sh              — dev-only DB wipe script
 #   scripts/release-public.sh          — this script itself
 #
 # Usage:
@@ -30,6 +31,7 @@ STRIP_FILES=(
   "docs/github-setup-checklist.md"
   "docs/project-state.md"
   "docs/regression-test-checklist.md"
+  "scripts/local-test.sh"
   "scripts/release-public.sh"
 )
 
