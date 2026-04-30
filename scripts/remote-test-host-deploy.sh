@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# remote-test-host-deploy.sh — push to private repo, build image on server, swap app container
+# remote-test-host-deploy.sh — build locally, scp binary, swap container on server
 #
 # First-time server setup (run once):
 #   bash scripts/remote-test-host-deploy.sh --setup
@@ -16,6 +16,7 @@ cd "$(dirname "$0")/.."
 REMOTE_HOST="root@159.223.190.255"
 REMOTE_DIR="/root/azimuthal"
 REPO="git@github.com:Azimuthal-HQ/azimuthal-private.git"
+BINARY=/tmp/azimuthal-linux
 
 # ── First-time setup ──────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--setup" ]]; then
@@ -45,47 +46,53 @@ fi
 # ── Deploy ────────────────────────────────────────────────────────────────────
 
 echo ""
-echo "=== 1/4  Pushing to private repo ==="
+echo "=== 1/4  Building locally ==="
+cd web && node_modules/.bin/vite build && cd ..
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+  -trimpath \
+  -ldflags="-s -w -X main.Version=$(git rev-parse --short HEAD) -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o "$BINARY" \
+  ./cmd/server
+echo "Binary: $BINARY ($(du -sh $BINARY | cut -f1))"
+
+echo ""
+echo "=== 2/4  Pushing to private repo ==="
 git push private main
 
 echo ""
-echo "=== 2/4  Pulling latest on server ==="
-ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<EOF
-  set -e
-  if [ ! -d "$REMOTE_DIR/.git" ]; then
-    echo "--- Cloning repo (first time) ---"
-    git clone "$REPO" "$REMOTE_DIR"
-  else
-    echo "--- Pulling latest ---"
-    cd "$REMOTE_DIR" && git pull origin main
-  fi
-EOF
-
-echo ""
-echo "=== 3/4  Building image on server ==="
-ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<EOF
-  set -e
-  cd "$REMOTE_DIR"
-  docker build -f build/Dockerfile -t azimuthal:local .
-EOF
+echo "=== 3/4  Copying binary to server ==="
+scp -o StrictHostKeyChecking=no "$BINARY" "$REMOTE_HOST:/tmp/azimuthal-new"
 
 echo ""
 echo "=== 4/4  Swapping app container ==="
-ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<EOF
+ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<'EOF'
   set -e
-  # Grab current env from running container
-  ENV_ARGS=\$(docker inspect azimuthal-app-1 --format '{{range .Config.Env}}-e "{{.}}" {{end}}' 2>/dev/null || echo "")
-  NETWORK=\$(docker inspect azimuthal-app-1 --format '{{range \$k,\$v := .NetworkSettings.Networks}}{{\$k}}{{end}}' 2>/dev/null || echo "azimuthal_default")
+
+  # Build a minimal image around the pre-compiled binary (takes ~1s)
+  mkdir -p /tmp/azimuthal-deploy
+  cp /tmp/azimuthal-new /tmp/azimuthal-deploy/azimuthal
+  cat > /tmp/azimuthal-deploy/Dockerfile <<'DOCKERFILE'
+FROM gcr.io/distroless/static:nonroot
+COPY azimuthal /azimuthal
+ENTRYPOINT ["/azimuthal"]
+DOCKERFILE
+
+  docker build -t azimuthal:local /tmp/azimuthal-deploy
+  rm -rf /tmp/azimuthal-deploy /tmp/azimuthal-new
+
+  # Grab env + network from existing container
+  ENV_ARGS=$(docker inspect azimuthal-app-1 --format '{{range .Config.Env}}-e "{{.}}" {{end}}' 2>/dev/null || echo "")
+  NETWORK=$(docker inspect azimuthal-app-1 --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null || echo "azimuthal_default")
 
   docker stop azimuthal-app-1 2>/dev/null || true
   docker rm   azimuthal-app-1 2>/dev/null || true
 
   docker run -d \
     --name azimuthal-app-1 \
-    --network "\$NETWORK" \
+    --network "$NETWORK" \
     --restart unless-stopped \
     -p 8080:8080 \
-    \$ENV_ARGS \
+    $ENV_ARGS \
     azimuthal:local serve
 
   sleep 3
