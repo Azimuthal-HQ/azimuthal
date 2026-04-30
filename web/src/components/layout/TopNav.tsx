@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, ChevronDown, LogOut, Settings, User } from 'lucide-react';
+import { Bell, ChevronDown, LogOut, Settings, User, Check } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Logo } from './Logo';
 import { DarkModeToggle } from '../theme/DarkModeToggle';
+import {
+  useNotifications,
+  useMarkNotificationRead,
+  useMarkAllNotificationsRead,
+  type Notification,
+} from '../../lib/api';
 
 export interface Space {
   id: string;
@@ -31,8 +37,17 @@ export function TopNav({
   const spaces = Array.isArray(rawSpaces) ? rawSpaces : [rawSpaces];
   const [spaceSwitcherOpen, setSpaceSwitcherOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const spaceSwitcherRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  const { data: notifData } = useNotifications();
+  const markRead = useMarkNotificationRead();
+  const markAllRead = useMarkAllNotificationsRead();
+
+  const unreadCount = notifData?.unread_count ?? 0;
+  const notifications = notifData?.notifications ?? [];
 
   const currentSpace = spaces.find((s) => s.id === currentSpaceId);
 
@@ -52,6 +67,9 @@ export function TopNav({
       }
       if (userMenuRef.current && !userMenuRef.current.contains(target)) {
         setUserMenuOpen(false);
+      }
+      if (notifRef.current && !notifRef.current.contains(target)) {
+        setNotifOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -137,18 +155,81 @@ export function TopNav({
         <DarkModeToggle />
 
         {/* Notification bell */}
-        <button
-          type="button"
-          className={cn(
-            'inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)]',
-            'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-            'hover:bg-[var(--color-surface-hover)] transition-colors duration-200',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+        <div className="relative" ref={notifRef}>
+          <button
+            type="button"
+            onClick={() => {
+              setNotifOpen((prev) => !prev);
+              setUserMenuOpen(false);
+              setSpaceSwitcherOpen(false);
+            }}
+            className={cn(
+              'relative inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)]',
+              'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+              'hover:bg-[var(--color-surface-hover)] transition-colors duration-200',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+            )}
+            aria-label="Notifications"
+          >
+            <Bell className="h-[18px] w-[18px]" />
+            {unreadCount > 0 && (
+              <span
+                className={cn(
+                  'absolute top-1 right-1 flex h-4 w-4 items-center justify-center',
+                  'rounded-full bg-[var(--color-primary)] text-white',
+                  'text-[10px] font-semibold leading-none',
+                )}
+              >
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </button>
+
+          {notifOpen && (
+            <div
+              className={cn(
+                'absolute top-full right-0 mt-[var(--space-1)]',
+                'w-80 rounded-[var(--radius-lg)]',
+                'bg-[var(--color-surface)] border border-[var(--color-border)]',
+                'shadow-[var(--shadow-lg)] overflow-hidden',
+              )}
+            >
+              <div className="flex items-center justify-between px-[var(--space-3)] py-[var(--space-2)] border-b border-[var(--color-border)]">
+                <span className="text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
+                  Notifications
+                </span>
+                {unreadCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => markAllRead.mutate()}
+                    className="flex items-center gap-1 text-[var(--text-xs)] text-[var(--color-primary)] hover:underline"
+                  >
+                    <Check className="h-3 w-3" />
+                    Mark all read
+                  </button>
+                )}
+              </div>
+
+              <div className="max-h-80 overflow-y-auto">
+                {notifications.length === 0 ? (
+                  <p className="py-[var(--space-4)] text-center text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                    No notifications
+                  </p>
+                ) : (
+                  notifications.map((n) => (
+                    <NotificationRow
+                      key={n.id}
+                      notification={n}
+                      onRead={() => {
+                        if (!n.is_read) markRead.mutate(n.id);
+                      }}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
           )}
-          aria-label="Notifications"
-        >
-          <Bell className="h-[18px] w-[18px]" />
-        </button>
+        </div>
 
         {/* User menu */}
         <div className="relative" ref={userMenuRef}>
@@ -218,6 +299,34 @@ function MenuButton({
     >
       <Icon className="h-4 w-4 text-[var(--color-text-muted)]" />
       {label}
+    </button>
+  );
+}
+
+function NotificationRow({
+  notification: n,
+  onRead,
+}: {
+  notification: Notification;
+  onRead: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onRead}
+      className={cn(
+        'w-full text-left px-[var(--space-3)] py-[var(--space-2)]',
+        'border-b border-[var(--color-border)] last:border-b-0',
+        'hover:bg-[var(--color-surface-hover)] transition-colors duration-150',
+        !n.is_read && 'bg-[var(--color-primary-muted)]',
+      )}
+    >
+      <p className="text-[var(--text-sm)] text-[var(--color-text)] line-clamp-2">
+        {n.title}
+      </p>
+      <p className="mt-0.5 text-[var(--text-xs)] text-[var(--color-text-muted)]">
+        {new Date(n.created_at).toLocaleString()}
+      </p>
     </button>
   );
 }

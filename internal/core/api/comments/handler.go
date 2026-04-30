@@ -2,6 +2,7 @@
 package comments
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -10,18 +11,39 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 )
+
+// NotificationEnqueuer is the subset of jobs.Queue used by the comments handler.
+type NotificationEnqueuer interface {
+	EnqueueNotification(ctx context.Context, args jobs.NotificationArgs) error
+}
 
 // Handler holds the dependencies for comment HTTP handlers.
 type Handler struct {
-	queries *generated.Queries
+	queries  *generated.Queries
+	auditLog audit.Logger
+	notifs   NotificationEnqueuer
 }
 
 // NewHandler creates a comment Handler.
 func NewHandler(queries *generated.Queries) *Handler {
-	return &Handler{queries: queries}
+	return &Handler{queries: queries, auditLog: audit.NewLogger(), notifs: jobs.NoopNotificationEnqueuer{}}
+}
+
+// WithAuditLogger attaches an audit logger to the handler.
+func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
+	h.auditLog = l
+	return h
+}
+
+// WithNotificationEnqueuer attaches a notification enqueuer to the handler.
+func (h *Handler) WithNotificationEnqueuer(n NotificationEnqueuer) *Handler {
+	h.notifs = n
+	return h
 }
 
 // Routes returns a chi.Router with comment endpoints mounted.
@@ -146,6 +168,30 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create comment")
 		return
+	}
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypeCommentCreated, ActorID: claims.UserID.String(),
+		ResourceType: "comment", ResourceID: comment.ID.String(),
+		Metadata: map[string]string{"item_id": itemID.String()},
+	})
+
+	// Notify assignee and reporter of the item (skip if they are the commenter).
+	if item, err := h.queries.GetItemByID(r.Context(), itemID); err == nil {
+		recipients := map[uuid.UUID]struct{}{}
+		if item.AssigneeID.Valid {
+			recipients[uuid.UUID(item.AssigneeID.Bytes)] = struct{}{}
+		}
+		recipients[item.ReporterID] = struct{}{}
+		delete(recipients, claims.UserID)
+		for recipientID := range recipients {
+			_ = h.notifs.EnqueueNotification(r.Context(), jobs.NotificationArgs{
+				UserID:     recipientID.String(),
+				EventKind:  "comment.added",
+				Message:    "New comment on an item you're involved in",
+				ResourceID: itemID.String(),
+				EntityKind: "item",
+			})
+		}
 	}
 
 	// Fetch the author name for the response.

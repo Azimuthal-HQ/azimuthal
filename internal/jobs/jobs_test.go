@@ -2,11 +2,14 @@ package jobs_test
 
 import (
 	"context"
+	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
+	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 )
 
@@ -74,13 +77,27 @@ func TestEmailWorker_PropagatesSendError(t *testing.T) {
 	}
 }
 
-// TestNotificationWorker_Work verifies that the notification worker succeeds.
+// TestNotificationWorker_Work verifies that the notification worker skips gracefully
+// on an invalid user_id (no DB write attempted) regardless of DB availability.
 func TestNotificationWorker_Work(t *testing.T) {
-	worker := jobs.NewNotificationWorker()
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set — skipping notification worker integration test")
+	}
+
 	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	defer pool.Close()
+
+	worker := jobs.NewNotificationWorker(generated.New(pool))
+
+	// An invalid UUID user_id should be skipped without error (the worker logs and returns nil).
 	job := &river.Job[jobs.NotificationArgs]{
 		Args: jobs.NotificationArgs{
-			UserID:     "user-123",
+			UserID:     "not-a-uuid",
 			EventKind:  "ticket.assigned",
 			Message:    "You have been assigned a ticket",
 			ResourceID: "ticket-456",

@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
+	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 )
 
@@ -26,7 +27,7 @@ func TestNewQueue_Integration(t *testing.T) {
 	}
 	defer pool.Close()
 
-	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{})
+	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{}, generated.New(pool))
 	if err != nil {
 		t.Fatalf("NewQueue: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestQueue_EnqueueRequiresDB(t *testing.T) {
 	}
 	defer pool.Close()
 
-	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{})
+	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{}, generated.New(pool))
 	if err != nil {
 		t.Fatalf("NewQueue: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestQueue_Start(t *testing.T) {
 	}
 	defer pool.Close()
 
-	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{})
+	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{}, generated.New(pool))
 	if err != nil {
 		t.Fatalf("NewQueue: %v", err)
 	}

@@ -39,12 +39,15 @@
 // @tag.description Members — space membership management
 // @tag.name        labels
 // @tag.description Labels — organization-scoped labels for items
+// @tag.name        notifications
+// @tag.description Notifications — in-app notification delivery and read state
 package main
 
 import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,17 +59,21 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 	"github.com/Azimuthal-HQ/azimuthal/web"
 )
 
@@ -80,30 +87,72 @@ func main() {
 	Execute()
 }
 
-// newServer builds an http.Server with the full API router backed by the
-// database. It connects to the database, runs migrations, constructs all
-// services with their DB-backed adapters, and calls api.NewRouter with the
-// full RouterConfig.
-func newServer(cfg *config.Config) (*http.Server, func(), error) {
+// serverDeps bundles shutdown hooks that must run in order before the DB pool closes.
+type serverDeps struct {
+	// stopQueue drains in-flight River jobs. Must be called before pool.Close().
+	stopQueue func(ctx context.Context) error
+}
+
+// newServer builds an http.Server with the full API router backed by the database.
+// The caller must call deps.stopQueue(ctx) then cleanup() during shutdown.
+func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) {
 	ctx := context.Background()
 	noop := func() {}
+	deps := &serverDeps{stopQueue: func(_ context.Context) error { return nil }}
 
 	pool, err := db.Connect(ctx, db.DefaultConfig(cfg.DatabaseURL))
 	if err != nil {
-		return nil, noop, fmt.Errorf("connecting to database: %w", err)
+		return nil, deps, noop, fmt.Errorf("connecting to database: %w", err)
 	}
 
 	if err := db.Migrate(ctx, pool); err != nil {
 		pool.Close()
-		return nil, noop, fmt.Errorf("running migrations: %w", err)
+		return nil, deps, noop, fmt.Errorf("running migrations: %w", err)
 	}
 
 	queries := generated.New(pool)
 
-	handler, err := buildRouter(cfg, queries)
+	// Build the email sender — NoopSender when SMTP host is not configured.
+	var sender email.Sender
+	if cfg.SMTPHost != "" {
+		sender = email.NewSMTPSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPFrom)
+	} else {
+		sender = &email.NoopSender{}
+	}
+
+	// Start the River background queue unless disabled by config.
+	queueStatus := "disabled"
+	var notifEnqueuer jobs.NotificationEnqueuer = jobs.NoopNotificationEnqueuer{}
+
+	if cfg.QueueEnabled {
+		q, err := jobs.NewQueue(ctx, pool, sender, queries)
+		if err != nil {
+			pool.Close()
+			return nil, deps, noop, fmt.Errorf("creating job queue: %w", err)
+		}
+
+		queueCtx, queueCancel := context.WithCancel(context.Background())
+		go func() {
+			if startErr := q.Start(queueCtx); startErr != nil {
+				slog.Error("job queue error", "error", startErr)
+			}
+		}()
+
+		deps.stopQueue = func(ctx context.Context) error {
+			queueCancel()
+			return q.Stop(ctx)
+		}
+		notifEnqueuer = q
+		queueStatus = "ok"
+		slog.Info("job queue started")
+	} else {
+		slog.Warn("job queue disabled via AZIMUTHAL_QUEUE_ENABLED=false")
+	}
+
+	handler, err := buildRouter(cfg, queries, notifEnqueuer, queueStatus)
 	if err != nil {
 		pool.Close()
-		return nil, noop, err
+		return nil, deps, noop, err
 	}
 
 	srv := &http.Server{
@@ -114,12 +163,12 @@ func newServer(cfg *config.Config) (*http.Server, func(), error) {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	return srv, func() { pool.Close() }, nil
+	return srv, deps, func() { pool.Close() }, nil
 }
 
 // buildRouter constructs all domain services with DB-backed adapters and
 // returns the fully wired API router.
-func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, error) {
+func buildRouter(cfg *config.Config, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, queueStatus string) (http.Handler, error) {
 	privateKey, err := auth.LoadOrGenerateRSAKey(cfg.JWTPrivateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("loading RSA signing key: %w", err)
@@ -140,7 +189,8 @@ func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, 
 	membershipResolver := adapters.NewMembershipAdapter(queries)
 	orgProvisioner := adapters.NewOrgProvisionerAdapter(queries)
 
-	ticketSvc := tickets.NewTicketService(adapters.NewTicketAdapter(queries))
+	ticketAdapter := adapters.NewTicketAdapter(queries)
+	ticketSvc := tickets.NewTicketService(ticketAdapter)
 
 	itemAdapter := adapters.NewItemAdapter(queries)
 	sprintAdapter := adapters.NewSprintAdapter(queries)
@@ -154,16 +204,20 @@ func buildRouter(cfg *config.Config, queries *generated.Queries) (http.Handler, 
 		return nil, fmt.Errorf("creating SPA handler: %w", err)
 	}
 
+	auditLog := audit.NewDBLogger(queries)
+
 	return api.NewRouter(api.RouterConfig{
-		Authenticator:  authenticator,
-		AuthHandler:    authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner),
-		TicketHandler:  ticketsapi.NewHandler(ticketSvc),
-		WikiHandler:    wikiapi.NewHandler(wikiSvc),
-		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))),
-		SpaceHandler:   spacesapi.NewHandler(queries),
-		CommentHandler: commentsapi.NewHandler(queries),
-		SPAHandler:     spaHandler,
-		AllowedOrigins: cfg.AllowedOrigins,
+		Authenticator:       authenticator,
+		AuthHandler:         authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner).WithAuditLogger(auditLog),
+		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc).WithAuditLogger(auditLog),
+		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog),
+		SpaceHandler:        spacesapi.NewHandler(queries),
+		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
+		NotificationHandler: notificationsapi.NewHandler(queries),
+		SPAHandler:          spaHandler,
+		AllowedOrigins:      cfg.AllowedOrigins,
+		QueueStatus:         queueStatus,
 	}), nil
 }
 

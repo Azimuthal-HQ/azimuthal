@@ -19,13 +19,21 @@ import { AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent } from '../../components/ui/card';
 import { cn } from '../../lib/utils';
-import { useProjectItems, type ProjectItem } from '../../lib/api';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  useActiveSprint,
+  useSprintItems,
+  queryKeys,
+  type ProjectItem,
+} from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type ColumnId = 'todo' | 'in_progress' | 'in_review' | 'done';
+// P2.7: "open" is the backend default status — treat it as the leftmost column.
+// TODO(P6): replace this static map with the workflow engine status graph.
+type ColumnId = 'open' | 'todo' | 'in_progress' | 'in_review' | 'done';
 
 interface ColumnDef {
   id: ColumnId;
@@ -37,6 +45,7 @@ interface ColumnDef {
 // ---------------------------------------------------------------------------
 
 const COLUMNS: ColumnDef[] = [
+  { id: 'open', label: 'Open' },
   { id: 'todo', label: 'To Do' },
   { id: 'in_progress', label: 'In Progress' },
   { id: 'in_review', label: 'In Review' },
@@ -142,33 +151,51 @@ function DroppableColumn({ column, items, onItemClick }: { column: ColumnDef; it
 // Main component
 // ---------------------------------------------------------------------------
 
-/** Sprint board page with drag-and-drop columns. */
+/** Sprint board page — shows active sprint items in drag-and-drop columns. */
 export function SprintBoardPage() {
   const navigate = useNavigate();
   const { spaceId = '' } = useParams<{ spaceId: string }>();
-  const { data: items, isLoading, error } = useProjectItems(spaceId);
+
+  // P2.5: load active sprint first, then its items
+  const { data: activeSprint, isLoading: sprintLoading } = useActiveSprint(spaceId);
+  const sprintId = activeSprint?.id ?? '';
+  const { data: items, isLoading: itemsLoading, error } = useSprintItems(spaceId, sprintId);
+
   const [activeItem, setActiveItem] = useState<ProjectItem | null>(null);
+  // Optimistic local status overrides while a drag transition is in-flight
+  const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({});
+
+  const queryClient = useQueryClient();
+
+  const effectiveItems = useMemo(() => {
+    if (!items) return [];
+    return items.map((i) => ({
+      ...i,
+      status: pendingStatus[i.id] ?? i.status,
+    }));
+  }, [items, pendingStatus]);
 
   const columns = useMemo(() => {
     const map: Record<ColumnId, ProjectItem[]> = {
+      open: [],
       todo: [],
       in_progress: [],
       in_review: [],
       done: [],
     };
-    if (items) {
-      for (const item of items) {
-        if (map[item.status as ColumnId]) {
-          map[item.status as ColumnId].push(item);
-        }
+    for (const item of effectiveItems) {
+      const col = item.status as ColumnId;
+      if (map[col] !== undefined) {
+        map[col].push(item);
+      } else {
+        map.open.push(item);
       }
     }
     return map;
-  }, [items]);
+  }, [effectiveItems]);
 
   const handleItemClick = useCallback((id: string) => {
-    const backlogPath = `/spaces/${spaceId}/backlog/${id}`;
-    navigate(backlogPath);
+    navigate(`/spaces/${spaceId}/backlog/${id}`);
   }, [navigate, spaceId]);
 
   const sensors = useSensors(
@@ -178,23 +205,86 @@ export function SprintBoardPage() {
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
       const id = event.active.id as string;
-      const item = items?.find((i) => i.id === id);
+      const item = effectiveItems.find((i) => i.id === id);
       if (item) setActiveItem(item);
     },
-    [items],
+    [effectiveItems],
   );
 
+  // P2.6: persist drag-and-drop via status transition endpoint
   const handleDragEnd = useCallback(
-    (_event: DragEndEvent) => {
+    async (event: DragEndEvent) => {
       setActiveItem(null);
+      const { active, over } = event;
+      if (!over || !sprintId) return;
+
+      const draggedId = active.id as string;
+      const draggedItem = effectiveItems.find((i) => i.id === draggedId);
+      if (!draggedItem) return;
+
+      // Determine target column: over.id is either a column id or an item id
+      let targetStatus = over.id as string;
+      if (!COLUMNS.find((c) => c.id === targetStatus)) {
+        // over.id is an item — use that item's current column
+        const overItem = effectiveItems.find((i) => i.id === targetStatus);
+        targetStatus = overItem?.status ?? draggedItem.status;
+      }
+
+      if (targetStatus === draggedItem.status) return;
+
+      // Optimistic update
+      setPendingStatus((prev) => ({ ...prev, [draggedId]: targetStatus }));
+
+      try {
+        await fetch(`/api/v1/spaces/${spaceId}/projects/items/${draggedId}/status`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('azimuthal_token') ?? ''}`,
+          },
+          body: JSON.stringify({ status: targetStatus }),
+        });
+        // Invalidate to sync server state
+        queryClient.invalidateQueries({ queryKey: queryKeys.sprintItems(spaceId, sprintId) });
+      } catch {
+        // Revert optimistic update on error
+        setPendingStatus((prev) => {
+          const next = { ...prev };
+          delete next[draggedId];
+          return next;
+        });
+      }
     },
-    [],
+    [effectiveItems, spaceId, sprintId, queryClient],
   );
+
+  const isLoading = sprintLoading || (!!sprintId && itemsLoading);
 
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center text-[var(--color-text-muted)]">
         Loading board...
+      </div>
+    );
+  }
+
+  // P2.5: empty state when no active sprint
+  if (!activeSprint) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+          Sprint Board
+        </h1>
+        <div className="flex min-h-[300px] items-center justify-center rounded-[var(--radius-lg)] border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface)]">
+          <div className="text-center space-y-2">
+            <p className="text-[var(--text-lg)] font-medium text-[var(--color-text-muted)]">
+              No active sprint
+            </p>
+            <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+              Start a sprint from the backlog to see items here.
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
@@ -212,9 +302,14 @@ export function SprintBoardPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
-        Sprint Board
-      </h1>
+      <div className="flex items-baseline gap-3">
+        <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+          Sprint Board
+        </h1>
+        <span className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+          {activeSprint.name}
+        </span>
+      </div>
 
       <DndContext
         sensors={sensors}

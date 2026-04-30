@@ -5,7 +5,6 @@ import {
   BarChart3,
   Clock,
   Columns3,
-  Compass,
   FileText,
   Home,
   LayoutDashboard,
@@ -46,23 +45,22 @@ function buildNavItems(spaceId: string): Record<string, NavItem[]> {
     service_desk: [
       { id: 'sd-tickets', label: 'Tickets', to: `${prefix}/tickets`, icon: LayoutDashboard },
       { id: 'sd-kanban', label: 'Kanban Board', to: `${prefix}/kanban`, icon: Columns3 },
-      { id: 'sd-reports', label: 'Reports', to: `${prefix}/tickets`, icon: BarChart3 },
+      { id: 'sd-reports', label: 'Reports', to: `${prefix}/reports`, icon: BarChart3 },
     ],
     wiki: [
       { id: 'wiki-pages', label: 'All Pages', to: `${prefix}/wiki`, icon: FileText },
-      { id: 'wiki-recent', label: 'Recent', to: `${prefix}/wiki`, icon: Clock },
-      { id: 'wiki-favorites', label: 'Favorites', to: `${prefix}/wiki`, icon: Star },
-      { id: 'wiki-trash', label: 'Trash', to: `${prefix}/wiki`, icon: Trash2 },
+      { id: 'wiki-recent', label: 'Recent', to: `${prefix}/wiki/recent`, icon: Clock },
+      { id: 'wiki-favorites', label: 'Favorites', to: `${prefix}/wiki/favorites`, icon: Star },
+      { id: 'wiki-trash', label: 'Trash', to: `${prefix}/wiki/trash`, icon: Trash2 },
     ],
     project: [
       { id: 'proj-backlog', label: 'Backlog', to: `${prefix}/backlog`, icon: ListTodo },
       { id: 'proj-board', label: 'Sprint Board', to: `${prefix}/board`, icon: Columns3 },
-      { id: 'proj-roadmap', label: 'Roadmap', to: `${prefix}/backlog`, icon: Map },
-      { id: 'proj-labels', label: 'Labels', to: `${prefix}/backlog`, icon: Tags },
+      { id: 'proj-roadmap', label: 'Roadmap', to: `${prefix}/roadmap`, icon: Map },
+      { id: 'proj-labels', label: 'Labels', to: `${prefix}/labels`, icon: Tags },
     ],
     dashboard: [
       { id: 'dash-home', label: 'Home', to: '/', icon: Home },
-      { id: 'dash-spaces', label: 'All Spaces', to: '/', icon: Compass },
       { id: 'dash-settings', label: 'Settings', to: '/settings', icon: Settings },
     ],
   };

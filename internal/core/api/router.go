@@ -7,6 +7,7 @@ import (
 
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
@@ -16,17 +17,20 @@ import (
 
 // RouterConfig holds all the dependencies needed to build the API router.
 type RouterConfig struct {
-	Authenticator  *auth.Authenticator
-	AuthHandler    *authapi.Handler
-	TicketHandler  *ticketsapi.Handler
-	WikiHandler    *wikiapi.Handler
-	ProjectHandler *projectsapi.Handler
-	SpaceHandler   *spacesapi.Handler
-	CommentHandler *commentsapi.Handler
-	SPAHandler     http.Handler // serves the embedded frontend; nil disables SPA serving
+	Authenticator       *auth.Authenticator
+	AuthHandler         *authapi.Handler
+	TicketHandler       *ticketsapi.Handler
+	WikiHandler         *wikiapi.Handler
+	ProjectHandler      *projectsapi.Handler
+	SpaceHandler        *spacesapi.Handler
+	CommentHandler      *commentsapi.Handler
+	NotificationHandler *notificationsapi.Handler
+	SPAHandler          http.Handler // serves the embedded frontend; nil disables SPA serving
 	// AllowedOrigins is the explicit CORS allow-list. nil falls back to the
 	// permissive wildcard for backwards compatibility with existing tests.
 	AllowedOrigins []string
+	// QueueStatus is reported in the /health response: "ok", "disabled", or "error".
+	QueueStatus string
 }
 
 // NewRouter builds the unified chi router with all routes and middleware.
@@ -44,7 +48,11 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	}
 
 	// Public endpoints (no auth required)
-	r.Get("/health", HandleHealth)
+	queueStatus := cfg.QueueStatus
+	if queueStatus == "" {
+		queueStatus = "disabled"
+	}
+	r.Get("/health", HandleHealthWithQueue(queueStatus))
 	r.Get("/ready", HandleReady)
 
 	// API documentation (no auth required)
@@ -82,6 +90,13 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 				r.Mount("/", cfg.CommentHandler.Routes())
 			}
 		})
+
+		// Notifications (scoped to current user)
+		if cfg.NotificationHandler != nil {
+			r.Route("/notifications", func(r chi.Router) {
+				r.Mount("/", cfg.NotificationHandler.Routes())
+			})
+		}
 
 		// Labels (scoped by org)
 		r.Route("/orgs/{orgID}/labels", func(r chi.Router) {

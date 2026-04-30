@@ -460,6 +460,8 @@ components:
       type: object
     api.healthResponse:
       properties:
+        queue:
+          type: string
         status:
           type: string
       type: object
@@ -468,6 +470,35 @@ components:
         display_name:
           type: string
         email:
+          type: string
+      type: object
+    notifications.listNotificationsResponse:
+      properties:
+        notifications:
+          items:
+            $ref: '#/components/schemas/notifications.notificationResponse'
+          type: array
+          uniqueItems: false
+        unread_count:
+          type: integer
+      type: object
+    notifications.notificationResponse:
+      properties:
+        body:
+          type: string
+        created_at:
+          type: string
+        entity_id:
+          type: string
+        entity_kind:
+          type: string
+        id:
+          type: string
+        is_read:
+          type: boolean
+        kind:
+          type: string
+        title:
           type: string
       type: object
   securitySchemes:
@@ -728,7 +759,8 @@ paths:
       - auth
   /health:
     get:
-      description: Returns {"status":"ok"} when the server is running.
+      description: Returns {"status":"ok"} when the server is running. Includes queue
+        status.
       responses:
         "200":
           content:
@@ -739,6 +771,87 @@ paths:
       summary: Liveness probe
       tags:
       - health
+  /notifications:
+    get:
+      description: Returns the authenticated user's notifications, unread first. Paginated
+        via limit/offset query params.
+      parameters:
+      - description: Max results (default 20)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/notifications.listNotificationsResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+      security:
+      - BearerAuth: []
+      summary: List notifications
+      tags:
+      - notifications
+  /notifications/{notificationID}/read:
+    post:
+      description: Marks the specified notification as read. Only the owning user
+        can mark their own notifications.
+      parameters:
+      - description: Notification ID
+        in: path
+        name: notificationID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+      security:
+      - BearerAuth: []
+      summary: Mark notification read
+      tags:
+      - notifications
+  /notifications/read-all:
+    post:
+      description: Marks every unread notification for the authenticated user as read.
+      responses:
+        "204":
+          description: No Content
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+      security:
+      - BearerAuth: []
+      summary: Mark all notifications read
+      tags:
+      - notifications
   /orgs/{orgID}:
     get:
       description: Returns an organization by its ID.

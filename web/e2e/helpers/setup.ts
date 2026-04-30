@@ -125,9 +125,9 @@ export async function getCurrentUser(page: Page): Promise<{ userId: string; orgI
 
 /**
  * Adds the current user as a member of the given space.
- * Space creation does NOT auto-add the creator as a space member,
- * so this must be called explicitly when tests need the members list
- * to contain data (e.g. assignee dropdown, reporter lookup).
+ * Space creation auto-adds the creator as an admin member, but this
+ * helper remains for tests that create spaces via API (not UI) or need
+ * to add a second user as a member.
  */
 export async function addCurrentUserAsSpaceMember(page: Page, orgId: string, spaceId: string): Promise<void> {
   const token = await getAuthToken(page)

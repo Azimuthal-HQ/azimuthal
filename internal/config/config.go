@@ -28,6 +28,9 @@ type Config struct {
 	JWTExpiry         time.Duration
 	JWTPrivateKeyPath string
 
+	// Queue
+	QueueEnabled bool
+
 	// CORS — explicit list of allowed origins. Empty list in production
 	// rejects all cross-origin requests; "*" matches any origin.
 	AllowedOrigins []string
@@ -62,6 +65,7 @@ func Load() (*Config, error) {
 	v.SetDefault("LOG_LEVEL", "info")
 	v.SetDefault("STORAGE_BUCKET", "azimuthal")
 	v.SetDefault("STORAGE_USE_SSL", false)
+	v.SetDefault("AZIMUTHAL_QUEUE_ENABLED", true)
 
 	cfg := &Config{
 		DatabaseURL:       v.GetString("DATABASE_URL"),
@@ -72,6 +76,7 @@ func Load() (*Config, error) {
 		StorageUseSSL:     v.GetBool("STORAGE_USE_SSL"),
 		JWTSecret:         v.GetString("JWT_SECRET"),
 		JWTPrivateKeyPath: v.GetString("JWT_PRIVATE_KEY_PATH"),
+		QueueEnabled:      v.GetBool("AZIMUTHAL_QUEUE_ENABLED"),
 		AllowedOrigins:    parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS"), v.GetString("APP_ENV")),
 		SMTPHost:          v.GetString("SMTP_HOST"),
 		SMTPPort:          v.GetInt("SMTP_PORT"),

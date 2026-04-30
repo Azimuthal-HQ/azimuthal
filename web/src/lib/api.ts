@@ -163,7 +163,8 @@ export interface WikiPage {
   id: string;
   space_id: string;
   title: string;
-  body: string;
+  content: string;
+  version: number;
   parent_id: string | null;
   author_id: string;
   created_at: string;
@@ -181,8 +182,8 @@ export interface ProjectItem {
   assignee_id: string | null;
   reporter_id: string;
   sprint_id: string | null;
-  sort_order: number;
-  label_ids: string[];
+  rank: string;
+  labels: string[];
   created_at: string;
   updated_at: string;
 }
@@ -193,8 +194,8 @@ export interface Sprint {
   name: string;
   goal: string;
   status: SprintStatus;
-  start_date: string | null;
-  end_date: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -226,6 +227,21 @@ export interface Member {
   display_name: string;
   email: string;
   role: string;
+}
+
+export interface Notification {
+  id: string;
+  kind: string;
+  title: string;
+  is_read: boolean;
+  entity_kind?: string;
+  entity_id?: string;
+  created_at: string;
+}
+
+export interface NotificationListResponse {
+  notifications: Notification[];
+  unread_count: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +471,6 @@ interface UpdateProjectItemRequest {
   description?: string;
   priority?: string;
   assignee_id?: string | null;
-  status?: string;
   labels?: string[];
 }
 
@@ -492,8 +507,8 @@ async function fetchSprints(spaceId: string): Promise<Sprint[]> {
 interface CreateSprintRequest {
   name: string;
   goal?: string;
-  start_date?: string;
-  end_date?: string;
+  starts_at?: string;
+  ends_at?: string;
 }
 
 async function createSprint(spaceId: string, req: CreateSprintRequest): Promise<Sprint> {
@@ -501,6 +516,23 @@ async function createSprint(spaceId: string, req: CreateSprintRequest): Promise<
     method: 'POST',
     body: JSON.stringify(req),
   });
+}
+
+async function fetchActiveSprint(spaceId: string): Promise<Sprint | null> {
+  try {
+    return await apiFetch<Sprint>(`/spaces/${spaceId}/projects/sprints/active`);
+  } catch (err) {
+    if (err instanceof APIError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+async function fetchSprintItems(spaceId: string, sprintId: string): Promise<ProjectItem[]> {
+  const data = await apiFetch<ProjectItem[] | ProjectItem | null>(
+    `/spaces/${spaceId}/projects/sprints/${sprintId}/items`,
+  );
+  if (data == null) return [];
+  return Array.isArray(data) ? data : [data];
 }
 
 // ---------------------------------------------------------------------------
@@ -584,6 +616,33 @@ async function createComment(orgId: string, spaceId: string, itemId: string, req
 }
 
 // ---------------------------------------------------------------------------
+// Notification API functions
+// ---------------------------------------------------------------------------
+
+async function listNotifications(): Promise<NotificationListResponse> {
+  return apiFetch<NotificationListResponse>('/notifications');
+}
+
+async function markNotificationRead(id: string): Promise<void> {
+  return apiFetch<void>(`/notifications/${id}/read`, { method: 'POST' });
+}
+
+async function markAllNotificationsRead(): Promise<void> {
+  return apiFetch<void>('/notifications/read-all', { method: 'POST' });
+}
+
+// ---------------------------------------------------------------------------
+// Ticket assign API function
+// ---------------------------------------------------------------------------
+
+async function assignTicket(spaceId: string, ticketId: string, assigneeId: string | null): Promise<void> {
+  return apiFetch<void>(`/spaces/${spaceId}/tickets/${ticketId}/assign`, {
+    method: 'POST',
+    body: JSON.stringify({ assignee_id: assigneeId }),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Query key factories
 // ---------------------------------------------------------------------------
 
@@ -598,9 +657,12 @@ export const queryKeys = {
   projectItems: (spaceId: string) => ['projectItems', spaceId] as const,
   projectItem: (spaceId: string, itemId: string) => ['projectItems', spaceId, itemId] as const,
   sprints: (spaceId: string) => ['sprints', spaceId] as const,
+  activeSprint: (spaceId: string) => ['sprints', spaceId, 'active'] as const,
+  sprintItems: (spaceId: string, sprintId: string) => ['sprints', spaceId, sprintId, 'items'] as const,
   labels: (orgId: string) => ['labels', orgId] as const,
   members: (orgId: string, spaceId: string) => ['members', orgId, spaceId] as const,
   comments: (spaceId: string, itemId: string) => ['comments', spaceId, itemId] as const,
+  notifications: () => ['notifications'] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -698,6 +760,24 @@ export function useSprints(spaceId: string, opts?: QueryOpts<Sprint[]>) {
   });
 }
 
+export function useActiveSprint(spaceId: string, opts?: QueryOpts<Sprint | null>) {
+  return useQuery<Sprint | null, APIError>({
+    queryKey: queryKeys.activeSprint(spaceId),
+    queryFn: () => fetchActiveSprint(spaceId),
+    enabled: !!spaceId,
+    ...opts,
+  });
+}
+
+export function useSprintItems(spaceId: string, sprintId: string, opts?: QueryOpts<ProjectItem[]>) {
+  return useQuery<ProjectItem[], APIError>({
+    queryKey: queryKeys.sprintItems(spaceId, sprintId),
+    queryFn: () => fetchSprintItems(spaceId, sprintId),
+    enabled: !!spaceId && !!sprintId,
+    ...opts,
+  });
+}
+
 export function useLabels(orgId: string, opts?: QueryOpts<Label[]>) {
   return useQuery<Label[], APIError>({
     queryKey: queryKeys.labels(orgId),
@@ -734,6 +814,15 @@ export function useComments(orgId: string, spaceId: string, itemId: string, opts
   });
 }
 
+
+export function useNotifications(opts?: QueryOpts<NotificationListResponse>) {
+  return useQuery<NotificationListResponse, APIError>({
+    queryKey: queryKeys.notifications(),
+    queryFn: listNotifications,
+    refetchInterval: 30_000,
+    ...opts,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Mutation hooks
@@ -870,6 +959,37 @@ export function useCreateComment(orgId: string, spaceId: string, itemId: string)
     mutationFn: (req) => createComment(orgId, spaceId, itemId, req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.comments(spaceId, itemId) });
+    },
+  });
+}
+
+export function useMarkNotificationRead() {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (id) => markNotificationRead(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
+    },
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, void>({
+    mutationFn: () => markAllNotificationsRead(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
+    },
+  });
+}
+
+export function useAssignTicket(spaceId: string, ticketId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string | null>({
+    mutationFn: (assigneeId) => assignTicket(spaceId, ticketId, assigneeId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
     },
   });
 }

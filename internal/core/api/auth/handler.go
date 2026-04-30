@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 )
 
@@ -39,11 +40,18 @@ type Handler struct {
 	sessions    *auth.SessionService
 	memberships MembershipResolver
 	orgs        OrgProvisioner
+	auditLog    audit.Logger
 }
 
 // NewHandler creates an auth Handler.
 func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner) *Handler {
-	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs}
+	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs, auditLog: audit.NewLogger()}
+}
+
+// WithAuditLogger attaches an audit logger to the handler.
+func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
+	h.auditLog = l
+	return h
 }
 
 // Routes returns a chi.Router with all auth endpoints mounted.
@@ -126,6 +134,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	user, err := h.users.Authenticate(r.Context(), req.Email, req.Password)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) || errors.Is(err, auth.ErrAccountInactive) {
+			_ = h.auditLog.Log(r.Context(), audit.Event{
+				Type: audit.EventTypeLoginFailed, ActorID: "", ResourceType: "user", ResourceID: "",
+				Metadata: map[string]string{"email": req.Email},
+			})
 			respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "invalid email or password")
 			return
 		}
@@ -148,6 +160,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
 	}
+
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypeUserLogin, ActorID: user.ID.String(),
+		OrgID: orgID.String(), ResourceType: "user", ResourceID: user.ID.String(),
+	})
 
 	respond.JSON(w, http.StatusOK, loginResponse{
 		AccessToken:  pair.AccessToken,
@@ -331,6 +348,11 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to logout")
 		return
 	}
+
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypeUserLogout, ActorID: claims.UserID.String(),
+		OrgID: claims.OrgID, ResourceType: "user", ResourceID: claims.UserID.String(),
+	})
 
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }

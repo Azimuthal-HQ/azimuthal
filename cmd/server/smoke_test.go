@@ -38,11 +38,12 @@ func TestSmoke(t *testing.T) {
 		t.Fatalf("loading config: %v", err)
 	}
 
-	srv, cleanup, err := newServer(cfg)
+	srv, deps, cleanup, err := newServer(cfg)
 	if err != nil {
 		t.Fatalf("creating server: %v", err)
 	}
 	defer cleanup()
+	_ = deps
 
 	ts := httptest.NewServer(srv.Handler)
 	defer ts.Close()

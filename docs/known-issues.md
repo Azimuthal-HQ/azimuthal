@@ -244,3 +244,34 @@ two users with the same email. The second registration returns 500 (due to
 issue #11 above), causing the login step to fail.
 
 **Test**: `cmd/server/smoke_test.go` — `TestSmoke/login_user`
+
+---
+
+## 14. Labels: Two Parallel Label Stores (P2.9 — Deferred to P5)
+
+**Severity**: Medium
+**Status**: Documented — fix deferred to Phase 5 (Items Table Split)
+
+Two label mechanisms exist in parallel and are not linked:
+
+1. `items.labels TEXT[]` — a text array column on the `items` table. Project
+   items store their labels here as plain strings. The frontend reads and
+   writes this array directly.
+
+2. `labels(id, org_id, name, color)` table — a proper labels admin table with
+   color/grouping support. Accessible at `GET /orgs/{orgID}/labels`. Not
+   joined to items.
+
+**Impact**: Labels created in the admin UI (`/labels`) have no effect on items.
+Items display label text from the array; color metadata is never shown.
+There is no way to query "all items with label X" efficiently.
+
+**Root cause**: The design was split across two PRs during Phase 0/1 with
+conflicting approaches. Neither was backed out before shipping.
+
+**Proper fix**: Migrate `items.labels TEXT[]` to a join table
+`item_labels(item_id, label_id)` referencing the `labels` table. This is
+in scope for Phase 5 (Items Table Split) where the items schema is being
+restructured anyway.
+
+**Do not fix in P2 or P3.** Document only.

@@ -182,7 +182,7 @@ docs: ## Generate OpenAPI 3.0 spec from handler annotations
 	@which swag > /dev/null 2>&1 || (echo "swag not installed. Run: go install github.com/swaggo/swag/v2/cmd/swag@latest" && exit 1)
 	@swag init \
 		--generalInfo main.go \
-		--dir ./cmd/server,./internal/core/api,./internal/core/api/auth,./internal/core/api/tickets,./internal/core/api/wiki,./internal/core/api/projects,./internal/core/api/spaces,./internal/core/api/comments \
+		--dir ./cmd/server,./internal/core/api,./internal/core/api/auth,./internal/core/api/tickets,./internal/core/api/wiki,./internal/core/api/projects,./internal/core/api/spaces,./internal/core/api/comments,./internal/core/api/notifications \
 		--output docs/api \
 		--outputTypes yaml \
 		--v3.1 \

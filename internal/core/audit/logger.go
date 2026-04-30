@@ -12,20 +12,45 @@ import (
 type EventType string
 
 const (
-	// EventTypeUserLogin records a successful user authentication.
-	EventTypeUserLogin EventType = "user.login"
-	// EventTypeUserLogout records a user session termination.
-	EventTypeUserLogout EventType = "user.logout"
-	// EventTypeItemCreated records the creation of any workspace item.
-	EventTypeItemCreated EventType = "item.created"
-	// EventTypeItemUpdated records a modification to a workspace item.
-	EventTypeItemUpdated EventType = "item.updated"
-	// EventTypeItemDeleted records a soft-delete of a workspace item.
-	EventTypeItemDeleted EventType = "item.deleted"
-	// EventTypePermissionChanged records a change in user permissions.
+	// Auth events
+	EventTypeUserLogin    EventType = "user.login"
+	EventTypeLoginFailed  EventType = "user.login_failed"
+	EventTypeUserLogout   EventType = "user.logout"
+	EventTypeTokenIssued  EventType = "user.token_issued"
+
+	// Ticket events
+	EventTypeTicketCreated      EventType = "ticket.created"
+	EventTypeTicketUpdated      EventType = "ticket.updated"
+	EventTypeTicketStatusChange EventType = "ticket.status_changed"
+	EventTypeTicketAssigned     EventType = "ticket.assigned"
+	EventTypeTicketUnassigned   EventType = "ticket.unassigned"
+	EventTypeTicketDeleted      EventType = "ticket.deleted"
+
+	// Wiki events
+	EventTypePageCreated EventType = "page.created"
+	EventTypePageUpdated EventType = "page.updated"
+	EventTypePageMoved   EventType = "page.moved"
+	EventTypePageDeleted EventType = "page.deleted"
+
+	// Project item events
+	EventTypeItemCreated      EventType = "item.created"
+	EventTypeItemUpdated      EventType = "item.updated"
+	EventTypeItemStatusChange EventType = "item.status_changed"
+	EventTypeItemSprintMove   EventType = "item.sprint_moved"
+	EventTypeItemDeleted      EventType = "item.deleted"
+
+	// Sprint events
+	EventTypeSprintCreated   EventType = "sprint.created"
+	EventTypeSprintStarted   EventType = "sprint.started"
+	EventTypeSprintCompleted EventType = "sprint.completed"
+
+	// Comment events
+	EventTypeCommentCreated EventType = "comment.created"
+	EventTypeCommentDeleted EventType = "comment.deleted"
+
+	// Legacy / misc
 	EventTypePermissionChanged EventType = "permission.changed"
-	// EventTypeSettingsChanged records an organisation-level settings change.
-	EventTypeSettingsChanged EventType = "settings.changed"
+	EventTypeSettingsChanged   EventType = "settings.changed"
 )
 
 // Event is the structured record written to the audit log.

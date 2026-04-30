@@ -12,7 +12,23 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
+	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
+
+// NotificationEnqueuer is the interface for enqueuing in-app notification jobs.
+// Implemented by *Queue; use NoopNotificationEnqueuer in tests or when the
+// queue is disabled.
+type NotificationEnqueuer interface {
+	EnqueueNotification(ctx context.Context, args NotificationArgs) error
+}
+
+// NoopNotificationEnqueuer silently discards notification jobs.
+type NoopNotificationEnqueuer struct{}
+
+// EnqueueNotification is a no-op.
+func (NoopNotificationEnqueuer) EnqueueNotification(_ context.Context, _ NotificationArgs) error {
+	return nil
+}
 
 // Queue wraps a River client and exposes helpers for enqueueing jobs.
 type Queue struct {
@@ -24,10 +40,10 @@ type Queue struct {
 // processing jobs.
 //
 // The pool must be open and healthy before calling NewQueue.
-func NewQueue(ctx context.Context, pool *pgxpool.Pool, sender email.Sender) (*Queue, error) {
+func NewQueue(ctx context.Context, pool *pgxpool.Pool, sender email.Sender, queries *generated.Queries) (*Queue, error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, NewEmailWorker(sender))
-	river.AddWorker(workers, NewNotificationWorker())
+	river.AddWorker(workers, NewNotificationWorker(queries))
 
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{

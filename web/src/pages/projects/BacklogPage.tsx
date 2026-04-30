@@ -106,13 +106,13 @@ export function BacklogPage() {
       if (b[0] === 'Backlog') return -1;
       return a[0].localeCompare(b[0]);
     });
-    // Sort items within each group by sort_order, treating falsy values as lowest priority
+    // Sort items within each group by rank (lexicographic string ordering)
     for (const [, groupItems] of entries) {
       groupItems.sort((a, b) => {
-        if (!a.sort_order && !b.sort_order) return 0;
-        if (!a.sort_order) return 1;
-        if (!b.sort_order) return -1;
-        return a.sort_order - b.sort_order;
+        if (!a.rank && !b.rank) return 0;
+        if (!a.rank) return 1;
+        if (!b.rank) return -1;
+        return a.rank.localeCompare(b.rank);
       });
     }
     return entries;
@@ -245,19 +245,19 @@ export function BacklogPage() {
               <div className="space-y-2 flex-1">
                 <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Priority</label>
                 <div className="grid grid-cols-4 gap-2">
-                  {(['critical', 'high', 'medium', 'low'] as const).map((p) => (
+                  {([['urgent', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']] as const).map(([value, label]) => (
                     <button
-                      key={p}
+                      key={value}
                       type="button"
-                      onClick={() => setFormPriority(p)}
+                      onClick={() => setFormPriority(value)}
                       className={cn(
-                        'rounded-[var(--radius-md)] border px-2 py-1.5 text-[var(--text-sm)] capitalize transition-colors',
-                        formPriority === p
+                        'rounded-[var(--radius-md)] border px-2 py-1.5 text-[var(--text-sm)] transition-colors',
+                        formPriority === value
                           ? 'border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-medium'
                           : 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]',
                       )}
                     >
-                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                      {label}
                     </button>
                   ))}
                 </div>

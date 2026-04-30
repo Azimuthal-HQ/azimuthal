@@ -43,5 +43,5 @@ web/test-results/
 data/
 cmd/server/data/
 
-# Claude Code worktrees
+# Claude Code local settings (never commit)
 .claude/

@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 )
 
 // MigrationFS holds the embedded SQL migration files.
@@ -29,6 +31,15 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	// "." because migrations.FS embeds *.sql at its root.
 	if err := goose.UpContext(ctx, db, "."); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
+	}
+
+	// Run River's own schema migrations (river_job, river_queue, etc.).
+	migrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
+	if err != nil {
+		return fmt.Errorf("creating river migrator: %w", err)
+	}
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+		return fmt.Errorf("running river migrations: %w", err)
 	}
 
 	return nil

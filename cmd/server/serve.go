@@ -39,7 +39,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	slog.Info("configuration loaded", "env", cfg.AppEnv, "port", cfg.AppPort)
 
-	srv, cleanup, err := newServer(cfg)
+	srv, deps, cleanup, err := newServer(cfg)
 	if err != nil {
 		return err
 	}
@@ -61,6 +61,11 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Drain in-flight jobs before closing the DB pool.
+	if err := deps.stopQueue(shutdownCtx); err != nil {
+		slog.Warn("job queue did not drain cleanly", "error", err)
+	}
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutting down server: %w", err)

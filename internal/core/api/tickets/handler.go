@@ -2,6 +2,7 @@
 package tickets
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,18 +12,39 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 )
+
+// NotificationEnqueuer enqueues in-app notification jobs.
+type NotificationEnqueuer interface {
+	EnqueueNotification(ctx context.Context, args jobs.NotificationArgs) error
+}
 
 // Handler holds the dependencies for ticket HTTP handlers.
 type Handler struct {
-	svc *tickets.TicketService
+	svc      *tickets.TicketService
+	auditLog audit.Logger
+	notifs   NotificationEnqueuer
 }
 
 // NewHandler creates a ticket Handler.
 func NewHandler(svc *tickets.TicketService) *Handler {
-	return &Handler{svc: svc}
+	return &Handler{svc: svc, auditLog: audit.NewLogger()}
+}
+
+// WithAuditLogger attaches an audit logger to the handler.
+func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
+	h.auditLog = l
+	return h
+}
+
+// WithNotificationEnqueuer attaches a notification enqueuer to the handler.
+func (h *Handler) WithNotificationEnqueuer(n NotificationEnqueuer) *Handler {
+	h.notifs = n
+	return h
 }
 
 // Routes returns a chi.Router with all ticket endpoints mounted.
@@ -61,7 +83,7 @@ type transitionRequest struct {
 }
 
 type assignRequest struct {
-	AssigneeID uuid.UUID `json:"assignee_id"`
+	AssigneeID *uuid.UUID `json:"assignee_id"`
 }
 
 // List returns all tickets in a space.
@@ -139,6 +161,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypeTicketCreated, ActorID: claims.UserID.String(),
+		OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: ticket.ID.String(),
+	})
 	respond.JSON(w, http.StatusCreated, ticket)
 }
 
@@ -217,6 +243,13 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeTicketUpdated, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
+		})
+	}
 	respond.JSON(w, http.StatusOK, existing)
 }
 
@@ -244,6 +277,13 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.Delete(r.Context(), id); err != nil {
 		handleTicketError(w, r, err)
 		return
+	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeTicketDeleted, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -284,6 +324,14 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeTicketStatusChange, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
+			Metadata: map[string]string{"to": string(req.Status)},
+		})
+	}
 	respond.JSON(w, http.StatusOK, ticket)
 }
 
@@ -318,10 +366,40 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := h.svc.Assign(r.Context(), id, req.AssigneeID, nil)
+	// null assignee_id means unassign
+	if req.AssigneeID == nil {
+		ticket, err := h.svc.Unassign(r.Context(), id)
+		if err != nil {
+			handleTicketError(w, r, err)
+			return
+		}
+		claims := auth.ClaimsFromContext(r.Context())
+		if claims != nil {
+			_ = h.auditLog.Log(r.Context(), audit.Event{
+				Type: audit.EventTypeTicketUnassigned, ActorID: claims.UserID.String(),
+				OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
+			})
+		}
+		respond.JSON(w, http.StatusOK, ticket)
+		return
+	}
+
+	var notifier tickets.AssignmentNotifier
+	if h.notifs != nil {
+		notifier = &queueAssignmentNotifier{enqueuer: h.notifs}
+	}
+	ticket, err := h.svc.Assign(r.Context(), id, *req.AssigneeID, notifier)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
+	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeTicketAssigned, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
+			Metadata: map[string]string{"assignee_id": req.AssigneeID.String()},
+		})
 	}
 	respond.JSON(w, http.StatusOK, ticket)
 }
@@ -352,6 +430,13 @@ func (h *Handler) Unassign(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
+	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeTicketUnassigned, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
+		})
 	}
 	respond.JSON(w, http.StatusOK, ticket)
 }
@@ -463,4 +548,19 @@ func handleTicketError(w http.ResponseWriter, r *http.Request, err error) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
 			fmt.Sprintf("ticket operation failed: %v", err))
 	}
+}
+
+// queueAssignmentNotifier implements tickets.AssignmentNotifier via the job queue.
+type queueAssignmentNotifier struct {
+	enqueuer NotificationEnqueuer
+}
+
+func (n *queueAssignmentNotifier) NotifyAssignment(ctx context.Context, ticketID uuid.UUID, assigneeID uuid.UUID, title string) error {
+	return n.enqueuer.EnqueueNotification(ctx, jobs.NotificationArgs{
+		UserID:     assigneeID.String(),
+		EventKind:  "ticket.assigned",
+		Message:    "You have been assigned to: " + title,
+		ResourceID: ticketID.String(),
+		EntityKind: "ticket",
+	})
 }

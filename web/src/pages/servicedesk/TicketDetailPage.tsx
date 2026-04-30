@@ -7,8 +7,8 @@ import { Card, CardContent } from '../../components/ui/card';
 import { cn } from '../../lib/utils';
 import {
   useTicket,
-  useUpdateTicket,
   useTransitionTicketStatus,
+  useAssignTicket,
   useMembers,
   useComments,
   useCreateComment,
@@ -61,7 +61,7 @@ export function TicketDetailPage() {
   const { spaceId = '', ticketId } = useParams<{ spaceId: string; ticketId: string }>();
   const { data: ticket, isLoading, error, refetch: refetchTicket } = useTicket(spaceId, ticketId ?? '');
   const transitionMutation = useTransitionTicketStatus(spaceId, ticketId ?? '');
-  const updateMutation = useUpdateTicket(spaceId, ticketId ?? '');
+  const assignMutation = useAssignTicket(spaceId, ticketId ?? '');
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
   const { data: members } = useMembers(orgId, spaceId);
@@ -76,7 +76,7 @@ export function TicketDetailPage() {
   }
 
   async function handleAssigneeChange(assigneeId: string) {
-    await updateMutation.mutateAsync({ assignee_id: assigneeId || null });
+    await assignMutation.mutateAsync(assigneeId || null);
     refetchTicket();
   }
 
@@ -269,6 +269,26 @@ export function TicketDetailPage() {
                     <option key={m.user_id} value={m.user_id}>{m.display_name}</option>
                   ))}
                 </select>
+                <div className="flex gap-[var(--space-2)]">
+                  {ticket.assignee_id !== me?.id && (
+                    <button
+                      type="button"
+                      onClick={() => handleAssigneeChange(me?.id ?? '')}
+                      className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline"
+                    >
+                      Assign to me
+                    </button>
+                  )}
+                  {ticket.assignee_id && (
+                    <button
+                      type="button"
+                      onClick={() => handleAssigneeChange('')}
+                      className="text-[var(--text-xs)] text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:underline"
+                    >
+                      Unassign
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Reporter */}

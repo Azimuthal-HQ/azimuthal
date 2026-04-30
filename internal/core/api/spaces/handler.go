@@ -3,6 +3,7 @@ package spaces
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -224,9 +225,23 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		CreatedBy:   claims.UserID,
 	})
 	if err != nil {
+		slog.Error("CreateSpace failed", "error", err, "org_id", orgID)
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create space")
 		return
 	}
+
+	// Auto-add the creator as an admin member of the new space.
+	if _, err := h.queries.AddSpaceMember(r.Context(), generated.AddSpaceMemberParams{
+		ID:      uuid.New(),
+		SpaceID: space.ID,
+		UserID:  claims.UserID,
+		Role:    "admin",
+	}); err != nil {
+		slog.Error("AddSpaceMember failed", "error", err, "space_id", space.ID)
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to add creator as member")
+		return
+	}
+
 	respond.JSON(w, http.StatusCreated, space)
 }
 

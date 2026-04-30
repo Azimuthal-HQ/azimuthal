@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 )
@@ -24,6 +25,7 @@ type Handler struct {
 	roadmap   *projects.RoadmapService
 	relations *projects.RelationService
 	labels    *projects.LabelService
+	auditLog  audit.Logger
 }
 
 // NewHandler creates a project Handler.
@@ -42,7 +44,14 @@ func NewHandler(
 		roadmap:   roadmap,
 		relations: relations,
 		labels:    labels,
+		auditLog:  audit.NewLogger(),
 	}
+}
+
+// WithAuditLogger attaches an audit logger to the handler.
+func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
+	h.auditLog = l
+	return h
 }
 
 // Routes returns a chi.Router with all project endpoints mounted.
@@ -58,6 +67,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Delete("/items/{itemID}", h.DeleteItem)
 	r.Post("/items/{itemID}/status", h.UpdateItemStatus)
 	r.Post("/items/{itemID}/sprint", h.AssignToSprint)
+	r.Post("/items/{itemID}/rank", h.RankItem)
 
 	// Relations
 	r.Get("/items/{itemID}/relations", h.ListRelations)
@@ -138,6 +148,10 @@ type updateSprintRequest struct {
 	Goal     string     `json:"goal"`
 	StartsAt *time.Time `json:"starts_at,omitempty"`
 	EndsAt   *time.Time `json:"ends_at,omitempty"`
+}
+
+type rankItemRequest struct {
+	Rank string `json:"rank"`
 }
 
 type createRelationRequest struct {
@@ -232,6 +246,10 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		handleProjectError(w, r, err)
 		return
 	}
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypeItemCreated, ActorID: claims.UserID.String(),
+		OrgID: claims.OrgID, ResourceType: "item", ResourceID: created.ID.String(),
+	})
 	respond.JSON(w, http.StatusCreated, created)
 }
 
@@ -313,6 +331,13 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		handleProjectError(w, r, err)
 		return
 	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeItemUpdated, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "item", ResourceID: id.String(),
+		})
+	}
 	respond.JSON(w, http.StatusOK, updated)
 }
 
@@ -341,6 +366,13 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 	if err := h.items.DeleteItem(r.Context(), id); err != nil {
 		handleProjectError(w, r, err)
 		return
+	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeItemDeleted, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "item", ResourceID: id.String(),
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -381,6 +413,14 @@ func (h *Handler) UpdateItemStatus(w http.ResponseWriter, r *http.Request) {
 		handleProjectError(w, r, err)
 		return
 	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeItemStatusChange, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "item", ResourceID: id.String(),
+			Metadata: map[string]string{"to": string(req.Status)},
+		})
+	}
 	respond.JSON(w, http.StatusOK, item)
 }
 
@@ -419,6 +459,47 @@ func (h *Handler) AssignToSprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "item assigned to sprint"})
+}
+
+// RankItem updates an item's rank to reposition it in the backlog.
+//
+// @Summary      Reorder a project item
+// @Description  Updates the rank string of a project item to change its position in the backlog
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        spaceID  path      string           true  "Space ID (UUID)"
+// @Param        itemID   path      string           true  "Item ID (UUID)"
+// @Param        body     body      rankItemRequest   true  "New rank value"
+// @Success      200      {object}  api.SwaggerMessageResponse
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /spaces/{spaceID}/projects/items/{itemID}/rank [post]
+func (h *Handler) RankItem(w http.ResponseWriter, r *http.Request) {
+	id, err := itemIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
+		return
+	}
+
+	var req rankItemRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	if req.Rank == "" {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "rank is required")
+		return
+	}
+
+	if err := h.backlog.ReorderItem(r.Context(), id, req.Rank); err != nil {
+		handleProjectError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]string{"message": "item reordered"})
 }
 
 // SearchItems performs full-text search on items.

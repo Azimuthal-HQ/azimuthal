@@ -9,6 +9,7 @@ import (
 // healthResponse is the JSON body returned by /health and /ready.
 type healthResponse struct {
 	Status string `json:"status"`
+	Queue  string `json:"queue,omitempty"`
 }
 
 // writeJSON encodes v as JSON to w. Logs on failure (client may have disconnected).
@@ -19,16 +20,23 @@ func writeJSON(w http.ResponseWriter, v any) {
 	}
 }
 
-// HandleHealth responds to liveness probes with {"status":"ok"}.
+// HandleHealth responds to liveness probes with {"status":"ok","queue":"ok|disabled"}.
 //
 // @Summary      Liveness probe
-// @Description  Returns {"status":"ok"} when the server is running.
+// @Description  Returns {"status":"ok"} when the server is running. Includes queue status.
 // @Tags         health
 // @Produce      json
 // @Success      200  {object}  healthResponse  "Server is alive"
 // @Router       /health [get]
 func HandleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, healthResponse{Status: "ok"})
+}
+
+// HandleHealthWithQueue returns a handler that includes queue status in the health response.
+func HandleHealthWithQueue(queueStatus string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, healthResponse{Status: "ok", Queue: queueStatus})
+	}
 }
 
 // HandleReady responds to readiness probes with {"status":"ready"}.
