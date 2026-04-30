@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# remote-test-host-deploy.sh — push to private repo, pull on server, build + restart via docker compose
+# remote-test-host-deploy.sh — push to private repo, build image on server, swap app container
 #
 # First-time server setup (run once):
 #   bash scripts/remote-test-host-deploy.sh --setup
@@ -23,22 +23,20 @@ if [[ "${1:-}" == "--setup" ]]; then
   echo "=== Server setup ==="
   ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<EOF
     set -e
-
-    # Generate deploy key if not already present
     if [ ! -f ~/.ssh/azimuthal_deploy ]; then
       ssh-keygen -t ed25519 -C "azimuthal-deploy" -f ~/.ssh/azimuthal_deploy -N ""
-      echo ""
-      echo "Host github.com" >> ~/.ssh/config
-      echo "  IdentityFile ~/.ssh/azimuthal_deploy" >> ~/.ssh/config
-      echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-    fi
+      cat >> ~/.ssh/config <<CFG
 
+Host github.com
+  IdentityFile ~/.ssh/azimuthal_deploy
+  StrictHostKeyChecking no
+CFG
+    fi
     echo ""
     echo "=== Add this deploy key to GitHub ==="
     echo "https://github.com/Azimuthal-HQ/azimuthal-private/settings/keys"
     echo ""
     cat ~/.ssh/azimuthal_deploy.pub
-    echo ""
 EOF
   echo "Once the key is added to GitHub, run without --setup to deploy."
   exit 0
@@ -47,33 +45,51 @@ fi
 # ── Deploy ────────────────────────────────────────────────────────────────────
 
 echo ""
-echo "=== 1/3  Pushing to private repo ==="
+echo "=== 1/4  Pushing to private repo ==="
 git push private main
 
 echo ""
-echo "=== 2/3  Pulling on server ==="
+echo "=== 2/4  Pulling latest on server ==="
 ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<EOF
   set -e
-
   if [ ! -d "$REMOTE_DIR/.git" ]; then
     echo "--- Cloning repo (first time) ---"
-    rm -rf "$REMOTE_DIR"
     git clone "$REPO" "$REMOTE_DIR"
   else
     echo "--- Pulling latest ---"
-    cd "$REMOTE_DIR"
-    git pull origin main
+    cd "$REMOTE_DIR" && git pull origin main
   fi
 EOF
 
 echo ""
-echo "=== 3/3  Building and restarting via docker compose ==="
+echo "=== 3/4  Building image on server ==="
 ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<EOF
   set -e
   cd "$REMOTE_DIR"
-  docker compose -f build/docker-compose.yml up --build -d app
-  echo "--- Status ---"
-  docker compose -f build/docker-compose.yml ps app
+  docker build -f build/Dockerfile -t azimuthal:local .
+EOF
+
+echo ""
+echo "=== 4/4  Swapping app container ==="
+ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<EOF
+  set -e
+  # Grab current env from running container
+  ENV_ARGS=\$(docker inspect azimuthal-app-1 --format '{{range .Config.Env}}-e "{{.}}" {{end}}' 2>/dev/null || echo "")
+  NETWORK=\$(docker inspect azimuthal-app-1 --format '{{range \$k,\$v := .NetworkSettings.Networks}}{{\$k}}{{end}}' 2>/dev/null || echo "azimuthal_default")
+
+  docker stop azimuthal-app-1 2>/dev/null || true
+  docker rm   azimuthal-app-1 2>/dev/null || true
+
+  docker run -d \
+    --name azimuthal-app-1 \
+    --network "\$NETWORK" \
+    --restart unless-stopped \
+    -p 8080:8080 \
+    \$ENV_ARGS \
+    azimuthal:local serve
+
+  sleep 3
+  docker logs azimuthal-app-1 --tail=6
 EOF
 
 echo ""
