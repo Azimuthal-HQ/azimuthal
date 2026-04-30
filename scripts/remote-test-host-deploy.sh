@@ -1,52 +1,52 @@
 #!/usr/bin/env bash
-# deploy.sh — push to private repo then pull and restart on remote server
+# remote-test-host-deploy.sh — build image, push to ghcr.io, deploy to test host
 #
-# First-time server setup (run once manually):
-#   ssh root@159.223.190.255
-#   git clone git@github.com:Azimuthal-HQ/azimuthal-private.git /opt/azimuthal
-#   cp /opt/azimuthal/.env.example /opt/azimuthal/.env  # then fill in real values
+# First-time setup (run once):
+#   docker login ghcr.io -u <your-github-username> --password-stdin <<< <your-github-pat>
+#   (PAT needs: write:packages scope)
 #
 # Usage:
-#   bash scripts/deploy.sh
+#   bash scripts/remote-test-host-deploy.sh          # tag: latest
+#   bash scripts/remote-test-host-deploy.sh v1.2.3   # custom tag
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 REMOTE_HOST="root@159.223.190.255"
-REMOTE_DIR="/opt/azimuthal"
+IMAGE="ghcr.io/azimuthal-hq/azimuthal"
+TAG="${1:-latest}"
 
 echo ""
-echo "=== 1/3  Building frontend ==="
-cd web && node_modules/.bin/vite build && cd ..
-
-echo ""
-echo "=== 2/3  Pushing to private repo ==="
+echo "=== 1/4  Pushing to private repo ==="
 git push private main
 
 echo ""
-echo "=== 3/3  Deploying to $REMOTE_HOST ==="
-ssh "$REMOTE_HOST" bash <<EOF
+echo "=== 2/4  Building Docker image ($IMAGE:$TAG) ==="
+docker build \
+  -f build/Dockerfile \
+  -t "$IMAGE:$TAG" \
+  --build-arg VERSION="$(git rev-parse --short HEAD)" \
+  .
+
+echo ""
+echo "=== 3/4  Pushing image to ghcr.io ==="
+docker push "$IMAGE:$TAG"
+
+echo ""
+echo "=== 4/4  Deploying to $REMOTE_HOST ==="
+ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<EOF
   set -e
-  cd $REMOTE_DIR
-
-  echo "--- Pulling latest ---"
-  git pull origin main
-
-  echo "--- Building binary ---"
-  go build -o /usr/local/bin/azimuthal ./cmd/server
-
-  echo "--- Restarting service ---"
-  if systemctl is-active --quiet azimuthal; then
-    systemctl restart azimuthal
-  else
-    echo "  (no systemd service found — binary updated, restart manually)"
-  fi
-
-  echo "--- Done ---"
+  cd /root/azimuthal
+  echo "--- Pulling new image ---"
+  docker compose pull app
+  echo "--- Restarting app ---"
+  docker compose up -d app
+  echo "--- Status ---"
+  docker compose ps app
 EOF
 
 echo ""
 echo "=== Deploy complete ==="
-echo "  Host: $REMOTE_HOST"
-echo "  URL:  http://159.223.190.255:8080"
+echo "  Image : $IMAGE:$TAG"
+echo "  Host  : http://159.223.190.255:8080"
