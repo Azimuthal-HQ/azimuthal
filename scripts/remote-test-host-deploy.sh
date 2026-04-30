@@ -90,8 +90,17 @@ ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<EOF
 
   sleep 3
   docker logs azimuthal-app-1 --tail=6
+
+  echo ""
+  echo "--- Creating default admin user (skips if already exists) ---"
+  docker exec azimuthal-app-1 /azimuthal admin create-user \
+    --email "admin@azimuthal.dev" \
+    --name "Admin" \
+    --password "password123" 2>/dev/null && echo "User created." || echo "User already exists, skipping."
 EOF
 
 echo ""
 echo "=== Deploy complete ==="
-echo "  Host : http://159.223.190.255:8080"
+echo "  Host     : http://159.223.190.255:8080"
+echo "  Email    : admin@azimuthal.dev"
+echo "  Password : password123"
