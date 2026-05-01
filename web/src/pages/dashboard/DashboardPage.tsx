@@ -75,8 +75,6 @@ export function DashboardPage() {
   const [formType, setFormType] = useState<SpaceType>('service_desk');
   const [formDescription, setFormDescription] = useState('');
   const [formKey, setFormKey] = useState('');
-  const [keyTouched, setKeyTouched] = useState(false);
-
   const createSpaceMutation = useCreateSpace(orgId);
 
   function resetForm() {
@@ -84,25 +82,21 @@ export function DashboardPage() {
     setFormType('service_desk');
     setFormDescription('');
     setFormKey('');
-    setKeyTouched(false);
   }
 
-  function handleNameChange(value: string) {
-    setFormName(value);
-    if (!keyTouched) setFormKey(deriveKey(value));
-  }
-
-  const keyError = formKey && !/^[A-Z0-9]{1,10}$/.test(formKey)
-    ? 'Key must be 1–10 uppercase letters or digits'
+  const keyError = formType === 'service_desk' && formKey && !/^[A-Z0-9]{1,10}$/.test(formKey)
+    ? 'Abbreviation must be 1–10 uppercase letters or digits'
     : null;
+
+  const keyMissing = formType === 'service_desk' && !formKey.trim();
 
   async function handleCreate() {
     const name = formName.trim();
     if (!name) return;
-    if (keyError) return;
+    if (keyError || keyMissing) return;
 
     const slug = slugify(name);
-    const key = formKey || deriveKey(name);
+    const key = formType === 'service_desk' ? formKey : deriveKey(name);
 
     try {
       const created = await createSpaceMutation.mutateAsync({
@@ -259,7 +253,7 @@ export function DashboardPage() {
                 id="space-name"
                 placeholder="e.g. HR Support"
                 value={formName}
-                onChange={(e) => handleNameChange(e.target.value)}
+                onChange={(e) => setFormName(e.target.value)}
                 autoFocus
               />
             </div>
@@ -293,29 +287,24 @@ export function DashboardPage() {
               </div>
             </div>
 
-            {/* Key — only relevant for service desks */}
+            {/* Key — required for service desks only */}
             {formType === 'service_desk' && (
               <div className="space-y-2">
                 <label htmlFor="space-key" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                  Ticket key{' '}
-                  <span className="font-normal text-[var(--color-text-muted)]">(prefix shown on every ticket)</span>
+                  Ticket abbreviation <span className="text-[var(--color-danger)]">*</span>
                 </label>
-                <div className="flex items-center gap-3">
-                  <Input
-                    id="space-key"
-                    placeholder="e.g. HR"
-                    value={formKey}
-                    onChange={(e) => {
-                      setFormKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10));
-                      setKeyTouched(true);
-                    }}
-                    className="w-28 font-mono"
-                  />
-                  <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                    Tickets will be numbered <span className="font-mono font-medium text-[var(--color-text)]">{formKey || deriveKey(formName) || 'HR'}-1</span>,{' '}
-                    <span className="font-mono font-medium text-[var(--color-text)]">{formKey || deriveKey(formName) || 'HR'}-2</span>, …
-                  </span>
-                </div>
+                <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
+                  A short prefix used to number tickets — e.g. <span className="font-mono">HR</span> → <span className="font-mono">HR-1</span>, <span className="font-mono">HR-2</span>
+                </p>
+                <Input
+                  id="space-key"
+                  placeholder="e.g. HR, SUPPORT, IT"
+                  value={formKey}
+                  onChange={(e) =>
+                    setFormKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))
+                  }
+                  className="w-40 font-mono"
+                />
                 {keyError && (
                   <p className="text-[var(--text-xs)] text-[var(--color-danger)]">{keyError}</p>
                 )}
@@ -345,7 +334,7 @@ export function DashboardPage() {
             <DialogClose asChild>
               <Button variant="outline" type="button">Cancel</Button>
             </DialogClose>
-            <Button onClick={handleCreate} disabled={createSpaceMutation.isPending || !formName.trim()}>
+            <Button onClick={handleCreate} disabled={createSpaceMutation.isPending || !formName.trim() || !!keyMissing || !!keyError}>
               {createSpaceMutation.isPending ? 'Creating...' : 'Create Space'}
             </Button>
           </DialogFooter>
