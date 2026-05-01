@@ -7,7 +7,8 @@
 #   https://github.com/Azimuthal-HQ/azimuthal-private/settings/keys
 #
 # Usage:
-#   bash scripts/remote-test-host-deploy.sh
+#   bash scripts/remote-test-host-deploy.sh          # deploy, keep DB
+#   bash scripts/remote-test-host-deploy.sh --wipe   # deploy + wipe remote DB
 
 set -euo pipefail
 
@@ -17,6 +18,8 @@ REMOTE_HOST="root@159.223.190.255"
 REMOTE_DIR="/root/azimuthal"
 REPO="git@github.com:Azimuthal-HQ/azimuthal-private.git"
 BINARY=/tmp/azimuthal-linux
+WIPE=0
+[[ "${1:-}" == "--wipe" ]] && WIPE=1
 
 # ── First-time setup ──────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--setup" ]]; then
@@ -65,7 +68,7 @@ scp -o StrictHostKeyChecking=no "$BINARY" "$REMOTE_HOST:/tmp/azimuthal-new"
 
 echo ""
 echo "=== 4/4  Swapping app container ==="
-ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" bash <<'EOF'
+ssh -o StrictHostKeyChecking=no "$REMOTE_HOST" WIPE_FLAG="$WIPE" bash <<'EOF'
   set -e
 
   # Build a minimal image around the pre-compiled binary (takes ~1s)
@@ -82,6 +85,34 @@ DOCKERFILE
 
   docker stop azimuthal-app-1 2>/dev/null || true
   docker rm   azimuthal-app-1 2>/dev/null || true
+
+  if [[ "WIPE_FLAG" == "1" ]]; then
+    echo "--- Wiping DB and storage ---"
+    docker stop azimuthal-db-1 azimuthal-storage-1 2>/dev/null || true
+    docker rm   azimuthal-db-1 azimuthal-storage-1 2>/dev/null || true
+    docker volume rm azimuthal_azimuthal_db azimuthal_azimuthal_storage 2>/dev/null || true
+
+    echo "--- Recreating DB and storage ---"
+    docker run -d --name azimuthal-db-1 \
+      --network azimuthal_default \
+      --restart unless-stopped \
+      -v azimuthal_azimuthal_db:/var/lib/postgresql/data \
+      -e POSTGRES_USER=azimuthal \
+      -e POSTGRES_PASSWORD=AzumthalDb92xK \
+      -e POSTGRES_DB=azimuthal \
+      postgres:16-alpine
+
+    docker run -d --name azimuthal-storage-1 \
+      --network azimuthal_default \
+      --restart unless-stopped \
+      -v azimuthal_azimuthal_storage:/data \
+      -e MINIO_ROOT_USER=azimuthal \
+      -e MINIO_ROOT_PASSWORD=Min10str0ng2026 \
+      minio/minio:latest server /data --console-address ":9001"
+
+    echo "--- Waiting for DB to be ready ---"
+    sleep 8
+  fi
 
   docker run -d \
     --name azimuthal-app-1 \
