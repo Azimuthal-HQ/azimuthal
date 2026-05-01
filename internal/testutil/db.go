@@ -122,12 +122,15 @@ func runMigrations(t *testing.T, dsn, schema string, pool *pgxpool.Pool) {
 }
 
 // newPoolWithSchema creates a pgxpool with the search_path set to the given schema.
+// MaxConns is capped at 3 per test to avoid exhausting postgres max_connections
+// when many integration tests run in parallel.
 func newPoolWithSchema(dsn, schema string) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 	poolConfig.ConnConfig.RuntimeParams["search_path"] = fmt.Sprintf("%q, public", schema)
+	poolConfig.MaxConns = 3
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("creating pool with schema: %w", err)
