@@ -272,7 +272,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 		Key:         key,
 	})
 	if err != nil {
-		slog.Error("CreateSpace failed", "error", err, "org_id", orgID)
+		slog.Error("CreateSpace failed", "error", err, "org_id", orgID) //nolint:gosec // G706: org_id is a UUID, not attacker-controlled
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create space")
 		return
 	}
