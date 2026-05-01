@@ -1,0 +1,41 @@
+# Test environment — used by make test-db-up
+# Never use this file in production
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: azimuthal-test-db
+    ports:
+      - "5433:5432"   # port 5433 to avoid conflict with any local postgres on 5432
+    environment:
+      POSTGRES_USER: azimuthal_test
+      POSTGRES_PASSWORD: testpassword
+      POSTGRES_DB: azimuthal_test
+    volumes:
+      - azimuthal_test_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "azimuthal_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  minio-test:
+    image: minio/minio:latest
+    container_name: azimuthal-test-storage
+    ports:
+      - "9001:9000"   # port 9001 to avoid conflict with production minio on 9000
+      - "9002:9001"   # minio console
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - azimuthal_test_storage:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  azimuthal_test_db:
+  azimuthal_test_storage:

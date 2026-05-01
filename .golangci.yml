@@ -1,0 +1,57 @@
+# .golangci.yml — Azimuthal linter configuration
+# Requires golangci-lint v2.x (used via golangci-lint-action@v7)
+
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck  # includes gosimple (merged in v2)
+    # Style
+    - misspell
+    # Complexity
+    - cyclop
+    - gocognit
+    - funlen
+    # Security
+    - gosec
+    - bodyclose
+    # Error handling
+    - wrapcheck
+    - errorlint
+    # Go idioms
+    - godox
+    - nolintlint
+    - revive
+
+  exclusions:
+    paths:
+      - vendor
+      - internal/db/generated
+      - web/node_modules
+    rules:
+      # Relax complexity rules in test files
+      - path: _test\.go
+        linters: [funlen, gocognit, cyclop, wrapcheck]
+      # Skip all linters on generated sqlc output
+      - path: internal/db/generated
+        linters: [all]
+      # TODOs are tracked in issues — only block on FIXME/HACK
+      - linters: [godox]
+        text: "TODO"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

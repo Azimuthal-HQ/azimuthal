@@ -1,0 +1,59 @@
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+!.env.test
+!.env.example
+
+# Editor/IDE
+# .idea/
+# .vscode/
+bin/
+
+# Frontend
+web/node_modules/
+web/playwright-report/
+web/test-results/
+
+# Local data dirs (RSA key persistence path)
+data/
+cmd/server/data/
+
+# Claude Code local settings (never commit)
+.claude/
+# === public-release strips ===
+.gitleaks.toml
+CLAUDE.md
+docs/agent-briefs.md
+docs/github-setup-checklist.md
+docs/project-state.md
+docs/regression-test-checklist.md
+scripts/local-test.sh
+scripts/push-private.sh
+scripts/release-public.sh
+scripts/remote-test-host-deploy.sh
+current-agent-progress/

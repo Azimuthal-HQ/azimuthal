@@ -1,0 +1,43 @@
+# trivy-ignore.yaml — Trivy vulnerability suppression policy
+#
+# Format: OPA Rego module — https://www.openpolicyagent.org/docs/latest/policy-language/
+# Trivy docs: https://trivy.dev/docs/configuration/filtering/#rego-custom-policy
+#
+# ── How to activate ───────────────────────────────────────────────────────────
+# When you need to suppress a finding, do TWO things:
+#
+#   1. Uncomment the `ignore-policy` line in trivy.yaml:
+#        ignore-policy: trivy-ignore.yaml
+#
+#   2. Add a valid Rego rule below (see the template).
+#
+# Once all rules are removed, also remove `ignore-policy` from trivy.yaml
+# to avoid a Rego parse error (empty Rego modules are invalid).
+#
+# ── Required documentation for every suppression ──────────────────────────────
+# Every ignore rule MUST include:
+#   - The CVE / finding ID being suppressed
+#   - Why it is a false positive or accepted risk in Azimuthal's deployment
+#   - A GitHub issue URL tracking the fix or permanent acceptance decision
+#   - An expiry date for review (maximum 90 days from the suppression date)
+#
+# Undocumented suppressions will be rejected in code review.
+#
+# ── Template (copy, uncomment, and fill in) ───────────────────────────────────
+#
+# package trivy
+#
+# import rego.v1
+#
+# default ignore := false
+#
+# ignore if {
+#   # CVE-YYYY-NNNNN: <one-line reason — why not exploitable in our deployment>
+#   # Tracking:  https://github.com/Azimuthal-HQ/azimuthal/issues/NNN
+#   # Review by: YYYY-MM-DD  (max 90 days from today)
+#   input.VulnerabilityID == "CVE-YYYY-NNNNN"
+#   input.PkgName == "affected-package"
+# }
+#
+# ── Active suppressions ───────────────────────────────────────────────────────
+# (none — all findings are currently addressed or do not require suppression)

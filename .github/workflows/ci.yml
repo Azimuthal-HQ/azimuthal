@@ -1,0 +1,648 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.26'
+  POSTGRES_VERSION: '16'
+  BINARY_NAME: azimuthal
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 1: Build
+  # ─────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Build binary
+        run: go build -v -o /tmp/${{ env.BINARY_NAME }} ./cmd/server
+
+      - name: Vet
+        run: go vet ./...
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 2: Test
+  # ─────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    needs: build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: azimuthal_test
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: azimuthal_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
+      JWT_SECRET: ci-test-secret-32-chars-minimum-xx
+      STORAGE_ENDPOINT: http://localhost:9001
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: minioadmin
+      STORAGE_BUCKET: azimuthal-test
+      APP_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9001:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            quay.io/minio/minio:latest server /data
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:9001/minio/health/live && break
+            sleep 2
+          done
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@latest
+
+      - name: Run migrations
+        run: |
+          if find migrations -name '*.sql' -quit 2>/dev/null | grep -q .; then
+            goose -dir migrations postgres "$DATABASE_URL" up
+          else
+            echo "No SQL migration files found — skipping (scaffold phase)"
+          fi
+
+      - name: Run tests with race detector
+        run: |
+          go test \
+            -race \
+            -coverprofile=coverage.out \
+            -covermode=atomic \
+            -coverpkg=./internal/... \
+            -timeout=120s \
+            ./...
+
+      - name: Enforce minimum coverage (80%)
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below the 80% floor"
+            exit 1
+          fi
+          echo "✅ Coverage ${COVERAGE}% meets minimum"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 7
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 3: Lint
+  # ─────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
+          args: --config=.golangci.yml --timeout=5m
+
+      - name: Check go.sum is up to date
+        run: |
+          go mod tidy
+          git diff --exit-code go.sum || \
+            (echo "❌ go.sum out of date — run go mod tidy" && exit 1)
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 4A: SAST
+  # ─────────────────────────────────────────────────────────────
+  sast:
+    name: SAST (gosec)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run gosec (SARIF output)
+        uses: securego/gosec@master
+        with:
+          args: >-
+            -severity high
+            -confidence high
+            -exclude-dir=vendor
+            -fmt sarif
+            -out gosec-results.sarif
+            ./...
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true  # requires GitHub Advanced Security; skip gracefully on free plans
+        with:
+          sarif_file: gosec-results.sarif
+          category: gosec
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Fail on HIGH+ findings
+        run: |
+          gosec \
+            -severity high \
+            -confidence high \
+            -exclude-dir=vendor \
+            ./...
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 4B: Dependency vulnerability scanning
+  # ─────────────────────────────────────────────────────────────
+  vuln-scan:
+    name: Dependency Scan (govulncheck)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+      - name: Generate JSON vulnerability report
+        if: always()
+        run: govulncheck -json ./... > vuln-report.json || true
+
+      - name: Upload vulnerability report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vuln-report
+          path: vuln-report.json
+          retention-days: 7
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 4C: Secret scanning
+  # ─────────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 4D: Container scanning
+  # ─────────────────────────────────────────────────────────────
+  container-scan:
+    name: Container Scan (trivy)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg VERSION=pr-${{ github.sha }} \
+            -t ${{ env.BINARY_NAME }}:scan-${{ github.sha }} \
+            -f build/Dockerfile \
+            .
+
+      - name: Run Trivy (SARIF output)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.BINARY_NAME }}:scan-${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true  # requires GitHub Advanced Security; skip gracefully on free plans
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+      - name: Fail on HIGH/CRITICAL findings
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.BINARY_NAME }}:scan-${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      - name: Clean up image
+        if: always()
+        run: docker rmi ${{ env.BINARY_NAME }}:scan-${{ github.sha }} || true
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 5: E2E Tests
+  # ─────────────────────────────────────────────────────────────
+  e2e:
+    name: E2E Tests (Playwright)
+    needs: [build, test]
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: azimuthal_test
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: azimuthal_test
+        ports:
+          - "5433:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
+      JWT_SECRET: ci-e2e-test-secret-32-chars-minimum
+      STORAGE_ENDPOINT: http://localhost:9001
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: minioadmin
+      STORAGE_BUCKET: azimuthal-test
+      APP_ENV: test
+      APP_PORT: "8082"
+      BASE_URL: http://localhost:8082
+      AZIMUTHAL_BINARY: /tmp/azimuthal-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9001:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            quay.io/minio/minio:latest server /data
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:9001/minio/health/live && break
+            sleep 2
+          done
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install goose and run migrations
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@latest
+          goose -dir migrations postgres "$DATABASE_URL" up
+
+      - name: Build frontend
+        run: cd web && npm ci && npm run build
+
+      - name: Build binary
+        run: |
+          go build \
+            -trimpath \
+            -ldflags="-s -w" \
+            -o /tmp/azimuthal-test \
+            ./cmd/server
+
+      - name: Install Playwright browsers
+        run: cd web && npx playwright install chromium --with-deps
+
+      - name: Run E2E tests
+        run: cd web && npx playwright test --reporter=list
+        timeout-minutes: 10
+        env:
+          BASE_URL: http://localhost:8082
+          AZIMUTHAL_BINARY: /tmp/azimuthal-test
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 7
+
+      - name: Upload test results on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-results
+          path: web/test-results/
+          retention-days: 3
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 6: API Docs Check
+  # ─────────────────────────────────────────────────────────────
+  docs-check:
+    name: API Docs Check
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install swag v2
+        run: go install github.com/swaggo/swag/v2/cmd/swag@latest
+
+      - name: Install PyYAML for validation
+        run: pip install pyyaml --break-system-packages
+
+      - name: Verify API spec is up to date with code
+        run: |
+          # Save current committed spec
+          cp docs/api/openapi.yaml /tmp/committed-spec.yaml
+
+          # Regenerate from annotations
+          make docs
+
+          # Compare — fail if spec differs from committed version
+          if ! diff -q docs/api/openapi.yaml /tmp/committed-spec.yaml > /dev/null 2>&1; then
+            echo "❌ API spec is out of sync with handler annotations"
+            echo ""
+            echo "A handler was modified without regenerating the spec."
+            echo "Run 'make docs' locally and commit docs/api/openapi.yaml"
+            echo ""
+            echo "Diff:"
+            diff /tmp/committed-spec.yaml docs/api/openapi.yaml || true
+            exit 1
+          fi
+          echo "✅ API spec is up to date"
+
+      - name: Validate OpenAPI 3.0 structure
+        run: |
+          python3 << 'EOF'
+          import yaml, sys
+
+          spec = yaml.safe_load(open('docs/api/openapi.yaml'))
+          errors = []
+
+          # Must be OpenAPI 3.x
+          if not spec.get('openapi', '').startswith('3.'):
+              errors.append(f"Not OAS3: openapi field is '{spec.get('openapi')}'")
+
+          # Must have title and version
+          info = spec.get('info', {})
+          if not info.get('title'):
+              errors.append("info.title is empty")
+          if not info.get('version'):
+              errors.append("info.version is empty")
+
+          # Must have BearerAuth security scheme
+          schemes = spec.get('components', {}).get('securitySchemes', {})
+          if 'BearerAuth' not in schemes:
+              errors.append("BearerAuth not found in components.securitySchemes")
+
+          # Must have required paths
+          paths = spec.get('paths', {})
+          required = ['/auth/login', '/auth/me']
+          for p in required:
+              if p not in paths:
+                  errors.append(f"Required path missing: {p}")
+
+          # All non-public endpoints must have security defined
+          public = [('/auth/login', 'post'), ('/auth/register', 'post'),
+                    ('/auth/refresh', 'post'),
+                    ('/health', 'get'), ('/ready', 'get')]
+          for path, methods in paths.items():
+              for method, op in methods.items():
+                  if method == 'parameters' or not isinstance(op, dict):
+                      continue
+                  if (path, method) in public:
+                      continue
+                  if not op.get('security'):
+                      errors.append(f"Missing security on {method.upper()} {path}")
+
+          if errors:
+              print(f"❌ OpenAPI spec validation failed ({len(errors)} errors):")
+              for e in errors:
+                  print(f"  - {e}")
+              sys.exit(1)
+
+          print(f"✅ OpenAPI 3.0 spec valid")
+          print(f"   Version: {spec['openapi']}")
+          print(f"   Endpoints: {len(paths)}")
+          tags = set()
+          for p in paths.values():
+              for m in p.values():
+                  if isinstance(m, dict):
+                      tags.update(m.get('tags', []))
+          print(f"   Tags: {sorted(tags)}")
+          EOF
+
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 7: Docker image boots and serves the app
+  # Audit ref: testing-audit.md §7.3 — would have caught v0.1.1 directly.
+  # ─────────────────────────────────────────────────────────────
+  docker-e2e:
+    name: Docker image boot
+    needs: build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: azimuthal_test
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: azimuthal_test
+        ports:
+          - "5433:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg VERSION=ci-${{ github.sha }} \
+            -t ${{ env.BINARY_NAME }}:boot-${{ github.sha }} \
+            -f build/Dockerfile \
+            .
+
+      - name: Run image and wait for /health
+        run: |
+          docker run -d \
+            --name azimuthal-boot \
+            --network host \
+            -e DATABASE_URL=postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable \
+            -e JWT_SECRET=ci-docker-boot-secret-32-chars-min \
+            -e STORAGE_ENDPOINT=http://localhost:9001 \
+            -e STORAGE_ACCESS_KEY=minioadmin \
+            -e STORAGE_SECRET_KEY=minioadmin \
+            -e STORAGE_BUCKET=azimuthal-test \
+            -e APP_ENV=test \
+            -e APP_PORT=8080 \
+            ${{ env.BINARY_NAME }}:boot-${{ github.sha }}
+
+          deadline=$((SECONDS + 60))
+          until curl -fsS http://localhost:8080/health > /dev/null 2>&1; do
+            if [ $SECONDS -ge $deadline ]; then
+              echo "❌ /health did not return 200 within 60s"
+              docker logs azimuthal-boot || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "✅ /health returned 200"
+
+      - name: Frontend bundle is served at /
+        run: |
+          BODY=$(curl -fsS http://localhost:8080/)
+          # Vite emits <script type="module" crossorigin src="/assets/...">; allow
+          # any attributes between "module" and the src=/assets/ marker.
+          echo "$BODY" | grep -Eq 'type="module"[^>]*src="/assets/' \
+            || (echo "❌ root response missing compiled JS bundle marker"; echo "$BODY" | head -40; exit 1)
+          echo "✅ root serves a compiled JS bundle"
+
+      - name: API health endpoint returns JSON
+        run: |
+          CT=$(curl -fsS -o /dev/null -w '%{content_type}' http://localhost:8080/health)
+          echo "$CT" | grep -q "application/json" \
+            || (echo "❌ /health Content-Type is $CT, expected application/json"; exit 1)
+          echo "✅ /health returns application/json"
+
+      - name: Tear down image
+        if: always()
+        run: |
+          docker stop azimuthal-boot || true
+          docker rm azimuthal-boot || true
+          docker rmi ${{ env.BINARY_NAME }}:boot-${{ github.sha }} || true
+
+
+  # ─────────────────────────────────────────────────────────────
+  # FINAL GATE
+  # ─────────────────────────────────────────────────────────────
+  all-checks:
+    name: All Gates Passed
+    needs: [build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all gates
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "❌ One or more pipeline gates failed"
+            exit 1
+          fi
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "⚠️ One or more pipeline gates were cancelled"
+            exit 1
+          fi
+          echo "✅ All gates passed — safe to merge"

@@ -1,0 +1,161 @@
+package api
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+
+	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
+	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
+	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
+	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
+	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
+	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+)
+
+// RouterConfig holds all the dependencies needed to build the API router.
+type RouterConfig struct {
+	Authenticator       *auth.Authenticator
+	AuthHandler         *authapi.Handler
+	TicketHandler       *ticketsapi.Handler
+	WikiHandler         *wikiapi.Handler
+	ProjectHandler      *projectsapi.Handler
+	SpaceHandler        *spacesapi.Handler
+	CommentHandler      *commentsapi.Handler
+	NotificationHandler *notificationsapi.Handler
+	WorkflowHandler     *workflowsapi.Handler
+	SPAHandler          http.Handler // serves the embedded frontend; nil disables SPA serving
+	// AllowedOrigins is the explicit CORS allow-list. nil falls back to the
+	// permissive wildcard for backwards compatibility with existing tests.
+	AllowedOrigins []string
+	// QueueStatus is reported in the /health response: "ok", "disabled", or "error".
+	QueueStatus string
+}
+
+// NewRouter builds the unified chi router with all routes and middleware.
+func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup naturally grows with routes
+	r := chi.NewRouter()
+
+	// Global middleware stack
+	r.Use(Recoverer)
+	r.Use(RequestID)
+	r.Use(Logging)
+	if cfg.AllowedOrigins == nil {
+		r.Use(CORS)
+	} else {
+		r.Use(NewCORS(cfg.AllowedOrigins))
+	}
+
+	// Public endpoints (no auth required)
+	queueStatus := cfg.QueueStatus
+	if queueStatus == "" {
+		queueStatus = "disabled"
+	}
+	r.Get("/health", HandleHealthWithQueue(queueStatus))
+	r.Get("/ready", HandleReady)
+
+	// API documentation (no auth required)
+	RegisterDocsRoutes(r)
+
+	// Auth endpoints (mostly public, /me is protected)
+	r.Route("/api/v1/auth", func(r chi.Router) {
+		r.Mount("/", cfg.AuthHandler.Routes())
+
+		// /me requires authentication — uses the same JWT middleware as
+		// all other protected endpoints to avoid redirect loops.
+		r.Group(func(r chi.Router) {
+			r.Use(cfg.Authenticator.RequireAuth)
+			r.Get("/me", cfg.AuthHandler.Me)
+			r.Patch("/me", cfg.AuthHandler.UpdateMe)
+		})
+	})
+
+	// Protected API endpoints
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(cfg.Authenticator.RequireAuth)
+
+		// Organization management
+		r.Get("/orgs/{orgID}", cfg.SpaceHandler.GetOrg)
+		r.Patch("/orgs/{orgID}", cfg.SpaceHandler.UpdateOrg)
+
+		// Spaces (scoped by org)
+		r.Route("/orgs/{orgID}/spaces", func(r chi.Router) {
+			r.Mount("/", cfg.SpaceHandler.Routes())
+		})
+
+		// Comments — new polymorphic routes (tickets, project-items, wiki)
+		if cfg.CommentHandler != nil {
+			r.Route("/orgs/{orgID}/spaces/{spaceID}/{entityType}/{entityID}/comments", func(r chi.Router) {
+				r.Get("/", cfg.CommentHandler.List)
+				r.Post("/", cfg.CommentHandler.Create)
+			})
+			// Legacy item-scoped comments route (deprecated, kept for one release)
+			r.Route("/orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments", func(r chi.Router) {
+				r.Get("/", cfg.CommentHandler.ListLegacy)
+				r.Post("/", cfg.CommentHandler.CreateLegacy)
+			})
+		}
+
+		// Notifications (scoped to current user)
+		if cfg.NotificationHandler != nil {
+			r.Route("/notifications", func(r chi.Router) {
+				r.Mount("/", cfg.NotificationHandler.Routes())
+			})
+		}
+
+		// Labels (scoped by org)
+		r.Route("/orgs/{orgID}/labels", func(r chi.Router) {
+			r.Get("/", cfg.ProjectHandler.ListLabels)
+			r.Post("/", cfg.ProjectHandler.CreateLabel)
+			r.Delete("/{labelID}", cfg.ProjectHandler.DeleteLabel)
+		})
+
+		// Workflows (org-scoped CRUD)
+		if cfg.WorkflowHandler != nil {
+			r.Route("/orgs/{orgID}/workflows", func(r chi.Router) {
+				r.Mount("/", cfg.WorkflowHandler.OrgRoutes())
+			})
+		}
+
+		// Space lookup by ID (no org prefix needed for child pages)
+		r.Get("/spaces/{spaceID}", cfg.SpaceHandler.Get)
+
+		// Tickets (scoped by space)
+		r.Route("/spaces/{spaceID}/tickets", func(r chi.Router) {
+			r.Mount("/", cfg.TicketHandler.Routes())
+			if cfg.WorkflowHandler != nil {
+				r.Post("/{ticketID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToTicket)
+			}
+		})
+
+		// Wiki pages (scoped by space)
+		r.Route("/spaces/{spaceID}/wiki", func(r chi.Router) {
+			r.Mount("/", cfg.WikiHandler.Routes())
+		})
+
+		// Projects (scoped by space)
+		r.Route("/spaces/{spaceID}/projects", func(r chi.Router) {
+			r.Mount("/", cfg.ProjectHandler.Routes())
+			if cfg.WorkflowHandler != nil {
+				r.Post("/items/{itemID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToItem)
+			}
+		})
+
+		// Space workflow (read-only, space-scoped)
+		if cfg.WorkflowHandler != nil {
+			r.Route("/spaces/{spaceID}/workflow", func(r chi.Router) {
+				r.Mount("/", cfg.WorkflowHandler.SpaceRoutes())
+			})
+		}
+	})
+
+	// SPA frontend: serve static assets and fall back to index.html
+	if cfg.SPAHandler != nil {
+		r.NotFound(cfg.SPAHandler.ServeHTTP)
+	}
+
+	return r
+}
