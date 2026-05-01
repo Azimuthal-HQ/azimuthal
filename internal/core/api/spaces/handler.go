@@ -2,6 +2,7 @@
 package spaces
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,14 +15,27 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
 
+// WorkflowAssigner assigns a default workflow to a newly created space.
+type WorkflowAssigner interface {
+	AssignDefaultWorkflowToSpace(ctx context.Context, orgID uuid.UUID, spaceType string, spaceID uuid.UUID) error
+}
+
 // Handler holds the dependencies for space HTTP handlers.
 type Handler struct {
-	queries *generated.Queries
+	queries  *generated.Queries
+	wfAssign WorkflowAssigner
 }
 
 // NewHandler creates a space Handler.
 func NewHandler(queries *generated.Queries) *Handler {
 	return &Handler{queries: queries}
+}
+
+// WithWorkflowAssigner attaches a WorkflowAssigner to the handler so new spaces
+// are automatically assigned their default workflow.
+func (h *Handler) WithWorkflowAssigner(wa WorkflowAssigner) *Handler {
+	h.wfAssign = wa
+	return h
 }
 
 // Routes returns a chi.Router with all space endpoints mounted.
@@ -240,6 +254,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		slog.Error("AddSpaceMember failed", "error", err, "space_id", space.ID)
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to add creator as member")
 		return
+	}
+
+	// Assign the default workflow for this space type (best-effort; non-fatal).
+	if h.wfAssign != nil {
+		if err := h.wfAssign.AssignDefaultWorkflowToSpace(r.Context(), orgID, req.Type, space.ID); err != nil {
+			slog.Warn("AssignDefaultWorkflowToSpace failed", "error", err, "space_id", space.ID)
+		}
 	}
 
 	respond.JSON(w, http.StatusCreated, space)

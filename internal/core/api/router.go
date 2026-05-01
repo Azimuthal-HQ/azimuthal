@@ -12,6 +12,7 @@ import (
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
+	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 )
 
@@ -25,6 +26,7 @@ type RouterConfig struct {
 	SpaceHandler        *spacesapi.Handler
 	CommentHandler      *commentsapi.Handler
 	NotificationHandler *notificationsapi.Handler
+	WorkflowHandler     *workflowsapi.Handler
 	SPAHandler          http.Handler // serves the embedded frontend; nil disables SPA serving
 	// AllowedOrigins is the explicit CORS allow-list. nil falls back to the
 	// permissive wildcard for backwards compatibility with existing tests.
@@ -111,9 +113,19 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			r.Delete("/{labelID}", cfg.ProjectHandler.DeleteLabel)
 		})
 
+		// Workflows (org-scoped CRUD)
+		if cfg.WorkflowHandler != nil {
+			r.Route("/orgs/{orgID}/workflows", func(r chi.Router) {
+				r.Mount("/", cfg.WorkflowHandler.OrgRoutes())
+			})
+		}
+
 		// Tickets (scoped by space)
 		r.Route("/spaces/{spaceID}/tickets", func(r chi.Router) {
 			r.Mount("/", cfg.TicketHandler.Routes())
+			if cfg.WorkflowHandler != nil {
+				r.Post("/{ticketID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToTicket)
+			}
 		})
 
 		// Wiki pages (scoped by space)
@@ -124,7 +136,17 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 		// Projects (scoped by space)
 		r.Route("/spaces/{spaceID}/projects", func(r chi.Router) {
 			r.Mount("/", cfg.ProjectHandler.Routes())
+			if cfg.WorkflowHandler != nil {
+				r.Post("/items/{itemID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToItem)
+			}
 		})
+
+		// Space workflow (read-only, space-scoped)
+		if cfg.WorkflowHandler != nil {
+			r.Route("/spaces/{spaceID}/workflow", func(r chi.Router) {
+				r.Mount("/", cfg.WorkflowHandler.SpaceRoutes())
+			})
+		}
 	})
 
 	// SPA frontend: serve static assets and fall back to index.html

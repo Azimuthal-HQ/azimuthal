@@ -36,6 +36,12 @@ SET status = $2, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
+-- name: UpdateTicketWorkflowState :one
+UPDATE tickets
+SET status = $2, workflow_state_id = $3, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
 -- name: SoftDeleteTicket :exec
 UPDATE tickets SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL;
 

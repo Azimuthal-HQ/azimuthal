@@ -475,6 +475,94 @@ components:
         email:
           type: string
       type: object
+    generated.ProjectItem:
+      properties:
+        assignee_id:
+          type: string
+        created_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        deleted_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        description:
+          type: string
+        due_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        id:
+          type: string
+        kind:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        number:
+          type: integer
+        parent_id:
+          type: string
+        priority:
+          type: string
+        rank:
+          type: string
+        reporter_id:
+          type: string
+        resolved_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        search_vector: {}
+        space_id:
+          type: string
+        sprint_id:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        updated_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        workflow_state_id:
+          type: string
+      type: object
+    generated.Ticket:
+      properties:
+        assignee_id:
+          type: string
+        created_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        deleted_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        description:
+          type: string
+        due_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        id:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        number:
+          type: integer
+        priority:
+          type: string
+        rank:
+          type: string
+        reporter_id:
+          type: string
+        resolved_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        search_vector: {}
+        space_id:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        updated_at:
+          $ref: '#/components/schemas/pgtype.Timestamptz'
+        workflow_state_id:
+          type: string
+      type: object
     notifications.listNotificationsResponse:
       properties:
         notifications:
@@ -504,11 +592,134 @@ components:
         title:
           type: string
       type: object
+    pgtype.InfinityModifier:
+      enum:
+      - 1
+      - 0
+      - -1
+      type: integer
+      x-enum-varnames:
+      - Infinity
+      - Finite
+      - NegativeInfinity
+    pgtype.Timestamptz:
+      properties:
+        infinityModifier:
+          $ref: '#/components/schemas/pgtype.InfinityModifier'
+        time:
+          type: string
+        valid:
+          type: boolean
+      type: object
     projects.rankItemRequest:
       properties:
         after_id:
           type: string
         before_id:
+          type: string
+      type: object
+    workflow.State:
+      properties:
+        category:
+          description: '"todo", "in_progress", "done"'
+          type: string
+        color:
+          type: string
+        created_at:
+          type: string
+        id:
+          type: string
+        is_initial:
+          type: boolean
+        name:
+          type: string
+        position:
+          type: integer
+        workflow_id:
+          type: string
+      type: object
+    workflow.Transition:
+      properties:
+        created_at:
+          type: string
+        from_state_id:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        to_state_id:
+          type: string
+        workflow_id:
+          type: string
+      type: object
+    workflow.Workflow:
+      properties:
+        applies_to:
+          description: '"tickets", "project_items", "both"'
+          type: string
+        created_at:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        is_default:
+          type: boolean
+        name:
+          type: string
+        org_id:
+          type: string
+        updated_at:
+          type: string
+      type: object
+    workflows.createStateRequest:
+      properties:
+        category:
+          type: string
+        color:
+          type: string
+        is_initial:
+          type: boolean
+        name:
+          type: string
+        position:
+          type: integer
+      type: object
+    workflows.createTransitionRequest:
+      properties:
+        from_state_id:
+          type: string
+        name:
+          type: string
+        to_state_id:
+          type: string
+      type: object
+    workflows.createWorkflowRequest:
+      properties:
+        applies_to:
+          type: string
+        description:
+          type: string
+        is_default:
+          type: boolean
+        name:
+          type: string
+      type: object
+    workflows.updateWorkflowRequest:
+      properties:
+        applies_to:
+          type: string
+        description:
+          type: string
+        is_default:
+          type: boolean
+        name:
+          type: string
+      type: object
+    workflows.workflowTransitionRequest:
+      properties:
+        state_id:
           type: string
       type: object
   securitySchemes:
@@ -1667,6 +1878,545 @@ paths:
       summary: Remove space member
       tags:
       - members
+  /orgs/{orgID}/workflows:
+    get:
+      description: Returns all workflows belonging to the organization.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/workflow.Workflow'
+                type: array
+          description: Workflows
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid org ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List workflows
+      tags:
+      - workflows
+    post:
+      description: Creates a new workflow for the organization.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.createWorkflowRequest'
+                description: Workflow definition
+                summary: body
+        description: Workflow definition
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.Workflow'
+          description: Created workflow
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Create workflow
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}:
+    delete:
+      description: Deletes a workflow by ID.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Delete workflow
+      tags:
+      - workflows
+    get:
+      description: Returns a workflow by ID.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.Workflow'
+          description: Workflow
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Get workflow
+      tags:
+      - workflows
+    put:
+      description: Updates a workflow's name, description, and default flag.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.updateWorkflowRequest'
+                description: Updated fields
+                summary: body
+        description: Updated fields
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.Workflow'
+          description: Updated workflow
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Update workflow
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/states:
+    get:
+      description: Returns all states for a workflow, ordered by position.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/workflow.State'
+                type: array
+          description: States
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List workflow states
+      tags:
+      - workflows
+    post:
+      description: Adds a state to a workflow.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.createStateRequest'
+                description: State definition
+                summary: body
+        description: State definition
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.State'
+          description: Created state
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Create workflow state
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/states/{stateID}:
+    delete:
+      description: Removes a state from a workflow.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: State ID
+        in: path
+        name: stateID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Delete workflow state
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/transitions:
+    get:
+      description: Returns all transitions for a workflow.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/workflow.Transition'
+                type: array
+          description: Transitions
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List workflow transitions
+      tags:
+      - workflows
+    post:
+      description: Adds a transition between two states in a workflow.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.createTransitionRequest'
+                description: Transition definition
+                summary: body
+        description: Transition definition
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.Transition'
+          description: Created transition
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Create workflow transition
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}:
+    delete:
+      description: Removes a transition from a workflow.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Delete workflow transition
+      tags:
+      - workflows
   /ready:
     get:
       description: Returns {"status":"ready"} when the server is ready to accept traffic.
@@ -2396,6 +3146,76 @@ paths:
       security:
       - BearerAuth: []
       summary: Update item status
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/items/{itemID}/workflow-state:
+    post:
+      description: Validates and applies a workflow state transition to a project
+        item.
+      parameters:
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.workflowTransitionRequest'
+                description: Target state ID
+                summary: body
+        description: Target state ID
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/generated.ProjectItem'
+          description: Updated item
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid transition
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Apply workflow transition (project item)
       tags:
       - projects
   /spaces/{spaceID}/projects/items/search:
@@ -3504,6 +4324,75 @@ paths:
       summary: Transition ticket status
       tags:
       - tickets
+  /spaces/{spaceID}/tickets/{ticketID}/workflow-state:
+    post:
+      description: Validates and applies a workflow state transition to a ticket.
+      parameters:
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.workflowTransitionRequest'
+                description: Target state ID
+                summary: body
+        description: Target state ID
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/generated.Ticket'
+          description: Updated ticket
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid transition
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Apply workflow transition (ticket)
+      tags:
+      - tickets
   /spaces/{spaceID}/tickets/kanban:
     get:
       description: Returns tickets grouped by status for kanban board display.
@@ -4347,5 +5236,87 @@ paths:
       summary: Page tree
       tags:
       - wiki
+  /spaces/{spaceID}/workflow:
+    get:
+      description: Returns the workflow assigned to a space.
+      parameters:
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.Workflow'
+          description: Workflow
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Get space workflow
+      tags:
+      - workflows
+  /spaces/{spaceID}/workflow/states:
+    get:
+      description: Returns the ordered list of workflow states for a space.
+      parameters:
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/workflow.State'
+                type: array
+          description: States
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Get space workflow states
+      tags:
+      - workflows
 servers:
 - url: localhost:8080/api/v1

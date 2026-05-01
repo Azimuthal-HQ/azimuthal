@@ -113,6 +113,17 @@ export type SpaceType = 'service_desk' | 'wiki' | 'project';
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type SprintStatus = 'planning' | 'active' | 'completed';
 
+export interface WorkflowState {
+  id: string;
+  workflow_id: string;
+  name: string;
+  category: 'todo' | 'in_progress' | 'done';
+  color: string;
+  position: number;
+  is_initial: boolean;
+  created_at: string;
+}
+
 export interface Organization {
   id: string;
   name: string;
@@ -842,6 +853,7 @@ export const queryKeys = {
   roadmapOverdue: (spaceId: string) => ['roadmapOverdue', spaceId] as const,
   roadmapSprints: (spaceId: string) => ['roadmapSprints', spaceId] as const,
   itemSearch: (spaceId: string, q: string) => ['itemSearch', spaceId, q] as const,
+  workflowStates: (spaceId: string) => ['workflowStates', spaceId] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -1377,6 +1389,20 @@ export function useCreateSprint(spaceId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.sprints(spaceId) });
     },
+  });
+}
+
+async function fetchWorkflowStates(spaceId: string): Promise<WorkflowState[]> {
+  return apiFetch<WorkflowState[]>(`/api/v1/spaces/${spaceId}/workflow/states`);
+}
+
+export function useWorkflowStates(spaceId: string, opts?: QueryOpts<WorkflowState[]>) {
+  return useQuery<WorkflowState[], APIError>({
+    queryKey: queryKeys.workflowStates(spaceId),
+    queryFn: () => fetchWorkflowStates(spaceId),
+    enabled: !!spaceId,
+    staleTime: 5 * 60 * 1000, // workflow states rarely change
+    ...opts,
   });
 }
 

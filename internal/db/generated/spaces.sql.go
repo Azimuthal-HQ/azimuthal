@@ -47,7 +47,7 @@ func (q *Queries) AddSpaceMember(ctx context.Context, arg AddSpaceMemberParams) 
 const createSpace = `-- name: CreateSpace :one
 INSERT INTO spaces (id, org_id, slug, name, description, type, icon, is_private, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at
+RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id
 `
 
 type CreateSpaceParams struct {
@@ -88,12 +88,13 @@ func (q *Queries) CreateSpace(ctx context.Context, arg CreateSpaceParams) (Space
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.WorkflowID,
 	)
 	return i, err
 }
 
 const getSpaceByID = `-- name: GetSpaceByID :one
-SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at FROM spaces WHERE id = $1 AND deleted_at IS NULL
+SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id FROM spaces WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetSpaceByID(ctx context.Context, id uuid.UUID) (Space, error) {
@@ -112,12 +113,13 @@ func (q *Queries) GetSpaceByID(ctx context.Context, id uuid.UUID) (Space, error)
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.WorkflowID,
 	)
 	return i, err
 }
 
 const getSpaceBySlug = `-- name: GetSpaceBySlug :one
-SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at FROM spaces WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL
+SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id FROM spaces WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL
 `
 
 type GetSpaceBySlugParams struct {
@@ -141,6 +143,7 @@ func (q *Queries) GetSpaceBySlug(ctx context.Context, arg GetSpaceBySlugParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.WorkflowID,
 	)
 	return i, err
 }
@@ -217,7 +220,7 @@ func (q *Queries) ListSpaceMembers(ctx context.Context, spaceID uuid.UUID) ([]Li
 }
 
 const listSpacesByOrg = `-- name: ListSpacesByOrg :many
-SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at FROM spaces WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC
+SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id FROM spaces WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC
 `
 
 func (q *Queries) ListSpacesByOrg(ctx context.Context, orgID uuid.UUID) ([]Space, error) {
@@ -242,6 +245,7 @@ func (q *Queries) ListSpacesByOrg(ctx context.Context, orgID uuid.UUID) ([]Space
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.WorkflowID,
 		); err != nil {
 			return nil, err
 		}
@@ -254,7 +258,7 @@ func (q *Queries) ListSpacesByOrg(ctx context.Context, orgID uuid.UUID) ([]Space
 }
 
 const listSpacesByType = `-- name: ListSpacesByType :many
-SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at FROM spaces WHERE org_id = $1 AND type = $2 AND deleted_at IS NULL ORDER BY name ASC
+SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id FROM spaces WHERE org_id = $1 AND type = $2 AND deleted_at IS NULL ORDER BY name ASC
 `
 
 type ListSpacesByTypeParams struct {
@@ -284,6 +288,7 @@ func (q *Queries) ListSpacesByType(ctx context.Context, arg ListSpacesByTypePara
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.WorkflowID,
 		); err != nil {
 			return nil, err
 		}
@@ -322,7 +327,7 @@ const updateSpace = `-- name: UpdateSpace :one
 UPDATE spaces
 SET name = $2, description = $3, icon = $4, is_private = $5
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at
+RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id
 `
 
 type UpdateSpaceParams struct {
@@ -355,6 +360,7 @@ func (q *Queries) UpdateSpace(ctx context.Context, arg UpdateSpaceParams) (Space
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.WorkflowID,
 	)
 	return i, err
 }

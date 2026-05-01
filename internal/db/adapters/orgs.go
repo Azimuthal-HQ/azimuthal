@@ -15,12 +15,19 @@ import (
 // OrgProvisionerAdapter implements auth.OrgProvisioner using sqlc-generated queries.
 // It creates a personal organization and owner membership for newly registered users.
 type OrgProvisionerAdapter struct {
-	q *generated.Queries
+	q       *generated.Queries
+	wfSeed  *WorkflowAdapter
 }
 
 // NewOrgProvisionerAdapter creates an OrgProvisionerAdapter.
 func NewOrgProvisionerAdapter(q *generated.Queries) *OrgProvisionerAdapter {
 	return &OrgProvisionerAdapter{q: q}
+}
+
+// NewOrgProvisionerAdapterWithWorkflows creates an OrgProvisionerAdapter that
+// seeds default workflows when a new org is created.
+func NewOrgProvisionerAdapterWithWorkflows(q *generated.Queries, wf *WorkflowAdapter) *OrgProvisionerAdapter {
+	return &OrgProvisionerAdapter{q: q, wfSeed: wf}
 }
 
 // ProvisionOrg creates a personal organization with a slug derived from the display name.
@@ -44,6 +51,12 @@ func (a *OrgProvisionerAdapter) ProvisionOrg(ctx context.Context, displayName st
 	})
 	if err != nil {
 		return uuid.Nil, "", fmt.Errorf("provisioning org: %w", err)
+	}
+
+	if a.wfSeed != nil {
+		if err := a.wfSeed.SeedDefaultWorkflows(ctx, org.ID); err != nil {
+			return uuid.Nil, "", fmt.Errorf("seeding default workflows: %w", err)
+		}
 	}
 	return org.ID, slug, nil
 }

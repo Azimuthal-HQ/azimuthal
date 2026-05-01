@@ -12,7 +12,10 @@ import { WikiPage } from './pages/wiki/WikiPage';
 import { BacklogPage } from './pages/projects/BacklogPage';
 import { ItemDetailPage } from './pages/projects/ItemDetailPage';
 import { SprintBoardPage } from './pages/projects/SprintBoardPage';
+import { SprintsPage } from './pages/projects/SprintsPage';
+import { RoadmapPage } from './pages/projects/RoadmapPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
+import { WorkflowAdminPage } from './pages/settings/WorkflowAdminPage';
 import { useAuth } from './lib/auth';
 
 // Shell wrapper that wires logout from useAuth so the TopNav button is functional.
@@ -44,9 +47,12 @@ export function App() {
         <Route path="spaces/:spaceId/backlog" element={<ErrorBoundary><BacklogPage /></ErrorBoundary>} />
         <Route path="spaces/:spaceId/backlog/:itemKey" element={<ErrorBoundary><ItemDetailPage /></ErrorBoundary>} />
         <Route path="spaces/:spaceId/board" element={<ErrorBoundary><SprintBoardPage /></ErrorBoundary>} />
+        <Route path="spaces/:spaceId/sprints" element={<ErrorBoundary><SprintsPage /></ErrorBoundary>} />
+        <Route path="spaces/:spaceId/roadmap" element={<ErrorBoundary><RoadmapPage /></ErrorBoundary>} />
 
         <Route path="settings" element={<SettingsPage />} />
         <Route path="settings/:section" element={<SettingsPage />} />
+        <Route path="admin/workflows" element={<WorkflowAdminPage />} />
       </Route>
     </Routes>
   );

@@ -42,6 +42,12 @@ SET status = $2, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
+-- name: UpdateProjectItemWorkflowState :one
+UPDATE project_items
+SET status = $2, workflow_state_id = $3, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
 -- name: UpdateProjectItemSprint :exec
 UPDATE project_items
 SET sprint_id = $2, updated_at = now()

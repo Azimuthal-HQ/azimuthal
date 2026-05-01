@@ -23,34 +23,43 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   useActiveSprint,
   useSprintItems,
+  useWorkflowStates,
   queryKeys,
   type ProjectItem,
+  type WorkflowState,
 } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-// P2.7: "open" is the backend default status — treat it as the leftmost column.
-// TODO(P6): replace this static map with the workflow engine status graph.
-type ColumnId = 'open' | 'todo' | 'in_progress' | 'in_review' | 'done';
-
 interface ColumnDef {
-  id: ColumnId;
+  id: string;
   label: string;
+  color: string;
 }
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const COLUMNS: ColumnDef[] = [
-  { id: 'open', label: 'Open' },
-  { id: 'todo', label: 'To Do' },
-  { id: 'in_progress', label: 'In Progress' },
-  { id: 'in_review', label: 'In Review' },
-  { id: 'done', label: 'Done' },
+const FALLBACK_COLUMNS: ColumnDef[] = [
+  { id: 'open', label: 'Open', color: '#3b82f6' },
+  { id: 'todo', label: 'To Do', color: '#3b82f6' },
+  { id: 'in_progress', label: 'In Progress', color: '#f59e0b' },
+  { id: 'in_review', label: 'In Review', color: '#8b5cf6' },
+  { id: 'done', label: 'Done', color: '#10b981' },
 ];
+
+function workflowStatesToColumns(states: WorkflowState[]): ColumnDef[] {
+  return [...states]
+    .sort((a, b) => a.position - b.position)
+    .map((s) => ({
+      id: s.name,
+      label: s.name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      color: s.color,
+    }));
+}
 
 const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
   critical: 'danger', urgent: 'danger', high: 'warning', medium: 'secondary', low: 'outline',
@@ -126,9 +135,12 @@ function DroppableColumn({ column, items, onItemClick }: { column: ColumnDef; it
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-[var(--radius-lg)] bg-[var(--color-bg)] p-3">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
-          {column.label}
-        </h3>
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: column.color }} />
+          <h3 className="text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
+            {column.label}
+          </h3>
+        </div>
         <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[var(--color-surface-hover)] px-1.5 text-[var(--text-xs)] font-medium text-[var(--color-text-muted)]">
           {items.length}
         </span>
@@ -161,6 +173,15 @@ export function SprintBoardPage() {
   const sprintId = activeSprint?.id ?? '';
   const { data: items, isLoading: itemsLoading, error } = useSprintItems(spaceId, sprintId);
 
+  // P6: derive columns from the space's workflow states
+  const { data: workflowStates } = useWorkflowStates(spaceId);
+  const columnDefs: ColumnDef[] = useMemo(
+    () => workflowStates && workflowStates.length > 0
+      ? workflowStatesToColumns(workflowStates)
+      : FALLBACK_COLUMNS,
+    [workflowStates],
+  );
+
   const [activeItem, setActiveItem] = useState<ProjectItem | null>(null);
   // Optimistic local status overrides while a drag transition is in-flight
   const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({});
@@ -176,23 +197,21 @@ export function SprintBoardPage() {
   }, [items, pendingStatus]);
 
   const columns = useMemo(() => {
-    const map: Record<ColumnId, ProjectItem[]> = {
-      open: [],
-      todo: [],
-      in_progress: [],
-      in_review: [],
-      done: [],
-    };
+    const map: Record<string, ProjectItem[]> = {};
+    for (const col of columnDefs) {
+      map[col.id] = [];
+    }
+    // initial state name used as fallback bucket
+    const fallbackKey = columnDefs[0]?.id ?? 'open';
     for (const item of effectiveItems) {
-      const col = item.status as ColumnId;
-      if (map[col] !== undefined) {
-        map[col].push(item);
+      if (map[item.status] !== undefined) {
+        map[item.status].push(item);
       } else {
-        map.open.push(item);
+        map[fallbackKey].push(item);
       }
     }
     return map;
-  }, [effectiveItems]);
+  }, [effectiveItems, columnDefs]);
 
   const handleItemClick = useCallback((id: string) => {
     navigate(`/spaces/${spaceId}/backlog/${id}`);
@@ -224,7 +243,7 @@ export function SprintBoardPage() {
 
       // Determine target column: over.id is either a column id or an item id
       let targetStatus = over.id as string;
-      if (!COLUMNS.find((c) => c.id === targetStatus)) {
+      if (!columnDefs.find((c) => c.id === targetStatus)) {
         // over.id is an item — use that item's current column
         const overItem = effectiveItems.find((i) => i.id === targetStatus);
         targetStatus = overItem?.status ?? draggedItem.status;
@@ -255,7 +274,7 @@ export function SprintBoardPage() {
         });
       }
     },
-    [effectiveItems, spaceId, sprintId, queryClient],
+    [effectiveItems, columnDefs, spaceId, sprintId, queryClient],
   );
 
   const isLoading = sprintLoading || (!!sprintId && itemsLoading);
@@ -318,11 +337,11 @@ export function SprintBoardPage() {
         onDragEnd={handleDragEnd}
       >
         <div className="flex gap-4 overflow-x-auto pb-4">
-          {COLUMNS.map((col) => (
+          {columnDefs.map((col) => (
             <DroppableColumn
               key={col.id}
               column={col}
-              items={columns[col.id]}
+              items={columns[col.id] ?? []}
               onItemClick={handleItemClick}
             />
           ))}

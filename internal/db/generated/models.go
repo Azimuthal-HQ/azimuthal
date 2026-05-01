@@ -149,26 +149,27 @@ type PageRevision struct {
 }
 
 type ProjectItem struct {
-	ID           uuid.UUID          `json:"id"`
-	SpaceID      uuid.UUID          `json:"space_id"`
-	ParentID     pgtype.UUID        `json:"parent_id"`
-	Number       int32              `json:"number"`
-	Kind         string             `json:"kind"`
-	Title        string             `json:"title"`
-	Description  string             `json:"description"`
-	Status       string             `json:"status"`
-	Priority     string             `json:"priority"`
-	ReporterID   uuid.UUID          `json:"reporter_id"`
-	AssigneeID   pgtype.UUID        `json:"assignee_id"`
-	SprintID     pgtype.UUID        `json:"sprint_id"`
-	Labels       []string           `json:"labels"`
-	DueAt        pgtype.Timestamptz `json:"due_at"`
-	ResolvedAt   pgtype.Timestamptz `json:"resolved_at"`
-	Rank         string             `json:"rank"`
-	SearchVector interface{}        `json:"search_vector"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	ID              uuid.UUID          `json:"id"`
+	SpaceID         uuid.UUID          `json:"space_id"`
+	ParentID        pgtype.UUID        `json:"parent_id"`
+	Number          int32              `json:"number"`
+	Kind            string             `json:"kind"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Status          string             `json:"status"`
+	Priority        string             `json:"priority"`
+	ReporterID      uuid.UUID          `json:"reporter_id"`
+	AssigneeID      pgtype.UUID        `json:"assignee_id"`
+	SprintID        pgtype.UUID        `json:"sprint_id"`
+	Labels          []string           `json:"labels"`
+	DueAt           pgtype.Timestamptz `json:"due_at"`
+	ResolvedAt      pgtype.Timestamptz `json:"resolved_at"`
+	Rank            string             `json:"rank"`
+	SearchVector    interface{}        `json:"search_vector"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
 }
 
 type Session struct {
@@ -195,6 +196,7 @@ type Space struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
+	WorkflowID  pgtype.UUID        `json:"workflow_id"`
 }
 
 type SpaceMember struct {
@@ -219,23 +221,24 @@ type Sprint struct {
 }
 
 type Ticket struct {
-	ID           uuid.UUID          `json:"id"`
-	SpaceID      uuid.UUID          `json:"space_id"`
-	Number       int32              `json:"number"`
-	Title        string             `json:"title"`
-	Description  string             `json:"description"`
-	Status       string             `json:"status"`
-	Priority     string             `json:"priority"`
-	ReporterID   uuid.UUID          `json:"reporter_id"`
-	AssigneeID   pgtype.UUID        `json:"assignee_id"`
-	Labels       []string           `json:"labels"`
-	DueAt        pgtype.Timestamptz `json:"due_at"`
-	ResolvedAt   pgtype.Timestamptz `json:"resolved_at"`
-	Rank         string             `json:"rank"`
-	SearchVector interface{}        `json:"search_vector"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	ID              uuid.UUID          `json:"id"`
+	SpaceID         uuid.UUID          `json:"space_id"`
+	Number          int32              `json:"number"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Status          string             `json:"status"`
+	Priority        string             `json:"priority"`
+	ReporterID      uuid.UUID          `json:"reporter_id"`
+	AssigneeID      pgtype.UUID        `json:"assignee_id"`
+	Labels          []string           `json:"labels"`
+	DueAt           pgtype.Timestamptz `json:"due_at"`
+	ResolvedAt      pgtype.Timestamptz `json:"resolved_at"`
+	Rank            string             `json:"rank"`
+	SearchVector    interface{}        `json:"search_vector"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
 }
 
 type User struct {
@@ -251,4 +254,35 @@ type User struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 	LastLoginAt  pgtype.Timestamptz `json:"last_login_at"`
+}
+
+type Workflow struct {
+	ID          uuid.UUID          `json:"id"`
+	OrgID       uuid.UUID          `json:"org_id"`
+	Name        string             `json:"name"`
+	Description *string            `json:"description"`
+	IsDefault   bool               `json:"is_default"`
+	AppliesTo   string             `json:"applies_to"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkflowState struct {
+	ID         uuid.UUID          `json:"id"`
+	WorkflowID uuid.UUID          `json:"workflow_id"`
+	Name       string             `json:"name"`
+	Category   string             `json:"category"`
+	Color      string             `json:"color"`
+	Position   int32              `json:"position"`
+	IsInitial  bool               `json:"is_initial"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkflowTransition struct {
+	ID          uuid.UUID          `json:"id"`
+	WorkflowID  uuid.UUID          `json:"workflow_id"`
+	FromStateID uuid.UUID          `json:"from_state_id"`
+	ToStateID   uuid.UUID          `json:"to_state_id"`
+	Name        string             `json:"name"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }

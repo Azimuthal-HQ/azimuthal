@@ -64,7 +64,9 @@ import (
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
+	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
@@ -187,7 +189,9 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, notifEnqueuer j
 	sessionSvc := auth.NewSessionService(adapters.NewSessionAdapter(queries), auth.SessionConfig{TTL: cfg.JWTExpiry})
 	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc)
 	membershipResolver := adapters.NewMembershipAdapter(queries)
-	orgProvisioner := adapters.NewOrgProvisionerAdapter(queries)
+	workflowAdapter := adapters.NewWorkflowAdapter(queries)
+	workflowEngine := workflow.NewDBEngine(workflowAdapter)
+	orgProvisioner := adapters.NewOrgProvisionerAdapterWithWorkflows(queries, workflowAdapter)
 
 	ticketAdapter := adapters.NewTicketAdapter(queries)
 	ticketSvc := tickets.NewTicketService(ticketAdapter)
@@ -198,6 +202,7 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, notifEnqueuer j
 	sprintSvc := projects.NewSprintService(sprintAdapter)
 
 	wikiSvc := wiki.NewService(queries)
+	wikiLocks := wiki.NewLockService(queries)
 
 	spaHandler, err := newSPAHandler()
 	if err != nil {
@@ -210,11 +215,12 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, notifEnqueuer j
 		Authenticator:       authenticator,
 		AuthHandler:         authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner).WithAuditLogger(auditLog),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
-		WikiHandler:         wikiapi.NewHandler(wikiSvc).WithAuditLogger(auditLog),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithAuditLogger(auditLog),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog),
-		SpaceHandler:        spacesapi.NewHandler(queries),
+		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		NotificationHandler: notificationsapi.NewHandler(queries),
+		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		QueueStatus:         queueStatus,
