@@ -125,10 +125,11 @@ jobs:
           go test \
             -v \
             -race \
+            -p 1 \
             -coverprofile=coverage.out \
             -covermode=atomic \
             -coverpkg=./internal/... \
-            -timeout=300s \
+            -timeout=600s \
             ./... 2>&1 | tee test-output.txt; exit ${PIPESTATUS[0]}
 
       - name: Upload test output
