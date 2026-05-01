@@ -10,10 +10,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// Ticket represents a service desk ticket. It maps to items with kind='ticket'.
+// Ticket represents a service desk ticket.
 type Ticket struct {
 	ID          uuid.UUID  `json:"id"`
 	SpaceID     uuid.UUID  `json:"space_id"`
+	Number      int32      `json:"number"`
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
 	Status      Status     `json:"status"`

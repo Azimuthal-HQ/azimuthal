@@ -11,21 +11,20 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
 
-func TestDbItemToTicket(t *testing.T) {
+func TestDbTicketToTicket(t *testing.T) {
 	now := time.Date(2025, 6, 15, 10, 0, 0, 0, time.UTC)
 	id := uuid.New()
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 	assigneeID := uuid.New()
 	due := now.Add(72 * time.Hour)
-	desc := "A test ticket"
 
-	dbItem := generated.Item{
+	dbTicket := generated.Ticket{
 		ID:          id,
 		SpaceID:     spaceID,
-		Kind:        "ticket",
+		Number:      1,
 		Title:       "Fix login bug",
-		Description: &desc,
+		Description: "A test ticket",
 		Status:      "open",
 		Priority:    "high",
 		ReporterID:  reporterID,
@@ -38,13 +37,16 @@ func TestDbItemToTicket(t *testing.T) {
 		UpdatedAt:   pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
 	}
 
-	got := dbItemToTicket(dbItem)
+	got := dbTicketToTicket(dbTicket)
 
 	if got.ID != id {
 		t.Errorf("ID mismatch: got %v, want %v", got.ID, id)
 	}
 	if got.SpaceID != spaceID {
 		t.Errorf("SpaceID mismatch")
+	}
+	if got.Number != 1 {
+		t.Errorf("Number mismatch: got %v", got.Number)
 	}
 	if got.Title != "Fix login bug" {
 		t.Errorf("Title mismatch: got %v", got.Title)
@@ -81,11 +83,11 @@ func TestDbItemToTicket(t *testing.T) {
 	}
 }
 
-func TestDbItemToTicketNilOptionals(t *testing.T) {
-	dbItem := generated.Item{
+func TestDbTicketToTicketNilOptionals(t *testing.T) {
+	dbTicket := generated.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    uuid.New(),
-		Kind:       "ticket",
+		Number:     1,
 		Title:      "Minimal ticket",
 		Status:     "open",
 		Priority:   "medium",
@@ -97,7 +99,7 @@ func TestDbItemToTicketNilOptionals(t *testing.T) {
 		UpdatedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}
 
-	got := dbItemToTicket(dbItem)
+	got := dbTicketToTicket(dbTicket)
 	if got.AssigneeID != nil {
 		t.Errorf("expected nil AssigneeID, got %v", got.AssigneeID)
 	}
@@ -109,41 +111,32 @@ func TestDbItemToTicketNilOptionals(t *testing.T) {
 	}
 }
 
-func TestFilterTickets(t *testing.T) {
-	items := []generated.Item{
-		{ID: uuid.New(), Kind: "ticket", SpaceID: uuid.New(), ReporterID: uuid.New(),
+func TestDbTicketsToTickets(t *testing.T) {
+	dbTickets := []generated.Ticket{
+		{ID: uuid.New(), SpaceID: uuid.New(), Number: 1, Title: "First", Status: "open",
+			Priority: "medium", ReporterID: uuid.New(),
 			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}},
-		{ID: uuid.New(), Kind: "task", SpaceID: uuid.New(), ReporterID: uuid.New(),
-			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-			UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}},
-		{ID: uuid.New(), Kind: "ticket", SpaceID: uuid.New(), ReporterID: uuid.New(),
-			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-			UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}},
-		{ID: uuid.New(), Kind: "bug", SpaceID: uuid.New(), ReporterID: uuid.New(),
+		{ID: uuid.New(), SpaceID: uuid.New(), Number: 2, Title: "Second", Status: "open",
+			Priority: "high", ReporterID: uuid.New(),
 			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}},
 	}
 
-	got := filterTickets(items)
+	got := dbTicketsToTickets(dbTickets)
 	if len(got) != 2 {
 		t.Errorf("expected 2 tickets, got %d", len(got))
 	}
-	for _, tk := range got {
-		if tk.Status != "" && string(tk.Status) == "task" {
-			t.Error("non-ticket item leaked through filter")
-		}
-	}
 }
 
-func TestFilterTicketsEmpty(t *testing.T) {
-	got := filterTickets(nil)
+func TestDbTicketsToTicketsEmpty(t *testing.T) {
+	got := dbTicketsToTickets(nil)
 	if len(got) != 0 {
 		t.Errorf("expected 0 tickets for nil input, got %d", len(got))
 	}
 }
 
-func TestTicketToCreateParams(t *testing.T) {
+func TestTicketCreateParamsValidation(t *testing.T) {
 	assignee := uuid.New()
 	due := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
 	tk := &tickets.Ticket{
@@ -160,38 +153,49 @@ func TestTicketToCreateParams(t *testing.T) {
 		Rank:        "0|aaa:",
 	}
 
-	got := ticketToCreateParams(tk)
+	// Verify the params struct we'd pass to CreateTicket.
+	params := generated.CreateTicketParams{
+		ID:          tk.ID,
+		SpaceID:     tk.SpaceID,
+		Number:      1,
+		Title:       tk.Title,
+		Description: tk.Description,
+		Status:      string(tk.Status),
+		Priority:    string(tk.Priority),
+		ReporterID:  tk.ReporterID,
+		AssigneeID:  pgUUID(tk.AssigneeID),
+		Labels:      coalesceLabels(tk.Labels),
+		DueAt:       pgTimestampPtr(tk.DueAt),
+		Rank:        tk.Rank,
+	}
 
-	if got.ID != tk.ID {
+	if params.ID != tk.ID {
 		t.Errorf("ID mismatch")
 	}
-	if got.Kind != "ticket" {
-		t.Errorf("Kind should be 'ticket', got %v", got.Kind)
-	}
-	if got.Title != "Create test" {
+	if params.Title != "Create test" {
 		t.Errorf("Title mismatch")
 	}
-	if got.Description == nil || *got.Description != "Desc" {
+	if params.Description != "Desc" {
 		t.Errorf("Description mismatch")
 	}
-	if got.Status != "open" {
-		t.Errorf("Status mismatch: got %v", got.Status)
+	if params.Status != "open" {
+		t.Errorf("Status mismatch: got %v", params.Status)
 	}
-	if got.Priority != "high" {
-		t.Errorf("Priority mismatch: got %v", got.Priority)
+	if params.Priority != "high" {
+		t.Errorf("Priority mismatch: got %v", params.Priority)
 	}
-	if !got.AssigneeID.Valid {
+	if !params.AssigneeID.Valid {
 		t.Error("AssigneeID should be valid")
 	}
-	if len(got.Labels) != 1 || got.Labels[0] != "bug" {
-		t.Errorf("Labels mismatch: got %v", got.Labels)
+	if len(params.Labels) != 1 || params.Labels[0] != "bug" {
+		t.Errorf("Labels mismatch: got %v", params.Labels)
 	}
-	if !got.DueAt.Valid {
+	if !params.DueAt.Valid {
 		t.Error("DueAt should be valid")
 	}
 }
 
-func TestTicketToCreateParamsNilOptionals(t *testing.T) {
+func TestTicketCreateParamsNilOptionals(t *testing.T) {
 	tk := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    uuid.New(),
@@ -201,16 +205,30 @@ func TestTicketToCreateParamsNilOptionals(t *testing.T) {
 		ReporterID: uuid.New(),
 	}
 
-	got := ticketToCreateParams(tk)
-	if got.AssigneeID.Valid {
+	params := generated.CreateTicketParams{
+		ID:          tk.ID,
+		SpaceID:     tk.SpaceID,
+		Number:      1,
+		Title:       tk.Title,
+		Description: tk.Description,
+		Status:      string(tk.Status),
+		Priority:    string(tk.Priority),
+		ReporterID:  tk.ReporterID,
+		AssigneeID:  pgUUID(tk.AssigneeID),
+		Labels:      coalesceLabels(tk.Labels),
+		DueAt:       pgTimestampPtr(tk.DueAt),
+		Rank:        tk.Rank,
+	}
+
+	if params.AssigneeID.Valid {
 		t.Error("AssigneeID should be invalid for nil")
 	}
-	if got.DueAt.Valid {
+	if params.DueAt.Valid {
 		t.Error("DueAt should be invalid for nil")
 	}
 }
 
-func TestTicketToUpdateParams(t *testing.T) {
+func TestTicketUpdateParamsValidation(t *testing.T) {
 	assignee := uuid.New()
 	tk := &tickets.Ticket{
 		ID:          uuid.New(),
@@ -223,21 +241,32 @@ func TestTicketToUpdateParams(t *testing.T) {
 		Rank:        "0|bbb:",
 	}
 
-	got := ticketToUpdateParams(tk)
-	if got.ID != tk.ID {
+	params := generated.UpdateTicketParams{
+		ID:          tk.ID,
+		Title:       tk.Title,
+		Description: tk.Description,
+		Status:      string(tk.Status),
+		Priority:    string(tk.Priority),
+		AssigneeID:  pgUUID(tk.AssigneeID),
+		Labels:      coalesceLabels(tk.Labels),
+		DueAt:       pgTimestampPtr(tk.DueAt),
+		Rank:        tk.Rank,
+	}
+
+	if params.ID != tk.ID {
 		t.Errorf("ID mismatch")
 	}
-	if got.Title != "Updated title" {
+	if params.Title != "Updated title" {
 		t.Errorf("Title mismatch")
 	}
-	if got.Status != "in_progress" {
-		t.Errorf("Status mismatch: got %v", got.Status)
+	if params.Status != "in_progress" {
+		t.Errorf("Status mismatch: got %v", params.Status)
 	}
-	if got.Priority != "urgent" {
-		t.Errorf("Priority mismatch: got %v", got.Priority)
+	if params.Priority != "urgent" {
+		t.Errorf("Priority mismatch: got %v", params.Priority)
 	}
-	if len(got.Labels) != 2 {
-		t.Errorf("Labels mismatch: got %v", got.Labels)
+	if len(params.Labels) != 2 {
+		t.Errorf("Labels mismatch: got %v", params.Labels)
 	}
 }
 

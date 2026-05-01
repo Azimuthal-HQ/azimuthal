@@ -1,4 +1,4 @@
-// Package comments provides HTTP handlers for item comment endpoints.
+// Package comments provides HTTP handlers for polymorphic entity comment endpoints.
 package comments
 
 import (
@@ -47,6 +47,7 @@ func (h *Handler) WithNotificationEnqueuer(n NotificationEnqueuer) *Handler {
 }
 
 // Routes returns a chi.Router with comment endpoints mounted.
+// The router is mounted under paths that include {entityType}/{entityID}.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.List)
@@ -55,43 +56,83 @@ func (h *Handler) Routes() chi.Router {
 }
 
 type createCommentRequest struct {
-	Content string `json:"content"`
+	Content  string    `json:"content"`
+	ParentID *uuid.UUID `json:"parent_id,omitempty"`
 }
 
 type commentResponse struct {
-	ID         uuid.UUID `json:"id"`
-	ItemID     string    `json:"item_id,omitempty"`
-	AuthorID   uuid.UUID `json:"author_id"`
-	AuthorName string    `json:"author_name"`
-	Body       string    `json:"body"`
-	Content    string    `json:"content"`
-	CreatedAt  string    `json:"created_at"`
-	UpdatedAt  string    `json:"updated_at"`
+	ID         uuid.UUID  `json:"id"`
+	EntityType string     `json:"entity_type"`
+	EntityID   uuid.UUID  `json:"entity_id"`
+	ParentID   *uuid.UUID `json:"parent_id,omitempty"`
+	AuthorID   uuid.UUID  `json:"author_id"`
+	AuthorName string     `json:"author_name"`
+	Body       string     `json:"body"`
+	Content    string     `json:"content"`
+	CreatedAt  string     `json:"created_at"`
+	UpdatedAt  string     `json:"updated_at"`
 }
 
-// List returns all comments for an item.
+// entityTypeFromURL extracts {entityType} URL param and maps to internal entity_type value.
+// URL param values: "tickets" → "ticket", "project-items" → "project_item", "wiki" → "page".
+func entityTypeFromURL(r *http.Request) (string, error) {
+	raw := chi.URLParam(r, "entityType")
+	switch raw {
+	case "tickets":
+		return "ticket", nil
+	case "project-items":
+		return "project_item", nil
+	case "wiki":
+		return "page", nil
+	default:
+		return "", fmt.Errorf("unknown entity type %q", raw)
+	}
+}
+
+// entityIDFromURL extracts {entityID} from the URL.
+func entityIDFromURL(r *http.Request) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, "entityID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing entity ID: %w", err)
+	}
+	return id, nil
+}
+
+// itemIDFromURL extracts {itemID} — retained for the legacy deprecated route.
+func itemIDFromURL(r *http.Request) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, "itemID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing item ID: %w", err)
+	}
+	return id, nil
+}
+
+// List returns all top-level comments for the entity.
 //
 // @Summary      List comments
-// @Description  Returns all comments for the specified item.
+// @Description  Returns all top-level comments for a ticket, project item, or wiki page.
 // @Tags         comments
 // @Produce      json
 // @Security     BearerAuth
-// @Param        orgID    path      string  true  "Organization ID (UUID)"
-// @Param        spaceID  path      string  true  "Space ID (UUID)"
-// @Param        itemID   path      string  true  "Item ID (UUID)"
-// @Success      200      {array}   api.SwaggerCommentResponse  "List of comments"
-// @Failure      400      {object}  api.SwaggerErrorResponse    "Invalid item ID"
-// @Failure      401      {object}  api.SwaggerErrorResponse    "Not authenticated"
-// @Failure      500      {object}  api.SwaggerErrorResponse    "Internal error"
-// @Router       /orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments [get]
+// @Param        orgID      path      string  true  "Organization ID (UUID)"
+// @Param        spaceID    path      string  true  "Space ID (UUID)"
+// @Param        entityType path      string  true  "Entity type (tickets, project-items, wiki)"
+// @Param        entityID   path      string  true  "Entity ID (UUID)"
+// @Success      200  {array}   api.SwaggerCommentResponse
+// @Failure      400  {object}  api.SwaggerErrorResponse
+// @Failure      401  {object}  api.SwaggerErrorResponse
+// @Failure      500  {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/spaces/{spaceID}/{entityType}/{entityID}/comments [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	itemID, err := itemIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
+	entityType, entityID, ok := h.extractEntityFromURL(w, r)
+	if !ok {
 		return
 	}
 
-	rows, err := h.queries.ListCommentsByItem(r.Context(), pgtype.UUID{Bytes: itemID, Valid: true})
+	rows, err := h.queries.ListCommentsByEntity(r.Context(), generated.ListCommentsByEntityParams{
+		EntityType: entityType,
+		EntityID:   entityID,
+	})
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list comments")
 		return
@@ -99,43 +140,150 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]commentResponse, 0, len(rows))
 	for _, row := range rows {
-		itemIDStr := ""
-		if row.ItemID.Valid {
-			itemIDStr = uuid.UUID(row.ItemID.Bytes).String()
-		}
-		result = append(result, commentResponse{
-			ID:         row.ID,
-			ItemID:     itemIDStr,
-			AuthorID:   row.AuthorID,
-			AuthorName: row.AuthorName,
-			Body:       row.Body,
-			Content:    row.Body,
-			CreatedAt:  row.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:  row.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
-		})
+		result = append(result, rowToResponse(row))
 	}
-
 	respond.JSON(w, http.StatusOK, result)
 }
 
-// Create adds a new comment to an item.
+// ListLegacy is the deprecated item-scoped comment list endpoint.
+// Returns comments with a Deprecation header pointing to the new route.
+//
+// @Summary      List comments (deprecated)
+// @Description  Deprecated: use /{entityType}/{entityID}/comments instead.
+// @Tags         comments
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        itemID   path      string  true  "Item ID (UUID)"
+// @Success      200  {array}   api.SwaggerCommentResponse
+// @Failure      400  {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments [get]
+func (h *Handler) ListLegacy(w http.ResponseWriter, r *http.Request) {
+	itemID, err := itemIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
+		return
+	}
+
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Link", `</api/v1/orgs/{orgID}/spaces/{spaceID}/project-items/{itemID}/comments>; rel="successor-version"`)
+
+	// Try project_item first, then ticket.
+	rows, err := h.queries.ListCommentsByEntity(r.Context(), generated.ListCommentsByEntityParams{
+		EntityType: "project_item",
+		EntityID:   itemID,
+	})
+	if err != nil || len(rows) == 0 {
+		rows, err = h.queries.ListCommentsByEntity(r.Context(), generated.ListCommentsByEntityParams{
+			EntityType: "ticket",
+			EntityID:   itemID,
+		})
+		if err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list comments")
+			return
+		}
+	}
+
+	result := make([]commentResponse, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, rowToResponse(row))
+	}
+	respond.JSON(w, http.StatusOK, result)
+}
+
+// Create adds a new comment to an entity.
 //
 // @Summary      Create comment
-// @Description  Adds a new comment to the specified item. Author is set from the JWT.
+// @Description  Adds a new comment to a ticket, project item, or wiki page.
 // @Tags         comments
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        orgID    path      string                          true  "Organization ID (UUID)"
-// @Param        spaceID  path      string                          true  "Space ID (UUID)"
-// @Param        itemID   path      string                          true  "Item ID (UUID)"
-// @Param        body     body      api.SwaggerCreateCommentRequest true  "Comment content"
-// @Success      201      {object}  api.SwaggerCommentResponse      "Comment created"
-// @Failure      400      {object}  api.SwaggerErrorResponse        "Validation error"
-// @Failure      401      {object}  api.SwaggerErrorResponse        "Not authenticated"
-// @Failure      500      {object}  api.SwaggerErrorResponse        "Internal error"
-// @Router       /orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments [post]
+// @Param        orgID      path      string                          true  "Organization ID (UUID)"
+// @Param        spaceID    path      string                          true  "Space ID (UUID)"
+// @Param        entityType path      string                          true  "Entity type (tickets, project-items, wiki)"
+// @Param        entityID   path      string                          true  "Entity ID (UUID)"
+// @Param        body       body      api.SwaggerCreateCommentRequest true  "Comment content"
+// @Success      201  {object}  api.SwaggerCommentResponse
+// @Failure      400  {object}  api.SwaggerErrorResponse
+// @Failure      401  {object}  api.SwaggerErrorResponse
+// @Failure      500  {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/spaces/{spaceID}/{entityType}/{entityID}/comments [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return
+	}
+
+	entityType, entityID, ok := h.extractEntityFromURL(w, r)
+	if !ok {
+		return
+	}
+
+	var req createCommentRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	if req.Content == "" {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "content is required")
+		return
+	}
+
+	parentID := pgtype.UUID{}
+	if req.ParentID != nil {
+		parentID = pgtype.UUID{Bytes: *req.ParentID, Valid: true}
+	}
+
+	comment, err := h.queries.CreateComment(r.Context(), generated.CreateCommentParams{
+		ID:         uuid.New(),
+		EntityType: entityType,
+		EntityID:   entityID,
+		ParentID:   parentID,
+		AuthorID:   claims.UserID,
+		Body:       req.Content,
+	})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create comment")
+		return
+	}
+
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypeCommentCreated, ActorID: claims.UserID.String(),
+		ResourceType: "comment", ResourceID: comment.ID.String(),
+		Metadata: map[string]string{"entity_type": entityType, "entity_id": entityID.String()},
+	})
+
+	user, err := h.queries.GetUserByID(r.Context(), claims.UserID)
+	authorName := ""
+	if err == nil {
+		authorName = user.DisplayName
+	}
+
+	var parentIDPtr *uuid.UUID
+	if comment.ParentID.Valid {
+		id := uuid.UUID(comment.ParentID.Bytes)
+		parentIDPtr = &id
+	}
+
+	respond.JSON(w, http.StatusCreated, commentResponse{
+		ID:         comment.ID,
+		EntityType: comment.EntityType,
+		EntityID:   comment.EntityID,
+		ParentID:   parentIDPtr,
+		AuthorID:   comment.AuthorID,
+		AuthorName: authorName,
+		Body:       comment.Body,
+		Content:    comment.Body,
+		CreatedAt:  comment.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:  comment.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
+	})
+}
+
+// CreateLegacy is the deprecated item-scoped create comment endpoint.
+func (h *Handler) CreateLegacy(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
@@ -153,62 +301,41 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
 		return
 	}
-
 	if req.Content == "" {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "content is required")
 		return
 	}
 
+	w.Header().Set("Deprecation", "true")
+
+	// Detect entity type by checking which table the item belongs to.
+	entityType := "project_item"
+	if _, terr := h.queries.GetTicketByID(r.Context(), itemID); terr == nil {
+		entityType = "ticket"
+	}
+
 	comment, err := h.queries.CreateComment(r.Context(), generated.CreateCommentParams{
-		ID:       uuid.New(),
-		ItemID:   pgtype.UUID{Bytes: itemID, Valid: true},
-		AuthorID: claims.UserID,
-		Body:     req.Content,
+		ID:         uuid.New(),
+		EntityType: entityType,
+		EntityID:   itemID,
+		AuthorID:   claims.UserID,
+		Body:       req.Content,
 	})
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create comment")
 		return
 	}
-	_ = h.auditLog.Log(r.Context(), audit.Event{
-		Type: audit.EventTypeCommentCreated, ActorID: claims.UserID.String(),
-		ResourceType: "comment", ResourceID: comment.ID.String(),
-		Metadata: map[string]string{"item_id": itemID.String()},
-	})
 
-	// Notify assignee and reporter of the item (skip if they are the commenter).
-	if item, err := h.queries.GetItemByID(r.Context(), itemID); err == nil {
-		recipients := map[uuid.UUID]struct{}{}
-		if item.AssigneeID.Valid {
-			recipients[uuid.UUID(item.AssigneeID.Bytes)] = struct{}{}
-		}
-		recipients[item.ReporterID] = struct{}{}
-		delete(recipients, claims.UserID)
-		for recipientID := range recipients {
-			_ = h.notifs.EnqueueNotification(r.Context(), jobs.NotificationArgs{
-				UserID:     recipientID.String(),
-				EventKind:  "comment.added",
-				Message:    "New comment on an item you're involved in",
-				ResourceID: itemID.String(),
-				EntityKind: "item",
-			})
-		}
-	}
-
-	// Fetch the author name for the response.
-	user, err := h.queries.GetUserByID(r.Context(), claims.UserID)
+	user, _ := h.queries.GetUserByID(r.Context(), claims.UserID) //nolint:errcheck
 	authorName := ""
-	if err == nil {
+	if user.ID != uuid.Nil {
 		authorName = user.DisplayName
-	}
-
-	itemIDStr := ""
-	if comment.ItemID.Valid {
-		itemIDStr = uuid.UUID(comment.ItemID.Bytes).String()
 	}
 
 	respond.JSON(w, http.StatusCreated, commentResponse{
 		ID:         comment.ID,
-		ItemID:     itemIDStr,
+		EntityType: comment.EntityType,
+		EntityID:   comment.EntityID,
 		AuthorID:   comment.AuthorID,
 		AuthorName: authorName,
 		Body:       comment.Body,
@@ -218,10 +345,36 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func itemIDFromURL(r *http.Request) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, "itemID"))
+func (h *Handler) extractEntityFromURL(w http.ResponseWriter, r *http.Request) (string, uuid.UUID, bool) {
+	entityType, err := entityTypeFromURL(r)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("parsing item ID: %w", err)
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid entity type")
+		return "", uuid.Nil, false
 	}
-	return id, nil
+	entityID, err := entityIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid entity ID")
+		return "", uuid.Nil, false
+	}
+	return entityType, entityID, true
+}
+
+func rowToResponse(row generated.ListCommentsByEntityRow) commentResponse {
+	var parentIDPtr *uuid.UUID
+	if row.ParentID.Valid {
+		id := uuid.UUID(row.ParentID.Bytes)
+		parentIDPtr = &id
+	}
+	return commentResponse{
+		ID:         row.ID,
+		EntityType: row.EntityType,
+		EntityID:   row.EntityID,
+		ParentID:   parentIDPtr,
+		AuthorID:   row.AuthorID,
+		AuthorName: row.AuthorName,
+		Body:       row.Body,
+		Content:    row.Body,
+		CreatedAt:  row.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:  row.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
+	}
 }

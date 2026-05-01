@@ -343,36 +343,38 @@ func TestItemStatusUpdateAndSoftDelete(t *testing.T) {
 	user := setupUser(t, q, org.ID, "reporter@example.com")
 	space := setupSpace(t, q, org.ID, user.ID, "project")
 
-	item, err := q.CreateItem(ctx, generated.CreateItemParams{
-		ID:         uuid.New(),
-		SpaceID:    space.ID,
-		Kind:       "task",
-		Title:      "Implement data layer",
-		Status:     "open",
-		Priority:   "high",
-		ReporterID: user.ID,
-		Labels:     []string{"backend"},
-		Rank:       "a",
+	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
+		ID:          uuid.New(),
+		SpaceID:     space.ID,
+		Number:      1,
+		Kind:        "task",
+		Title:       "Implement data layer",
+		Description: "",
+		Status:      "open",
+		Priority:    "high",
+		ReporterID:  user.ID,
+		Labels:      []string{"backend"},
+		Rank:        "a",
 	})
 	if err != nil {
-		t.Fatalf("CreateItem: %v", err)
+		t.Fatalf("CreateProjectItem: %v", err)
 	}
 
-	updated, err := q.UpdateItemStatus(ctx, generated.UpdateItemStatusParams{
+	updated, err := q.UpdateProjectItemStatus(ctx, generated.UpdateProjectItemStatusParams{
 		ID:     item.ID,
 		Status: "in_progress",
 	})
 	if err != nil {
-		t.Fatalf("UpdateItemStatus: %v", err)
+		t.Fatalf("UpdateProjectItemStatus: %v", err)
 	}
 	if updated.Status != "in_progress" {
 		t.Errorf("status not updated: %s", updated.Status)
 	}
 
-	if err := q.SoftDeleteItem(ctx, item.ID); err != nil {
-		t.Fatalf("SoftDeleteItem: %v", err)
+	if err := q.SoftDeleteProjectItem(ctx, item.ID); err != nil {
+		t.Fatalf("SoftDeleteProjectItem: %v", err)
 	}
-	_, err = q.GetItemByID(ctx, item.ID)
+	_, err = q.GetProjectItemByID(ctx, item.ID)
 	if err == nil {
 		t.Error("expected error after soft delete")
 	}
@@ -388,20 +390,21 @@ func TestCreateItemWithoutLabels(t *testing.T) {
 	user := setupUser(t, q, org.ID, "labels-test@example.com")
 	space := setupSpace(t, q, org.ID, user.ID, "project")
 
-	// Create item with minimum fields — no labels provided (nil in Go → empty array).
-	item, err := q.CreateItem(ctx, generated.CreateItemParams{
-		ID:         uuid.New(),
-		SpaceID:    space.ID,
-		Kind:       "ticket",
-		Title:      "No labels ticket",
-		Status:     "open",
-		Priority:   "medium",
-		ReporterID: user.ID,
-		Labels:     []string{},
-		Rank:       "a",
+	// Create ticket with minimum fields — no labels provided (nil in Go → empty array).
+	item, err := q.CreateTicket(ctx, generated.CreateTicketParams{
+		ID:          uuid.New(),
+		SpaceID:     space.ID,
+		Number:      1,
+		Title:       "No labels ticket",
+		Description: "",
+		Status:      "open",
+		Priority:    "medium",
+		ReporterID:  user.ID,
+		Labels:      []string{},
+		Rank:        "a",
 	})
 	if err != nil {
-		t.Fatalf("CreateItem without labels: %v", err)
+		t.Fatalf("CreateTicket without labels: %v", err)
 	}
 	if item.Labels == nil {
 		t.Error("expected non-nil labels slice, got nil")
@@ -410,20 +413,22 @@ func TestCreateItemWithoutLabels(t *testing.T) {
 		t.Errorf("expected empty labels, got %v", item.Labels)
 	}
 
-	// Create item with labels provided.
-	withLabels, err := q.CreateItem(ctx, generated.CreateItemParams{
-		ID:         uuid.New(),
-		SpaceID:    space.ID,
-		Kind:       "task",
-		Title:      "Labelled task",
-		Status:     "open",
-		Priority:   "high",
-		ReporterID: user.ID,
-		Labels:     []string{"backend", "urgent"},
-		Rank:       "b",
+	// Create project item with labels provided.
+	withLabels, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
+		ID:          uuid.New(),
+		SpaceID:     space.ID,
+		Number:      1,
+		Kind:        "task",
+		Title:       "Labelled task",
+		Description: "",
+		Status:      "open",
+		Priority:    "high",
+		ReporterID:  user.ID,
+		Labels:      []string{"backend", "urgent"},
+		Rank:        "b",
 	})
 	if err != nil {
-		t.Fatalf("CreateItem with labels: %v", err)
+		t.Fatalf("CreateProjectItem with labels: %v", err)
 	}
 	if len(withLabels.Labels) != 2 {
 		t.Errorf("expected 2 labels, got %d", len(withLabels.Labels))
@@ -433,12 +438,12 @@ func TestCreateItemWithoutLabels(t *testing.T) {
 	}
 
 	// Verify via read-back.
-	fetched, err := q.GetItemByID(ctx, item.ID)
+	fetched, err := q.GetTicketByID(ctx, item.ID)
 	if err != nil {
-		t.Fatalf("GetItemByID: %v", err)
+		t.Fatalf("GetTicketByID: %v", err)
 	}
 	if len(fetched.Labels) != 0 {
-		t.Errorf("fetched item expected empty labels, got %v", fetched.Labels)
+		t.Errorf("fetched ticket expected empty labels, got %v", fetched.Labels)
 	}
 }
 

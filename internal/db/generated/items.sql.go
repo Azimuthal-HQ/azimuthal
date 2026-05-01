@@ -12,93 +12,55 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createItem = `-- name: CreateItem :one
-INSERT INTO items (id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, labels, due_at, rank)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, search_vector, number
+const countItemsArchiveProjectItems = `-- name: CountItemsArchiveProjectItems :one
+SELECT COUNT(*) FROM items_archive WHERE kind IN ('task','story','epic','bug') AND deleted_at IS NULL
 `
 
-type CreateItemParams struct {
-	ID          uuid.UUID          `json:"id"`
-	SpaceID     uuid.UUID          `json:"space_id"`
-	ParentID    pgtype.UUID        `json:"parent_id"`
-	Kind        string             `json:"kind"`
-	Title       string             `json:"title"`
-	Description *string            `json:"description"`
-	Status      string             `json:"status"`
-	Priority    string             `json:"priority"`
-	ReporterID  uuid.UUID          `json:"reporter_id"`
-	AssigneeID  pgtype.UUID        `json:"assignee_id"`
-	Labels      []string           `json:"labels"`
-	DueAt       pgtype.Timestamptz `json:"due_at"`
-	Rank        string             `json:"rank"`
+func (q *Queries) CountItemsArchiveProjectItems(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countItemsArchiveProjectItems)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
-func (q *Queries) CreateItem(ctx context.Context, arg CreateItemParams) (Item, error) {
-	row := q.db.QueryRow(ctx, createItem,
-		arg.ID,
-		arg.SpaceID,
-		arg.ParentID,
-		arg.Kind,
-		arg.Title,
-		arg.Description,
-		arg.Status,
-		arg.Priority,
-		arg.ReporterID,
-		arg.AssigneeID,
-		arg.Labels,
-		arg.DueAt,
-		arg.Rank,
-	)
-	var i Item
-	err := row.Scan(
-		&i.ID,
-		&i.SpaceID,
-		&i.ParentID,
-		&i.Kind,
-		&i.Title,
-		&i.Description,
-		&i.Status,
-		&i.Priority,
-		&i.ReporterID,
-		&i.AssigneeID,
-		&i.SprintID,
-		&i.Labels,
-		&i.DueAt,
-		&i.ResolvedAt,
-		&i.Rank,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.SearchVector,
-		&i.Number,
-	)
-	return i, err
-}
-
-const createItemRelation = `-- name: CreateItemRelation :one
-INSERT INTO item_relations (id, from_id, to_id, kind, created_by)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, from_id, to_id, kind, created_by, created_at
+const countItemsArchiveTickets = `-- name: CountItemsArchiveTickets :one
+SELECT COUNT(*) FROM items_archive WHERE kind = 'ticket' AND deleted_at IS NULL
 `
 
-type CreateItemRelationParams struct {
+func (q *Queries) CountItemsArchiveTickets(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countItemsArchiveTickets)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createEntityRelation = `-- name: CreateEntityRelation :one
+INSERT INTO entity_relations (id, from_id, from_type, to_id, to_type, kind, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, from_id, to_id, kind, created_by, created_at, from_type, to_type
+`
+
+type CreateEntityRelationParams struct {
 	ID        uuid.UUID `json:"id"`
 	FromID    uuid.UUID `json:"from_id"`
+	FromType  string    `json:"from_type"`
 	ToID      uuid.UUID `json:"to_id"`
+	ToType    string    `json:"to_type"`
 	Kind      string    `json:"kind"`
 	CreatedBy uuid.UUID `json:"created_by"`
 }
 
-func (q *Queries) CreateItemRelation(ctx context.Context, arg CreateItemRelationParams) (ItemRelation, error) {
-	row := q.db.QueryRow(ctx, createItemRelation,
+func (q *Queries) CreateEntityRelation(ctx context.Context, arg CreateEntityRelationParams) (EntityRelation, error) {
+	row := q.db.QueryRow(ctx, createEntityRelation,
 		arg.ID,
 		arg.FromID,
+		arg.FromType,
 		arg.ToID,
+		arg.ToType,
 		arg.Kind,
 		arg.CreatedBy,
 	)
-	var i ItemRelation
+	var i EntityRelation
 	err := row.Scan(
 		&i.ID,
 		&i.FromID,
@@ -106,6 +68,8 @@ func (q *Queries) CreateItemRelation(ctx context.Context, arg CreateItemRelation
 		&i.Kind,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.FromType,
+		&i.ToType,
 	)
 	return i, err
 }
@@ -183,12 +147,12 @@ func (q *Queries) CreateSprint(ctx context.Context, arg CreateSprintParams) (Spr
 	return i, err
 }
 
-const deleteItemRelation = `-- name: DeleteItemRelation :exec
-DELETE FROM item_relations WHERE id = $1
+const deleteEntityRelation = `-- name: DeleteEntityRelation :exec
+DELETE FROM entity_relations WHERE id = $1
 `
 
-func (q *Queries) DeleteItemRelation(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteItemRelation, id)
+func (q *Queries) DeleteEntityRelation(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteEntityRelation, id)
 	return err
 }
 
@@ -223,38 +187,6 @@ func (q *Queries) GetActiveSprintBySpace(ctx context.Context, spaceID uuid.UUID)
 	return i, err
 }
 
-const getItemByID = `-- name: GetItemByID :one
-SELECT id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, search_vector, number FROM items WHERE id = $1 AND deleted_at IS NULL
-`
-
-func (q *Queries) GetItemByID(ctx context.Context, id uuid.UUID) (Item, error) {
-	row := q.db.QueryRow(ctx, getItemByID, id)
-	var i Item
-	err := row.Scan(
-		&i.ID,
-		&i.SpaceID,
-		&i.ParentID,
-		&i.Kind,
-		&i.Title,
-		&i.Description,
-		&i.Status,
-		&i.Priority,
-		&i.ReporterID,
-		&i.AssigneeID,
-		&i.SprintID,
-		&i.Labels,
-		&i.DueAt,
-		&i.ResolvedAt,
-		&i.Rank,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.SearchVector,
-		&i.Number,
-	)
-	return i, err
-}
-
 const getSprintByID = `-- name: GetSprintByID :one
 SELECT id, space_id, name, goal, status, starts_at, ends_at, created_by, created_at, updated_at FROM sprints WHERE id = $1
 `
@@ -277,243 +209,54 @@ func (q *Queries) GetSprintByID(ctx context.Context, id uuid.UUID) (Sprint, erro
 	return i, err
 }
 
-const listItemRelations = `-- name: ListItemRelations :many
-SELECT ir.id, ir.from_id, ir.to_id, ir.kind, ir.created_by, ir.created_at,
-       i.title AS to_title, i.status AS to_status, i.kind AS to_kind
-FROM item_relations ir
-JOIN items i ON i.id = ir.to_id
-WHERE ir.from_id = $1
+const listEntityRelationsByEntity = `-- name: ListEntityRelationsByEntity :many
+SELECT er.id, er.from_id, er.from_type, er.to_id, er.to_type, er.kind, er.created_by, er.created_at,
+       COALESCE(t.title,  pi.title)  AS to_title,
+       COALESCE(t.status, pi.status) AS to_status
+FROM entity_relations er
+LEFT JOIN tickets      t  ON er.to_id = t.id  AND er.to_type = 'ticket'
+LEFT JOIN project_items pi ON er.to_id = pi.id AND er.to_type = 'project_item'
+WHERE er.from_id = $1 AND er.from_type = $2
 `
 
-type ListItemRelationsRow struct {
+type ListEntityRelationsByEntityParams struct {
+	FromID   uuid.UUID `json:"from_id"`
+	FromType string    `json:"from_type"`
+}
+
+type ListEntityRelationsByEntityRow struct {
 	ID        uuid.UUID          `json:"id"`
 	FromID    uuid.UUID          `json:"from_id"`
+	FromType  string             `json:"from_type"`
 	ToID      uuid.UUID          `json:"to_id"`
+	ToType    string             `json:"to_type"`
 	Kind      string             `json:"kind"`
 	CreatedBy uuid.UUID          `json:"created_by"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	ToTitle   string             `json:"to_title"`
 	ToStatus  string             `json:"to_status"`
-	ToKind    string             `json:"to_kind"`
 }
 
-func (q *Queries) ListItemRelations(ctx context.Context, fromID uuid.UUID) ([]ListItemRelationsRow, error) {
-	rows, err := q.db.Query(ctx, listItemRelations, fromID)
+func (q *Queries) ListEntityRelationsByEntity(ctx context.Context, arg ListEntityRelationsByEntityParams) ([]ListEntityRelationsByEntityRow, error) {
+	rows, err := q.db.Query(ctx, listEntityRelationsByEntity, arg.FromID, arg.FromType)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListItemRelationsRow{}
+	items := []ListEntityRelationsByEntityRow{}
 	for rows.Next() {
-		var i ListItemRelationsRow
+		var i ListEntityRelationsByEntityRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.FromID,
+			&i.FromType,
 			&i.ToID,
+			&i.ToType,
 			&i.Kind,
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.ToTitle,
 			&i.ToStatus,
-			&i.ToKind,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listItemsByAssignee = `-- name: ListItemsByAssignee :many
-SELECT id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, search_vector, number FROM items
-WHERE space_id = $1 AND assignee_id = $2 AND deleted_at IS NULL
-ORDER BY rank ASC, created_at DESC
-`
-
-type ListItemsByAssigneeParams struct {
-	SpaceID    uuid.UUID   `json:"space_id"`
-	AssigneeID pgtype.UUID `json:"assignee_id"`
-}
-
-func (q *Queries) ListItemsByAssignee(ctx context.Context, arg ListItemsByAssigneeParams) ([]Item, error) {
-	rows, err := q.db.Query(ctx, listItemsByAssignee, arg.SpaceID, arg.AssigneeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Item{}
-	for rows.Next() {
-		var i Item
-		if err := rows.Scan(
-			&i.ID,
-			&i.SpaceID,
-			&i.ParentID,
-			&i.Kind,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Priority,
-			&i.ReporterID,
-			&i.AssigneeID,
-			&i.SprintID,
-			&i.Labels,
-			&i.DueAt,
-			&i.ResolvedAt,
-			&i.Rank,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.SearchVector,
-			&i.Number,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listItemsBySpace = `-- name: ListItemsBySpace :many
-SELECT id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, search_vector, number FROM items
-WHERE space_id = $1 AND deleted_at IS NULL
-ORDER BY rank ASC, created_at DESC
-`
-
-func (q *Queries) ListItemsBySpace(ctx context.Context, spaceID uuid.UUID) ([]Item, error) {
-	rows, err := q.db.Query(ctx, listItemsBySpace, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Item{}
-	for rows.Next() {
-		var i Item
-		if err := rows.Scan(
-			&i.ID,
-			&i.SpaceID,
-			&i.ParentID,
-			&i.Kind,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Priority,
-			&i.ReporterID,
-			&i.AssigneeID,
-			&i.SprintID,
-			&i.Labels,
-			&i.DueAt,
-			&i.ResolvedAt,
-			&i.Rank,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.SearchVector,
-			&i.Number,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listItemsBySprint = `-- name: ListItemsBySprint :many
-SELECT id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, search_vector, number FROM items
-WHERE sprint_id = $1 AND deleted_at IS NULL
-ORDER BY rank ASC
-`
-
-func (q *Queries) ListItemsBySprint(ctx context.Context, sprintID pgtype.UUID) ([]Item, error) {
-	rows, err := q.db.Query(ctx, listItemsBySprint, sprintID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Item{}
-	for rows.Next() {
-		var i Item
-		if err := rows.Scan(
-			&i.ID,
-			&i.SpaceID,
-			&i.ParentID,
-			&i.Kind,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Priority,
-			&i.ReporterID,
-			&i.AssigneeID,
-			&i.SprintID,
-			&i.Labels,
-			&i.DueAt,
-			&i.ResolvedAt,
-			&i.Rank,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.SearchVector,
-			&i.Number,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listItemsByStatus = `-- name: ListItemsByStatus :many
-SELECT id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, search_vector, number FROM items
-WHERE space_id = $1 AND status = $2 AND deleted_at IS NULL
-ORDER BY rank ASC, created_at DESC
-`
-
-type ListItemsByStatusParams struct {
-	SpaceID uuid.UUID `json:"space_id"`
-	Status  string    `json:"status"`
-}
-
-func (q *Queries) ListItemsByStatus(ctx context.Context, arg ListItemsByStatusParams) ([]Item, error) {
-	rows, err := q.db.Query(ctx, listItemsByStatus, arg.SpaceID, arg.Status)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Item{}
-	for rows.Next() {
-		var i Item
-		if err := rows.Scan(
-			&i.ID,
-			&i.SpaceID,
-			&i.ParentID,
-			&i.Kind,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Priority,
-			&i.ReporterID,
-			&i.AssigneeID,
-			&i.SprintID,
-			&i.Labels,
-			&i.DueAt,
-			&i.ResolvedAt,
-			&i.Rank,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.SearchVector,
-			&i.Number,
 		); err != nil {
 			return nil, err
 		}
@@ -588,180 +331,6 @@ func (q *Queries) ListSprintsBySpace(ctx context.Context, spaceID uuid.UUID) ([]
 		return nil, err
 	}
 	return items, nil
-}
-
-const searchItems = `-- name: SearchItems :many
-SELECT id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, search_vector, number FROM items
-WHERE space_id = $1
-  AND deleted_at IS NULL
-  AND search_vector @@ plainto_tsquery('english', $2)
-ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC
-LIMIT $3
-`
-
-type SearchItemsParams struct {
-	SpaceID        uuid.UUID `json:"space_id"`
-	PlaintoTsquery string    `json:"plainto_tsquery"`
-	Limit          int32     `json:"limit"`
-}
-
-func (q *Queries) SearchItems(ctx context.Context, arg SearchItemsParams) ([]Item, error) {
-	rows, err := q.db.Query(ctx, searchItems, arg.SpaceID, arg.PlaintoTsquery, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Item{}
-	for rows.Next() {
-		var i Item
-		if err := rows.Scan(
-			&i.ID,
-			&i.SpaceID,
-			&i.ParentID,
-			&i.Kind,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Priority,
-			&i.ReporterID,
-			&i.AssigneeID,
-			&i.SprintID,
-			&i.Labels,
-			&i.DueAt,
-			&i.ResolvedAt,
-			&i.Rank,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.SearchVector,
-			&i.Number,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const softDeleteItem = `-- name: SoftDeleteItem :exec
-UPDATE items SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL
-`
-
-func (q *Queries) SoftDeleteItem(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, softDeleteItem, id)
-	return err
-}
-
-const updateItem = `-- name: UpdateItem :one
-UPDATE items
-SET title = $2, description = $3, status = $4, priority = $5,
-    assignee_id = $6, labels = $7, due_at = $8, rank = $9
-WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, search_vector, number
-`
-
-type UpdateItemParams struct {
-	ID          uuid.UUID          `json:"id"`
-	Title       string             `json:"title"`
-	Description *string            `json:"description"`
-	Status      string             `json:"status"`
-	Priority    string             `json:"priority"`
-	AssigneeID  pgtype.UUID        `json:"assignee_id"`
-	Labels      []string           `json:"labels"`
-	DueAt       pgtype.Timestamptz `json:"due_at"`
-	Rank        string             `json:"rank"`
-}
-
-func (q *Queries) UpdateItem(ctx context.Context, arg UpdateItemParams) (Item, error) {
-	row := q.db.QueryRow(ctx, updateItem,
-		arg.ID,
-		arg.Title,
-		arg.Description,
-		arg.Status,
-		arg.Priority,
-		arg.AssigneeID,
-		arg.Labels,
-		arg.DueAt,
-		arg.Rank,
-	)
-	var i Item
-	err := row.Scan(
-		&i.ID,
-		&i.SpaceID,
-		&i.ParentID,
-		&i.Kind,
-		&i.Title,
-		&i.Description,
-		&i.Status,
-		&i.Priority,
-		&i.ReporterID,
-		&i.AssigneeID,
-		&i.SprintID,
-		&i.Labels,
-		&i.DueAt,
-		&i.ResolvedAt,
-		&i.Rank,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.SearchVector,
-		&i.Number,
-	)
-	return i, err
-}
-
-const updateItemSprint = `-- name: UpdateItemSprint :exec
-UPDATE items SET sprint_id = $2 WHERE id = $1 AND deleted_at IS NULL
-`
-
-type UpdateItemSprintParams struct {
-	ID       uuid.UUID   `json:"id"`
-	SprintID pgtype.UUID `json:"sprint_id"`
-}
-
-func (q *Queries) UpdateItemSprint(ctx context.Context, arg UpdateItemSprintParams) error {
-	_, err := q.db.Exec(ctx, updateItemSprint, arg.ID, arg.SprintID)
-	return err
-}
-
-const updateItemStatus = `-- name: UpdateItemStatus :one
-UPDATE items SET status = $2 WHERE id = $1 AND deleted_at IS NULL RETURNING id, space_id, parent_id, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, search_vector, number
-`
-
-type UpdateItemStatusParams struct {
-	ID     uuid.UUID `json:"id"`
-	Status string    `json:"status"`
-}
-
-func (q *Queries) UpdateItemStatus(ctx context.Context, arg UpdateItemStatusParams) (Item, error) {
-	row := q.db.QueryRow(ctx, updateItemStatus, arg.ID, arg.Status)
-	var i Item
-	err := row.Scan(
-		&i.ID,
-		&i.SpaceID,
-		&i.ParentID,
-		&i.Kind,
-		&i.Title,
-		&i.Description,
-		&i.Status,
-		&i.Priority,
-		&i.ReporterID,
-		&i.AssigneeID,
-		&i.SprintID,
-		&i.Labels,
-		&i.DueAt,
-		&i.ResolvedAt,
-		&i.Rank,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.SearchVector,
-		&i.Number,
-	)
-	return i, err
 }
 
 const updateSprint = `-- name: UpdateSprint :one

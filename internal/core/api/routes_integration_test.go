@@ -88,12 +88,13 @@ func newTestServer(t *testing.T) *testServer {
 	labelSvc := projects.NewLabelService(adapters.NewLabelAdapter(queries))
 
 	wikiSvc := wiki.NewService(queries)
+	wikiLocks := wiki.NewLockService(queries)
 
 	router := api.NewRouter(api.RouterConfig{
 		Authenticator:  authenticator,
 		AuthHandler:    authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner),
 		TicketHandler:  ticketsapi.NewHandler(ticketSvc),
-		WikiHandler:    wikiapi.NewHandler(wikiSvc),
+		WikiHandler:    wikiapi.NewHandler(wikiSvc, wikiLocks),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
 		SpaceHandler:   spacesapi.NewHandler(queries),
 		CommentHandler: commentsapi.NewHandler(queries),
@@ -541,8 +542,8 @@ func TestComments_CorrectURLIncludesOrgId(t *testing.T) {
 	// Create an item directly in the database
 	itemID := uuid.New()
 	_, err := ts.DB.Pool.Exec(context.Background(),
-		`INSERT INTO items (id, space_id, kind, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		itemID, space.ID, "ticket", "Test Ticket", "open", "medium", user.ID,
+		`INSERT INTO tickets (id, space_id, number, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		itemID, space.ID, 1, "Test Ticket", "open", "medium", user.ID,
 	)
 	require.NoError(t, err)
 
@@ -564,8 +565,8 @@ func TestComments_PostAndRetrieve(t *testing.T) {
 	// Create an item directly in the database
 	itemID := uuid.New()
 	_, err := ts.DB.Pool.Exec(context.Background(),
-		`INSERT INTO items (id, space_id, kind, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		itemID, space.ID, "ticket", "Comment Test Ticket", "open", "medium", user.ID,
+		`INSERT INTO tickets (id, space_id, number, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		itemID, space.ID, 1, "Comment Test Ticket", "open", "medium", user.ID,
 	)
 	require.NoError(t, err)
 
@@ -643,8 +644,8 @@ func TestComments_WrongURL_NoOrgId_Returns404(t *testing.T) {
 
 	itemID := uuid.New()
 	_, err := ts.DB.Pool.Exec(context.Background(),
-		`INSERT INTO items (id, space_id, kind, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		itemID, space.ID, "ticket", "Test Ticket", "open", "medium", user.ID,
+		`INSERT INTO tickets (id, space_id, number, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		itemID, space.ID, 1, "Test Ticket", "open", "medium", user.ID,
 	)
 	require.NoError(t, err)
 
@@ -661,8 +662,8 @@ func TestComments_PostAndRetrieve_FullURL(t *testing.T) {
 
 	itemID := uuid.New()
 	_, err := ts.DB.Pool.Exec(context.Background(),
-		`INSERT INTO items (id, space_id, kind, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		itemID, space.ID, "ticket", "Full URL Comment Test", "open", "medium", user.ID,
+		`INSERT INTO tickets (id, space_id, number, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		itemID, space.ID, 1, "Full URL Comment Test", "open", "medium", user.ID,
 	)
 	require.NoError(t, err)
 

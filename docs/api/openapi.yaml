@@ -107,6 +107,9 @@ components:
         to_id:
           example: b2c3d4e5-f6a7-8901-bcde-f12345678901
           type: string
+        to_type:
+          example: project_item
+          type: string
       type: object
     api.SwaggerCreateSpaceRequest:
       properties:
@@ -499,6 +502,13 @@ components:
         kind:
           type: string
         title:
+          type: string
+      type: object
+    projects.rankItemRequest:
+      properties:
+        after_id:
+          type: string
+        before_id:
           type: string
       type: object
   securitySchemes:
@@ -1332,9 +1342,138 @@ paths:
       summary: Update space
       tags:
       - spaces
+  /orgs/{orgID}/spaces/{spaceID}/{entityType}/{entityID}/comments:
+    get:
+      description: Returns all top-level comments for a ticket, project item, or wiki
+        page.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Entity type (tickets, project-items, wiki)
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      - description: Entity ID (UUID)
+        in: path
+        name: entityID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.SwaggerCommentResponse'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List comments
+      tags:
+      - comments
+    post:
+      description: Adds a new comment to a ticket, project item, or wiki page.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Entity type (tickets, project-items, wiki)
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      - description: Entity ID (UUID)
+        in: path
+        name: entityID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateCommentRequest'
+                description: Comment content
+                summary: body
+        description: Comment content
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerCommentResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create comment
+      tags:
+      - comments
   /orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments:
     get:
-      description: Returns all comments for the specified item.
+      description: 'Deprecated: use /{entityType}/{entityID}/comments instead.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1362,91 +1501,16 @@ paths:
                 items:
                   $ref: '#/components/schemas/api.SwaggerCommentResponse'
                 type: array
-          description: List of comments
+          description: OK
         "400":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Invalid item ID
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not authenticated
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Internal error
+          description: Bad Request
       security:
       - BearerAuth: []
-      summary: List comments
-      tags:
-      - comments
-    post:
-      description: Adds a new comment to the specified item. Author is set from the
-        JWT.
-      parameters:
-      - description: Organization ID (UUID)
-        in: path
-        name: orgID
-        required: true
-        schema:
-          type: string
-      - description: Space ID (UUID)
-        in: path
-        name: spaceID
-        required: true
-        schema:
-          type: string
-      - description: Item ID (UUID)
-        in: path
-        name: itemID
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/api.SwaggerCreateCommentRequest'
-                description: Comment content
-                summary: body
-        description: Comment content
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerCommentResponse'
-          description: Comment created
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not authenticated
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Internal error
-      security:
-      - BearerAuth: []
-      summary: Create comment
+      summary: List comments (deprecated)
       tags:
       - comments
   /orgs/{orgID}/spaces/{spaceID}/members:
@@ -2028,6 +2092,71 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a project item
+      tags:
+      - projects
+  /spaces/{spaceID}/projects/items/{itemID}/rank:
+    post:
+      description: Repositions a project item by specifying the item that should come
+        immediately before it (before_id) and/or after it (after_id). All items in
+        the space are renumbered to reflect the new order.
+      parameters:
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/projects.rankItemRequest'
+                description: Neighbour IDs
+                summary: body
+        description: Neighbour IDs
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerMessageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Reorder a project item
       tags:
       - projects
   /spaces/{spaceID}/projects/items/{itemID}/relations:
@@ -3800,6 +3929,95 @@ paths:
       security:
       - BearerAuth: []
       summary: Diff page versions
+      tags:
+      - wiki
+  /spaces/{spaceID}/wiki/{pageID}/lock:
+    delete:
+      parameters:
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Release page lock
+      tags:
+      - wiki
+    get:
+      parameters:
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get page lock
+      tags:
+      - wiki
+    post:
+      parameters:
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Conflict
+      security:
+      - BearerAuth: []
+      summary: Acquire page lock
       tags:
       - wiki
   /spaces/{spaceID}/wiki/{pageID}/move:

@@ -84,12 +84,18 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			r.Mount("/", cfg.SpaceHandler.Routes())
 		})
 
-		// Comments (scoped by org, space, and item)
-		r.Route("/orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments", func(r chi.Router) {
-			if cfg.CommentHandler != nil {
-				r.Mount("/", cfg.CommentHandler.Routes())
-			}
-		})
+		// Comments — new polymorphic routes (tickets, project-items, wiki)
+		if cfg.CommentHandler != nil {
+			r.Route("/orgs/{orgID}/spaces/{spaceID}/{entityType}/{entityID}/comments", func(r chi.Router) {
+				r.Get("/", cfg.CommentHandler.List)
+				r.Post("/", cfg.CommentHandler.Create)
+			})
+			// Legacy item-scoped comments route (deprecated, kept for one release)
+			r.Route("/orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments", func(r chi.Router) {
+				r.Get("/", cfg.CommentHandler.ListLegacy)
+				r.Post("/", cfg.CommentHandler.CreateLegacy)
+			})
+		}
 
 		// Notifications (scoped to current user)
 		if cfg.NotificationHandler != nil {

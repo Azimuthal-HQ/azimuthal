@@ -25,18 +25,31 @@ type AuditLog struct {
 }
 
 type Comment struct {
-	ID        uuid.UUID          `json:"id"`
-	ItemID    pgtype.UUID        `json:"item_id"`
-	PageID    pgtype.UUID        `json:"page_id"`
-	ParentID  pgtype.UUID        `json:"parent_id"`
-	AuthorID  uuid.UUID          `json:"author_id"`
-	Body      string             `json:"body"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	ID         uuid.UUID          `json:"id"`
+	ItemID     pgtype.UUID        `json:"item_id"`
+	PageID     pgtype.UUID        `json:"page_id"`
+	ParentID   pgtype.UUID        `json:"parent_id"`
+	AuthorID   uuid.UUID          `json:"author_id"`
+	Body       string             `json:"body"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt  pgtype.Timestamptz `json:"deleted_at"`
+	EntityType string             `json:"entity_type"`
+	EntityID   uuid.UUID          `json:"entity_id"`
 }
 
-type Item struct {
+type EntityRelation struct {
+	ID        uuid.UUID          `json:"id"`
+	FromID    uuid.UUID          `json:"from_id"`
+	ToID      uuid.UUID          `json:"to_id"`
+	Kind      string             `json:"kind"`
+	CreatedBy uuid.UUID          `json:"created_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	FromType  string             `json:"from_type"`
+	ToType    string             `json:"to_type"`
+}
+
+type ItemsArchive struct {
 	ID           uuid.UUID          `json:"id"`
 	SpaceID      uuid.UUID          `json:"space_id"`
 	ParentID     pgtype.UUID        `json:"parent_id"`
@@ -57,15 +70,6 @@ type Item struct {
 	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 	SearchVector interface{}        `json:"search_vector"`
 	Number       *int32             `json:"number"`
-}
-
-type ItemRelation struct {
-	ID        uuid.UUID          `json:"id"`
-	FromID    uuid.UUID          `json:"from_id"`
-	ToID      uuid.UUID          `json:"to_id"`
-	Kind      string             `json:"kind"`
-	CreatedBy uuid.UUID          `json:"created_by"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Label struct {
@@ -123,6 +127,15 @@ type Page struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 	SearchVector interface{}        `json:"search_vector"`
+	Path         string             `json:"path"`
+}
+
+type PageLock struct {
+	PageID     uuid.UUID          `json:"page_id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	UserName   string             `json:"user_name"`
+	AcquiredAt pgtype.Timestamptz `json:"acquired_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
 }
 
 type PageRevision struct {
@@ -133,6 +146,29 @@ type PageRevision struct {
 	Content   string             `json:"content"`
 	AuthorID  uuid.UUID          `json:"author_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type ProjectItem struct {
+	ID           uuid.UUID          `json:"id"`
+	SpaceID      uuid.UUID          `json:"space_id"`
+	ParentID     pgtype.UUID        `json:"parent_id"`
+	Number       int32              `json:"number"`
+	Kind         string             `json:"kind"`
+	Title        string             `json:"title"`
+	Description  string             `json:"description"`
+	Status       string             `json:"status"`
+	Priority     string             `json:"priority"`
+	ReporterID   uuid.UUID          `json:"reporter_id"`
+	AssigneeID   pgtype.UUID        `json:"assignee_id"`
+	SprintID     pgtype.UUID        `json:"sprint_id"`
+	Labels       []string           `json:"labels"`
+	DueAt        pgtype.Timestamptz `json:"due_at"`
+	ResolvedAt   pgtype.Timestamptz `json:"resolved_at"`
+	Rank         string             `json:"rank"`
+	SearchVector interface{}        `json:"search_vector"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type Session struct {
@@ -180,6 +216,26 @@ type Sprint struct {
 	CreatedBy uuid.UUID          `json:"created_by"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Ticket struct {
+	ID           uuid.UUID          `json:"id"`
+	SpaceID      uuid.UUID          `json:"space_id"`
+	Number       int32              `json:"number"`
+	Title        string             `json:"title"`
+	Description  string             `json:"description"`
+	Status       string             `json:"status"`
+	Priority     string             `json:"priority"`
+	ReporterID   uuid.UUID          `json:"reporter_id"`
+	AssigneeID   pgtype.UUID        `json:"assignee_id"`
+	Labels       []string           `json:"labels"`
+	DueAt        pgtype.Timestamptz `json:"due_at"`
+	ResolvedAt   pgtype.Timestamptz `json:"resolved_at"`
+	Rank         string             `json:"rank"`
+	SearchVector interface{}        `json:"search_vector"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type User struct {

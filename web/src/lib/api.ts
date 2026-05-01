@@ -244,6 +244,47 @@ export interface NotificationListResponse {
   unread_count: number;
 }
 
+export interface WikiTreeNode {
+  id: string;
+  space_id: string;
+  parent_id: string | null;
+  title: string;
+  version: number;
+  position: number;
+  children: WikiTreeNode[];
+}
+
+export interface WikiRevision {
+  id: string;
+  page_id: string;
+  version: number;
+  title: string;
+  author_id: string;
+  created_at: string;
+}
+
+export interface Relation {
+  id: string;
+  from_id: string;
+  to_id: string;
+  kind: string;
+  created_by: string;
+  to_title: string;
+  to_status: string;
+  to_kind: string;
+}
+
+export interface RoadmapItem {
+  item: ProjectItem;
+  due_at: string;
+  overdue: boolean;
+}
+
+export interface RoadmapSprint {
+  sprint: Sprint;
+  items: ProjectItem[];
+}
+
 // ---------------------------------------------------------------------------
 // Auth types
 // ---------------------------------------------------------------------------
@@ -599,8 +640,18 @@ async function fetchMembers(orgId: string, spaceId: string): Promise<Member[]> {
 // Comment API functions
 // ---------------------------------------------------------------------------
 
-async function fetchComments(orgId: string, spaceId: string, itemId: string): Promise<Comment[]> {
-  const data = await apiFetch<Comment[] | Comment>(`/orgs/${orgId}/spaces/${spaceId}/items/${itemId}/comments`);
+function entityTypeToPath(entityType: string): string {
+  switch (entityType) {
+    case 'ticket': return 'tickets';
+    case 'project_item': return 'project-items';
+    case 'page': return 'wiki';
+    default: return entityType;
+  }
+}
+
+async function fetchComments(orgId: string, spaceId: string, entityType: string, entityId: string): Promise<Comment[]> {
+  const path = entityTypeToPath(entityType);
+  const data = await apiFetch<Comment[] | Comment>(`/orgs/${orgId}/spaces/${spaceId}/${path}/${entityId}/comments`);
   return Array.isArray(data) ? data : [data];
 }
 
@@ -608,8 +659,9 @@ interface CreateCommentRequest {
   content: string;
 }
 
-async function createComment(orgId: string, spaceId: string, itemId: string, req: CreateCommentRequest): Promise<Comment> {
-  return apiFetch<Comment>(`/orgs/${orgId}/spaces/${spaceId}/items/${itemId}/comments`, {
+async function createComment(orgId: string, spaceId: string, entityType: string, entityId: string, req: CreateCommentRequest): Promise<Comment> {
+  const path = entityTypeToPath(entityType);
+  return apiFetch<Comment>(`/orgs/${orgId}/spaces/${spaceId}/${path}/${entityId}/comments`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -643,6 +695,122 @@ async function assignTicket(spaceId: string, ticketId: string, assigneeId: strin
 }
 
 // ---------------------------------------------------------------------------
+// Wiki tree / search / revision / move API functions
+// ---------------------------------------------------------------------------
+
+async function fetchWikiTree(spaceId: string): Promise<WikiTreeNode[]> {
+  const data = await apiFetch<WikiTreeNode[] | null>(`/spaces/${spaceId}/wiki/tree`);
+  return data ?? [];
+}
+
+async function searchWikiPages(spaceId: string, q: string): Promise<WikiPage[]> {
+  const data = await apiFetch<WikiPage[] | null>(`/spaces/${spaceId}/wiki/search?q=${encodeURIComponent(q)}`);
+  return data ?? [];
+}
+
+async function fetchWikiRevisions(spaceId: string, pageId: string): Promise<WikiRevision[]> {
+  const data = await apiFetch<WikiRevision[] | null>(`/spaces/${spaceId}/wiki/${pageId}/revisions`);
+  return data ?? [];
+}
+
+async function fetchWikiRevision(spaceId: string, pageId: string, version: number): Promise<WikiPage> {
+  return apiFetch<WikiPage>(`/spaces/${spaceId}/wiki/${pageId}/revisions/${version}`);
+}
+
+async function fetchWikiDiff(spaceId: string, pageId: string, from: number, to: number): Promise<{ diff: string }> {
+  return apiFetch<{ diff: string }>(`/spaces/${spaceId}/wiki/${pageId}/diff?from=${from}&to=${to}`);
+}
+
+interface MoveWikiPageRequest {
+  parent_id: string | null;
+  position: number;
+}
+
+async function moveWikiPage(spaceId: string, pageId: string, req: MoveWikiPageRequest): Promise<WikiPage> {
+  return apiFetch<WikiPage>(`/spaces/${spaceId}/wiki/${pageId}/move`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Relations API functions
+// ---------------------------------------------------------------------------
+
+async function fetchRelations(spaceId: string, itemId: string): Promise<Relation[]> {
+  const data = await apiFetch<Relation[] | null>(`/spaces/${spaceId}/projects/items/${itemId}/relations`);
+  return data ?? [];
+}
+
+interface CreateRelationRequest {
+  to_id: string;
+  kind: string;
+}
+
+async function createRelation(spaceId: string, itemId: string, req: CreateRelationRequest): Promise<Relation> {
+  return apiFetch<Relation>(`/spaces/${spaceId}/projects/items/${itemId}/relations`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function deleteRelation(spaceId: string, relationId: string): Promise<void> {
+  return apiFetch<void>(`/spaces/${spaceId}/projects/relations/${relationId}`, { method: 'DELETE' });
+}
+
+// ---------------------------------------------------------------------------
+// Rank / search items API functions
+// ---------------------------------------------------------------------------
+
+interface RankItemRequest {
+  before_id?: string;
+  after_id?: string;
+}
+
+async function rankItem(spaceId: string, itemId: string, req: RankItemRequest): Promise<void> {
+  return apiFetch<void>(`/spaces/${spaceId}/projects/items/${itemId}/rank`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function searchItems(spaceId: string, q: string): Promise<ProjectItem[]> {
+  const data = await apiFetch<ProjectItem[] | null>(`/spaces/${spaceId}/projects/items/search?q=${encodeURIComponent(q)}`);
+  return data ?? [];
+}
+
+// ---------------------------------------------------------------------------
+// Sprint start / complete API functions
+// ---------------------------------------------------------------------------
+
+async function startSprint(spaceId: string, sprintId: string): Promise<Sprint> {
+  return apiFetch<Sprint>(`/spaces/${spaceId}/projects/sprints/${sprintId}/start`, { method: 'POST' });
+}
+
+async function completeSprint(spaceId: string, sprintId: string): Promise<Sprint> {
+  return apiFetch<Sprint>(`/spaces/${spaceId}/projects/sprints/${sprintId}/complete`, { method: 'POST' });
+}
+
+// ---------------------------------------------------------------------------
+// Roadmap API functions
+// ---------------------------------------------------------------------------
+
+async function fetchRoadmap(spaceId: string): Promise<RoadmapItem[]> {
+  const data = await apiFetch<RoadmapItem[] | null>(`/spaces/${spaceId}/projects/roadmap`);
+  return data ?? [];
+}
+
+async function fetchRoadmapOverdue(spaceId: string): Promise<RoadmapItem[]> {
+  const data = await apiFetch<RoadmapItem[] | null>(`/spaces/${spaceId}/projects/roadmap/overdue`);
+  return data ?? [];
+}
+
+async function fetchRoadmapSprints(spaceId: string): Promise<RoadmapSprint[]> {
+  const data = await apiFetch<RoadmapSprint[] | null>(`/spaces/${spaceId}/projects/roadmap/sprints`);
+  return data ?? [];
+}
+
+// ---------------------------------------------------------------------------
 // Query key factories
 // ---------------------------------------------------------------------------
 
@@ -661,8 +829,19 @@ export const queryKeys = {
   sprintItems: (spaceId: string, sprintId: string) => ['sprints', spaceId, sprintId, 'items'] as const,
   labels: (orgId: string) => ['labels', orgId] as const,
   members: (orgId: string, spaceId: string) => ['members', orgId, spaceId] as const,
-  comments: (spaceId: string, itemId: string) => ['comments', spaceId, itemId] as const,
+  comments: (spaceId: string, entityType: string, entityId: string) => ['comments', spaceId, entityType, entityId] as const,
   notifications: () => ['notifications'] as const,
+  wikiTree: (spaceId: string) => ['wikiTree', spaceId] as const,
+  wikiSearch: (spaceId: string, q: string) => ['wikiSearch', spaceId, q] as const,
+  wikiLock: (spaceId: string, pageId: string) => ['wikiLock', spaceId, pageId] as const,
+  wikiRevisions: (spaceId: string, pageId: string) => ['wikiRevisions', spaceId, pageId] as const,
+  wikiRevision: (spaceId: string, pageId: string, version: number) => ['wikiRevision', spaceId, pageId, version] as const,
+  wikiDiff: (spaceId: string, pageId: string, from: number, to: number) => ['wikiDiff', spaceId, pageId, from, to] as const,
+  relations: (spaceId: string, itemId: string) => ['relations', spaceId, itemId] as const,
+  roadmap: (spaceId: string) => ['roadmap', spaceId] as const,
+  roadmapOverdue: (spaceId: string) => ['roadmapOverdue', spaceId] as const,
+  roadmapSprints: (spaceId: string) => ['roadmapSprints', spaceId] as const,
+  itemSearch: (spaceId: string, q: string) => ['itemSearch', spaceId, q] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -676,6 +855,14 @@ export function useMe(opts?: QueryOpts<User>) {
     queryKey: queryKeys.me(),
     queryFn: fetchMe,
     ...opts,
+  });
+}
+
+export function useUpdateProfile() {
+  const queryClient = useQueryClient();
+  return useMutation<User, APIError, { display_name?: string; email?: string }>({
+    mutationFn: (body) => apiFetch<User>('/auth/me', { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.me() }),
   });
 }
 
@@ -801,11 +988,11 @@ export function useMembers(orgId: string, spaceId: string, opts?: QueryOpts<Memb
   });
 }
 
-export function useComments(orgId: string, spaceId: string, itemId: string, opts?: QueryOpts<Comment[]>) {
+export function useComments(orgId: string, spaceId: string, entityType: string, entityId: string, opts?: QueryOpts<Comment[]>) {
   return useQuery<Comment[], APIError>({
-    queryKey: queryKeys.comments(spaceId, itemId),
-    queryFn: () => fetchComments(orgId, spaceId, itemId),
-    enabled: !!orgId && !!spaceId && !!itemId,
+    queryKey: queryKeys.comments(spaceId, entityType, entityId),
+    queryFn: () => fetchComments(orgId, spaceId, entityType, entityId),
+    enabled: !!orgId && !!spaceId && !!entityType && !!entityId,
     retry: (failureCount, error) => {
       if (error?.status === 404) return false;
       return failureCount < 2;
@@ -953,12 +1140,12 @@ export function useTransitionProjectItemStatus(spaceId: string, itemId: string) 
   });
 }
 
-export function useCreateComment(orgId: string, spaceId: string, itemId: string) {
+export function useCreateComment(orgId: string, spaceId: string, entityType: string, entityId: string) {
   const queryClient = useQueryClient();
   return useMutation<Comment, APIError, CreateCommentRequest>({
-    mutationFn: (req) => createComment(orgId, spaceId, itemId, req),
+    mutationFn: (req) => createComment(orgId, spaceId, entityType, entityId, req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.comments(spaceId, itemId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.comments(spaceId, entityType, entityId) });
     },
   });
 }
@@ -983,6 +1170,132 @@ export function useMarkAllNotificationsRead() {
   });
 }
 
+export function useWikiTree(spaceId: string, opts?: QueryOpts<WikiTreeNode[]>) {
+  return useQuery<WikiTreeNode[], APIError>({
+    queryKey: queryKeys.wikiTree(spaceId),
+    queryFn: () => fetchWikiTree(spaceId),
+    enabled: !!spaceId,
+    ...opts,
+  });
+}
+
+export function useWikiSearch(spaceId: string, q: string, opts?: QueryOpts<WikiPage[]>) {
+  return useQuery<WikiPage[], APIError>({
+    queryKey: queryKeys.wikiSearch(spaceId, q),
+    queryFn: () => searchWikiPages(spaceId, q),
+    enabled: !!spaceId && q.length > 0,
+    ...opts,
+  });
+}
+
+export function useWikiRevisions(spaceId: string, pageId: string, opts?: QueryOpts<WikiRevision[]>) {
+  return useQuery<WikiRevision[], APIError>({
+    queryKey: queryKeys.wikiRevisions(spaceId, pageId),
+    queryFn: () => fetchWikiRevisions(spaceId, pageId),
+    enabled: !!spaceId && !!pageId,
+    ...opts,
+  });
+}
+
+export interface PageLock {
+  page_id: string;
+  user_id: string;
+  user_name: string;
+  expires_at: string;
+}
+
+export function usePageLock(spaceId: string, pageId: string, opts?: QueryOpts<PageLock | null>) {
+  return useQuery<PageLock | null, APIError>({
+    queryKey: queryKeys.wikiLock(spaceId, pageId),
+    queryFn: async () => {
+      const data = await apiFetch<PageLock | null>(`/spaces/${spaceId}/wiki/${pageId}/lock`);
+      return data;
+    },
+    enabled: !!spaceId && !!pageId,
+    refetchInterval: 15000,
+    ...opts,
+  });
+}
+
+export function useAcquirePageLock(spaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<PageLock, APIError, void>({
+    mutationFn: () => apiFetch<PageLock>(`/spaces/${spaceId}/wiki/${pageId}/lock`, { method: 'POST' }),
+    onSuccess: (data) => queryClient.setQueryData(queryKeys.wikiLock(spaceId, pageId), data),
+  });
+}
+
+export function useReleasePageLock(spaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, void>({
+    mutationFn: () => apiFetch<void>(`/spaces/${spaceId}/wiki/${pageId}/lock`, { method: 'DELETE' }),
+    onSuccess: () => queryClient.setQueryData(queryKeys.wikiLock(spaceId, pageId), null),
+  });
+}
+
+export function useWikiRevision(spaceId: string, pageId: string, version: number, opts?: QueryOpts<WikiPage>) {
+  return useQuery<WikiPage, APIError>({
+    queryKey: queryKeys.wikiRevision(spaceId, pageId, version),
+    queryFn: () => fetchWikiRevision(spaceId, pageId, version),
+    enabled: !!spaceId && !!pageId && version > 0,
+    ...opts,
+  });
+}
+
+export function useWikiDiff(spaceId: string, pageId: string, from: number, to: number, opts?: QueryOpts<{ diff: string }>) {
+  return useQuery<{ diff: string }, APIError>({
+    queryKey: queryKeys.wikiDiff(spaceId, pageId, from, to),
+    queryFn: () => fetchWikiDiff(spaceId, pageId, from, to),
+    enabled: !!spaceId && !!pageId && from > 0 && to > 0,
+    ...opts,
+  });
+}
+
+export function useRelations(spaceId: string, itemId: string, opts?: QueryOpts<Relation[]>) {
+  return useQuery<Relation[], APIError>({
+    queryKey: queryKeys.relations(spaceId, itemId),
+    queryFn: () => fetchRelations(spaceId, itemId),
+    enabled: !!spaceId && !!itemId,
+    ...opts,
+  });
+}
+
+export function useRoadmap(spaceId: string, opts?: QueryOpts<RoadmapItem[]>) {
+  return useQuery<RoadmapItem[], APIError>({
+    queryKey: queryKeys.roadmap(spaceId),
+    queryFn: () => fetchRoadmap(spaceId),
+    enabled: !!spaceId,
+    ...opts,
+  });
+}
+
+export function useRoadmapOverdue(spaceId: string, opts?: QueryOpts<RoadmapItem[]>) {
+  return useQuery<RoadmapItem[], APIError>({
+    queryKey: queryKeys.roadmapOverdue(spaceId),
+    queryFn: () => fetchRoadmapOverdue(spaceId),
+    enabled: !!spaceId,
+    ...opts,
+  });
+}
+
+export function useRoadmapSprints(spaceId: string, opts?: QueryOpts<RoadmapSprint[]>) {
+  return useQuery<RoadmapSprint[], APIError>({
+    queryKey: queryKeys.roadmapSprints(spaceId),
+    queryFn: () => fetchRoadmapSprints(spaceId),
+    enabled: !!spaceId,
+    ...opts,
+  });
+}
+
+export function useItemSearch(spaceId: string, q: string, opts?: QueryOpts<ProjectItem[]>) {
+  return useQuery<ProjectItem[], APIError>({
+    queryKey: queryKeys.itemSearch(spaceId, q),
+    queryFn: () => searchItems(spaceId, q),
+    enabled: !!spaceId && q.length > 0,
+    ...opts,
+  });
+}
+
 export function useAssignTicket(spaceId: string, ticketId: string) {
   const queryClient = useQueryClient();
   return useMutation<void, APIError, string | null>({
@@ -990,6 +1303,79 @@ export function useAssignTicket(spaceId: string, ticketId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
+    },
+  });
+}
+
+export function useMoveWikiPage(spaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<WikiPage, APIError, MoveWikiPageRequest>({
+    mutationFn: (req) => moveWikiPage(spaceId, pageId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiTree(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiPages(spaceId) });
+    },
+  });
+}
+
+export function useCreateRelation(spaceId: string, itemId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Relation, APIError, CreateRelationRequest>({
+    mutationFn: (req) => createRelation(spaceId, itemId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.relations(spaceId, itemId) });
+    },
+  });
+}
+
+export function useDeleteRelation(spaceId: string, itemId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (relationId) => deleteRelation(spaceId, relationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.relations(spaceId, itemId) });
+    },
+  });
+}
+
+export function useRankItem(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, { itemId: string } & RankItemRequest>({
+    mutationFn: ({ itemId, ...req }) => rankItem(spaceId, itemId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
+    },
+  });
+}
+
+export function useStartSprint(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Sprint, APIError, string>({
+    mutationFn: (sprintId) => startSprint(spaceId, sprintId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sprints(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.activeSprint(spaceId) });
+    },
+  });
+}
+
+export function useCompleteSprint(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Sprint, APIError, string>({
+    mutationFn: (sprintId) => completeSprint(spaceId, sprintId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sprints(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.activeSprint(spaceId) });
+    },
+  });
+}
+
+export function useCreateSprint(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Sprint, APIError, CreateSprintRequest>({
+    mutationFn: (req) => createSprint(spaceId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sprints(spaceId) });
     },
   });
 }

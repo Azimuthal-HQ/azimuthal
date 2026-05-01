@@ -46,6 +46,79 @@ func init() {
 
 	adminCmd.AddCommand(createUserCmd)
 	adminCmd.AddCommand(resetPasswordCmd)
+	adminCmd.AddCommand(verifySplitCmd)
+}
+
+// --- verify-split ---
+
+var verifySplitCmd = &cobra.Command{
+	Use:   "verify-split",
+	Short: "Verify items_archive row counts match tickets + project_items after P5 migration",
+	RunE:  runVerifySplit,
+}
+
+func runVerifySplit(cmd *cobra.Command, _ []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	ctx := context.Background()
+	pool, err := db.Connect(ctx, db.DefaultConfig(cfg.DatabaseURL))
+	if err != nil {
+		return fmt.Errorf("connecting to database: %w", err)
+	}
+	defer pool.Close()
+
+	queries := generated.New(pool)
+
+	archiveTickets, err := queries.CountItemsArchiveTickets(ctx)
+	if err != nil {
+		return fmt.Errorf("counting archive tickets: %w", err)
+	}
+
+	archiveProjectItems, err := queries.CountItemsArchiveProjectItems(ctx)
+	if err != nil {
+		return fmt.Errorf("counting archive project items: %w", err)
+	}
+
+	// Count live rows in new tables (including soft-deleted for parity).
+	var liveTickets int64
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM tickets").Scan(&liveTickets); err != nil {
+		return fmt.Errorf("counting live tickets: %w", err)
+	}
+
+	var liveProjectItems int64
+	if err := pool.QueryRow(ctx, "SELECT COUNT(*) FROM project_items").Scan(&liveProjectItems); err != nil {
+		return fmt.Errorf("counting live project items: %w", err)
+	}
+
+	ok := true
+	fmt.Printf("items_archive tickets:      %d\n", archiveTickets)
+	fmt.Printf("tickets table:              %d\n", liveTickets)
+	if archiveTickets != liveTickets {
+		fmt.Printf("  ⚠️  MISMATCH: archive=%d live=%d delta=%d\n", archiveTickets, liveTickets, liveTickets-archiveTickets)
+		ok = false
+	} else {
+		fmt.Printf("  ✅ ticket counts match\n")
+	}
+
+	fmt.Printf("items_archive project_items: %d\n", archiveProjectItems)
+	fmt.Printf("project_items table:         %d\n", liveProjectItems)
+	if archiveProjectItems != liveProjectItems {
+		fmt.Printf("  ⚠️  MISMATCH: archive=%d live=%d delta=%d\n", archiveProjectItems, liveProjectItems, liveProjectItems-archiveProjectItems)
+		ok = false
+	} else {
+		fmt.Printf("  ✅ project item counts match\n")
+	}
+
+	if ok {
+		fmt.Println("\n✅ verify-split: zero divergence")
+	} else {
+		fmt.Println("\n❌ verify-split: divergence detected — manual investigation required")
+		return fmt.Errorf("split divergence detected")
+	}
+	return nil
 }
 
 // slugifyName converts a display name into a URL-safe slug.

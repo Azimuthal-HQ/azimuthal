@@ -25,6 +25,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -315,6 +316,23 @@ func (m *mockPageStore) SearchPages(_ context.Context, _ generated.SearchPagesPa
 	return nil, nil
 }
 
+func (m *mockPageStore) UpdatePageDescendantPaths(_ context.Context, _ generated.UpdatePageDescendantPathsParams) error {
+	return nil
+}
+
+type mockLockStore struct{}
+
+func (m *mockLockStore) UpsertPageLock(_ context.Context, _ generated.UpsertPageLockParams) (generated.PageLock, error) {
+	return generated.PageLock{}, nil
+}
+func (m *mockLockStore) GetPageLock(_ context.Context, _ uuid.UUID) (generated.PageLock, error) {
+	return generated.PageLock{}, pgx.ErrNoRows
+}
+func (m *mockLockStore) DeletePageLock(_ context.Context, _ generated.DeletePageLockParams) error {
+	return nil
+}
+func (m *mockLockStore) DeleteExpiredPageLocks(_ context.Context) error { return nil }
+
 // ---- Mock project repos ----
 
 type mockItemRepo struct {
@@ -449,6 +467,9 @@ func (m *mockRelationRepo) Create(_ context.Context, rel *projects.Relation) err
 func (m *mockRelationRepo) ListByItem(_ context.Context, _ uuid.UUID) ([]*projects.Relation, error) {
 	return nil, nil
 }
+func (m *mockRelationRepo) ListByEntity(_ context.Context, _ uuid.UUID, _ string) ([]*projects.Relation, error) {
+	return nil, nil
+}
 func (m *mockRelationRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
 
 type mockLabelRepo struct{}
@@ -508,7 +529,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 
 	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil)
 	ticketHandler := ticketsapi.NewHandler(ticketSvc)
-	wikiHandler := wikiapi.NewHandler(wikiSvc)
+	wikiHandler := wikiapi.NewHandler(wikiSvc, wiki.NewLockService(&mockLockStore{}))
 	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
 	spaceHandler := spacesapi.NewHandler(nil)

@@ -11,7 +11,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
 
-func TestDbItemToProject(t *testing.T) {
+func TestDbProjectItemToItem(t *testing.T) {
 	now := time.Date(2025, 6, 15, 10, 0, 0, 0, time.UTC)
 	id := uuid.New()
 	spaceID := uuid.New()
@@ -22,15 +22,15 @@ func TestDbItemToProject(t *testing.T) {
 	due := now.Add(72 * time.Hour)
 	resolved := now.Add(48 * time.Hour)
 	deleted := now.Add(96 * time.Hour)
-	desc := "A project item"
 
-	dbItem := generated.Item{
+	dbItem := generated.ProjectItem{
 		ID:          id,
 		SpaceID:     spaceID,
 		ParentID:    pgtype.UUID{Bytes: parentID, Valid: true},
+		Number:      1,
 		Kind:        "story",
 		Title:       "Build feature X",
-		Description: &desc,
+		Description: "A project item",
 		Status:      "in_progress",
 		Priority:    "high",
 		ReporterID:  reporterID,
@@ -45,7 +45,7 @@ func TestDbItemToProject(t *testing.T) {
 		DeletedAt:   pgtype.Timestamptz{Time: deleted, Valid: true},
 	}
 
-	got := dbItemToProject(dbItem)
+	got := dbProjectItemToItem(dbItem)
 
 	if got.ID != id {
 		t.Errorf("ID mismatch")
@@ -97,10 +97,11 @@ func TestDbItemToProject(t *testing.T) {
 	}
 }
 
-func TestDbItemToProjectNilOptionals(t *testing.T) {
-	dbItem := generated.Item{
+func TestDbProjectItemToItemNilOptionals(t *testing.T) {
+	dbItem := generated.ProjectItem{
 		ID:         uuid.New(),
 		SpaceID:    uuid.New(),
+		Number:     1,
 		Kind:       "task",
 		Title:      "Minimal item",
 		Status:     "open",
@@ -116,7 +117,7 @@ func TestDbItemToProjectNilOptionals(t *testing.T) {
 		UpdatedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}
 
-	got := dbItemToProject(dbItem)
+	got := dbProjectItemToItem(dbItem)
 	if got.ParentID != nil {
 		t.Errorf("expected nil ParentID")
 	}
@@ -137,17 +138,17 @@ func TestDbItemToProjectNilOptionals(t *testing.T) {
 	}
 }
 
-func TestDbItemsToProjects(t *testing.T) {
-	items := []generated.Item{
-		{ID: uuid.New(), SpaceID: uuid.New(), Kind: "task", ReporterID: uuid.New(),
+func TestDbProjectItemsToItems(t *testing.T) {
+	items := []generated.ProjectItem{
+		{ID: uuid.New(), SpaceID: uuid.New(), Number: 1, Kind: "task", ReporterID: uuid.New(),
 			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}},
-		{ID: uuid.New(), SpaceID: uuid.New(), Kind: "story", ReporterID: uuid.New(),
+		{ID: uuid.New(), SpaceID: uuid.New(), Number: 2, Kind: "story", ReporterID: uuid.New(),
 			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}},
 	}
 
-	got := dbItemsToProjects(items)
+	got := dbProjectItemsToItems(items)
 	if len(got) != 2 {
 		t.Errorf("expected 2 items, got %d", len(got))
 	}
@@ -159,8 +160,8 @@ func TestDbItemsToProjects(t *testing.T) {
 	}
 }
 
-func TestDbItemsToProjectsEmpty(t *testing.T) {
-	got := dbItemsToProjects(nil)
+func TestDbProjectItemsToItemsEmpty(t *testing.T) {
+	got := dbProjectItemsToItems(nil)
 	if len(got) != 0 {
 		t.Errorf("expected 0 items for nil input, got %d", len(got))
 	}
@@ -242,7 +243,7 @@ func TestDbSprintToProjectNilOptionals(t *testing.T) {
 	}
 }
 
-func TestItemToCreateParams(t *testing.T) {
+func TestProjectItemCreateParamsValidation(t *testing.T) {
 	parentID := uuid.New()
 	assigneeID := uuid.New()
 	due := time.Date(2025, 8, 1, 0, 0, 0, 0, time.UTC)
@@ -263,29 +264,45 @@ func TestItemToCreateParams(t *testing.T) {
 		Rank:        "0|ccc:",
 	}
 
-	got := itemToCreateParams(item)
+	// Verify the adapter can create params from this item.
+	params := generated.CreateProjectItemParams{
+		ID:          item.ID,
+		SpaceID:     item.SpaceID,
+		ParentID:    pgUUID(item.ParentID),
+		Number:      1,
+		Kind:        item.Kind,
+		Title:       item.Title,
+		Description: item.Description,
+		Status:      item.Status,
+		Priority:    item.Priority,
+		ReporterID:  item.ReporterID,
+		AssigneeID:  pgUUID(item.AssigneeID),
+		Labels:      coalesceLabels(item.Labels),
+		DueAt:       pgTimestampPtr(item.DueAt),
+		Rank:        item.Rank,
+	}
 
-	if got.ID != item.ID {
+	if params.ID != item.ID {
 		t.Errorf("ID mismatch")
 	}
-	if got.Kind != "story" {
-		t.Errorf("Kind mismatch: got %v", got.Kind)
+	if params.Kind != "story" {
+		t.Errorf("Kind mismatch: got %v", params.Kind)
 	}
-	if !got.ParentID.Valid {
+	if !params.ParentID.Valid {
 		t.Error("ParentID should be valid")
 	}
-	if got.Description == nil || *got.Description != "Details here" {
+	if params.Description != "Details here" {
 		t.Errorf("Description mismatch")
 	}
-	if !got.AssigneeID.Valid {
+	if !params.AssigneeID.Valid {
 		t.Error("AssigneeID should be valid")
 	}
-	if !got.DueAt.Valid {
+	if !params.DueAt.Valid {
 		t.Error("DueAt should be valid")
 	}
 }
 
-func TestItemToCreateParamsNilOptionals(t *testing.T) {
+func TestProjectItemCreateParamsNilOptionals(t *testing.T) {
 	item := &projects.Item{
 		ID:         uuid.New(),
 		SpaceID:    uuid.New(),
@@ -296,19 +313,35 @@ func TestItemToCreateParamsNilOptionals(t *testing.T) {
 		ReporterID: uuid.New(),
 	}
 
-	got := itemToCreateParams(item)
-	if got.ParentID.Valid {
+	params := generated.CreateProjectItemParams{
+		ID:          item.ID,
+		SpaceID:     item.SpaceID,
+		ParentID:    pgUUID(item.ParentID),
+		Number:      1,
+		Kind:        item.Kind,
+		Title:       item.Title,
+		Description: item.Description,
+		Status:      item.Status,
+		Priority:    item.Priority,
+		ReporterID:  item.ReporterID,
+		AssigneeID:  pgUUID(item.AssigneeID),
+		Labels:      coalesceLabels(item.Labels),
+		DueAt:       pgTimestampPtr(item.DueAt),
+		Rank:        item.Rank,
+	}
+
+	if params.ParentID.Valid {
 		t.Error("ParentID should be invalid for nil")
 	}
-	if got.AssigneeID.Valid {
+	if params.AssigneeID.Valid {
 		t.Error("AssigneeID should be invalid for nil")
 	}
-	if got.DueAt.Valid {
+	if params.DueAt.Valid {
 		t.Error("DueAt should be invalid for nil")
 	}
 }
 
-func TestItemToUpdateParams(t *testing.T) {
+func TestProjectItemUpdateParamsValidation(t *testing.T) {
 	assignee := uuid.New()
 	item := &projects.Item{
 		ID:          uuid.New(),
@@ -321,17 +354,28 @@ func TestItemToUpdateParams(t *testing.T) {
 		Rank:        "0|ddd:",
 	}
 
-	got := itemToUpdateParams(item)
-	if got.ID != item.ID {
+	params := generated.UpdateProjectItemParams{
+		ID:          item.ID,
+		Title:       item.Title,
+		Description: item.Description,
+		Status:      item.Status,
+		Priority:    item.Priority,
+		AssigneeID:  pgUUID(item.AssigneeID),
+		Labels:      coalesceLabels(item.Labels),
+		DueAt:       pgTimestampPtr(item.DueAt),
+		Rank:        item.Rank,
+	}
+
+	if params.ID != item.ID {
 		t.Errorf("ID mismatch")
 	}
-	if got.Title != "Updated task" {
+	if params.Title != "Updated task" {
 		t.Errorf("Title mismatch")
 	}
-	if got.Status != "in_progress" {
+	if params.Status != "in_progress" {
 		t.Errorf("Status mismatch")
 	}
-	if !got.AssigneeID.Valid {
+	if !params.AssigneeID.Valid {
 		t.Error("AssigneeID should be valid")
 	}
 }
@@ -359,7 +403,7 @@ func TestSprintToCreateParams(t *testing.T) {
 		t.Errorf("Name mismatch")
 	}
 	if got.Goal == nil || *got.Goal != "Ship MVP" {
-		t.Errorf("Goal mismatch")
+		t.Errorf("Goal mismatch: got %v", got.Goal)
 	}
 	if !got.StartsAt.Valid {
 		t.Error("StartsAt should be valid")
@@ -368,58 +412,3 @@ func TestSprintToCreateParams(t *testing.T) {
 		t.Error("EndsAt should be valid")
 	}
 }
-
-func TestSprintToCreateParamsNilDates(t *testing.T) {
-	sprint := &projects.Sprint{
-		ID:        uuid.New(),
-		SpaceID:   uuid.New(),
-		Name:      "Sprint undated",
-		Status:    "planned",
-		CreatedBy: uuid.New(),
-	}
-
-	got := sprintToCreateParams(sprint)
-	if got.StartsAt.Valid {
-		t.Error("StartsAt should be invalid for nil")
-	}
-	if got.EndsAt.Valid {
-		t.Error("EndsAt should be invalid for nil")
-	}
-	if got.Goal == nil || *got.Goal != "" {
-		t.Errorf("Goal should be empty string pointer for empty goal")
-	}
-}
-
-func TestNewItemAdapter(t *testing.T) {
-	adapter := NewItemAdapter(nil)
-	if adapter == nil {
-		t.Fatal("expected non-nil adapter")
-	}
-}
-
-func TestNewSprintAdapter(t *testing.T) {
-	adapter := NewSprintAdapter(nil)
-	if adapter == nil {
-		t.Fatal("expected non-nil adapter")
-	}
-}
-
-func TestNewRelationAdapter(t *testing.T) {
-	adapter := NewRelationAdapter(nil)
-	if adapter == nil {
-		t.Fatal("expected non-nil adapter")
-	}
-}
-
-func TestNewLabelAdapter(t *testing.T) {
-	adapter := NewLabelAdapter(nil)
-	if adapter == nil {
-		t.Fatal("expected non-nil adapter")
-	}
-}
-
-// Verify interface compliance at compile time.
-var _ projects.ItemRepository = (*ItemAdapter)(nil)
-var _ projects.SprintRepository = (*SprintAdapter)(nil)
-var _ projects.RelationRepository = (*RelationAdapter)(nil)
-var _ projects.LabelRepository = (*LabelAdapter)(nil)

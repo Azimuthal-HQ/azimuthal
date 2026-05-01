@@ -68,6 +68,9 @@ func (m *mockRelationRepo) Create(_ context.Context, _ *projects.Relation) error
 func (m *mockRelationRepo) ListByItem(_ context.Context, _ uuid.UUID) ([]*projects.Relation, error) {
 	return nil, nil
 }
+func (m *mockRelationRepo) ListByEntity(_ context.Context, _ uuid.UUID, _ string) ([]*projects.Relation, error) {
+	return nil, nil
+}
 func (m *mockRelationRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
 
 type mockLabelRepo struct{}

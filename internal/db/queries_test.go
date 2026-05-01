@@ -228,62 +228,62 @@ func TestItemListAndUpdate(t *testing.T) {
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "item2@example.com")
 	space := setupSpace(t, q, org.ID, user.ID, "project")
-	item, err := q.CreateItem(ctx, generated.CreateItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Kind: "bug", Title: "Fix regression",
+	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
+		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "bug",
+		Title: "Fix regression", Description: "",
 		Status: "open", Priority: "medium", ReporterID: user.ID,
 		Labels: []string{}, Rank: "b",
 	})
 	if err != nil {
-		t.Fatalf("CreateItem: %v", err)
+		t.Fatalf("CreateProjectItem: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteItem(ctx, item.ID) }()
-	fetched, err := q.GetItemByID(ctx, item.ID)
+	defer func() { _ = q.SoftDeleteProjectItem(ctx, item.ID) }()
+	fetched, err := q.GetProjectItemByID(ctx, item.ID)
 	if err != nil {
-		t.Fatalf("GetItemByID: %v", err)
+		t.Fatalf("GetProjectItemByID: %v", err)
 	}
 	if fetched.ID != item.ID {
 		t.Error("ID mismatch")
 	}
-	items, err := q.ListItemsBySpace(ctx, space.ID)
+	items, err := q.ListProjectItemsBySpace(ctx, space.ID)
 	if err != nil {
-		t.Fatalf("ListItemsBySpace: %v", err)
+		t.Fatalf("ListProjectItemsBySpace: %v", err)
 	}
 	if len(items) == 0 {
 		t.Error("expected at least one item")
 	}
-	statusItems, err := q.ListItemsByStatus(ctx, generated.ListItemsByStatusParams{
+	statusItems, err := q.ListProjectItemsByStatus(ctx, generated.ListProjectItemsByStatusParams{
 		SpaceID: space.ID, Status: "open",
 	})
 	if err != nil {
-		t.Fatalf("ListItemsByStatus: %v", err)
+		t.Fatalf("ListProjectItemsByStatus: %v", err)
 	}
 	if len(statusItems) == 0 {
 		t.Error("expected items with open status")
 	}
 	assigneeUID := pgtype.UUID{Bytes: user.ID, Valid: true}
-	desc := "full update"
-	_, err = q.UpdateItem(ctx, generated.UpdateItemParams{
-		ID: item.ID, Title: "Fix regression v2", Description: &desc,
+	_, err = q.UpdateProjectItem(ctx, generated.UpdateProjectItemParams{
+		ID: item.ID, Title: "Fix regression v2", Description: "full update",
 		Status: "in_progress", Priority: "high",
 		AssigneeID: assigneeUID, Labels: []string{"backend"}, Rank: "b",
 	})
 	if err != nil {
-		t.Fatalf("UpdateItem: %v", err)
+		t.Fatalf("UpdateProjectItem: %v", err)
 	}
-	assigneeItems, err := q.ListItemsByAssignee(ctx, generated.ListItemsByAssigneeParams{
+	assigneeItems, err := q.ListProjectItemsByAssignee(ctx, generated.ListProjectItemsByAssigneeParams{
 		SpaceID: space.ID, AssigneeID: assigneeUID,
 	})
 	if err != nil {
-		t.Fatalf("ListItemsByAssignee: %v", err)
+		t.Fatalf("ListProjectItemsByAssignee: %v", err)
 	}
 	if len(assigneeItems) == 0 {
 		t.Error("expected assigned items")
 	}
-	searched, err := q.SearchItems(ctx, generated.SearchItemsParams{
+	searched, err := q.SearchProjectItems(ctx, generated.SearchProjectItemsParams{
 		SpaceID: space.ID, PlaintoTsquery: "regression", Limit: 10,
 	})
 	if err != nil {
-		t.Fatalf("SearchItems: %v", err)
+		t.Fatalf("SearchProjectItems: %v", err)
 	}
 	_ = searched
 }
@@ -296,37 +296,40 @@ func TestItemRelations(t *testing.T) {
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "relations@example.com")
 	space := setupSpace(t, q, org.ID, user.ID, "project")
-	from, err := q.CreateItem(ctx, generated.CreateItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "From",
-		Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
+	from, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
+		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "task", Title: "From",
+		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
 	})
 	if err != nil {
-		t.Fatalf("CreateItem from: %v", err)
+		t.Fatalf("CreateProjectItem from: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteItem(ctx, from.ID) }()
-	to, err := q.CreateItem(ctx, generated.CreateItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "To",
-		Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "b",
+	defer func() { _ = q.SoftDeleteProjectItem(ctx, from.ID) }()
+	to, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
+		ID: uuid.New(), SpaceID: space.ID, Number: 2, Kind: "task", Title: "To",
+		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "b",
 	})
 	if err != nil {
-		t.Fatalf("CreateItem to: %v", err)
+		t.Fatalf("CreateProjectItem to: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteItem(ctx, to.ID) }()
-	rel, err := q.CreateItemRelation(ctx, generated.CreateItemRelationParams{
-		ID: uuid.New(), FromID: from.ID, ToID: to.ID, Kind: "blocks", CreatedBy: user.ID,
+	defer func() { _ = q.SoftDeleteProjectItem(ctx, to.ID) }()
+	rel, err := q.CreateEntityRelation(ctx, generated.CreateEntityRelationParams{
+		ID: uuid.New(), FromID: from.ID, FromType: "project_item",
+		ToID: to.ID, ToType: "project_item", Kind: "blocks", CreatedBy: user.ID,
 	})
 	if err != nil {
-		t.Fatalf("CreateItemRelation: %v", err)
+		t.Fatalf("CreateEntityRelation: %v", err)
 	}
-	rels, err := q.ListItemRelations(ctx, from.ID)
+	rels, err := q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
+		FromID: from.ID, FromType: "project_item",
+	})
 	if err != nil {
-		t.Fatalf("ListItemRelations: %v", err)
+		t.Fatalf("ListEntityRelationsByEntity: %v", err)
 	}
 	if len(rels) == 0 {
 		t.Error("expected at least one relation")
 	}
-	if err := q.DeleteItemRelation(ctx, rel.ID); err != nil {
-		t.Fatalf("DeleteItemRelation: %v", err)
+	if err := q.DeleteEntityRelation(ctx, rel.ID); err != nil {
+		t.Fatalf("DeleteEntityRelation: %v", err)
 	}
 }
 
@@ -413,23 +416,23 @@ func TestSprints(t *testing.T) {
 	if len(sprints) == 0 {
 		t.Error("expected at least one sprint")
 	}
-	item, err := q.CreateItem(ctx, generated.CreateItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "Sprint task",
-		Status: "open", Priority: "medium", ReporterID: user.ID, Labels: []string{}, Rank: "a",
+	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
+		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "task", Title: "Sprint task",
+		Description: "", Status: "open", Priority: "medium", ReporterID: user.ID, Labels: []string{}, Rank: "a",
 	})
 	if err != nil {
-		t.Fatalf("CreateItem for sprint: %v", err)
+		t.Fatalf("CreateProjectItem for sprint: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteItem(ctx, item.ID) }()
+	defer func() { _ = q.SoftDeleteProjectItem(ctx, item.ID) }()
 	sprintUID := pgtype.UUID{Bytes: sprint.ID, Valid: true}
-	if err := q.UpdateItemSprint(ctx, generated.UpdateItemSprintParams{
+	if err := q.UpdateProjectItemSprint(ctx, generated.UpdateProjectItemSprintParams{
 		ID: item.ID, SprintID: sprintUID,
 	}); err != nil {
-		t.Fatalf("UpdateItemSprint: %v", err)
+		t.Fatalf("UpdateProjectItemSprint: %v", err)
 	}
-	sprintItems, err := q.ListItemsBySprint(ctx, sprintUID)
+	sprintItems, err := q.ListProjectItemsBySprint(ctx, sprintUID)
 	if err != nil {
-		t.Fatalf("ListItemsBySprint: %v", err)
+		t.Fatalf("ListProjectItemsBySprint: %v", err)
 	}
 	if len(sprintItems) == 0 {
 		t.Error("expected at least one item in sprint")
@@ -531,17 +534,17 @@ func TestComments(t *testing.T) {
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "commenter@example.com")
 	space := setupSpace(t, q, org.ID, user.ID, "project")
-	item, err := q.CreateItem(ctx, generated.CreateItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "Comment target",
-		Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
+	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
+		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "task", Title: "Comment target",
+		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
 	})
 	if err != nil {
-		t.Fatalf("CreateItem: %v", err)
+		t.Fatalf("CreateProjectItem: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteItem(ctx, item.ID) }()
-	itemUID := pgtype.UUID{Bytes: item.ID, Valid: true}
+	defer func() { _ = q.SoftDeleteProjectItem(ctx, item.ID) }()
 	comment, err := q.CreateComment(ctx, generated.CreateCommentParams{
-		ID: uuid.New(), ItemID: itemUID, AuthorID: user.ID, Body: "This is a comment",
+		ID: uuid.New(), EntityType: "project_item", EntityID: item.ID,
+		AuthorID: user.ID, Body: "This is a comment",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment: %v", err)
@@ -553,9 +556,11 @@ func TestComments(t *testing.T) {
 	if got.ID != comment.ID {
 		t.Error("comment ID mismatch")
 	}
-	comments, err := q.ListCommentsByItem(ctx, itemUID)
+	comments, err := q.ListCommentsByEntity(ctx, generated.ListCommentsByEntityParams{
+		EntityType: "project_item", EntityID: item.ID,
+	})
 	if err != nil {
-		t.Fatalf("ListCommentsByItem: %v", err)
+		t.Fatalf("ListCommentsByEntity: %v", err)
 	}
 	if len(comments) == 0 {
 		t.Error("expected at least one comment")
@@ -571,7 +576,7 @@ func TestComments(t *testing.T) {
 	}
 	parentUID := pgtype.UUID{Bytes: comment.ID, Valid: true}
 	reply, err := q.CreateComment(ctx, generated.CreateCommentParams{
-		ID: uuid.New(), ItemID: itemUID, ParentID: parentUID,
+		ID: uuid.New(), EntityType: "project_item", EntityID: item.ID, ParentID: parentUID,
 		AuthorID: user.ID, Body: "This is a reply",
 	})
 	if err != nil {
@@ -592,16 +597,18 @@ func TestComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePage: %v", err)
 	}
-	pageUID := pgtype.UUID{Bytes: page.ID, Valid: true}
 	pageComment, err := q.CreateComment(ctx, generated.CreateCommentParams{
-		ID: uuid.New(), PageID: pageUID, AuthorID: user.ID, Body: "Page comment",
+		ID: uuid.New(), EntityType: "page", EntityID: page.ID,
+		AuthorID: user.ID, Body: "Page comment",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment on page: %v", err)
 	}
-	pageComments, err := q.ListCommentsByPage(ctx, pageUID)
+	pageComments, err := q.ListCommentsByEntity(ctx, generated.ListCommentsByEntityParams{
+		EntityType: "page", EntityID: page.ID,
+	})
 	if err != nil {
-		t.Fatalf("ListCommentsByPage: %v", err)
+		t.Fatalf("ListCommentsByEntity for page: %v", err)
 	}
 	if len(pageComments) == 0 {
 		t.Error("expected at least one page comment")

@@ -277,7 +277,7 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	require.NoError(t, err, "membership row must round-trip")
 	require.Equal(t, "owner", gotMembership.Role)
 
-	gotItem, err := dstQueries.GetItemByID(ctx, seed.item.ID)
+	gotItem, err := dstQueries.GetTicketByID(ctx, seed.item.ID)
 	require.NoError(t, err, "item row must round-trip")
 	require.Equal(t, seed.item.Title, gotItem.Title)
 	require.Equal(t, seed.item.Status, gotItem.Status)
@@ -289,8 +289,11 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	require.Equal(t, seed.page.Content, gotPage.Content)
 
 	// Comment list scoped to the item — exercises both the comment row and
-	// the FK back to the item.
-	itemComments, err := dstQueries.ListCommentsByItem(ctx, pgtype.UUID{Bytes: seed.item.ID, Valid: true})
+	// the polymorphic entity link back to the ticket.
+	itemComments, err := dstQueries.ListCommentsByEntity(ctx, generated.ListCommentsByEntityParams{
+		EntityType: "ticket",
+		EntityID:   seed.item.ID,
+	})
 	require.NoError(t, err, "item comments must round-trip")
 	require.Len(t, itemComments, 1, "exactly one comment expected on the item")
 	require.Equal(t, seed.comment.ID, itemComments[0].ID)
@@ -303,7 +306,7 @@ type seedFixtures struct {
 	org     generated.Organization
 	user    generated.User
 	space   generated.Space
-	item    generated.Item
+	item    generated.Ticket
 	page    generated.Page
 	comment generated.Comment
 }
@@ -358,12 +361,12 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 	require.NoError(t, err)
 
 	itemDesc := "Round-trip fixture item"
-	item, err := q.CreateItem(ctx, generated.CreateItemParams{
+	item, err := q.CreateTicket(ctx, generated.CreateTicketParams{
 		ID:          uuid.New(),
 		SpaceID:     space.ID,
-		Kind:        "ticket",
+		Number:      1,
 		Title:       "Round Trip Ticket",
-		Description: &itemDesc,
+		Description: itemDesc,
 		Status:      "open",
 		Priority:    "medium",
 		ReporterID:  user.ID,
@@ -383,10 +386,11 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 	require.NoError(t, err)
 
 	comment, err := q.CreateComment(ctx, generated.CreateCommentParams{
-		ID:       uuid.New(),
-		ItemID:   pgtype.UUID{Bytes: item.ID, Valid: true},
-		AuthorID: user.ID,
-		Body:     "Round-trip comment body.",
+		ID:         uuid.New(),
+		EntityType: "ticket",
+		EntityID:   item.ID,
+		AuthorID:   user.ID,
+		Body:       "Round-trip comment body.",
 	})
 	require.NoError(t, err)
 

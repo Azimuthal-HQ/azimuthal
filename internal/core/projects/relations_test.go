@@ -32,6 +32,10 @@ func (r *stubRelationRepo) ListByItem(_ context.Context, fromID uuid.UUID) ([]*R
 	return result, nil
 }
 
+func (r *stubRelationRepo) ListByEntity(_ context.Context, fromID uuid.UUID, fromType string) ([]*Relation, error) {
+	return r.ListByItem(context.Background(), fromID)
+}
+
 func (r *stubRelationRepo) Delete(_ context.Context, id uuid.UUID) error {
 	if _, ok := r.relations[id]; !ok {
 		return ErrNotFound

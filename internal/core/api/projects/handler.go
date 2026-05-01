@@ -151,12 +151,14 @@ type updateSprintRequest struct {
 }
 
 type rankItemRequest struct {
-	Rank string `json:"rank"`
+	BeforeID *uuid.UUID `json:"before_id"`
+	AfterID  *uuid.UUID `json:"after_id"`
 }
 
 type createRelationRequest struct {
-	ToID uuid.UUID `json:"to_id"`
-	Kind string    `json:"kind"`
+	ToID     uuid.UUID `json:"to_id"`
+	ToType   string    `json:"to_type"`
+	Kind     string    `json:"kind"`
 }
 
 type createLabelRequest struct {
@@ -461,17 +463,17 @@ func (h *Handler) AssignToSprint(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "item assigned to sprint"})
 }
 
-// RankItem updates an item's rank to reposition it in the backlog.
+// RankItem repositions an item relative to its neighbours in the backlog.
 //
 // @Summary      Reorder a project item
-// @Description  Updates the rank string of a project item to change its position in the backlog
+// @Description  Repositions a project item by specifying the item that should come immediately before it (before_id) and/or after it (after_id). All items in the space are renumbered to reflect the new order.
 // @Tags         projects
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        spaceID  path      string           true  "Space ID (UUID)"
 // @Param        itemID   path      string           true  "Item ID (UUID)"
-// @Param        body     body      rankItemRequest   true  "New rank value"
+// @Param        body     body      rankItemRequest   true  "Neighbour IDs"
 // @Success      200      {object}  api.SwaggerMessageResponse
 // @Failure      400      {object}  api.SwaggerErrorResponse
 // @Failure      401      {object}  api.SwaggerErrorResponse
@@ -490,12 +492,14 @@ func (h *Handler) RankItem(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
 		return
 	}
-	if req.Rank == "" {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "rank is required")
+
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
 		return
 	}
 
-	if err := h.backlog.ReorderItem(r.Context(), id, req.Rank); err != nil {
+	if err := h.backlog.RankItemRelative(r.Context(), spaceID, id, req.BeforeID, req.AfterID); err != nil {
 		handleProjectError(w, r, err)
 		return
 	}
@@ -612,9 +616,15 @@ func (h *Handler) CreateRelation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	toType := req.ToType
+	if toType == "" {
+		toType = "project_item"
+	}
 	rel := &projects.Relation{
 		FromID:    fromID,
+		FromType:  "project_item",
 		ToID:      req.ToID,
+		ToType:    toType,
 		Kind:      req.Kind,
 		CreatedBy: claims.UserID,
 	}

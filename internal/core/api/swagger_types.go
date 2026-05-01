@@ -248,8 +248,9 @@ type SwaggerUpdateSprintRequest struct {
 
 // SwaggerCreateRelationRequest matches createRelationRequest in projects handler.
 type SwaggerCreateRelationRequest struct {
-	ToID uuid.UUID `json:"to_id" example:"b2c3d4e5-f6a7-8901-bcde-f12345678901"`
-	Kind string    `json:"kind" example:"blocks"`
+	ToID   uuid.UUID `json:"to_id"   example:"b2c3d4e5-f6a7-8901-bcde-f12345678901"`
+	ToType string    `json:"to_type" example:"project_item"`
+	Kind   string    `json:"kind"    example:"blocks"`
 }
 
 // SwaggerCreateLabelRequest matches createLabelRequest in projects handler.

@@ -13,9 +13,9 @@ import (
 )
 
 const createPage = `-- name: CreatePage :one
-INSERT INTO pages (id, space_id, parent_id, title, content, author_id, position)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector
+INSERT INTO pages (id, space_id, parent_id, title, content, author_id, position, path)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path
 `
 
 type CreatePageParams struct {
@@ -26,6 +26,7 @@ type CreatePageParams struct {
 	Content  string      `json:"content"`
 	AuthorID uuid.UUID   `json:"author_id"`
 	Position int32       `json:"position"`
+	Path     string      `json:"path"`
 }
 
 func (q *Queries) CreatePage(ctx context.Context, arg CreatePageParams) (Page, error) {
@@ -37,6 +38,7 @@ func (q *Queries) CreatePage(ctx context.Context, arg CreatePageParams) (Page, e
 		arg.Content,
 		arg.AuthorID,
 		arg.Position,
+		arg.Path,
 	)
 	var i Page
 	err := row.Scan(
@@ -52,6 +54,7 @@ func (q *Queries) CreatePage(ctx context.Context, arg CreatePageParams) (Page, e
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.SearchVector,
+		&i.Path,
 	)
 	return i, err
 }
@@ -93,8 +96,31 @@ func (q *Queries) CreatePageRevision(ctx context.Context, arg CreatePageRevision
 	return i, err
 }
 
+const deleteExpiredPageLocks = `-- name: DeleteExpiredPageLocks :exec
+DELETE FROM page_locks WHERE expires_at <= now()
+`
+
+func (q *Queries) DeleteExpiredPageLocks(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteExpiredPageLocks)
+	return err
+}
+
+const deletePageLock = `-- name: DeletePageLock :exec
+DELETE FROM page_locks WHERE page_id = $1 AND user_id = $2
+`
+
+type DeletePageLockParams struct {
+	PageID uuid.UUID `json:"page_id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeletePageLock(ctx context.Context, arg DeletePageLockParams) error {
+	_, err := q.db.Exec(ctx, deletePageLock, arg.PageID, arg.UserID)
+	return err
+}
+
 const getPageByID = `-- name: GetPageByID :one
-SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector FROM pages WHERE id = $1 AND deleted_at IS NULL
+SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path FROM pages WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetPageByID(ctx context.Context, id uuid.UUID) (Page, error) {
@@ -113,6 +139,82 @@ func (q *Queries) GetPageByID(ctx context.Context, id uuid.UUID) (Page, error) {
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.SearchVector,
+		&i.Path,
+	)
+	return i, err
+}
+
+const getPageDescendants = `-- name: GetPageDescendants :many
+SELECT p.id, p.space_id, p.parent_id, p.title, p.version, p.author_id, p.position, p.path, p.created_at, p.updated_at
+FROM pages p
+WHERE p.space_id = $1
+  AND p.deleted_at IS NULL
+  AND p.path LIKE (SELECT pp.path || '.%' FROM pages pp WHERE pp.id = $2 AND pp.deleted_at IS NULL)
+ORDER BY p.path ASC
+`
+
+type GetPageDescendantsParams struct {
+	SpaceID uuid.UUID `json:"space_id"`
+	ID      uuid.UUID `json:"id"`
+}
+
+type GetPageDescendantsRow struct {
+	ID        uuid.UUID          `json:"id"`
+	SpaceID   uuid.UUID          `json:"space_id"`
+	ParentID  pgtype.UUID        `json:"parent_id"`
+	Title     string             `json:"title"`
+	Version   int32              `json:"version"`
+	AuthorID  uuid.UUID          `json:"author_id"`
+	Position  int32              `json:"position"`
+	Path      string             `json:"path"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetPageDescendants(ctx context.Context, arg GetPageDescendantsParams) ([]GetPageDescendantsRow, error) {
+	rows, err := q.db.Query(ctx, getPageDescendants, arg.SpaceID, arg.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetPageDescendantsRow{}
+	for rows.Next() {
+		var i GetPageDescendantsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.ParentID,
+			&i.Title,
+			&i.Version,
+			&i.AuthorID,
+			&i.Position,
+			&i.Path,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPageLock = `-- name: GetPageLock :one
+SELECT page_id, user_id, user_name, acquired_at, expires_at FROM page_locks WHERE page_id = $1 AND expires_at > now()
+`
+
+func (q *Queries) GetPageLock(ctx context.Context, pageID uuid.UUID) (PageLock, error) {
+	row := q.db.QueryRow(ctx, getPageLock, pageID)
+	var i PageLock
+	err := row.Scan(
+		&i.PageID,
+		&i.UserID,
+		&i.UserName,
+		&i.AcquiredAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -141,9 +243,58 @@ func (q *Queries) GetPageRevision(ctx context.Context, arg GetPageRevisionParams
 	return i, err
 }
 
+const getPageTree = `-- name: GetPageTree :many
+SELECT id, space_id, parent_id, title, version, author_id, position, path, created_at, updated_at
+FROM pages WHERE space_id = $1 AND deleted_at IS NULL ORDER BY path ASC
+`
+
+type GetPageTreeRow struct {
+	ID        uuid.UUID          `json:"id"`
+	SpaceID   uuid.UUID          `json:"space_id"`
+	ParentID  pgtype.UUID        `json:"parent_id"`
+	Title     string             `json:"title"`
+	Version   int32              `json:"version"`
+	AuthorID  uuid.UUID          `json:"author_id"`
+	Position  int32              `json:"position"`
+	Path      string             `json:"path"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetPageTree(ctx context.Context, spaceID uuid.UUID) ([]GetPageTreeRow, error) {
+	rows, err := q.db.Query(ctx, getPageTree, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetPageTreeRow{}
+	for rows.Next() {
+		var i GetPageTreeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.ParentID,
+			&i.Title,
+			&i.Version,
+			&i.AuthorID,
+			&i.Position,
+			&i.Path,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChildPages = `-- name: ListChildPages :many
-SELECT id, space_id, parent_id, title, version, author_id, position, created_at, updated_at
-FROM pages WHERE parent_id = $1 AND deleted_at IS NULL ORDER BY position ASC
+SELECT id, space_id, parent_id, title, version, author_id, position, path, created_at, updated_at
+FROM pages WHERE parent_id = $1 AND deleted_at IS NULL ORDER BY path ASC
 `
 
 type ListChildPagesRow struct {
@@ -154,6 +305,7 @@ type ListChildPagesRow struct {
 	Version   int32              `json:"version"`
 	AuthorID  uuid.UUID          `json:"author_id"`
 	Position  int32              `json:"position"`
+	Path      string             `json:"path"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
@@ -175,6 +327,7 @@ func (q *Queries) ListChildPages(ctx context.Context, parentID pgtype.UUID) ([]L
 			&i.Version,
 			&i.AuthorID,
 			&i.Position,
+			&i.Path,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -230,8 +383,8 @@ func (q *Queries) ListPageRevisions(ctx context.Context, pageID uuid.UUID) ([]Li
 }
 
 const listPagesBySpace = `-- name: ListPagesBySpace :many
-SELECT id, space_id, parent_id, title, version, author_id, position, created_at, updated_at
-FROM pages WHERE space_id = $1 AND deleted_at IS NULL ORDER BY position ASC, title ASC
+SELECT id, space_id, parent_id, title, version, author_id, position, path, created_at, updated_at
+FROM pages WHERE space_id = $1 AND deleted_at IS NULL ORDER BY path ASC
 `
 
 type ListPagesBySpaceRow struct {
@@ -242,6 +395,7 @@ type ListPagesBySpaceRow struct {
 	Version   int32              `json:"version"`
 	AuthorID  uuid.UUID          `json:"author_id"`
 	Position  int32              `json:"position"`
+	Path      string             `json:"path"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
@@ -263,6 +417,7 @@ func (q *Queries) ListPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]Li
 			&i.Version,
 			&i.AuthorID,
 			&i.Position,
+			&i.Path,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -277,8 +432,8 @@ func (q *Queries) ListPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]Li
 }
 
 const listRootPagesBySpace = `-- name: ListRootPagesBySpace :many
-SELECT id, space_id, parent_id, title, version, author_id, position, created_at, updated_at
-FROM pages WHERE space_id = $1 AND parent_id IS NULL AND deleted_at IS NULL ORDER BY position ASC
+SELECT id, space_id, parent_id, title, version, author_id, position, path, created_at, updated_at
+FROM pages WHERE space_id = $1 AND parent_id IS NULL AND deleted_at IS NULL ORDER BY path ASC
 `
 
 type ListRootPagesBySpaceRow struct {
@@ -289,6 +444,7 @@ type ListRootPagesBySpaceRow struct {
 	Version   int32              `json:"version"`
 	AuthorID  uuid.UUID          `json:"author_id"`
 	Position  int32              `json:"position"`
+	Path      string             `json:"path"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
@@ -310,6 +466,7 @@ func (q *Queries) ListRootPagesBySpace(ctx context.Context, spaceID uuid.UUID) (
 			&i.Version,
 			&i.AuthorID,
 			&i.Position,
+			&i.Path,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -324,7 +481,7 @@ func (q *Queries) ListRootPagesBySpace(ctx context.Context, spaceID uuid.UUID) (
 }
 
 const searchPages = `-- name: SearchPages :many
-SELECT id, space_id, parent_id, title, version, author_id, position, created_at, updated_at
+SELECT id, space_id, parent_id, title, version, author_id, position, path, created_at, updated_at
 FROM pages
 WHERE space_id = $1
   AND deleted_at IS NULL
@@ -347,6 +504,7 @@ type SearchPagesRow struct {
 	Version   int32              `json:"version"`
 	AuthorID  uuid.UUID          `json:"author_id"`
 	Position  int32              `json:"position"`
+	Path      string             `json:"path"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
@@ -368,6 +526,7 @@ func (q *Queries) SearchPages(ctx context.Context, arg SearchPagesParams) ([]Sea
 			&i.Version,
 			&i.AuthorID,
 			&i.Position,
+			&i.Path,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -394,7 +553,7 @@ const updatePageContent = `-- name: UpdatePageContent :one
 UPDATE pages
 SET title = $3, content = $4, version = version + 1
 WHERE id = $1 AND version = $2 AND deleted_at IS NULL
-RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector
+RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path
 `
 
 type UpdatePageContentParams struct {
@@ -425,21 +584,83 @@ func (q *Queries) UpdatePageContent(ctx context.Context, arg UpdatePageContentPa
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.SearchVector,
+		&i.Path,
 	)
 	return i, err
 }
 
+const updatePageDescendantPaths = `-- name: UpdatePageDescendantPaths :exec
+UPDATE pages
+SET path = REPLACE(path, $2, $3)
+WHERE space_id = $1
+  AND path LIKE $2 || '.%'
+  AND deleted_at IS NULL
+`
+
+type UpdatePageDescendantPathsParams struct {
+	SpaceID   uuid.UUID `json:"space_id"`
+	Replace   string    `json:"replace"`
+	Replace_2 string    `json:"replace_2"`
+}
+
+func (q *Queries) UpdatePageDescendantPaths(ctx context.Context, arg UpdatePageDescendantPathsParams) error {
+	_, err := q.db.Exec(ctx, updatePageDescendantPaths, arg.SpaceID, arg.Replace, arg.Replace_2)
+	return err
+}
+
 const updatePagePosition = `-- name: UpdatePagePosition :exec
-UPDATE pages SET parent_id = $2, position = $3 WHERE id = $1 AND deleted_at IS NULL
+UPDATE pages SET parent_id = $2, position = $3, path = $4 WHERE id = $1 AND deleted_at IS NULL
 `
 
 type UpdatePagePositionParams struct {
 	ID       uuid.UUID   `json:"id"`
 	ParentID pgtype.UUID `json:"parent_id"`
 	Position int32       `json:"position"`
+	Path     string      `json:"path"`
 }
 
 func (q *Queries) UpdatePagePosition(ctx context.Context, arg UpdatePagePositionParams) error {
-	_, err := q.db.Exec(ctx, updatePagePosition, arg.ID, arg.ParentID, arg.Position)
+	_, err := q.db.Exec(ctx, updatePagePosition,
+		arg.ID,
+		arg.ParentID,
+		arg.Position,
+		arg.Path,
+	)
 	return err
+}
+
+const upsertPageLock = `-- name: UpsertPageLock :one
+INSERT INTO page_locks (page_id, user_id, user_name, acquired_at, expires_at)
+VALUES ($1, $2, $3, now(), $4)
+ON CONFLICT (page_id) DO UPDATE
+  SET user_id = EXCLUDED.user_id,
+      user_name = EXCLUDED.user_name,
+      acquired_at = now(),
+      expires_at = EXCLUDED.expires_at
+RETURNING page_id, user_id, user_name, acquired_at, expires_at
+`
+
+type UpsertPageLockParams struct {
+	PageID    uuid.UUID          `json:"page_id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	UserName  string             `json:"user_name"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) UpsertPageLock(ctx context.Context, arg UpsertPageLockParams) (PageLock, error) {
+	row := q.db.QueryRow(ctx, upsertPageLock,
+		arg.PageID,
+		arg.UserID,
+		arg.UserName,
+		arg.ExpiresAt,
+	)
+	var i PageLock
+	err := row.Scan(
+		&i.PageID,
+		&i.UserID,
+		&i.UserName,
+		&i.AcquiredAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }

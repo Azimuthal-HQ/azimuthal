@@ -218,12 +218,11 @@ func TestCreateTicket_TypeIsTicket(t *testing.T) {
 	err := adapter.Create(context.Background(), ticket)
 	require.NoError(t, err)
 
-	// Verify it's stored as kind='ticket' by reading the raw item.
-	var kind string
-	err = db.Pool.QueryRow(context.Background(),
-		"SELECT kind FROM items WHERE id = $1", ticket.ID).Scan(&kind)
+	// Verify the ticket was stored in the tickets table by fetching it back.
+	fetched, err := adapter.GetByID(context.Background(), ticket.ID)
 	require.NoError(t, err)
-	require.Equal(t, "ticket", kind)
+	require.Equal(t, ticket.ID, fetched.ID)
+	require.Equal(t, "Type test", fetched.Title)
 }
 
 // --- Project item adapter tests ---
@@ -287,7 +286,7 @@ func TestCreateProjectItem_SoftDelete(t *testing.T) {
 	// Verify deleted_at is set in the database.
 	var deletedAt *string
 	err = db.Pool.QueryRow(context.Background(),
-		"SELECT deleted_at::text FROM items WHERE id = $1", item.ID).Scan(&deletedAt)
+		"SELECT deleted_at::text FROM project_items WHERE id = $1", item.ID).Scan(&deletedAt)
 	require.NoError(t, err)
 	require.NotNil(t, deletedAt, "deleted_at must be set after soft delete")
 }

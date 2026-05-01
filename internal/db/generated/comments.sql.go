@@ -13,25 +13,25 @@ import (
 )
 
 const createComment = `-- name: CreateComment :one
-INSERT INTO comments (id, item_id, page_id, parent_id, author_id, body)
+INSERT INTO comments (id, entity_type, entity_id, parent_id, author_id, body)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at
+RETURNING id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at, entity_type, entity_id
 `
 
 type CreateCommentParams struct {
-	ID       uuid.UUID   `json:"id"`
-	ItemID   pgtype.UUID `json:"item_id"`
-	PageID   pgtype.UUID `json:"page_id"`
-	ParentID pgtype.UUID `json:"parent_id"`
-	AuthorID uuid.UUID   `json:"author_id"`
-	Body     string      `json:"body"`
+	ID         uuid.UUID   `json:"id"`
+	EntityType string      `json:"entity_type"`
+	EntityID   uuid.UUID   `json:"entity_id"`
+	ParentID   pgtype.UUID `json:"parent_id"`
+	AuthorID   uuid.UUID   `json:"author_id"`
+	Body       string      `json:"body"`
 }
 
 func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (Comment, error) {
 	row := q.db.QueryRow(ctx, createComment,
 		arg.ID,
-		arg.ItemID,
-		arg.PageID,
+		arg.EntityType,
+		arg.EntityID,
 		arg.ParentID,
 		arg.AuthorID,
 		arg.Body,
@@ -47,12 +47,14 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.EntityType,
+		&i.EntityID,
 	)
 	return i, err
 }
 
 const getCommentByID = `-- name: GetCommentByID :one
-SELECT id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at FROM comments WHERE id = $1 AND deleted_at IS NULL
+SELECT id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at, entity_type, entity_id FROM comments WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetCommentByID(ctx context.Context, id uuid.UUID) (Comment, error) {
@@ -68,12 +70,15 @@ func (q *Queries) GetCommentByID(ctx context.Context, id uuid.UUID) (Comment, er
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.EntityType,
+		&i.EntityID,
 	)
 	return i, err
 }
 
 const listCommentReplies = `-- name: ListCommentReplies :many
-SELECT c.id, c.item_id, c.page_id, c.parent_id, c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
+SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
+       c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
        u.display_name AS author_name, u.avatar_url AS author_avatar
 FROM comments c
 JOIN users u ON u.id = c.author_id
@@ -83,6 +88,8 @@ ORDER BY c.created_at ASC
 
 type ListCommentRepliesRow struct {
 	ID           uuid.UUID          `json:"id"`
+	EntityType   string             `json:"entity_type"`
+	EntityID     uuid.UUID          `json:"entity_id"`
 	ItemID       pgtype.UUID        `json:"item_id"`
 	PageID       pgtype.UUID        `json:"page_id"`
 	ParentID     pgtype.UUID        `json:"parent_id"`
@@ -106,6 +113,8 @@ func (q *Queries) ListCommentReplies(ctx context.Context, parentID pgtype.UUID) 
 		var i ListCommentRepliesRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.EntityType,
+			&i.EntityID,
 			&i.ItemID,
 			&i.PageID,
 			&i.ParentID,
@@ -127,17 +136,25 @@ func (q *Queries) ListCommentReplies(ctx context.Context, parentID pgtype.UUID) 
 	return items, nil
 }
 
-const listCommentsByItem = `-- name: ListCommentsByItem :many
-SELECT c.id, c.item_id, c.page_id, c.parent_id, c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
+const listCommentsByEntity = `-- name: ListCommentsByEntity :many
+SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
+       c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
        u.display_name AS author_name, u.avatar_url AS author_avatar
 FROM comments c
 JOIN users u ON u.id = c.author_id
-WHERE c.item_id = $1 AND c.parent_id IS NULL AND c.deleted_at IS NULL
+WHERE c.entity_type = $1 AND c.entity_id = $2 AND c.parent_id IS NULL AND c.deleted_at IS NULL
 ORDER BY c.created_at ASC
 `
 
-type ListCommentsByItemRow struct {
+type ListCommentsByEntityParams struct {
+	EntityType string    `json:"entity_type"`
+	EntityID   uuid.UUID `json:"entity_id"`
+}
+
+type ListCommentsByEntityRow struct {
 	ID           uuid.UUID          `json:"id"`
+	EntityType   string             `json:"entity_type"`
+	EntityID     uuid.UUID          `json:"entity_id"`
 	ItemID       pgtype.UUID        `json:"item_id"`
 	PageID       pgtype.UUID        `json:"page_id"`
 	ParentID     pgtype.UUID        `json:"parent_id"`
@@ -150,72 +167,19 @@ type ListCommentsByItemRow struct {
 	AuthorAvatar *string            `json:"author_avatar"`
 }
 
-func (q *Queries) ListCommentsByItem(ctx context.Context, itemID pgtype.UUID) ([]ListCommentsByItemRow, error) {
-	rows, err := q.db.Query(ctx, listCommentsByItem, itemID)
+func (q *Queries) ListCommentsByEntity(ctx context.Context, arg ListCommentsByEntityParams) ([]ListCommentsByEntityRow, error) {
+	rows, err := q.db.Query(ctx, listCommentsByEntity, arg.EntityType, arg.EntityID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListCommentsByItemRow{}
+	items := []ListCommentsByEntityRow{}
 	for rows.Next() {
-		var i ListCommentsByItemRow
+		var i ListCommentsByEntityRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.ItemID,
-			&i.PageID,
-			&i.ParentID,
-			&i.AuthorID,
-			&i.Body,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.AuthorName,
-			&i.AuthorAvatar,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listCommentsByPage = `-- name: ListCommentsByPage :many
-SELECT c.id, c.item_id, c.page_id, c.parent_id, c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
-       u.display_name AS author_name, u.avatar_url AS author_avatar
-FROM comments c
-JOIN users u ON u.id = c.author_id
-WHERE c.page_id = $1 AND c.parent_id IS NULL AND c.deleted_at IS NULL
-ORDER BY c.created_at ASC
-`
-
-type ListCommentsByPageRow struct {
-	ID           uuid.UUID          `json:"id"`
-	ItemID       pgtype.UUID        `json:"item_id"`
-	PageID       pgtype.UUID        `json:"page_id"`
-	ParentID     pgtype.UUID        `json:"parent_id"`
-	AuthorID     uuid.UUID          `json:"author_id"`
-	Body         string             `json:"body"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	AuthorName   string             `json:"author_name"`
-	AuthorAvatar *string            `json:"author_avatar"`
-}
-
-func (q *Queries) ListCommentsByPage(ctx context.Context, pageID pgtype.UUID) ([]ListCommentsByPageRow, error) {
-	rows, err := q.db.Query(ctx, listCommentsByPage, pageID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListCommentsByPageRow{}
-	for rows.Next() {
-		var i ListCommentsByPageRow
-		if err := rows.Scan(
-			&i.ID,
+			&i.EntityType,
+			&i.EntityID,
 			&i.ItemID,
 			&i.PageID,
 			&i.ParentID,
@@ -247,7 +211,7 @@ func (q *Queries) SoftDeleteComment(ctx context.Context, id uuid.UUID) error {
 }
 
 const updateComment = `-- name: UpdateComment :one
-UPDATE comments SET body = $2 WHERE id = $1 AND deleted_at IS NULL RETURNING id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at
+UPDATE comments SET body = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at, entity_type, entity_id
 `
 
 type UpdateCommentParams struct {
@@ -268,6 +232,8 @@ func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (C
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.EntityType,
+		&i.EntityID,
 	)
 	return i, err
 }

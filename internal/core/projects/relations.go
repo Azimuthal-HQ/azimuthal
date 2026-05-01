@@ -25,25 +25,27 @@ var ValidRelationKinds = map[string]bool{
 	RelationWikiLink:    true,
 }
 
-// Relation represents a link between two items (or an item and a wiki page).
+// Relation represents a polymorphic link between two entities.
 type Relation struct {
 	ID        uuid.UUID `json:"id"`
 	FromID    uuid.UUID `json:"from_id"`
+	FromType  string    `json:"from_type"`
 	ToID      uuid.UUID `json:"to_id"`
+	ToType    string    `json:"to_type"`
 	Kind      string    `json:"kind"`
 	CreatedBy uuid.UUID `json:"created_by"`
 	ToTitle   string    `json:"to_title"`
 	ToStatus  string    `json:"to_status"`
-	ToKind    string    `json:"to_kind"`
 }
 
-// RelationRepository defines the data access contract for item relations.
+// RelationRepository defines the data access contract for entity relations.
 type RelationRepository interface {
-	// Create persists a new relation.
+	// Create persists a new polymorphic relation.
 	Create(ctx context.Context, rel *Relation) error
-	// ListByItem returns all relations originating from a given item,
-	// with joined target item metadata.
+	// ListByItem returns all relations from an entity, inferring its type automatically.
 	ListByItem(ctx context.Context, fromID uuid.UUID) ([]*Relation, error)
+	// ListByEntity returns all relations from a specifically typed entity.
+	ListByEntity(ctx context.Context, fromID uuid.UUID, fromType string) ([]*Relation, error)
 	// Delete removes a relation by ID.
 	Delete(ctx context.Context, id uuid.UUID) error
 }

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Clock, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Clock, AlertCircle, Trash2, Link2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
 import { cn } from '../../lib/utils';
 import {
   useProjectItem,
@@ -13,6 +14,10 @@ import {
   useComments,
   useCreateComment,
   useMe,
+  useRelations,
+  useCreateRelation,
+  useDeleteRelation,
+  useItemSearch,
 } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
@@ -49,10 +54,25 @@ export function ItemDetailPage() {
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
   const { data: members } = useMembers(orgId, spaceId);
-  const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, itemId);
-  const createCommentMutation = useCreateComment(orgId, spaceId, itemId);
+  const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, 'project_item', itemId);
+  const createCommentMutation = useCreateComment(orgId, spaceId, 'project_item', itemId);
 
   const [newComment, setNewComment] = useState('');
+
+  // Relations state
+  const { data: relations = [] } = useRelations(spaceId, itemId);
+  const createRelationMutation = useCreateRelation(spaceId, itemId);
+  const deleteRelationMutation = useDeleteRelation(spaceId, itemId);
+  const [relKind, setRelKind] = useState('relates_to');
+  const [relSearch, setRelSearch] = useState('');
+  const [relSearchDebounced, setRelSearchDebounced] = useState('');
+  const { data: searchResults = [] } = useItemSearch(spaceId, relSearchDebounced);
+
+  function handleRelSearchChange(v: string) {
+    setRelSearch(v);
+    clearTimeout((handleRelSearchChange as any)._t);
+    (handleRelSearchChange as any)._t = setTimeout(() => setRelSearchDebounced(v), 300);
+  }
 
   const backlogPath = `/spaces/${spaceId}/backlog`;
 
@@ -145,6 +165,69 @@ export function ItemDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Relations section */}
+          <div className="border-t border-[var(--color-border)] pt-6">
+            <h3 className="flex items-center gap-2 text-[var(--text-sm)] font-semibold mb-3 text-[var(--color-text)]">
+              <Link2 className="h-4 w-4" />Relations
+            </h3>
+            {relations.length > 0 && (
+              <div className="space-y-1.5 mb-4">
+                {relations.map(rel => (
+                  <div key={rel.id} className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)]">
+                    <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[var(--text-xs)] text-[var(--color-text-muted)] capitalize shrink-0">
+                      {rel.kind.replace(/_/g, ' ')}
+                    </span>
+                    <span className="flex-1 truncate text-[var(--color-text)]">{rel.to_title}</span>
+                    <span className="text-[var(--text-xs)] text-[var(--color-text-muted)] shrink-0">{rel.to_status}</span>
+                    <button
+                      onClick={() => deleteRelationMutation.mutate(rel.id)}
+                      className="ml-1 rounded p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <select
+                value={relKind}
+                onChange={e => setRelKind(e.target.value)}
+                className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[var(--text-sm)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+              >
+                {['relates_to', 'blocks', 'is_blocked_by', 'duplicates'].map(k => (
+                  <option key={k} value={k}>{k.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
+              <div className="relative flex-1">
+                <Input
+                  placeholder="Search items…"
+                  value={relSearch}
+                  onChange={e => handleRelSearchChange(e.target.value)}
+                />
+                {searchResults.length > 0 && relSearch && (
+                  <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+                    {searchResults.filter(r => r.id !== itemId).slice(0, 8).map(r => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[var(--text-sm)] text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]"
+                        onClick={async () => {
+                          await createRelationMutation.mutateAsync({ to_id: r.id, kind: relKind });
+                          setRelSearch('');
+                          setRelSearchDebounced('');
+                        }}
+                      >
+                        <span className="truncate">{r.title}</span>
+                        <span className="ml-auto text-[var(--text-xs)] text-[var(--color-text-muted)] shrink-0">{r.status}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
 
           {/* Comments section */}
           <div className="border-t border-[var(--color-border)] pt-6">

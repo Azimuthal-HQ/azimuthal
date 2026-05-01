@@ -10,7 +10,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
 
-// ItemAdapter implements projects.ItemRepository using sqlc-generated queries.
+// ItemAdapter implements projects.ItemRepository using the project_items table.
 type ItemAdapter struct {
 	q *generated.Queries
 }
@@ -20,9 +20,31 @@ func NewItemAdapter(q *generated.Queries) *ItemAdapter {
 	return &ItemAdapter{q: q}
 }
 
-// Create persists a new project item.
+// Create persists a new project item, auto-assigning the next available number.
 func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
-	_, err := a.q.CreateItem(ctx, itemToCreateParams(item))
+	maxNum, err := a.q.GetProjectItemMaxNumber(ctx, item.SpaceID)
+	if err != nil {
+		return fmt.Errorf("item adapter get max number: %w", err)
+	}
+	number := int32(maxNum) + 1
+
+	_, err = a.q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
+		ID:          item.ID,
+		SpaceID:     item.SpaceID,
+		ParentID:    pgUUID(item.ParentID),
+		Number:      number,
+		Kind:        item.Kind,
+		Title:       item.Title,
+		Description: item.Description,
+		Status:      item.Status,
+		Priority:    item.Priority,
+		ReporterID:  item.ReporterID,
+		AssigneeID:  pgUUID(item.AssigneeID),
+		SprintID:    pgUUID(item.SprintID),
+		Labels:      coalesceLabels(item.Labels),
+		DueAt:       pgTimestampPtr(item.DueAt),
+		Rank:        item.Rank,
+	})
 	if err != nil {
 		return fmt.Errorf("item adapter create: %w", err)
 	}
@@ -31,16 +53,26 @@ func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
 
 // GetByID retrieves an item by primary key. Returns an error if absent or soft-deleted.
 func (a *ItemAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Item, error) {
-	row, err := a.q.GetItemByID(ctx, id)
+	row, err := a.q.GetProjectItemByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("item adapter get by id: %w", err)
 	}
-	return dbItemToProject(row), nil
+	return dbProjectItemToItem(row), nil
 }
 
 // Update persists changes to an existing item.
 func (a *ItemAdapter) Update(ctx context.Context, item *projects.Item) error {
-	_, err := a.q.UpdateItem(ctx, itemToUpdateParams(item))
+	_, err := a.q.UpdateProjectItem(ctx, generated.UpdateProjectItemParams{
+		ID:          item.ID,
+		Title:       item.Title,
+		Description: item.Description,
+		Status:      item.Status,
+		Priority:    item.Priority,
+		AssigneeID:  pgUUID(item.AssigneeID),
+		Labels:      coalesceLabels(item.Labels),
+		DueAt:       pgTimestampPtr(item.DueAt),
+		Rank:        item.Rank,
+	})
 	if err != nil {
 		return fmt.Errorf("item adapter update: %w", err)
 	}
@@ -49,19 +81,19 @@ func (a *ItemAdapter) Update(ctx context.Context, item *projects.Item) error {
 
 // UpdateStatus changes only the status field.
 func (a *ItemAdapter) UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*projects.Item, error) {
-	row, err := a.q.UpdateItemStatus(ctx, generated.UpdateItemStatusParams{
+	row, err := a.q.UpdateProjectItemStatus(ctx, generated.UpdateProjectItemStatusParams{
 		ID:     id,
 		Status: status,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("item adapter update status: %w", err)
 	}
-	return dbItemToProject(row), nil
+	return dbProjectItemToItem(row), nil
 }
 
 // UpdateSprint assigns an item to a sprint (or removes it if sprintID is nil).
 func (a *ItemAdapter) UpdateSprint(ctx context.Context, id uuid.UUID, sprintID *uuid.UUID) error {
-	if err := a.q.UpdateItemSprint(ctx, generated.UpdateItemSprintParams{
+	if err := a.q.UpdateProjectItemSprint(ctx, generated.UpdateProjectItemSprintParams{
 		ID:       id,
 		SprintID: pgUUID(sprintID),
 	}); err != nil {
@@ -72,7 +104,7 @@ func (a *ItemAdapter) UpdateSprint(ctx context.Context, id uuid.UUID, sprintID *
 
 // SoftDelete sets deleted_at on an item.
 func (a *ItemAdapter) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.SoftDeleteItem(ctx, id); err != nil {
+	if err := a.q.SoftDeleteProjectItem(ctx, id); err != nil {
 		return fmt.Errorf("item adapter soft delete: %w", err)
 	}
 	return nil
@@ -80,50 +112,50 @@ func (a *ItemAdapter) SoftDelete(ctx context.Context, id uuid.UUID) error {
 
 // ListBySpace returns all non-deleted items in a space, ordered by rank.
 func (a *ItemAdapter) ListBySpace(ctx context.Context, spaceID uuid.UUID) ([]*projects.Item, error) {
-	rows, err := a.q.ListItemsBySpace(ctx, spaceID)
+	rows, err := a.q.ListProjectItemsBySpace(ctx, spaceID)
 	if err != nil {
 		return nil, fmt.Errorf("item adapter list by space: %w", err)
 	}
-	return dbItemsToProjects(rows), nil
+	return dbProjectItemsToItems(rows), nil
 }
 
 // ListByStatus returns items filtered by status within a space.
 func (a *ItemAdapter) ListByStatus(ctx context.Context, spaceID uuid.UUID, status string) ([]*projects.Item, error) {
-	rows, err := a.q.ListItemsByStatus(ctx, generated.ListItemsByStatusParams{
+	rows, err := a.q.ListProjectItemsByStatus(ctx, generated.ListProjectItemsByStatusParams{
 		SpaceID: spaceID,
 		Status:  status,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("item adapter list by status: %w", err)
 	}
-	return dbItemsToProjects(rows), nil
+	return dbProjectItemsToItems(rows), nil
 }
 
 // ListByAssignee returns items assigned to a specific user within a space.
 func (a *ItemAdapter) ListByAssignee(ctx context.Context, spaceID uuid.UUID, assigneeID uuid.UUID) ([]*projects.Item, error) {
-	rows, err := a.q.ListItemsByAssignee(ctx, generated.ListItemsByAssigneeParams{
+	rows, err := a.q.ListProjectItemsByAssignee(ctx, generated.ListProjectItemsByAssigneeParams{
 		SpaceID:    spaceID,
 		AssigneeID: pgUUID(&assigneeID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("item adapter list by assignee: %w", err)
 	}
-	return dbItemsToProjects(rows), nil
+	return dbProjectItemsToItems(rows), nil
 }
 
 // ListBySprint returns all items in a given sprint, ordered by rank.
 func (a *ItemAdapter) ListBySprint(ctx context.Context, sprintID uuid.UUID) ([]*projects.Item, error) {
-	rows, err := a.q.ListItemsBySprint(ctx, pgUUID(&sprintID))
+	rows, err := a.q.ListProjectItemsBySprint(ctx, pgUUID(&sprintID))
 	if err != nil {
 		return nil, fmt.Errorf("item adapter list by sprint: %w", err)
 	}
-	return dbItemsToProjects(rows), nil
+	return dbProjectItemsToItems(rows), nil
 }
 
 // Search performs full-text search on items within a space.
 func (a *ItemAdapter) Search(ctx context.Context, spaceID uuid.UUID, query string, limit int) ([]*projects.Item, error) {
 	searchLimit := int32(limit) //nolint:gosec // limit is validated by the service layer (capped at 50)
-	rows, err := a.q.SearchItems(ctx, generated.SearchItemsParams{
+	rows, err := a.q.SearchProjectItems(ctx, generated.SearchProjectItemsParams{
 		SpaceID:        spaceID,
 		PlaintoTsquery: query,
 		Limit:          searchLimit,
@@ -131,74 +163,17 @@ func (a *ItemAdapter) Search(ctx context.Context, spaceID uuid.UUID, query strin
 	if err != nil {
 		return nil, fmt.Errorf("item adapter search: %w", err)
 	}
-	return dbItemsToProjects(rows), nil
+	return dbProjectItemsToItems(rows), nil
 }
 
-// itemToCreateParams converts a domain Item to sqlc CreateItemParams.
-func itemToCreateParams(item *projects.Item) generated.CreateItemParams {
-	labels := item.Labels
-	if labels == nil {
-		labels = []string{}
-	}
-	return generated.CreateItemParams{
-		ID:          item.ID,
-		SpaceID:     item.SpaceID,
-		ParentID:    pgUUID(item.ParentID),
-		Kind:        item.Kind,
-		Title:       item.Title,
-		Description: strPtr(item.Description),
-		Status:      item.Status,
-		Priority:    item.Priority,
-		ReporterID:  item.ReporterID,
-		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      labels,
-		DueAt:       pgTimestampPtr(item.DueAt),
-		Rank:        item.Rank,
-	}
-}
-
-// itemToUpdateParams converts a domain Item to sqlc UpdateItemParams.
-func itemToUpdateParams(item *projects.Item) generated.UpdateItemParams {
-	labels := item.Labels
-	if labels == nil {
-		labels = []string{}
-	}
-	return generated.UpdateItemParams{
-		ID:          item.ID,
-		Title:       item.Title,
-		Description: strPtr(item.Description),
-		Status:      item.Status,
-		Priority:    item.Priority,
-		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      labels,
-		DueAt:       pgTimestampPtr(item.DueAt),
-		Rank:        item.Rank,
-	}
-}
-
-// sprintToCreateParams converts a domain Sprint to sqlc CreateSprintParams.
-func sprintToCreateParams(sprint *projects.Sprint) generated.CreateSprintParams {
-	return generated.CreateSprintParams{
-		ID:        sprint.ID,
-		SpaceID:   sprint.SpaceID,
-		Name:      sprint.Name,
-		Goal:      strPtr(sprint.Goal),
-		Status:    sprint.Status,
-		StartsAt:  pgTimestampPtr(sprint.StartsAt),
-		EndsAt:    pgTimestampPtr(sprint.EndsAt),
-		CreatedBy: sprint.CreatedBy,
-	}
-}
-
-// dbItemToProject converts a generated.Item to a projects.Item.
-func dbItemToProject(i generated.Item) *projects.Item {
+func dbProjectItemToItem(i generated.ProjectItem) *projects.Item {
 	return &projects.Item{
 		ID:          i.ID,
 		SpaceID:     i.SpaceID,
 		ParentID:    goUUIDPtr(i.ParentID),
 		Kind:        i.Kind,
 		Title:       i.Title,
-		Description: derefStr(i.Description),
+		Description: i.Description,
 		Status:      i.Status,
 		Priority:    i.Priority,
 		ReporterID:  i.ReporterID,
@@ -214,11 +189,10 @@ func dbItemToProject(i generated.Item) *projects.Item {
 	}
 }
 
-// dbItemsToProjects converts a slice of generated.Item to domain items.
-func dbItemsToProjects(items []generated.Item) []*projects.Item {
-	result := make([]*projects.Item, len(items))
-	for i, item := range items {
-		result[i] = dbItemToProject(item)
+func dbProjectItemsToItems(rows []generated.ProjectItem) []*projects.Item {
+	result := make([]*projects.Item, len(rows))
+	for i, row := range rows {
+		result[i] = dbProjectItemToItem(row)
 	}
 	return result
 }
@@ -300,7 +274,19 @@ func (a *SprintAdapter) ListBySpace(ctx context.Context, spaceID uuid.UUID) ([]*
 	return result, nil
 }
 
-// dbSprintToProject converts a generated.Sprint to a projects.Sprint.
+func sprintToCreateParams(sprint *projects.Sprint) generated.CreateSprintParams {
+	return generated.CreateSprintParams{
+		ID:        sprint.ID,
+		SpaceID:   sprint.SpaceID,
+		Name:      sprint.Name,
+		Goal:      strPtr(sprint.Goal),
+		Status:    sprint.Status,
+		StartsAt:  pgTimestampPtr(sprint.StartsAt),
+		EndsAt:    pgTimestampPtr(sprint.EndsAt),
+		CreatedBy: sprint.CreatedBy,
+	}
+}
+
 func dbSprintToProject(s generated.Sprint) *projects.Sprint {
 	return &projects.Sprint{
 		ID:        s.ID,
@@ -316,7 +302,7 @@ func dbSprintToProject(s generated.Sprint) *projects.Sprint {
 	}
 }
 
-// RelationAdapter implements projects.RelationRepository using sqlc-generated queries.
+// RelationAdapter implements projects.RelationRepository using the entity_relations table.
 type RelationAdapter struct {
 	q *generated.Queries
 }
@@ -326,12 +312,14 @@ func NewRelationAdapter(q *generated.Queries) *RelationAdapter {
 	return &RelationAdapter{q: q}
 }
 
-// Create persists a new relation.
+// Create persists a new polymorphic entity relation.
 func (a *RelationAdapter) Create(ctx context.Context, rel *projects.Relation) error {
-	_, err := a.q.CreateItemRelation(ctx, generated.CreateItemRelationParams{
+	_, err := a.q.CreateEntityRelation(ctx, generated.CreateEntityRelationParams{
 		ID:        rel.ID,
 		FromID:    rel.FromID,
+		FromType:  rel.FromType,
 		ToID:      rel.ToID,
+		ToType:    rel.ToType,
 		Kind:      rel.Kind,
 		CreatedBy: rel.CreatedBy,
 	})
@@ -341,34 +329,67 @@ func (a *RelationAdapter) Create(ctx context.Context, rel *projects.Relation) er
 	return nil
 }
 
-// ListByItem returns all relations originating from a given item.
+// ListByItem returns all relations from a given entity (identified by fromID and fromType).
 func (a *RelationAdapter) ListByItem(ctx context.Context, fromID uuid.UUID) ([]*projects.Relation, error) {
-	rows, err := a.q.ListItemRelations(ctx, fromID)
+	// Attempt to list from both entity types — try project_item first, then ticket.
+	// In practice, callers pass a from_type too; this shim queries without type constraint.
+	// For full polymorphism, use ListByEntity which accepts a from_type.
+	rows, err := a.q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
+		FromID:   fromID,
+		FromType: "project_item",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("relation adapter list by item: %w", err)
 	}
+	if len(rows) == 0 {
+		// Fall back to ticket type.
+		rows, err = a.q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
+			FromID:   fromID,
+			FromType: "ticket",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("relation adapter list by item (ticket): %w", err)
+		}
+	}
+	return dbEntityRelationRowsToRelations(rows), nil
+}
+
+// ListByEntity returns all relations from a specific typed entity.
+func (a *RelationAdapter) ListByEntity(ctx context.Context, fromID uuid.UUID, fromType string) ([]*projects.Relation, error) {
+	rows, err := a.q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
+		FromID:   fromID,
+		FromType: fromType,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("relation adapter list by entity: %w", err)
+	}
+	return dbEntityRelationRowsToRelations(rows), nil
+}
+
+// Delete removes a relation by ID.
+func (a *RelationAdapter) Delete(ctx context.Context, id uuid.UUID) error {
+	if err := a.q.DeleteEntityRelation(ctx, id); err != nil {
+		return fmt.Errorf("relation adapter delete: %w", err)
+	}
+	return nil
+}
+
+func dbEntityRelationRowsToRelations(rows []generated.ListEntityRelationsByEntityRow) []*projects.Relation {
 	result := make([]*projects.Relation, len(rows))
 	for i, row := range rows {
 		result[i] = &projects.Relation{
 			ID:        row.ID,
 			FromID:    row.FromID,
+			FromType:  row.FromType,
 			ToID:      row.ToID,
+			ToType:    row.ToType,
 			Kind:      row.Kind,
 			CreatedBy: row.CreatedBy,
 			ToTitle:   row.ToTitle,
 			ToStatus:  row.ToStatus,
-			ToKind:    row.ToKind,
 		}
 	}
-	return result, nil
-}
-
-// Delete removes a relation by ID.
-func (a *RelationAdapter) Delete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.DeleteItemRelation(ctx, id); err != nil {
-		return fmt.Errorf("relation adapter delete: %w", err)
-	}
-	return nil
+	return result
 }
 
 // LabelAdapter implements projects.LabelRepository using sqlc-generated queries.
