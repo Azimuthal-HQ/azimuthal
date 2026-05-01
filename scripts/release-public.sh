@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # release-public.sh — push a clean, stripped version to the public repo
 #
-# Branches from current HEAD, strips internal-only files, and pushes to the
-# public repo. History accumulates normally on the public repo — each release
-# adds one commit on top of the previous.
+# Branches from the current public main, overlays private main's files,
+# removes internal-only files, and pushes. History accumulates normally.
 #
 # What it strips (internal-only files not suitable for public OSS):
 #   .gitleaks.toml                     — internal secret-scan config with allowlists
+#   .claude/                           — agent settings (local + project)
 #   CLAUDE.md                          — agent instructions
 #   current-agent-progress/            — agent progress tracking
 #   docs/agent-briefs.md               — internal agent task specs
@@ -46,6 +46,7 @@ STRIP_FILES=(
 )
 
 STRIP_DIRS=(
+  ".claude"
   "current-agent-progress"
 )
 
@@ -71,38 +72,42 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Fetch current public main so we can build on top of it
+# Fetch current public main so we build on top of its history
 git fetch git@github.com:Azimuthal-HQ/azimuthal.git main:refs/remotes/public/main 2>/dev/null || true
 
 # Branch from public/main if it exists, otherwise from current HEAD
 if git rev-parse --verify refs/remotes/public/main >/dev/null 2>&1; then
   git checkout -b "$TEMP_BRANCH" refs/remotes/public/main
-  # Bring in all files from current private HEAD
+  # Overlay all files from private main (stages them into the index)
   git checkout "$CURRENT_BRANCH" -- .
 else
   git checkout -b "$TEMP_BRANCH"
 fi
 
-# Remove internal files from the index (keeps them on disk)
+# Remove internal files from index AND disk so git add -A can't re-pick them up
 for f in "${STRIP_FILES[@]}"; do
-  git rm --cached "$f" 2>/dev/null || true
+  git rm -f "$f" 2>/dev/null || rm -f "$f"
 done
 for d in "${STRIP_DIRS[@]}"; do
-  git rm -r --cached "$d" 2>/dev/null || true
+  git rm -rf "$d" 2>/dev/null || rm -rf "$d"
 done
 
-# Ensure strip list is in .gitignore
+# Remove any untracked build artifacts that shouldn't go public
+rm -f server
+
+# Ensure strip entries are in .gitignore
 for f in "${STRIP_FILES[@]}"; do
   grep -qxF "$f" .gitignore 2>/dev/null || echo "$f" >> .gitignore
 done
 for d in "${STRIP_DIRS[@]}"; do
   grep -qxF "$d/" .gitignore 2>/dev/null || echo "$d/" >> .gitignore
 done
+grep -qxF "server" .gitignore 2>/dev/null || echo "server" >> .gitignore
 
 git add -A
 git commit -m "chore: public release — internal files stripped
 
-Removed: .gitleaks.toml, CLAUDE.md, current-agent-progress/,
+Removed: .gitleaks.toml, .claude/, CLAUDE.md, current-agent-progress/,
 docs/agent-briefs.md, docs/github-setup-checklist.md,
 docs/project-state.md, docs/regression-test-checklist.md,
 scripts/local-test.sh, scripts/push-private.sh,
