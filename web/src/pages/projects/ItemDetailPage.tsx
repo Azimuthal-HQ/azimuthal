@@ -18,6 +18,7 @@ import {
   useCreateRelation,
   useDeleteRelation,
   useItemSearch,
+  useSpace,
 } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,7 @@ export function ItemDetailPage() {
   const { spaceId = '', itemKey } = useParams<{ spaceId: string; itemKey: string }>();
   const itemId = itemKey ?? '';
 
+  const { data: space } = useSpace(spaceId);
   const { data: item, isLoading, error, refetch: refetchItem } = useProjectItem(spaceId, itemId);
   const updateMutation = useUpdateProjectItem(spaceId, itemId);
   const statusMutation = useTransitionProjectItemStatus(spaceId, itemId);
@@ -142,7 +144,7 @@ export function ItemDetailPage() {
         </Link>
         <span>/</span>
         <span className="text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono)' }}>
-          {item.number ? `PROJ-${item.number}` : item.id.slice(0, 8)}
+          {item.number ? `${space?.key ?? 'PROJ'}-${item.number}` : item.id.slice(0, 8)}
         </span>
       </div>
 

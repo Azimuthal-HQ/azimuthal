@@ -120,6 +120,9 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			})
 		}
 
+		// Space lookup by ID (no org prefix needed for child pages)
+		r.Get("/spaces/{spaceID}", cfg.SpaceHandler.Get)
+
 		// Tickets (scoped by space)
 		r.Route("/spaces/{spaceID}/tickets", func(r chi.Router) {
 			r.Mount("/", cfg.TicketHandler.Routes())

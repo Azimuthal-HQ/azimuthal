@@ -24,6 +24,7 @@ import {
   useActiveSprint,
   useSprintItems,
   useWorkflowStates,
+  useSpace,
   queryKeys,
   type ProjectItem,
   type WorkflowState,
@@ -72,7 +73,7 @@ const PRIORITY_LABEL: Record<string, string> = {
 // Sortable item card
 // ---------------------------------------------------------------------------
 
-function SortableItemCard({ item, onItemClick }: { item: ProjectItem; onItemClick?: (id: string) => void }) {
+function SortableItemCard({ item, onItemClick, spaceKey }: { item: ProjectItem; onItemClick?: (id: string) => void; spaceKey?: string }) {
   const {
     attributes,
     listeners,
@@ -92,12 +93,12 @@ function SortableItemCard({ item, onItemClick }: { item: ProjectItem; onItemClic
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <ItemCard item={item} onItemClick={onItemClick} />
+      <ItemCard item={item} onItemClick={onItemClick} spaceKey={spaceKey} />
     </div>
   );
 }
 
-function ItemCard({ item, overlay, onItemClick }: { item: ProjectItem; overlay?: boolean; onItemClick?: (id: string) => void }) {
+function ItemCard({ item, overlay, onItemClick, spaceKey }: { item: ProjectItem; overlay?: boolean; onItemClick?: (id: string) => void; spaceKey?: string }) {
   const priorityKey = String(item.priority ?? '').toLowerCase();
   return (
     <Card
@@ -112,7 +113,7 @@ function ItemCard({ item, overlay, onItemClick }: { item: ProjectItem; overlay?:
           className="text-[var(--text-xs)] font-medium text-[var(--color-text-muted)]"
           style={{ fontFamily: 'var(--font-mono)' }}
         >
-          {item.number ? `PROJ-${item.number}` : (item.id ?? '').slice(0, 8)}
+          {item.number ? `${spaceKey ?? 'PROJ'}-${item.number}` : (item.id ?? '').slice(0, 8)}
         </span>
         <p className="text-[var(--text-sm)] leading-snug text-[var(--color-text)]">
           {item.title}
@@ -131,7 +132,7 @@ function ItemCard({ item, overlay, onItemClick }: { item: ProjectItem; overlay?:
 // Droppable column
 // ---------------------------------------------------------------------------
 
-function DroppableColumn({ column, items, onItemClick }: { column: ColumnDef; items: ProjectItem[]; onItemClick?: (id: string) => void }) {
+function DroppableColumn({ column, items, onItemClick, spaceKey }: { column: ColumnDef; items: ProjectItem[]; onItemClick?: (id: string) => void; spaceKey?: string }) {
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-[var(--radius-lg)] bg-[var(--color-bg)] p-3">
       <div className="mb-3 flex items-center justify-between">
@@ -151,7 +152,7 @@ function DroppableColumn({ column, items, onItemClick }: { column: ColumnDef; it
       >
         <div className="flex flex-1 flex-col gap-2">
           {items.map((item) => (
-            <SortableItemCard key={item.id} item={item} onItemClick={onItemClick} />
+            <SortableItemCard key={item.id} item={item} onItemClick={onItemClick} spaceKey={spaceKey} />
           ))}
         </div>
       </SortableContext>
@@ -167,6 +168,8 @@ function DroppableColumn({ column, items, onItemClick }: { column: ColumnDef; it
 export function SprintBoardPage() {
   const navigate = useNavigate();
   const { spaceId = '' } = useParams<{ spaceId: string }>();
+
+  const { data: space } = useSpace(spaceId);
 
   // P2.5: load active sprint first, then its items
   const { data: activeSprint, isLoading: sprintLoading } = useActiveSprint(spaceId);
@@ -343,6 +346,7 @@ export function SprintBoardPage() {
               column={col}
               items={columns[col.id] ?? []}
               onItemClick={handleItemClick}
+              spaceKey={space?.key}
             />
           ))}
         </div>
@@ -350,7 +354,7 @@ export function SprintBoardPage() {
         <DragOverlay>
           {activeItem ? (
             <div className="w-72">
-              <ItemCard item={activeItem} overlay />
+              <ItemCard item={activeItem} overlay spaceKey={space?.key} />
             </div>
           ) : null}
         </DragOverlay>

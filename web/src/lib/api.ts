@@ -139,6 +139,7 @@ export interface Space {
   org_id: string;
   name: string;
   slug: string;
+  key: string;
   type: SpaceType;
   description: string;
   created_at: string;
@@ -353,6 +354,10 @@ export async function refreshAccessToken(): Promise<RefreshResponse> {
 // Space API functions
 // ---------------------------------------------------------------------------
 
+async function fetchSpace(spaceId: string): Promise<Space> {
+  return apiFetch<Space>(`/spaces/${spaceId}`);
+}
+
 async function fetchSpaces(orgId: string): Promise<Space[]> {
   // Audit ref: testing-audit.md §7.5 — list endpoints occasionally return
   // literal `null` instead of `[]`. Treat null/undefined as empty so list
@@ -365,6 +370,7 @@ async function fetchSpaces(orgId: string): Promise<Space[]> {
 interface CreateSpaceRequest {
   name: string;
   slug: string;
+  key: string;
   type: SpaceType;
   description?: string;
 }
@@ -828,6 +834,7 @@ async function fetchRoadmapSprints(spaceId: string): Promise<RoadmapSprint[]> {
 export const queryKeys = {
   me: () => ['me'] as const,
   organization: (orgId: string) => ['organization', orgId] as const,
+  space: (spaceId: string) => ['space', spaceId] as const,
   spaces: (orgId: string) => ['spaces', orgId] as const,
   tickets: (spaceId: string) => ['tickets', spaceId] as const,
   ticket: (spaceId: string, ticketId: string) => ['tickets', spaceId, ticketId] as const,
@@ -892,6 +899,15 @@ export function useSpaces(orgId: string, opts?: QueryOpts<Space[]>) {
     queryKey: queryKeys.spaces(orgId),
     queryFn: () => fetchSpaces(orgId),
     enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function useSpace(spaceId: string, opts?: QueryOpts<Space>) {
+  return useQuery<Space, APIError>({
+    queryKey: queryKeys.space(spaceId),
+    queryFn: () => fetchSpace(spaceId),
+    enabled: !!spaceId,
     ...opts,
   });
 }

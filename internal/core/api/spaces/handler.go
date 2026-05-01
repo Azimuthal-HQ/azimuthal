@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -14,6 +16,25 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
+
+var validKey = regexp.MustCompile(`^[A-Z0-9]{1,10}$`)
+var nonAlphanumeric = regexp.MustCompile(`[^A-Z0-9]`)
+
+// deriveKey generates a default key from a space name: uppercase, strip
+// non-alphanumeric chars, take the first word, cap at 8 characters.
+func deriveKey(name string) string {
+	upper := regexp.MustCompile(`[^a-zA-Z0-9\s]`).ReplaceAllString(name, "")
+	words := regexp.MustCompile(`\s+`).Split(strings.TrimSpace(upper), -1)
+	first := strings.ToUpper(words[0])
+	first = nonAlphanumeric.ReplaceAllString(first, "")
+	if len(first) > 8 {
+		first = first[:8]
+	}
+	if first == "" {
+		return "SPACE"
+	}
+	return first
+}
 
 // WorkflowAssigner assigns a default workflow to a newly created space.
 type WorkflowAssigner interface {
@@ -55,6 +76,7 @@ func (h *Handler) Routes() chi.Router {
 type createSpaceRequest struct {
 	Slug        string  `json:"slug"`
 	Name        string  `json:"name"`
+	Key         string  `json:"key"`
 	Description *string `json:"description,omitempty"`
 	Type        string  `json:"type"`
 	Icon        *string `json:"icon,omitempty"`
@@ -63,6 +85,7 @@ type createSpaceRequest struct {
 
 type updateSpaceRequest struct {
 	Name        string  `json:"name"`
+	Key         string  `json:"key"`
 	Description *string `json:"description,omitempty"`
 	Icon        *string `json:"icon,omitempty"`
 	IsPrivate   bool    `json:"is_private"`
@@ -227,6 +250,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	key := req.Key
+	if key == "" {
+		key = deriveKey(req.Name)
+	}
+	if !validKey.MatchString(key) {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "key must be 1–10 uppercase letters or digits (e.g. HR, COM, IT2)")
+		return
+	}
+
 	space, err := h.queries.CreateSpace(r.Context(), generated.CreateSpaceParams{
 		ID:          uuid.New(),
 		OrgID:       orgID,
@@ -237,6 +269,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Icon:        req.Icon,
 		IsPrivate:   req.IsPrivate,
 		CreatedBy:   claims.UserID,
+		Key:         key,
 	})
 	if err != nil {
 		slog.Error("CreateSpace failed", "error", err, "org_id", orgID)
@@ -329,12 +362,29 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Key != "" && !validKey.MatchString(req.Key) {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "key must be 1–10 uppercase letters or digits")
+		return
+	}
+
+	// Fetch current space so we can keep the existing key if none provided.
+	current, err := h.queries.GetSpaceByID(r.Context(), id)
+	if err != nil {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "space not found")
+		return
+	}
+	key := req.Key
+	if key == "" {
+		key = current.Key
+	}
+
 	space, err := h.queries.UpdateSpace(r.Context(), generated.UpdateSpaceParams{
 		ID:          id,
 		Name:        req.Name,
 		Description: req.Description,
 		Icon:        req.Icon,
 		IsPrivate:   req.IsPrivate,
+		Key:         key,
 	})
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to update space")

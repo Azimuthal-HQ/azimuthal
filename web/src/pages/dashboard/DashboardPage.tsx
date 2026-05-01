@@ -52,6 +52,12 @@ function slugify(name: string): string {
     .replace(/^-|-$/g, '');
 }
 
+function deriveKey(name: string): string {
+  const first = name.trim().split(/\s+/)[0] ?? '';
+  const upper = first.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  return upper || 'SPACE';
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -68,6 +74,8 @@ export function DashboardPage() {
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState<SpaceType>('service_desk');
   const [formDescription, setFormDescription] = useState('');
+  const [formKey, setFormKey] = useState('');
+  const [keyTouched, setKeyTouched] = useState(false);
 
   const createSpaceMutation = useCreateSpace(orgId);
 
@@ -75,18 +83,32 @@ export function DashboardPage() {
     setFormName('');
     setFormType('service_desk');
     setFormDescription('');
+    setFormKey('');
+    setKeyTouched(false);
   }
+
+  function handleNameChange(value: string) {
+    setFormName(value);
+    if (!keyTouched) setFormKey(deriveKey(value));
+  }
+
+  const keyError = formKey && !/^[A-Z0-9]{1,10}$/.test(formKey)
+    ? 'Key must be 1–10 uppercase letters or digits'
+    : null;
 
   async function handleCreate() {
     const name = formName.trim();
     if (!name) return;
+    if (keyError) return;
 
     const slug = slugify(name);
+    const key = formKey || deriveKey(name);
 
     try {
       const created = await createSpaceMutation.mutateAsync({
         name,
         slug,
+        key,
         type: formType,
         description: formDescription.trim() || undefined,
       });
@@ -235,11 +257,37 @@ export function DashboardPage() {
               </label>
               <Input
                 id="space-name"
-                placeholder="e.g. Backend API"
+                placeholder="e.g. HR Support"
                 value={formName}
-                onChange={(e) => setFormName(e.target.value)}
+                onChange={(e) => handleNameChange(e.target.value)}
                 autoFocus
               />
+            </div>
+
+            {/* Key */}
+            <div className="space-y-2">
+              <label htmlFor="space-key" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                Ticket key{' '}
+                <span className="font-normal text-[var(--color-text-muted)]">(prefix for ticket numbers)</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="space-key"
+                  placeholder="e.g. HR"
+                  value={formKey}
+                  onChange={(e) => {
+                    setFormKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10));
+                    setKeyTouched(true);
+                  }}
+                  className="w-32 font-mono"
+                />
+                <span className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                  → tickets will show as <strong>{formKey || deriveKey(formName) || 'HR'}-1</strong>, <strong>{formKey || deriveKey(formName) || 'HR'}-2</strong>, …
+                </span>
+              </div>
+              {keyError && (
+                <p className="text-[var(--text-xs)] text-[var(--color-danger)]">{keyError}</p>
+              )}
             </div>
 
             {/* Type */}

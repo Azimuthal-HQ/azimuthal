@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Plus, Search, AlertCircle } from 'lucide-react';
+import { Plus, Search, AlertCircle, GripVertical } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
@@ -14,7 +14,7 @@ import {
   DialogClose,
 } from '../../components/ui/dialog';
 import { cn } from '../../lib/utils';
-import { useProjectItems, useCreateProjectItem, type ProjectItem } from '../../lib/api';
+import { useProjectItems, useCreateProjectItem, useRankItem, useSpace, type ProjectItem } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Badge helpers
@@ -43,10 +43,30 @@ const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
 /** Backlog list page for project items. */
 export function BacklogPage() {
   const { spaceId = '' } = useParams<{ spaceId: string }>();
+  const { data: space } = useSpace(spaceId);
   const { data: items, isLoading, error } = useProjectItems(spaceId);
   const createMutation = useCreateProjectItem(spaceId);
+  const rankMutation = useRankItem(spaceId);
 
   const [search, setSearch] = useState('');
+
+  // Drag-to-reorder state
+  const dragId = useRef<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  function handleDragStart(id: string) {
+    dragId.current = id;
+  }
+
+  function handleDrop(groupItems: ProjectItem[], targetId: string) {
+    const srcId = dragId.current;
+    if (!srcId || srcId === targetId) { dragId.current = null; setDragOverId(null); return; }
+    const targetIdx = groupItems.findIndex(i => i.id === targetId);
+    const after = targetIdx > 0 ? groupItems[targetIdx - 1] : undefined;
+    rankMutation.mutate({ itemId: srcId, before_id: targetId, after_id: after?.id });
+    dragId.current = null;
+    setDragOverId(null);
+  }
 
   // Modal state
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -170,6 +190,7 @@ export function BacklogPage() {
             <table className="w-full text-left text-[var(--text-sm)]">
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
+                  <th className="w-8 px-2 py-3" />
                   <th className="whitespace-nowrap px-4 py-3 font-medium text-[var(--color-text-muted)]">ID</th>
                   <th className="px-4 py-3 font-medium text-[var(--color-text-muted)]">Title</th>
                   <th className="px-4 py-3 font-medium text-[var(--color-text-muted)]">Priority</th>
@@ -179,11 +200,26 @@ export function BacklogPage() {
               <tbody>
                 {groupItems.map((item) => {
                   const itemPath = `/spaces/${spaceId}/backlog/${item.id}`;
+                  const isOver = dragOverId === item.id;
                   return (
-                    <tr key={item.id} className="border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors">
+                    <tr
+                      key={item.id}
+                      draggable
+                      onDragStart={() => handleDragStart(item.id)}
+                      onDragOver={(e) => { e.preventDefault(); setDragOverId(item.id); }}
+                      onDragLeave={() => setDragOverId(null)}
+                      onDrop={() => handleDrop(groupItems, item.id)}
+                      className={cn(
+                        'border-b border-[var(--color-border)] last:border-b-0 transition-colors cursor-grab active:cursor-grabbing',
+                        isOver ? 'bg-[var(--color-primary-muted)]' : 'hover:bg-[var(--color-surface-hover)]',
+                      )}
+                    >
+                      <td className="px-2 py-3 text-[var(--color-text-muted)]">
+                        <GripVertical className="h-4 w-4" />
+                      </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <Link to={itemPath} className="font-medium text-[var(--color-primary)] hover:underline" style={{ fontFamily: 'var(--font-mono)' }}>
-                          {item.number ? `PROJ-${item.number}` : (item.id ?? '').slice(0, 8)}
+                          {item.number ? `${space?.key ?? 'PROJ'}-${item.number}` : (item.id ?? '').slice(0, 8)}
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-[var(--color-text)]">

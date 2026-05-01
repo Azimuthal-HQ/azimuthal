@@ -13,6 +13,7 @@ import {
   useComments,
   useCreateComment,
   useMe,
+  useSpace,
   type TicketStatus,
 } from '../../lib/api';
 
@@ -59,6 +60,7 @@ const ALL_STATUSES: TicketStatus[] = ['open', 'in_progress', 'resolved', 'closed
 /** Detail page for a single service desk ticket. */
 export function TicketDetailPage() {
   const { spaceId = '', ticketId } = useParams<{ spaceId: string; ticketId: string }>();
+  const { data: space } = useSpace(spaceId);
   const { data: ticket, isLoading, error, refetch: refetchTicket } = useTicket(spaceId, ticketId ?? '');
   const transitionMutation = useTransitionTicketStatus(spaceId, ticketId ?? '');
   const assignMutation = useAssignTicket(spaceId, ticketId ?? '');
@@ -127,7 +129,7 @@ export function TicketDetailPage() {
         </Link>
         <ChevronRight className="h-4 w-4" />
         <span className="text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono)' }}>
-          {ticket.number ? `SD-${ticket.number}` : ticket.id.slice(0, 8)}
+          {ticket.number ? `${space?.key ?? 'SD'}-${ticket.number}` : ticket.id.slice(0, 8)}
         </span>
       </nav>
 

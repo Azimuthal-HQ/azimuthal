@@ -19,7 +19,7 @@ import { AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent } from '../../components/ui/card';
 import { cn } from '../../lib/utils';
-import { useTickets, type Ticket } from '../../lib/api';
+import { useTickets, useSpace, type Ticket } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -67,9 +67,10 @@ interface SortableTicketCardProps {
   ticket: Ticket;
   overlay?: boolean;
   spaceId?: string;
+  spaceKey?: string;
 }
 
-function SortableTicketCard({ ticket, spaceId }: { ticket: Ticket; spaceId?: string }) {
+function SortableTicketCard({ ticket, spaceId, spaceKey }: { ticket: Ticket; spaceId?: string; spaceKey?: string }) {
   const {
     attributes,
     listeners,
@@ -89,12 +90,12 @@ function SortableTicketCard({ ticket, spaceId }: { ticket: Ticket; spaceId?: str
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <TicketCard ticket={ticket} spaceId={spaceId} />
+      <TicketCard ticket={ticket} spaceId={spaceId} spaceKey={spaceKey} />
     </div>
   );
 }
 
-function TicketCard({ ticket, overlay, spaceId }: SortableTicketCardProps) {
+function TicketCard({ ticket, overlay, spaceId, spaceKey }: SortableTicketCardProps) {
   const ticketPath = `/spaces/${spaceId}/tickets/${ticket.id}`;
   const priorityKey = String(ticket.priority ?? '').toLowerCase();
   return (
@@ -110,7 +111,7 @@ function TicketCard({ ticket, overlay, spaceId }: SortableTicketCardProps) {
           className="text-[var(--text-xs)] font-medium text-[var(--color-text-muted)] hover:underline"
           style={{ fontFamily: 'var(--font-mono)' }}
         >
-          {ticket.number ? `SD-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
+          {ticket.number ? `${spaceKey ?? 'SD'}-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
         </Link>
         <p className="text-[var(--text-sm)] leading-snug text-[var(--color-text)]">
           {ticket.title}
@@ -133,9 +134,10 @@ interface DroppableColumnProps {
   column: ColumnDef;
   tickets: Ticket[];
   spaceId?: string;
+  spaceKey?: string;
 }
 
-function DroppableColumn({ column, tickets, spaceId }: DroppableColumnProps) {
+function DroppableColumn({ column, tickets, spaceId, spaceKey }: DroppableColumnProps) {
   return (
     <div className="flex w-72 shrink-0 flex-col rounded-[var(--radius-lg)] bg-[var(--color-bg)] p-3">
       <div className="mb-3 flex items-center justify-between">
@@ -152,7 +154,7 @@ function DroppableColumn({ column, tickets, spaceId }: DroppableColumnProps) {
       >
         <div className="flex flex-1 flex-col gap-2">
           {tickets.map((ticket) => (
-            <SortableTicketCard key={ticket.id} ticket={ticket} spaceId={spaceId} />
+            <SortableTicketCard key={ticket.id} ticket={ticket} spaceId={spaceId} spaceKey={spaceKey} />
           ))}
         </div>
       </SortableContext>
@@ -167,6 +169,7 @@ function DroppableColumn({ column, tickets, spaceId }: DroppableColumnProps) {
 /** Kanban board view for service desk tickets with drag-and-drop. */
 export function KanbanPage() {
   const { spaceId = '' } = useParams<{ spaceId: string }>();
+  const { data: space } = useSpace(spaceId);
   const { data: tickets, isLoading, error } = useTickets(spaceId);
   const [activeTicket, setActiveTicket] = useState<Ticket | null>(null);
 
@@ -245,6 +248,7 @@ export function KanbanPage() {
               column={col}
               tickets={columns[col.id]}
               spaceId={spaceId}
+              spaceKey={space?.key}
             />
           ))}
         </div>
@@ -252,7 +256,7 @@ export function KanbanPage() {
         <DragOverlay>
           {activeTicket ? (
             <div className="w-72">
-              <TicketCard ticket={activeTicket} overlay spaceId={spaceId} />
+              <TicketCard ticket={activeTicket} overlay spaceId={spaceId} spaceKey={space?.key} />
             </div>
           ) : null}
         </DragOverlay>

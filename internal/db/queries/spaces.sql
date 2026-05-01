@@ -1,6 +1,6 @@
 -- name: CreateSpace :one
-INSERT INTO spaces (id, org_id, slug, name, description, type, icon, is_private, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO spaces (id, org_id, slug, name, description, type, icon, is_private, created_by, key)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: GetSpaceByID :one
@@ -17,7 +17,7 @@ SELECT * FROM spaces WHERE org_id = $1 AND type = $2 AND deleted_at IS NULL ORDE
 
 -- name: UpdateSpace :one
 UPDATE spaces
-SET name = $2, description = $3, icon = $4, is_private = $5
+SET name = $2, description = $3, icon = $4, is_private = $5, key = $6
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 

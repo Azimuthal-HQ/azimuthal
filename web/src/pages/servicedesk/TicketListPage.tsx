@@ -14,7 +14,7 @@ import {
   DialogClose,
 } from '../../components/ui/dialog';
 import { cn } from '../../lib/utils';
-import { useTickets, useCreateTicket, type TicketStatus } from '../../lib/api';
+import { useTickets, useCreateTicket, useSpace, type TicketStatus } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,6 +77,7 @@ const PRIORITY_NAME_TO_API: Record<TicketPriority, string> = {
 /** Filterable list/table view of service desk tickets. */
 export function TicketListPage() {
   const { spaceId = '' } = useParams<{ spaceId: string }>();
+  const { data: space } = useSpace(spaceId);
   const { data: tickets, isLoading, error } = useTickets(spaceId);
   const createTicketMutation = useCreateTicket(spaceId);
 
@@ -228,7 +229,7 @@ export function TicketListPage() {
                         className="font-[var(--font-mono)] text-[var(--color-primary)] hover:underline"
                         style={{ fontFamily: 'var(--font-mono)' }}
                       >
-                        {ticket.number ? `SD-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
+                        {ticket.number ? `${space?.key ?? 'SD'}-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-[var(--color-text)]">

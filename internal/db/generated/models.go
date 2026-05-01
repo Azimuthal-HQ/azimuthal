@@ -197,6 +197,7 @@ type Space struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
 	WorkflowID  pgtype.UUID        `json:"workflow_id"`
+	Key         string             `json:"key"`
 }
 
 type SpaceMember struct {
