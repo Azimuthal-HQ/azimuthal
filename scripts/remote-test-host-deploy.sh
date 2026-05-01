@@ -80,19 +80,15 @@ DOCKERFILE
   docker build -t azimuthal:local /tmp/azimuthal-deploy
   rm -rf /tmp/azimuthal-deploy /tmp/azimuthal-new
 
-  # Grab env + network from existing container
-  ENV_ARGS=$(docker inspect azimuthal-app-1 --format '{{range .Config.Env}}-e "{{.}}" {{end}}' 2>/dev/null || echo "")
-  NETWORK=$(docker inspect azimuthal-app-1 --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null || echo "azimuthal_default")
-
   docker stop azimuthal-app-1 2>/dev/null || true
   docker rm   azimuthal-app-1 2>/dev/null || true
 
   docker run -d \
     --name azimuthal-app-1 \
-    --network "$NETWORK" \
+    --network azimuthal_default \
     --restart unless-stopped \
     -p 8080:8080 \
-    $ENV_ARGS \
+    --env-file /root/azimuthal-env \
     azimuthal:local serve
 
   sleep 3
