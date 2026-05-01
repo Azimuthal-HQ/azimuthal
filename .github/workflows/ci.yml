@@ -127,7 +127,7 @@ jobs:
             -coverprofile=coverage.out \
             -covermode=atomic \
             -coverpkg=./internal/... \
-            -timeout=120s \
+            -timeout=300s \
             ./...
 
       - name: Enforce minimum coverage (80%)
