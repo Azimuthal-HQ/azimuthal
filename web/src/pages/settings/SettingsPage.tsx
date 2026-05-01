@@ -5,7 +5,7 @@ import { Input } from '../../components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { useTheme } from '../../components/theme/ThemeProvider';
 import { useAuth } from '../../lib/auth';
-import { useOrganization, useUpdateOrganization } from '../../lib/api';
+import { useOrganization, useUpdateOrganization, useUpdateProfile } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +44,8 @@ export function SettingsPage() {
   // Profile state
   const [displayName, setDisplayName] = useState(user?.email?.split('@')[0] ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
+  const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
+  const updateProfileMutation = useUpdateProfile();
 
   // Organization state — populated from API
   const orgId = user?.orgId ?? '';
@@ -62,6 +64,16 @@ export function SettingsPage() {
       setOrgDescription(org.description ?? '');
     }
   }, [org]);
+
+  async function handleSaveProfile() {
+    try {
+      await updateProfileMutation.mutateAsync({ display_name: displayName.trim(), email: email.trim() });
+      setProfileSaveSuccess(true);
+      setTimeout(() => setProfileSaveSuccess(false), 3000);
+    } catch {
+      // error handled by mutation state
+    }
+  }
 
   async function handleSaveOrg() {
     if (!orgName.trim()) return;
@@ -172,8 +184,18 @@ export function SettingsPage() {
                     disabled
                   />
                 </div>
-                <div className="flex justify-end">
-                  <Button>Save Changes</Button>
+                <div className="flex items-center justify-end gap-3">
+                  {profileSaveSuccess && (
+                    <span className="flex items-center gap-1 text-[var(--text-sm)] text-[var(--color-success)]">
+                      <Check className="h-4 w-4" />Saved
+                    </span>
+                  )}
+                  {updateProfileMutation.error && (
+                    <span className="text-[var(--text-sm)] text-[var(--color-danger)]">{updateProfileMutation.error.message}</span>
+                  )}
+                  <Button onClick={handleSaveProfile} disabled={updateProfileMutation.isPending}>
+                    {updateProfileMutation.isPending ? 'Saving...' : 'Save Changes'}
+                  </Button>
                 </div>
               </CardContent>
             </Card>

@@ -45,7 +45,7 @@ func (h *Handler) Routes() chi.Router {
 // @Failure      401  {object}  api.SwaggerErrorResponse
 // @Security     BearerAuth
 // @Router       /notifications [get]
-func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) { //nolint:cyclop // HTTP handler complexity from query-param parsing and branching
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
@@ -56,12 +56,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	offset := int32(0)
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
-			limit = int32(n)
+			limit = int32(n) //nolint:gosec // G109 — value is bounded to [1,100] by the check above
 		}
 	}
 	if o := r.URL.Query().Get("offset"); o != "" {
 		if n, err := strconv.Atoi(o); err == nil && n >= 0 {
-			offset = int32(n)
+			offset = int32(n) //nolint:gosec // G109 — value is non-negative int from strconv; safe for int32 pagination
 		}
 	}
 

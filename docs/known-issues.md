@@ -275,3 +275,18 @@ in scope for Phase 5 (Items Table Split) where the items schema is being
 restructured anyway.
 
 **Do not fix in P2 or P3.** Document only.
+
+---
+
+## Issue 15 — Ticket relations blocked by schema FK constraint
+
+**Phase discovered**: P3  
+**Status**: Deferred to P5 (Items Table Split)
+
+**Symptom**: The P3 spec intended to add `GET/POST /tickets/{id}/relations` and `DELETE /relations/{id}` endpoints for service desk tickets, reusing the existing `item_relations` table and `RelationService`.
+
+**Root cause**: `item_relations.from_id` and `item_relations.to_id` both carry `REFERENCES items(id)` foreign keys. Ticket IDs live in the `tickets` table, not `items`. Inserting a ticket ID as `from_id` violates the FK constraint at the database level. Adding ticket relations without a schema change is not possible.
+
+**Proper fix**: P5 (Items Table Split) makes `item_relations` polymorphic — `entity_type TEXT + entity_id UUID` with no FK, or a union FK pattern. Once P5 lands, ticket relations can be added with a single handler and no migration.
+
+**Do not fix before P5.**

@@ -115,8 +115,9 @@ func TestSmoke(t *testing.T) {
 	// 3b. Login with the same credentials to test the login flow
 	t.Run("login_user", func(t *testing.T) {
 		// Re-register a second user to get a known email for login
+		loginEmail := fmt.Sprintf("smoke-login-%d@test.local", time.Now().UnixNano())
 		regPayload := map[string]string{
-			"email":        "smoke-login@test.local",
+			"email":        loginEmail,
 			"display_name": "Login Tester",
 			"password":     "login-password-123",
 		}
@@ -124,7 +125,7 @@ func TestSmoke(t *testing.T) {
 
 		// Now login
 		loginPayload := map[string]string{
-			"email":    "smoke-login@test.local",
+			"email":    loginEmail,
 			"password": "login-password-123",
 		}
 		body := doPost(t, client, base+"/api/v1/auth/login", loginPayload, "", http.StatusOK)
@@ -140,8 +141,8 @@ func TestSmoke(t *testing.T) {
 		if !ok {
 			t.Fatal("expected user in login response")
 		}
-		if user["email"] != "smoke-login@test.local" {
-			t.Errorf("expected email smoke-login@test.local, got %v", user["email"])
+		if user["email"] != loginEmail {
+			t.Errorf("expected email %s, got %v", loginEmail, user["email"])
 		}
 		org, ok := body["org"].(map[string]interface{})
 		if !ok {
@@ -185,11 +186,13 @@ func TestSmoke(t *testing.T) {
 	var spaceID string
 	t.Run("create_space", func(t *testing.T) {
 		slug := fmt.Sprintf("smoke-%d", time.Now().UnixNano())
+		key := fmt.Sprintf("S%d", time.Now().UnixNano()%100000)
 		payload := map[string]interface{}{
 			"slug":        slug,
 			"name":        "Smoke Test Space",
 			"description": "Created by smoke test",
 			"type":        "service_desk",
+			"key":         key,
 			"is_private":  false,
 		}
 		url := fmt.Sprintf("%s/api/v1/orgs/%s/spaces", base, orgID)

@@ -35,3 +35,10 @@ func TestDefaultLogger_Log_IsNoOp(t *testing.T) {
 func TestDefaultLogger_ImplementsInterface(_ *testing.T) {
 	var _ = audit.NewLogger()
 }
+
+func TestDBLogger_IsAvailable(t *testing.T) {
+	l := audit.NewDBLogger(nil)
+	if !l.IsAvailable() {
+		t.Error("dbLogger.IsAvailable() must return true")
+	}
+}

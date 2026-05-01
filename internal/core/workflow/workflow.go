@@ -11,14 +11,14 @@ import (
 
 // Workflow is an org-scoped state machine definition.
 type Workflow struct {
-	ID          uuid.UUID  `json:"id"`
-	OrgID       uuid.UUID  `json:"org_id"`
-	Name        string     `json:"name"`
-	Description *string    `json:"description"`
-	IsDefault   bool       `json:"is_default"`
-	AppliesTo   string     `json:"applies_to"` // "tickets", "project_items", "both"
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID          uuid.UUID `json:"id"`
+	OrgID       uuid.UUID `json:"org_id"`
+	Name        string    `json:"name"`
+	Description *string   `json:"description"`
+	IsDefault   bool      `json:"is_default"`
+	AppliesTo   string    `json:"applies_to"` // "tickets", "project_items", "both"
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // State is a named node in a workflow graph.

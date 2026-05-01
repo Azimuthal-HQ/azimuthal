@@ -34,13 +34,12 @@ var (
 )
 
 // PageStore defines the database operations required by the wiki service.
-// This interface allows for mocking in tests and decouples the service
-// from the concrete sqlc-generated implementation.
 type PageStore interface {
 	CreatePage(ctx context.Context, arg generated.CreatePageParams) (generated.Page, error)
 	GetPageByID(ctx context.Context, id uuid.UUID) (generated.Page, error)
 	UpdatePageContent(ctx context.Context, arg generated.UpdatePageContentParams) (generated.Page, error)
 	UpdatePagePosition(ctx context.Context, arg generated.UpdatePagePositionParams) error
+	UpdatePageDescendantPaths(ctx context.Context, arg generated.UpdatePageDescendantPathsParams) error
 	SoftDeletePage(ctx context.Context, id uuid.UUID) error
 	ListPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]generated.ListPagesBySpaceRow, error)
 	ListRootPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]generated.ListRootPagesBySpaceRow, error)
@@ -76,8 +75,8 @@ type CreatePageInput struct {
 	Position int32
 }
 
-// CreatePage creates a new wiki page, validates inputs, and stores
-// the initial revision for version history.
+// CreatePage creates a new wiki page and stores the initial revision.
+// The materialized path is computed from the parent's path before insert.
 func (s *Service) CreatePage(ctx context.Context, input CreatePageInput) (generated.Page, error) {
 	if err := validateCreateInput(input); err != nil {
 		return generated.Page{}, fmt.Errorf("validating create input: %w", err)
@@ -86,8 +85,16 @@ func (s *Service) CreatePage(ctx context.Context, input CreatePageInput) (genera
 	pageID := uuid.New()
 
 	var parentID pgtype.UUID
+	var path string
 	if input.ParentID != nil {
 		parentID = pgtype.UUID{Bytes: *input.ParentID, Valid: true}
+		parent, err := s.store.GetPageByID(ctx, *input.ParentID)
+		if err != nil {
+			return generated.Page{}, fmt.Errorf("fetching parent page: %w", err)
+		}
+		path = parent.Path + "." + pageID.String()
+	} else {
+		path = pageID.String()
 	}
 
 	page, err := s.store.CreatePage(ctx, generated.CreatePageParams{
@@ -98,12 +105,12 @@ func (s *Service) CreatePage(ctx context.Context, input CreatePageInput) (genera
 		Content:  input.Content,
 		AuthorID: input.AuthorID,
 		Position: input.Position,
+		Path:     path,
 	})
 	if err != nil {
 		return generated.Page{}, fmt.Errorf("creating page: %w", err)
 	}
 
-	// Store the initial revision for history.
 	_, err = s.store.CreatePageRevision(ctx, generated.CreatePageRevisionParams{
 		ID:       uuid.New(),
 		PageID:   page.ID,
@@ -141,8 +148,7 @@ type UpdatePageInput struct {
 }
 
 // UpdatePage updates a page's title and content using optimistic locking.
-// Returns ErrVersionConflict if the expected version does not match (409).
-// A new revision is created on every successful update.
+// Returns ErrVersionConflict if the expected version does not match.
 func (s *Service) UpdatePage(ctx context.Context, input UpdatePageInput) (generated.Page, error) {
 	if strings.TrimSpace(input.Title) == "" {
 		return generated.Page{}, ErrEmptyTitle
@@ -156,7 +162,6 @@ func (s *Service) UpdatePage(ctx context.Context, input UpdatePageInput) (genera
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Either the page doesn't exist or the version didn't match.
 			_, getErr := s.store.GetPageByID(ctx, input.PageID)
 			if getErr != nil {
 				if errors.Is(getErr, pgx.ErrNoRows) {
@@ -169,7 +174,6 @@ func (s *Service) UpdatePage(ctx context.Context, input UpdatePageInput) (genera
 		return generated.Page{}, fmt.Errorf("updating page content: %w", err)
 	}
 
-	// Store revision for the updated version.
 	_, err = s.store.CreatePageRevision(ctx, generated.CreatePageRevisionParams{
 		ID:       uuid.New(),
 		PageID:   page.ID,
@@ -187,25 +191,56 @@ func (s *Service) UpdatePage(ctx context.Context, input UpdatePageInput) (genera
 
 // MovePageInput holds parameters for moving a page in the tree.
 type MovePageInput struct {
+	SpaceID  uuid.UUID
 	PageID   uuid.UUID
 	ParentID *uuid.UUID
 	Position int32
 }
 
 // MovePage changes a page's parent and/or position in the tree.
+// Updates the materialized path for the moved page and all its descendants.
 func (s *Service) MovePage(ctx context.Context, input MovePageInput) error {
+	page, err := s.store.GetPageByID(ctx, input.PageID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrPageNotFound
+		}
+		return fmt.Errorf("fetching page to move: %w", err)
+	}
+
+	oldPath := page.Path
+
 	var parentID pgtype.UUID
+	var newPath string
 	if input.ParentID != nil {
 		parentID = pgtype.UUID{Bytes: *input.ParentID, Valid: true}
+		parent, err := s.store.GetPageByID(ctx, *input.ParentID)
+		if err != nil {
+			return fmt.Errorf("fetching new parent: %w", err)
+		}
+		newPath = parent.Path + "." + input.PageID.String()
+	} else {
+		newPath = input.PageID.String()
 	}
 
 	if err := s.store.UpdatePagePosition(ctx, generated.UpdatePagePositionParams{
 		ID:       input.PageID,
 		ParentID: parentID,
 		Position: input.Position,
+		Path:     newPath,
 	}); err != nil {
 		return fmt.Errorf("moving page: %w", err)
 	}
+
+	// Bulk-update all descendant paths: replace old prefix with new prefix.
+	if err := s.store.UpdatePageDescendantPaths(ctx, generated.UpdatePageDescendantPathsParams{
+		SpaceID:   input.SpaceID,
+		Replace:   oldPath,
+		Replace_2: newPath,
+	}); err != nil {
+		return fmt.Errorf("updating descendant paths: %w", err)
+	}
+
 	return nil
 }
 

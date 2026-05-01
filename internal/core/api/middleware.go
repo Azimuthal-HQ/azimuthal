@@ -56,7 +56,7 @@ func Logging(next http.Handler) http.Handler {
 		wrapped := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(wrapped, r)
 		// G706: values are from the request/context, not from untrusted user input.
-		slog.Info("http request", //nolint:gosec // G706 — values originate from the HTTP server, not user-tainted data
+		slog.Info("http request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", wrapped.status,
@@ -151,7 +151,7 @@ func Recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rvr := recover(); rvr != nil {
-				slog.Error("panic recovered", //nolint:gosec // G706 — panic value and path are server-internal
+				slog.Error("panic recovered",
 					"error", rvr,
 					"request_id", respond.RequestIDFromContext(r.Context()),
 					"path", r.URL.Path,

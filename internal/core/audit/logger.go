@@ -12,45 +12,64 @@ import (
 type EventType string
 
 const (
-	// Auth events
-	EventTypeUserLogin    EventType = "user.login"
-	EventTypeLoginFailed  EventType = "user.login_failed"
-	EventTypeUserLogout   EventType = "user.logout"
-	EventTypeTokenIssued  EventType = "user.token_issued"
+	// EventTypeUserLogin records a successful user login.
+	EventTypeUserLogin EventType = "user.login"
+	// EventTypeLoginFailed records a failed login attempt.
+	EventTypeLoginFailed EventType = "user.login_failed"
+	// EventTypeUserLogout records a user logout.
+	EventTypeUserLogout EventType = "user.logout"
+	// EventTypeTokenIssued records a JWT token being issued.
+	EventTypeTokenIssued EventType = "user.token_issued"
 
-	// Ticket events
-	EventTypeTicketCreated      EventType = "ticket.created"
-	EventTypeTicketUpdated      EventType = "ticket.updated"
+	// EventTypeTicketCreated records a new service-desk ticket being created.
+	EventTypeTicketCreated EventType = "ticket.created"
+	// EventTypeTicketUpdated records a ticket being updated.
+	EventTypeTicketUpdated EventType = "ticket.updated"
+	// EventTypeTicketStatusChange records a ticket status transition.
 	EventTypeTicketStatusChange EventType = "ticket.status_changed"
-	EventTypeTicketAssigned     EventType = "ticket.assigned"
-	EventTypeTicketUnassigned   EventType = "ticket.unassigned"
-	EventTypeTicketDeleted      EventType = "ticket.deleted"
+	// EventTypeTicketAssigned records a ticket being assigned to a user.
+	EventTypeTicketAssigned EventType = "ticket.assigned"
+	// EventTypeTicketUnassigned records a ticket being unassigned.
+	EventTypeTicketUnassigned EventType = "ticket.unassigned"
+	// EventTypeTicketDeleted records a ticket being deleted.
+	EventTypeTicketDeleted EventType = "ticket.deleted"
 
-	// Wiki events
+	// EventTypePageCreated records a wiki page being created.
 	EventTypePageCreated EventType = "page.created"
+	// EventTypePageUpdated records a wiki page being updated.
 	EventTypePageUpdated EventType = "page.updated"
-	EventTypePageMoved   EventType = "page.moved"
+	// EventTypePageMoved records a wiki page being moved.
+	EventTypePageMoved EventType = "page.moved"
+	// EventTypePageDeleted records a wiki page being deleted.
 	EventTypePageDeleted EventType = "page.deleted"
 
-	// Project item events
-	EventTypeItemCreated      EventType = "item.created"
-	EventTypeItemUpdated      EventType = "item.updated"
+	// EventTypeItemCreated records a project item being created.
+	EventTypeItemCreated EventType = "item.created"
+	// EventTypeItemUpdated records a project item being updated.
+	EventTypeItemUpdated EventType = "item.updated"
+	// EventTypeItemStatusChange records a project item status transition.
 	EventTypeItemStatusChange EventType = "item.status_changed"
-	EventTypeItemSprintMove   EventType = "item.sprint_moved"
-	EventTypeItemDeleted      EventType = "item.deleted"
+	// EventTypeItemSprintMove records a project item being moved between sprints.
+	EventTypeItemSprintMove EventType = "item.sprint_moved"
+	// EventTypeItemDeleted records a project item being deleted.
+	EventTypeItemDeleted EventType = "item.deleted"
 
-	// Sprint events
-	EventTypeSprintCreated   EventType = "sprint.created"
-	EventTypeSprintStarted   EventType = "sprint.started"
+	// EventTypeSprintCreated records a sprint being created.
+	EventTypeSprintCreated EventType = "sprint.created"
+	// EventTypeSprintStarted records a sprint being started.
+	EventTypeSprintStarted EventType = "sprint.started"
+	// EventTypeSprintCompleted records a sprint being completed.
 	EventTypeSprintCompleted EventType = "sprint.completed"
 
-	// Comment events
+	// EventTypeCommentCreated records a comment being created.
 	EventTypeCommentCreated EventType = "comment.created"
+	// EventTypeCommentDeleted records a comment being deleted.
 	EventTypeCommentDeleted EventType = "comment.deleted"
 
-	// Legacy / misc
+	// EventTypePermissionChanged records a permission change.
 	EventTypePermissionChanged EventType = "permission.changed"
-	EventTypeSettingsChanged   EventType = "settings.changed"
+	// EventTypeSettingsChanged records a settings change.
+	EventTypeSettingsChanged EventType = "settings.changed"
 )
 
 // Event is the structured record written to the audit log.

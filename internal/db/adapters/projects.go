@@ -26,7 +26,7 @@ func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
 	if err != nil {
 		return fmt.Errorf("item adapter get max number: %w", err)
 	}
-	number := int32(maxNum) + 1
+	number := int32(maxNum) + 1 //nolint:gosec // G115 — item numbers are sequential and will never approach int32 max
 
 	_, err = a.q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID:          item.ID,

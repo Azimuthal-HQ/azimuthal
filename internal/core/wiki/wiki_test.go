@@ -83,6 +83,10 @@ func (m *mockStore) UpdatePagePosition(_ context.Context, arg generated.UpdatePa
 	return nil
 }
 
+func (m *mockStore) UpdatePageDescendantPaths(_ context.Context, _ generated.UpdatePageDescendantPathsParams) error {
+	return nil
+}
+
 func (m *mockStore) SoftDeletePage(_ context.Context, id uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

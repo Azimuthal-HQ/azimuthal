@@ -40,6 +40,7 @@ linters:
     paths:
       - vendor
       - internal/db/generated
+      - web/node_modules
     rules:
       # Relax complexity rules in test files
       - path: _test\.go

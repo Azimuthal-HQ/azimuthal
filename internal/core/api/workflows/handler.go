@@ -3,6 +3,7 @@ package workflows
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -545,7 +546,7 @@ func (h *Handler) GetSpaceWorkflowStates(w http.ResponseWriter, r *http.Request)
 // @Failure      409       {object}  api.SwaggerErrorResponse        "Invalid transition"
 // @Failure      500       {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /spaces/{spaceID}/tickets/{ticketID}/workflow-state [post]
-func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // workflow state machine validation requires multiple guard branches
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
@@ -637,7 +638,7 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 // @Failure      409      {object}  api.SwaggerErrorResponse        "Invalid transition"
 // @Failure      500      {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /spaces/{spaceID}/projects/items/{itemID}/workflow-state [post]
-func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // workflow state machine validation requires multiple guard branches
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
@@ -713,21 +714,41 @@ type workflowTransitionRequest struct {
 // ─── URL param helpers ────────────────────────────────────────────────────────
 
 func orgIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "orgID"))
+	id, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("parsing orgID: %w", err)
+	}
+	return id, nil
 }
 
 func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "spaceID"))
+	id, err := uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("parsing spaceID: %w", err)
+	}
+	return id, nil
 }
 
 func workflowIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "workflowID"))
+	id, err := uuid.Parse(chi.URLParam(r, "workflowID"))
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("parsing workflowID: %w", err)
+	}
+	return id, nil
 }
 
 func stateIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "stateID"))
+	id, err := uuid.Parse(chi.URLParam(r, "stateID"))
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("parsing stateID: %w", err)
+	}
+	return id, nil
 }
 
 func transitionIDFromURL(r *http.Request) (uuid.UUID, error) {
-	return uuid.Parse(chi.URLParam(r, "transitionID"))
+	id, err := uuid.Parse(chi.URLParam(r, "transitionID"))
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("parsing transitionID: %w", err)
+	}
+	return id, nil
 }

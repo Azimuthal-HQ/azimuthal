@@ -3,6 +3,7 @@ package db_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,16 +108,26 @@ func setupUser(t *testing.T, q *generated.Queries, orgID uuid.UUID, email string
 }
 
 // setupSpace creates a test space and registers soft-delete on cleanup.
+func spaceKey(kind string) string {
+	s := strings.ToUpper(strings.NewReplacer("_", "", "-", "").Replace(kind))
+	if len(s) > 8 {
+		s = s[:8]
+	}
+	return s
+}
+
 func setupSpace(t *testing.T, q *generated.Queries, orgID, createdBy uuid.UUID, kind string) generated.Space {
 	t.Helper()
+	slug := kind + "-" + uuid.New().String()[:8]
 	space, err := q.CreateSpace(context.Background(), generated.CreateSpaceParams{
 		ID:        uuid.New(),
 		OrgID:     orgID,
-		Slug:      kind + "-" + uuid.New().String()[:8],
+		Slug:      slug,
 		Name:      kind + " space",
 		Type:      kind,
 		IsPrivate: false,
 		CreatedBy: createdBy,
+		Key:       spaceKey(kind),
 	})
 	if err != nil {
 		t.Fatalf("setupSpace: %v", err)

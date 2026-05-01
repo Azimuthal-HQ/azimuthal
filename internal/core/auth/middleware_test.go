@@ -97,7 +97,7 @@ func TestRequireAuth_SessionCookie_Valid(t *testing.T) {
 	handler := a.RequireAuth(inner)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "session", Value: sess.Token})
+	req.AddCookie(&http.Cookie{Name: "session", Value: sess.Token}) //nolint:gosec // G124 — test-only loopback cookie
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -112,7 +112,7 @@ func TestRequireAuth_ExpiredSessionCookie(t *testing.T) {
 	handler := a.RequireAuth(inner)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "session", Value: "expired-or-unknown"})
+	req.AddCookie(&http.Cookie{Name: "session", Value: "expired-or-unknown"}) //nolint:gosec // G124 — test-only loopback cookie
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 

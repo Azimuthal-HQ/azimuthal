@@ -244,10 +244,13 @@ func (a *WorkflowAdapter) AssignDefaultWorkflowToSpace(ctx context.Context, orgI
 		return fmt.Errorf("workflow adapter assign to space: %w", err)
 	}
 
-	return a.q.AssignWorkflowToSpace(ctx, generated.AssignWorkflowToSpaceParams{
+	if err := a.q.AssignWorkflowToSpace(ctx, generated.AssignWorkflowToSpaceParams{
 		WorkflowID: pgtype.UUID{Bytes: wf.ID, Valid: true},
 		ID:         spaceID,
-	})
+	}); err != nil {
+		return fmt.Errorf("workflow adapter assign workflow to space: %w", err)
+	}
+	return nil
 }
 
 // SeedDefaultWorkflows creates the two default workflows for a new org using

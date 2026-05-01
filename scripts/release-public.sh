@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# release-public.sh — push a clean, agent-stripped version to the public repo
+# release-public.sh — push a clean, stripped version to the public repo
 #
 # What it strips (internal-only files not suitable for public OSS):
+#   .gitleaks.toml                     — internal secret-scan config with allowlists
 #   CLAUDE.md                          — agent instructions
 #   current-agent-progress/            — agent progress tracking
 #   docs/agent-briefs.md               — internal agent task specs
@@ -9,7 +10,9 @@
 #   docs/project-state.md              — internal project state
 #   docs/regression-test-checklist.md  — internal regression tracker
 #   scripts/local-test.sh              — dev-only DB wipe script
+#   scripts/push-private.sh            — references private repo
 #   scripts/release-public.sh          — this script itself
+#   scripts/remote-test-host-deploy.sh — contains server IP + credentials
 #
 # Usage:
 #   bash scripts/release-public.sh            → pushes to origin main
@@ -26,13 +29,16 @@ TEMP_BRANCH="release/public-$(date +%Y%m%d-%H%M%S)"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 STRIP_FILES=(
+  ".gitleaks.toml"
   "CLAUDE.md"
   "docs/agent-briefs.md"
   "docs/github-setup-checklist.md"
   "docs/project-state.md"
   "docs/regression-test-checklist.md"
   "scripts/local-test.sh"
+  "scripts/push-private.sh"
   "scripts/release-public.sh"
+  "scripts/remote-test-host-deploy.sh"
 )
 
 STRIP_DIRS=(
@@ -75,14 +81,16 @@ done
 } >> .gitignore
 
 git add .gitignore
-git commit -m "chore: strip internal agent files for public release
+git commit -m "chore: strip internal files for public release
 
-Removed: CLAUDE.md, current-agent-progress/, docs/agent-briefs.md,
-docs/github-setup-checklist.md, docs/project-state.md,
-docs/regression-test-checklist.md"
+Removed: .gitleaks.toml, CLAUDE.md, current-agent-progress/,
+docs/agent-briefs.md, docs/github-setup-checklist.md,
+docs/project-state.md, docs/regression-test-checklist.md,
+scripts/local-test.sh, scripts/push-private.sh,
+scripts/remote-test-host-deploy.sh"
 
 echo "  Pushing $TEMP_BRANCH → origin main..."
-git push origin "$TEMP_BRANCH:main"
+git push git@github.com:Azimuthal-HQ/azimuthal.git "$TEMP_BRANCH:main"
 
 echo ""
 echo "  Cleaning up temp branch..."

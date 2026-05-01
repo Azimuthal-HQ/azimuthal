@@ -226,7 +226,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // @Failure      401    {object}  api.SwaggerErrorResponse        "Not authenticated"
 // @Failure      500    {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /orgs/{orgID}/spaces [post]
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // HTTP handler; validation + key derivation + member seeding requires branching
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")

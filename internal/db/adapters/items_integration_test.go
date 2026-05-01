@@ -455,15 +455,15 @@ func TestCreateSpace_SlugUniqueness(t *testing.T) {
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
 
 	_, err := db.Pool.Exec(context.Background(),
-		`INSERT INTO spaces (id, org_id, slug, name, type, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		uuid.New(), org.ID, "same-slug", "Space 1", "project", user.ID)
+		`INSERT INTO spaces (id, org_id, slug, name, type, created_by, key)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		uuid.New(), org.ID, "same-slug", "Space 1", "project", user.ID, "SPACE1")
 	require.NoError(t, err)
 
 	_, err = db.Pool.Exec(context.Background(),
-		`INSERT INTO spaces (id, org_id, slug, name, type, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		uuid.New(), org.ID, "same-slug", "Space 2", "project", user.ID)
+		`INSERT INTO spaces (id, org_id, slug, name, type, created_by, key)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		uuid.New(), org.ID, "same-slug", "Space 2", "project", user.ID, "SPACE2")
 	require.Error(t, err, "duplicate slug in same org must fail")
 }
 

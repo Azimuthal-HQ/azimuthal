@@ -3,6 +3,7 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -85,15 +86,23 @@ func CreateTestUser(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) User {
 // Requires a user to set as the creator (spaces.created_by is NOT NULL).
 func CreateTestSpace(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, createdBy uuid.UUID, spaceType string) Space {
 	t.Helper()
+	slug := fmt.Sprintf("test-%s-%s", spaceType, uuid.New().String()[:8])
 	space := Space{
 		ID:   uuid.New(),
-		Slug: fmt.Sprintf("test-%s-%s", spaceType, uuid.New().String()[:8]),
+		Slug: slug,
 		Name: fmt.Sprintf("Test %s", spaceType),
 		Type: spaceType,
 	}
+	// Derive a unique key from the space type (strip underscores, uppercase, max 6 chars)
+	// plus 2 random hex digits so multiple spaces of the same type don't collide.
+	base := strings.ToUpper(strings.ReplaceAll(spaceType, "_", ""))
+	if len(base) > 6 {
+		base = base[:6]
+	}
+	key := base + strings.ToUpper(uuid.New().String()[:2])
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO spaces (id, org_id, slug, name, type, created_by) VALUES ($1, $2, $3, $4, $5, $6)`,
-		space.ID, orgID, space.Slug, space.Name, space.Type, createdBy,
+		`INSERT INTO spaces (id, org_id, slug, name, type, created_by, key) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		space.ID, orgID, space.Slug, space.Name, space.Type, createdBy, key,
 	)
 	if err != nil {
 		t.Fatalf("CreateTestSpace: %v", err)

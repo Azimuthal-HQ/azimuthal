@@ -66,12 +66,12 @@ import (
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
-	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -97,7 +97,7 @@ type serverDeps struct {
 
 // newServer builds an http.Server with the full API router backed by the database.
 // The caller must call deps.stopQueue(ctx) then cleanup() during shutdown.
-func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) {
+func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { //nolint:funlen // server wiring naturally enumerates all dependencies; splitting would obscure the startup sequence
 	ctx := context.Background()
 	noop := func() {}
 	deps := &serverDeps{stopQueue: func(_ context.Context) error { return nil }}

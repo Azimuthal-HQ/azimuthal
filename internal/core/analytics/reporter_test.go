@@ -49,3 +49,10 @@ func TestDefaultReporter_UserActivity_ReturnsNotImplemented(t *testing.T) {
 func TestDefaultReporter_ImplementsInterface(_ *testing.T) {
 	var _ = analytics.NewReporter()
 }
+
+func TestErrNotImplemented_Error(t *testing.T) {
+	msg := analytics.ErrNotImplemented.Error()
+	if msg == "" {
+		t.Error("ErrNotImplemented.Error() must return a non-empty string")
+	}
+}

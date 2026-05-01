@@ -32,7 +32,7 @@ func (r *stubRelationRepo) ListByItem(_ context.Context, fromID uuid.UUID) ([]*R
 	return result, nil
 }
 
-func (r *stubRelationRepo) ListByEntity(_ context.Context, fromID uuid.UUID, fromType string) ([]*Relation, error) {
+func (r *stubRelationRepo) ListByEntity(_ context.Context, fromID uuid.UUID, _ string) ([]*Relation, error) {
 	return r.ListByItem(context.Background(), fromID)
 }
 

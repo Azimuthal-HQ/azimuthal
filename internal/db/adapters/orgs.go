@@ -15,8 +15,8 @@ import (
 // OrgProvisionerAdapter implements auth.OrgProvisioner using sqlc-generated queries.
 // It creates a personal organization and owner membership for newly registered users.
 type OrgProvisionerAdapter struct {
-	q       *generated.Queries
-	wfSeed  *WorkflowAdapter
+	q      *generated.Queries
+	wfSeed *WorkflowAdapter
 }
 
 // NewOrgProvisionerAdapter creates an OrgProvisionerAdapter.

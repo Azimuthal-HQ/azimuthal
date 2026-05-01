@@ -3,6 +3,7 @@ package projects
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 )
@@ -75,6 +76,61 @@ func (s *BacklogService) ReorderItem(ctx context.Context, itemID uuid.UUID, newR
 	item.Rank = newRank
 	if err := s.itemRepo.Update(ctx, item); err != nil {
 		return fmt.Errorf("reordering item: %w", err)
+	}
+	return nil
+}
+
+// RankItemRelative repositions an item relative to its neighbours in the space.
+// Pass beforeID to place the item immediately before that item,
+// or afterID to place it immediately after. Both are optional.
+func (s *BacklogService) RankItemRelative(ctx context.Context, spaceID, itemID uuid.UUID, beforeID, afterID *uuid.UUID) error { //nolint:cyclop // lexorank positioning logic requires branching on before/after/both/neither cases
+	all, err := s.itemRepo.ListBySpace(ctx, spaceID)
+	if err != nil {
+		return fmt.Errorf("ranking item: %w", err)
+	}
+
+	sort.Slice(all, func(i, j int) bool { return all[i].Rank < all[j].Rank })
+
+	var moving *Item
+	remaining := make([]*Item, 0, len(all))
+	for _, it := range all {
+		if it.ID == itemID {
+			moving = it
+		} else {
+			remaining = append(remaining, it)
+		}
+	}
+	if moving == nil {
+		return ErrNotFound
+	}
+
+	insertIdx := len(remaining)
+	if beforeID != nil {
+		for i, it := range remaining {
+			if it.ID == *beforeID {
+				insertIdx = i
+				break
+			}
+		}
+	} else if afterID != nil {
+		for i, it := range remaining {
+			if it.ID == *afterID {
+				insertIdx = i + 1
+				break
+			}
+		}
+	}
+
+	newOrder := make([]*Item, 0, len(all))
+	newOrder = append(newOrder, remaining[:insertIdx]...)
+	newOrder = append(newOrder, moving)
+	newOrder = append(newOrder, remaining[insertIdx:]...)
+
+	for i, it := range newOrder {
+		it.Rank = fmt.Sprintf("0|%06d:", i+1)
+		if err := s.itemRepo.Update(ctx, it); err != nil {
+			return fmt.Errorf("ranking item: %w", err)
+		}
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
@@ -53,9 +54,28 @@ func (m *mockPageStore) SearchPages(_ context.Context, _ generated.SearchPagesPa
 	return nil, nil
 }
 
+func (m *mockPageStore) UpdatePageDescendantPaths(_ context.Context, _ generated.UpdatePageDescendantPathsParams) error {
+	return nil
+}
+
+// mockLockStore satisfies wiki.LockStore with no-ops.
+type mockLockStore struct{}
+
+func (m *mockLockStore) UpsertPageLock(_ context.Context, _ generated.UpsertPageLockParams) (generated.PageLock, error) {
+	return generated.PageLock{}, nil
+}
+func (m *mockLockStore) GetPageLock(_ context.Context, _ uuid.UUID) (generated.PageLock, error) {
+	return generated.PageLock{}, pgx.ErrNoRows
+}
+func (m *mockLockStore) DeletePageLock(_ context.Context, _ generated.DeletePageLockParams) error {
+	return nil
+}
+func (m *mockLockStore) DeleteExpiredPageLocks(_ context.Context) error { return nil }
+
 func setupWikiHandler() *wikiapi.Handler {
 	svc := wiki.NewService(&mockPageStore{})
-	return wikiapi.NewHandler(svc)
+	locks := wiki.NewLockService(&mockLockStore{})
+	return wikiapi.NewHandler(svc, locks)
 }
 
 func withParam(r *http.Request, key, val string) *http.Request {

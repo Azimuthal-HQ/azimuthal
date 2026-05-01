@@ -171,7 +171,7 @@ func TestSpaceUpdateAndMembers(t *testing.T) {
 	space := setupSpace(t, q, org.ID, owner.ID, "wiki")
 	desc := "updated desc"
 	upd, err := q.UpdateSpace(ctx, generated.UpdateSpaceParams{
-		ID: space.ID, Name: "Updated Wiki", Description: &desc, IsPrivate: false,
+		ID: space.ID, Name: "Updated Wiki", Description: &desc, IsPrivate: false, Key: space.Key,
 	})
 	if err != nil {
 		t.Fatalf("UpdateSpace: %v", err)

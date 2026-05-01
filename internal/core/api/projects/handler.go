@@ -156,9 +156,9 @@ type rankItemRequest struct {
 }
 
 type createRelationRequest struct {
-	ToID     uuid.UUID `json:"to_id"`
-	ToType   string    `json:"to_type"`
-	Kind     string    `json:"kind"`
+	ToID   uuid.UUID `json:"to_id"`
+	ToType string    `json:"to_type"`
+	Kind   string    `json:"kind"`
 }
 
 type createLabelRequest struct {

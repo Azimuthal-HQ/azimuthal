@@ -148,3 +148,64 @@ func TestConfig_IsTest(t *testing.T) {
 		t.Error("expected IsDevelopment()=false when APP_ENV=test")
 	}
 }
+
+func TestConfig_IsProduction(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
+	t.Setenv("APP_ENV", "production")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.IsProduction() {
+		t.Error("expected IsProduction()=true when APP_ENV=production")
+	}
+}
+
+func TestConfig_IsProduction_False(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
+	t.Setenv("APP_ENV", "development")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.IsProduction() {
+		t.Error("expected IsProduction()=false when APP_ENV=development")
+	}
+}
+
+func TestConfig_AllowedOrigins_Explicit(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("AZIMUTHAL_ALLOWED_ORIGINS", "https://app.example.com, https://admin.example.com")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.AllowedOrigins) != 2 {
+		t.Errorf("expected 2 allowed origins, got %d: %v", len(cfg.AllowedOrigins), cfg.AllowedOrigins)
+	}
+	if cfg.AllowedOrigins[0] != "https://app.example.com" {
+		t.Errorf("unexpected first origin: %q", cfg.AllowedOrigins[0])
+	}
+}
+
+func TestConfig_AllowedOrigins_ProductionEmpty(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("AZIMUTHAL_ALLOWED_ORIGINS", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.AllowedOrigins) != 0 {
+		t.Errorf("expected empty allowed origins in production, got %v", cfg.AllowedOrigins)
+	}
+}

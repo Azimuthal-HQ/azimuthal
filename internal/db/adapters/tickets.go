@@ -26,7 +26,7 @@ func (a *TicketAdapter) Create(ctx context.Context, t *tickets.Ticket) error {
 	if err != nil {
 		return fmt.Errorf("ticket adapter get max number: %w", err)
 	}
-	number := int32(maxNum) + 1
+	number := int32(maxNum) + 1 //nolint:gosec // G115 — ticket numbers are sequential and will never approach int32 max
 
 	row, err := a.q.CreateTicket(ctx, generated.CreateTicketParams{
 		ID:          t.ID,

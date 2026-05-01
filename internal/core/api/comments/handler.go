@@ -56,7 +56,7 @@ func (h *Handler) Routes() chi.Router {
 }
 
 type createCommentRequest struct {
-	Content  string    `json:"content"`
+	Content  string     `json:"content"`
 	ParentID *uuid.UUID `json:"parent_id,omitempty"`
 }
 
@@ -210,7 +210,7 @@ func (h *Handler) ListLegacy(w http.ResponseWriter, r *http.Request) {
 // @Failure      401  {object}  api.SwaggerErrorResponse
 // @Failure      500  {object}  api.SwaggerErrorResponse
 // @Router       /orgs/{orgID}/spaces/{spaceID}/{entityType}/{entityID}/comments [post]
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:funlen // HTTP handler; validation + author lookup + notification dispatch requires length
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
@@ -326,7 +326,7 @@ func (h *Handler) CreateLegacy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, _ := h.queries.GetUserByID(r.Context(), claims.UserID) //nolint:errcheck
+	user, _ := h.queries.GetUserByID(r.Context(), claims.UserID)
 	authorName := ""
 	if user.ID != uuid.Nil {
 		authorName = user.DisplayName

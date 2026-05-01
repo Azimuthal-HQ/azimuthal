@@ -15,6 +15,7 @@ import {
   Tags,
   Ticket,
   Trash2,
+  Zap,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -56,6 +57,7 @@ function buildNavItems(spaceId: string): Record<string, NavItem[]> {
     project: [
       { id: 'proj-backlog', label: 'Backlog', to: `${prefix}/backlog`, icon: ListTodo },
       { id: 'proj-board', label: 'Sprint Board', to: `${prefix}/board`, icon: Columns3 },
+      { id: 'proj-sprints', label: 'Sprints', to: `${prefix}/sprints`, icon: Zap },
       { id: 'proj-roadmap', label: 'Roadmap', to: `${prefix}/roadmap`, icon: Map },
       { id: 'proj-labels', label: 'Labels', to: `${prefix}/labels`, icon: Tags },
     ],
