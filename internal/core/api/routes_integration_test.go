@@ -169,7 +169,7 @@ func (ts *testServer) delete(t *testing.T, path string, authed bool) httpResult 
 
 func (ts *testServer) do(t *testing.T, req *http.Request) httpResult {
 	t.Helper()
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: test-only SSRF — URL is always localhost httptest server
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	b, err := io.ReadAll(resp.Body)
@@ -1267,9 +1267,9 @@ func TestIntegration_Sprint_CreateAndList(t *testing.T) {
 
 	// Create a sprint.
 	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/sprints", space.ID), map[string]any{
-		"name":       "Sprint 1",
-		"starts_at":  "2026-05-01T00:00:00Z",
-		"ends_at":    "2026-05-14T00:00:00Z",
+		"name":      "Sprint 1",
+		"starts_at": "2026-05-01T00:00:00Z",
+		"ends_at":   "2026-05-14T00:00:00Z",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "create sprint: %s", r.Body)
 	var sprint map[string]any
