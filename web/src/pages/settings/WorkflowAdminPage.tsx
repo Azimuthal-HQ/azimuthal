@@ -17,11 +17,6 @@ interface Workflow {
   applies_to: string;
 }
 
-interface WorkflowWithStates {
-  workflow: Workflow;
-  states: WorkflowState[];
-  expanded: boolean;
-}
 
 async function apiFetch<T>(url: string): Promise<T> {
   const token = localStorage.getItem('azimuthal_token') ?? '';
@@ -117,7 +112,7 @@ function WorkflowCard({ wf, states }: { wf: Workflow; states: WorkflowState[] })
 /** Read-only workflow overview for org admins. */
 export function WorkflowAdminPage() {
   const { user } = useAuth();
-  const orgId = user?.org_id ?? '';
+  const orgId = user?.orgId ?? '';
 
   const { data: workflows, isLoading, error } = useQuery<Workflow[]>({
     queryKey: ['workflows', orgId],
@@ -126,14 +121,6 @@ export function WorkflowAdminPage() {
   });
 
   const [statesCache, setStatesCache] = useState<Record<string, WorkflowState[]>>({});
-
-  // Eagerly fetch states for each workflow once we have the list.
-  // We use a simple effect-free pattern: fire per-workflow queries.
-  const workflowsWithStates: WorkflowWithStates[] = (workflows ?? []).map((wf) => ({
-    workflow: wf,
-    states: statesCache[wf.id] ?? [],
-    expanded: true,
-  }));
 
   // Fetch states for each workflow using individual queries (declaratively via
   // a helper component to avoid hook-in-loop issues).
