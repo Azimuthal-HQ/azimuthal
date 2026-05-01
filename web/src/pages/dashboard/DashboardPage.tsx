@@ -264,32 +264,6 @@ export function DashboardPage() {
               />
             </div>
 
-            {/* Key */}
-            <div className="space-y-2">
-              <label htmlFor="space-key" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                Ticket key{' '}
-                <span className="font-normal text-[var(--color-text-muted)]">(prefix for ticket numbers)</span>
-              </label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="space-key"
-                  placeholder="e.g. HR"
-                  value={formKey}
-                  onChange={(e) => {
-                    setFormKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10));
-                    setKeyTouched(true);
-                  }}
-                  className="w-32 font-mono"
-                />
-                <span className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
-                  → tickets will show as <strong>{formKey || deriveKey(formName) || 'HR'}-1</strong>, <strong>{formKey || deriveKey(formName) || 'HR'}-2</strong>, …
-                </span>
-              </div>
-              {keyError && (
-                <p className="text-[var(--text-xs)] text-[var(--color-danger)]">{keyError}</p>
-              )}
-            </div>
-
             {/* Type */}
             <div className="space-y-2">
               <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
@@ -318,6 +292,35 @@ export function DashboardPage() {
                 ))}
               </div>
             </div>
+
+            {/* Key — only relevant for service desks */}
+            {formType === 'service_desk' && (
+              <div className="space-y-2">
+                <label htmlFor="space-key" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                  Ticket key{' '}
+                  <span className="font-normal text-[var(--color-text-muted)]">(prefix shown on every ticket)</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    id="space-key"
+                    placeholder="e.g. HR"
+                    value={formKey}
+                    onChange={(e) => {
+                      setFormKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10));
+                      setKeyTouched(true);
+                    }}
+                    className="w-28 font-mono"
+                  />
+                  <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
+                    Tickets will be numbered <span className="font-mono font-medium text-[var(--color-text)]">{formKey || deriveKey(formName) || 'HR'}-1</span>,{' '}
+                    <span className="font-mono font-medium text-[var(--color-text)]">{formKey || deriveKey(formName) || 'HR'}-2</span>, …
+                  </span>
+                </div>
+                {keyError && (
+                  <p className="text-[var(--text-xs)] text-[var(--color-danger)]">{keyError}</p>
+                )}
+              </div>
+            )}
 
             {/* Description */}
             <div className="space-y-2">
