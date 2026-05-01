@@ -44,9 +44,7 @@ data/
 cmd/server/data/
 
 # Claude Code local settings (never commit)
-.claude/
-# === public-release strips ===
-.gitleaks.toml
+.claude/.gitleaks.toml
 CLAUDE.md
 docs/agent-briefs.md
 docs/github-setup-checklist.md
