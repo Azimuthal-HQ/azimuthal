@@ -54,4 +54,6 @@ scripts/local-test.sh
 scripts/push-private.sh
 scripts/release-public.sh
 scripts/remote-test-host-deploy.sh
+.claude/
 current-agent-progress/
+server
