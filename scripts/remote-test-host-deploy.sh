@@ -86,7 +86,7 @@ DOCKERFILE
   docker stop azimuthal-app-1 2>/dev/null || true
   docker rm   azimuthal-app-1 2>/dev/null || true
 
-  if [[ "WIPE_FLAG" == "1" ]]; then
+  if [[ "$WIPE_FLAG" == "1" ]]; then
     echo "--- Wiping DB and storage ---"
     docker stop azimuthal-db-1 azimuthal-storage-1 2>/dev/null || true
     docker rm   azimuthal-db-1 azimuthal-storage-1 2>/dev/null || true
@@ -94,7 +94,7 @@ DOCKERFILE
 
     echo "--- Recreating DB and storage ---"
     docker run -d --name azimuthal-db-1 \
-      --network azimuthal_default \
+      --network azimuthal_default --network-alias db \
       --restart unless-stopped \
       -v azimuthal_azimuthal_db:/var/lib/postgresql/data \
       -e POSTGRES_USER=azimuthal \
@@ -103,7 +103,7 @@ DOCKERFILE
       postgres:16-alpine
 
     docker run -d --name azimuthal-storage-1 \
-      --network azimuthal_default \
+      --network azimuthal_default --network-alias storage \
       --restart unless-stopped \
       -v azimuthal_azimuthal_storage:/data \
       -e MINIO_ROOT_USER=azimuthal \
@@ -111,7 +111,7 @@ DOCKERFILE
       minio/minio:latest server /data --console-address ":9001"
 
     echo "--- Waiting for DB to be ready ---"
-    sleep 8
+    until docker exec azimuthal-db-1 pg_isready -U azimuthal 2>/dev/null; do sleep 2; done
   fi
 
   docker run -d \
