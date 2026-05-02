@@ -15,7 +15,7 @@ jobs:
 
   build-release:
     name: Build Release Binaries
-    runs-on: [self-hosted, azimuthal]
+    runs-on: azimuthal
     permissions:
       contents: write
     strategy:
@@ -84,7 +84,7 @@ jobs:
  
   docker-release:
     name: Build & Push to GHCR
-    runs-on: [self-hosted, azimuthal]
+    runs-on: azimuthal
     permissions:
       contents: read
       packages: write
@@ -131,7 +131,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: [build-release, docker-release]
-    runs-on: [self-hosted, azimuthal]
+    runs-on: azimuthal
     permissions:
       contents: write
  
