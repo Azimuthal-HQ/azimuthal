@@ -543,18 +543,27 @@ jobs:
           mv docs/api/swagger.yaml docs/api/openapi.yaml 2>/dev/null || true
           rm -f docs/api/docs.go docs/api/swagger.json
 
-          # Compare — fail if spec differs from committed version
-          if ! diff -q docs/api/openapi.yaml /tmp/committed-spec.yaml > /dev/null 2>&1; then
-            echo "❌ API spec is out of sync with handler annotations"
-            echo ""
-            echo "A handler was modified without regenerating the spec."
-            echo "Run 'make docs' locally and commit docs/api/openapi.yaml"
-            echo ""
-            echo "Diff:"
-            diff /tmp/committed-spec.yaml docs/api/openapi.yaml || true
-            exit 1
-          fi
-          echo "✅ API spec is up to date"
+          # Compare semantically (YAML parse + sort_keys) — immune to key-ordering
+          # differences between swag runs on different environments
+          python3 - << 'PYEOF'
+          import yaml, json, sys
+          with open('/tmp/committed-spec.yaml') as f:
+              committed = yaml.safe_load(f)
+          with open('docs/api/openapi.yaml') as f:
+              generated = yaml.safe_load(f)
+          committed_s = json.dumps(committed, sort_keys=True)
+          generated_s = json.dumps(generated, sort_keys=True)
+          if committed_s != generated_s:
+              print("❌ API spec is out of sync with handler annotations")
+              print("A handler was modified without regenerating the spec.")
+              print("Run 'make docs' locally and commit docs/api/openapi.yaml")
+              # Show which top-level keys differ
+              for k in set(list(committed.keys()) + list(generated.keys())):
+                  if json.dumps(committed.get(k), sort_keys=True) != json.dumps(generated.get(k), sort_keys=True):
+                      print(f"  differs in: {k}")
+              sys.exit(1)
+          print("✅ API spec is up to date")
+          PYEOF
 
       - name: Validate OpenAPI 3.0 structure
         run: |
