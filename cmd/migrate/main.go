@@ -30,7 +30,9 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	goose.SetDialect("postgres") //nolint:errcheck
+	if err := goose.SetDialect("postgres"); err != nil {
+		log.Fatalf("setting dialect: %v", err)
+	}
 	if err := goose.Up(db, dir); err != nil {
 		log.Fatalf("running migrations: %v", err)
 	}
