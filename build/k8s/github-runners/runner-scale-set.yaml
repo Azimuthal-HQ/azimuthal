@@ -24,6 +24,8 @@ runnerScaleSetName: "azimuthal"
 
 template:
   spec:
+    securityContext:
+      supplementalGroups: [2375]
     initContainers:
       - name: init-dind-externals
         image: ghcr.io/actions/actions-runner:latest
