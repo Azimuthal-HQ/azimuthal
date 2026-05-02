@@ -74,6 +74,12 @@ export async function createSpace(
   }[type]
   await page.locator(`[role="dialog"] button:has-text("${typeLabel}")`).click()
 
+  // Service desk requires a Key field (uppercase, max 10 chars) — fill it now
+  if (type === 'service_desk') {
+    const key = name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) + 'SD'
+    await page.fill('#space-key', key)
+  }
+
   // Submit — click the Create Space button in the dialog footer
   await page.locator('[role="dialog"] button:has-text("Create Space"):not(:has-text("Service Desk")):not(:has-text("Wiki")):not(:has-text("Project"))').click()
 

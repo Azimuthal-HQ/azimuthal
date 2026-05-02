@@ -137,8 +137,11 @@ jobs:
               echo "postgres ready after $((i*2))s" && break
             sleep 2
           done
-          docker exec postgres pg_isready -U azimuthal_test || \
-            (echo "❌ postgres never became ready" && exit 1)
+          for retry in $(seq 1 5); do
+            docker exec postgres pg_isready -U azimuthal_test && break
+            [ "$retry" = "5" ] && echo "❌ postgres never became ready" && exit 1
+            sleep 2
+          done
 
       - name: Start MinIO
         run: |
@@ -520,8 +523,11 @@ jobs:
               echo "postgres ready after $((i*2))s" && break
             sleep 2
           done
-          docker exec postgres pg_isready -U azimuthal_test || \
-            (echo "❌ postgres never became ready" && exit 1)
+          for retry in $(seq 1 5); do
+            docker exec postgres pg_isready -U azimuthal_test && break
+            [ "$retry" = "5" ] && echo "❌ postgres never became ready" && exit 1
+            sleep 2
+          done
 
       - name: Start MinIO
         run: |
@@ -700,8 +706,11 @@ jobs:
               echo "postgres ready after $((i*2))s" && break
             sleep 2
           done
-          docker exec postgres pg_isready -U azimuthal_test || \
-            (echo "❌ postgres never became ready" && exit 1)
+          for retry in $(seq 1 5); do
+            docker exec postgres pg_isready -U azimuthal_test && break
+            [ "$retry" = "5" ] && echo "❌ postgres never became ready" && exit 1
+            sleep 2
+          done
 
       - name: Build Docker image
         run: |
