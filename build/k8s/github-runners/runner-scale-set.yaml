@@ -38,7 +38,14 @@ template:
       # Actions runner — the actual job executor
       - name: runner
         image: ghcr.io/actions/actions-runner:latest
-        command: ["/home/runner/run.sh"]
+        command:
+          - /bin/sh
+          - -c
+          - |
+            echo "Waiting for Docker daemon to be ready..."
+            until docker info >/dev/null 2>&1; do sleep 1; done
+            echo "Docker ready — starting runner"
+            exec /home/runner/run.sh
         resources:
           requests:
             cpu: "200m"
