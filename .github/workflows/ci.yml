@@ -21,7 +21,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
     steps:
       - uses: actions/checkout@v4
 
@@ -60,7 +60,7 @@ jobs:
   test:
     name: Test
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
 
     services:
       postgres:
@@ -165,7 +165,7 @@ jobs:
   lint:
     name: Lint
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
     steps:
       - uses: actions/checkout@v4
 
@@ -197,7 +197,7 @@ jobs:
   sast:
     name: SAST (gosec)
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
     permissions:
       security-events: write
       contents: read
@@ -250,7 +250,7 @@ jobs:
   vuln-scan:
     name: Dependency Scan (govulncheck)
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
     steps:
       - uses: actions/checkout@v4
 
@@ -287,7 +287,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   secret-scan:
     name: Secret Scan (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
     permissions:
       contents: read
       pull-requests: read
@@ -309,7 +309,7 @@ jobs:
   container-scan:
     name: Container Scan (trivy)
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
     permissions:
       security-events: write
       contents: read
@@ -368,7 +368,7 @@ jobs:
   e2e:
     name: E2E Tests (Playwright)
     needs: [build, test]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
 
     services:
       postgres:
@@ -474,7 +474,7 @@ jobs:
   docs-check:
     name: API Docs Check
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
     steps:
       - uses: actions/checkout@v4
 
@@ -583,7 +583,7 @@ jobs:
   docker-e2e:
     name: Docker image boot
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
 
     services:
       postgres:
@@ -667,7 +667,7 @@ jobs:
   all-checks:
     name: All Gates Passed
     needs: [build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, azimuthal]
     if: always()
     steps:
       - name: Check all gates

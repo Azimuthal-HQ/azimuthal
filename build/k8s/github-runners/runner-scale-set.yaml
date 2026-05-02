@@ -1,0 +1,85 @@
+# GitHub Actions Runner Scale Set — Azimuthal-HQ/azimuthal
+#
+# Uses Docker-in-Docker so `services:` blocks (postgres, minio) work exactly
+# as they do on GitHub-hosted ubuntu-latest runners.
+#
+# Managed by Helm. To install/upgrade, use setup.sh.
+#
+# Manual commands:
+#   helm upgrade --install azimuthal-runners \
+#     --namespace github-runners \
+#     --version "0.9.3" \
+#     --values build/k8s/github-runners/runner-scale-set.yaml \
+#     oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+
+githubConfigUrl: "https://github.com/Azimuthal-HQ/azimuthal"
+githubConfigSecret: "azimuthal-runner-secret"
+
+# Scale: keep 1 warm, burst up to 4 for parallel matrix jobs
+minRunners: 1
+maxRunners: 4
+
+# Label used in ci.yml: runs-on: [self-hosted, azimuthal]
+runnerScaleSetName: "azimuthal"
+
+template:
+  spec:
+    initContainers:
+      - name: init-dind-externals
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+        volumeMounts:
+          - name: dind-externals
+            mountPath: /home/runner/tmpDir
+
+    containers:
+      # Actions runner — the actual job executor
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["/home/runner/run.sh"]
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        env:
+          - name: DOCKER_HOST
+            value: unix:///var/run/docker.sock
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: dind-sock
+            mountPath: /var/run
+          - name: dind-externals
+            mountPath: /home/runner/externals
+
+      # Docker-in-Docker daemon — needed for `services:` and docker build
+      - name: dind
+        image: docker:dind
+        args: ["dockerd", "--host=unix:///var/run/docker.sock", "--host=tcp://0.0.0.0:2376"]
+        securityContext:
+          privileged: true
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: dind-sock
+            mountPath: /var/run
+          - name: dind-externals
+            mountPath: /home/runner/externals
+
+    volumes:
+      - name: work
+        emptyDir: {}
+      - name: dind-sock
+        emptyDir: {}
+      - name: dind-externals
+        emptyDir: {}
