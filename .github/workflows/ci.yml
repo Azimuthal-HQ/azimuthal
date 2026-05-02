@@ -91,7 +91,12 @@ jobs:
       - name: Install goose
         run: go install github.com/pressly/goose/v3/cmd/goose@latest
 
-      # By now DinD has had ~20-30s extra to start while Go setup ran above
+      # Compile everything before Docker wait — DinD startup is variable (10-90s);
+      # compilation takes 30-60s and gives the daemon extra time to initialize.
+      - name: Compile (gives DinD extra startup time)
+        run: go build ./...
+
+      # By now DinD has had ~60-90s to start while Go setup + compile ran above
       - name: Wait for Docker daemon
         run: |
           echo "Waiting for Docker daemon..."
@@ -336,6 +341,12 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Create stub frontend dist (for go:embed)
+        run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
+
+      - name: Compile (gives DinD extra startup time)
+        run: go build ./...
+
       - name: Wait for Docker daemon
         run: |
           for i in $(seq 1 60); do
@@ -424,7 +435,10 @@ jobs:
       - name: Install goose
         run: go install github.com/pressly/goose/v3/cmd/goose@latest
 
-      # By now DinD has had ~20-30s extra to start while Go/Node setup ran above
+      - name: Compile (gives DinD extra startup time)
+        run: go build ./...
+
+      # By now DinD has had ~60-90s to start while Go/Node setup + compile ran above
       - name: Wait for Docker daemon
         run: |
           for i in $(seq 1 60); do
@@ -587,6 +601,18 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Create stub frontend dist (for go:embed)
+        run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
+
+      - name: Compile (gives DinD extra startup time)
+        run: go build ./...
 
       - name: Wait for Docker daemon
         run: |
