@@ -39,8 +39,8 @@ template:
         command: ["/home/runner/run.sh"]
         resources:
           requests:
-            cpu: "1"
-            memory: "2Gi"
+            cpu: "200m"
+            memory: "512Mi"
           limits:
             cpu: "4"
             memory: "8Gi"
@@ -63,8 +63,8 @@ template:
           privileged: true
         resources:
           requests:
-            cpu: "500m"
-            memory: "1Gi"
+            cpu: "200m"
+            memory: "512Mi"
           limits:
             cpu: "2"
             memory: "4Gi"
