@@ -170,10 +170,13 @@ jobs:
           prerelease: ${{ contains(env.VERSION, '-') }}
           files: ${{ env.BINARY_NAME }}-*
           body: |
-            ## Azimuthal ${{ env.VERSION }} — Community Edition
+            ## Azimuthal ${{ env.VERSION }}
  
             The self-hostable, open-source alternative to Jira, Confluence,
             and Jira Service Desk. Know exactly where your team is headed.
+ 
+            **Free and open source for everyone — every feature, no tiers.**
+            Apache 2.0 licensed.
  
             ### Docker (recommended)
             ```bash

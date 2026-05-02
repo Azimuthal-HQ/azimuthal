@@ -55,6 +55,7 @@ docs/project-state.md
 docs/regression-test-checklist.md
 scripts/local-test.sh
 scripts/push-private.sh
+scripts/push-public.sh
 scripts/release-private.sh
 scripts/release-public.sh
 scripts/remote-test-host-deploy.sh
