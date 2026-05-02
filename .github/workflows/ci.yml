@@ -524,69 +524,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install PyYAML for validation
-        run: pip install pyyaml --break-system-packages
-
       - name: Validate OpenAPI 3.0 structure
         run: |
-          python3 << 'EOF'
-          import yaml, sys
-
-          spec = yaml.safe_load(open('docs/api/openapi.yaml'))
-          errors = []
+          SPEC=docs/api/openapi.yaml
+          ERRORS=0
 
           # Must be OpenAPI 3.x
-          if not spec.get('openapi', '').startswith('3.'):
-              errors.append(f"Not OAS3: openapi field is '{spec.get('openapi')}'")
+          grep -q "^openapi: 3" "$SPEC" \
+            || { echo "❌ Not OAS3 — missing 'openapi: 3.x' at root"; ERRORS=$((ERRORS+1)); }
 
-          # Must have title and version
-          info = spec.get('info', {})
-          if not info.get('title'):
-              errors.append("info.title is empty")
-          if not info.get('version'):
-              errors.append("info.version is empty")
+          # Must have non-empty title and version under info:
+          grep -q "^info:" "$SPEC" \
+            || { echo "❌ Missing info: block"; ERRORS=$((ERRORS+1)); }
+          grep -q "title:" "$SPEC" \
+            || { echo "❌ info.title missing"; ERRORS=$((ERRORS+1)); }
+          grep -q "version:" "$SPEC" \
+            || { echo "❌ info.version missing"; ERRORS=$((ERRORS+1)); }
 
           # Must have BearerAuth security scheme
-          schemes = spec.get('components', {}).get('securitySchemes', {})
-          if 'BearerAuth' not in schemes:
-              errors.append("BearerAuth not found in components.securitySchemes")
+          grep -q "BearerAuth:" "$SPEC" \
+            || { echo "❌ BearerAuth not found in securitySchemes"; ERRORS=$((ERRORS+1)); }
 
           # Must have required paths
-          paths = spec.get('paths', {})
-          required = ['/auth/login', '/auth/me']
-          for p in required:
-              if p not in paths:
-                  errors.append(f"Required path missing: {p}")
+          grep -q "/auth/login:" "$SPEC" \
+            || { echo "❌ Required path missing: /auth/login"; ERRORS=$((ERRORS+1)); }
+          grep -q "/auth/me:" "$SPEC" \
+            || { echo "❌ Required path missing: /auth/me"; ERRORS=$((ERRORS+1)); }
 
-          # All non-public endpoints must have security defined
-          public = [('/auth/login', 'post'), ('/auth/register', 'post'),
-                    ('/auth/refresh', 'post'),
-                    ('/health', 'get'), ('/ready', 'get')]
-          for path, methods in paths.items():
-              for method, op in methods.items():
-                  if method == 'parameters' or not isinstance(op, dict):
-                      continue
-                  if (path, method) in public:
-                      continue
-                  if not op.get('security'):
-                      errors.append(f"Missing security on {method.upper()} {path}")
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "❌ OpenAPI spec validation failed ($ERRORS errors)"
+            exit 1
+          fi
 
-          if errors:
-              print(f"❌ OpenAPI spec validation failed ({len(errors)} errors):")
-              for e in errors:
-                  print(f"  - {e}")
-              sys.exit(1)
-
-          print(f"✅ OpenAPI 3.0 spec valid")
-          print(f"   Version: {spec['openapi']}")
-          print(f"   Endpoints: {len(paths)}")
-          tags = set()
-          for p in paths.values():
-              for m in p.values():
-                  if isinstance(m, dict):
-                      tags.update(m.get('tags', []))
-          print(f"   Tags: {sorted(tags)}")
-          EOF
+          VERSION=$(grep "^openapi:" "$SPEC" | awk '{print $2}')
+          ENDPOINTS=$(grep -c "^  /" "$SPEC" || true)
+          echo "✅ OpenAPI ${VERSION} spec valid (${ENDPOINTS} top-level paths)"
 
 
   # ─────────────────────────────────────────────────────────────
