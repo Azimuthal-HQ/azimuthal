@@ -89,10 +89,6 @@ jobs:
       - name: Create stub frontend dist (for go:embed)
         run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
 
-      # Pinned to go.mod version — avoids @latest proxy resolution call.
-      - name: Install goose
-        run: go install github.com/pressly/goose/v3/cmd/goose@v3.27.0
-
       # Compile + vet before Docker wait — DinD startup is variable (10-180s on k3s);
       # this gives the daemon ~90s of initialization time before we need it.
       - name: Compile and vet (gives DinD extra startup time)
@@ -159,12 +155,7 @@ jobs:
             (echo "❌ MinIO never became ready" && exit 1)
 
       - name: Run migrations
-        run: |
-          if find migrations -name '*.sql' -quit 2>/dev/null | grep -q .; then
-            $(go env GOPATH)/bin/goose -dir migrations postgres "$DATABASE_URL" up
-          else
-            echo "No SQL migration files found — skipping (scaffold phase)"
-          fi
+        run: go run ./cmd/migrate
 
       # -race requires CGO; ensure gcc is present on the minimal runner image.
       - name: Install C build tools (required for -race detector)
@@ -466,9 +457,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
-      - name: Install goose
-        run: go install github.com/pressly/goose/v3/cmd/goose@latest
-
       - name: Compile and vet (gives DinD extra startup time)
         run: go build ./... && go vet ./...
 
@@ -526,8 +514,7 @@ jobs:
             (echo "❌ MinIO never became ready" && exit 1)
 
       - name: Run migrations
-        run: |
-          $(go env GOPATH)/bin/goose -dir migrations postgres "$DATABASE_URL" up
+        run: go run ./cmd/migrate
 
       - name: Build frontend
         run: cd web && npm ci && npm run build
