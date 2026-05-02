@@ -92,6 +92,8 @@ jobs:
       # Compile + vet before Docker wait — DinD startup is variable (10-180s on k3s);
       # this gives the daemon ~90s of initialization time before we need it.
       - name: Compile and vet (gives DinD extra startup time)
+        env:
+          CGO_ENABLED: "0"  # gcc not installed yet; only go test -race needs CGO=1
         run: go build ./... && go vet ./...
 
       # By now DinD has had ~90s to start — confirm it's ready.
@@ -379,6 +381,20 @@ jobs:
             sleep 2
           done
           docker info
+          echo "Sleeping 30s for DinD bridge networking to settle..."
+          sleep 30
+
+      - name: Pull Dockerfile base images (with retry)
+        run: |
+          for img in golang:1.26-alpine node:20-alpine gcr.io/distroless/static:nonroot; do
+            echo "=== Pulling $img ==="
+            for attempt in $(seq 1 10); do
+              docker pull "$img" && echo "✅ Pulled $img" && break
+              echo "Pull attempt $attempt/10 failed, retrying in 30s..."
+              sleep 30
+              [ "$attempt" = "10" ] && echo "❌ Failed to pull $img after 10 attempts" && exit 1
+            done
+          done
 
       - name: Build Docker image
         run: |
@@ -638,7 +654,7 @@ jobs:
 
       - name: Pull container images (with retry)
         run: |
-          for img in postgres:16-alpine; do
+          for img in postgres:16-alpine golang:1.26-alpine node:20-alpine gcr.io/distroless/static:nonroot; do
             echo "=== Pulling $img ==="
             for attempt in $(seq 1 10); do
               docker pull "$img" && echo "✅ Pulled $img" && break
