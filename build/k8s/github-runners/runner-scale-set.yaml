@@ -41,9 +41,6 @@ template:
           requests:
             cpu: "200m"
             memory: "512Mi"
-          limits:
-            cpu: "4"
-            memory: "8Gi"
         env:
           - name: DOCKER_HOST
             value: unix:///var/run/docker.sock
@@ -65,9 +62,6 @@ template:
           requests:
             cpu: "200m"
             memory: "512Mi"
-          limits:
-            cpu: "2"
-            memory: "4Gi"
         volumeMounts:
           - name: work
             mountPath: /home/runner/_work
