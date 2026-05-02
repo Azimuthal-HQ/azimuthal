@@ -63,21 +63,8 @@ jobs:
     name: Test
     needs: build
     runs-on: azimuthal
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: azimuthal_test
-          POSTGRES_PASSWORD: testpassword
-          POSTGRES_DB: azimuthal_test
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
+    # No services: block — postgres + minio started manually after Docker-wait
+    # (DinD daemon may not be ready when services: fires, causing instant failure)
     env:
       DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
       JWT_SECRET: ci-test-secret-32-chars-minimum-xx
@@ -89,6 +76,28 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for Docker daemon
+        run: |
+          echo "Waiting for Docker daemon..."
+          for i in $(seq 1 30); do
+            docker info >/dev/null 2>&1 && echo "Docker ready after ${i}s" && break
+            sleep 2
+          done
+          docker info
+
+      - name: Start postgres
+        run: |
+          docker run -d --name postgres \
+            -p 5433:5432 \
+            -e POSTGRES_USER=azimuthal_test \
+            -e POSTGRES_PASSWORD=testpassword \
+            -e POSTGRES_DB=azimuthal_test \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec postgres pg_isready -U azimuthal_test && break
+            sleep 2
+          done
 
       - name: Start MinIO
         run: |
@@ -324,6 +333,14 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Wait for Docker daemon
+        run: |
+          for i in $(seq 1 30); do
+            docker info >/dev/null 2>&1 && echo "Docker ready after ${i}s" && break
+            sleep 2
+          done
+          docker info
+
       - name: Build Docker image
         run: |
           docker build \
@@ -371,22 +388,7 @@ jobs:
     name: E2E Tests (Playwright)
     needs: [build, test]
     runs-on: azimuthal
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: azimuthal_test
-          POSTGRES_PASSWORD: testpassword
-          POSTGRES_DB: azimuthal_test
-        ports:
-          - "5433:5432"
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
-
+    # No services: block — postgres + minio started manually after Docker-wait
     env:
       DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
       JWT_SECRET: ci-e2e-test-secret-32-chars-minimum
@@ -401,6 +403,27 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for Docker daemon
+        run: |
+          for i in $(seq 1 30); do
+            docker info >/dev/null 2>&1 && echo "Docker ready after ${i}s" && break
+            sleep 2
+          done
+          docker info
+
+      - name: Start postgres
+        run: |
+          docker run -d --name postgres \
+            -p 5433:5432 \
+            -e POSTGRES_USER=azimuthal_test \
+            -e POSTGRES_PASSWORD=testpassword \
+            -e POSTGRES_DB=azimuthal_test \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec postgres pg_isready -U azimuthal_test && break
+            sleep 2
+          done
 
       - name: Start MinIO
         run: |
@@ -586,24 +609,31 @@ jobs:
     name: Docker image boot
     needs: build
     runs-on: azimuthal
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: azimuthal_test
-          POSTGRES_PASSWORD: testpassword
-          POSTGRES_DB: azimuthal_test
-        ports:
-          - "5433:5432"
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
+    # No services: block — postgres started manually after Docker-wait
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for Docker daemon
+        run: |
+          for i in $(seq 1 30); do
+            docker info >/dev/null 2>&1 && echo "Docker ready after ${i}s" && break
+            sleep 2
+          done
+          docker info
+
+      - name: Start postgres
+        run: |
+          docker run -d --name postgres \
+            -p 5433:5432 \
+            -e POSTGRES_USER=azimuthal_test \
+            -e POSTGRES_PASSWORD=testpassword \
+            -e POSTGRES_DB=azimuthal_test \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec postgres pg_isready -U azimuthal_test && break
+            sleep 2
+          done
 
       - name: Build Docker image
         run: |
