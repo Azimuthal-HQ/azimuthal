@@ -267,7 +267,7 @@ jobs:
       # pre-pulls images before DinD is ready.
       - name: Install gosec (pre-built binary)
         run: |
-          GOSEC_VERSION="2.22.2"
+          GOSEC_VERSION="2.26.1"
           curl -sSfL \
             "https://github.com/securego/gosec/releases/download/v${GOSEC_VERSION}/gosec_${GOSEC_VERSION}_linux_amd64.tar.gz" \
             | tar -xz -C /usr/local/bin gosec
