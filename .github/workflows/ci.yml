@@ -91,20 +91,27 @@ jobs:
       - name: Install goose
         run: go install github.com/pressly/goose/v3/cmd/goose@latest
 
-      # Compile everything before Docker wait — DinD startup is variable (10-90s);
-      # compilation takes 30-60s and gives the daemon extra time to initialize.
-      - name: Compile (gives DinD extra startup time)
-        run: go build ./...
+      # Compile + vet before Docker wait — DinD startup is variable (10-180s on k3s);
+      # this gives the daemon ~90s of initialization time before we need it.
+      - name: Compile and vet (gives DinD extra startup time)
+        run: go build ./... && go vet ./...
 
-      # By now DinD has had ~60-90s to start while Go setup + compile ran above
-      - name: Wait for Docker daemon
+      # By now DinD has had ~90s to start; confirm it's ready then pre-pull images
+      # so docker run commands are instant (no per-run image pull delay).
+      - name: Wait for Docker daemon and pre-pull images
         run: |
           echo "Waiting for Docker daemon..."
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
             sleep 2
           done
           docker info
+
+          echo "Pre-pulling images in background..."
+          docker pull postgres:16-alpine &
+          docker pull quay.io/minio/minio:latest &
+          wait
+          echo "Images ready."
 
       - name: Start postgres
         run: |
@@ -118,6 +125,7 @@ jobs:
             docker exec postgres pg_isready -U azimuthal_test && break
             sleep 2
           done
+          docker exec postgres pg_isready -U azimuthal_test || (echo "❌ postgres never became ready" && exit 1)
 
       - name: Start MinIO
         run: |
@@ -130,6 +138,7 @@ jobs:
             curl -sf http://localhost:9001/minio/health/live && break
             sleep 2
           done
+          curl -sf http://localhost:9001/minio/health/live || (echo "❌ MinIO never became ready" && exit 1)
 
       - name: Run migrations
         run: |
@@ -234,6 +243,7 @@ jobs:
 
       - name: Run gosec (SARIF output)
         uses: securego/gosec@master
+        continue-on-error: true  # SARIF step may fail if action can't upload; real gate is below
         with:
           args: >-
             -severity high
@@ -344,12 +354,12 @@ jobs:
       - name: Create stub frontend dist (for go:embed)
         run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
 
-      - name: Compile (gives DinD extra startup time)
-        run: go build ./...
+      - name: Compile and vet (gives DinD extra startup time)
+        run: go build ./... && go vet ./...
 
       - name: Wait for Docker daemon
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
             sleep 2
           done
@@ -435,17 +445,19 @@ jobs:
       - name: Install goose
         run: go install github.com/pressly/goose/v3/cmd/goose@latest
 
-      - name: Compile (gives DinD extra startup time)
-        run: go build ./...
+      - name: Compile and vet (gives DinD extra startup time)
+        run: go build ./... && go vet ./...
 
-      # By now DinD has had ~60-90s to start while Go/Node setup + compile ran above
-      - name: Wait for Docker daemon
+      - name: Wait for Docker daemon and pre-pull images
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
             sleep 2
           done
           docker info
+          docker pull postgres:16-alpine &
+          docker pull quay.io/minio/minio:latest &
+          wait
 
       - name: Start postgres
         run: |
@@ -459,6 +471,7 @@ jobs:
             docker exec postgres pg_isready -U azimuthal_test && break
             sleep 2
           done
+          docker exec postgres pg_isready -U azimuthal_test || (echo "❌ postgres never became ready" && exit 1)
 
       - name: Start MinIO
         run: |
@@ -471,6 +484,7 @@ jobs:
             curl -sf http://localhost:9001/minio/health/live && break
             sleep 2
           done
+          curl -sf http://localhost:9001/minio/health/live || (echo "❌ MinIO never became ready" && exit 1)
 
       - name: Run migrations
         run: |
@@ -583,16 +597,18 @@ jobs:
       - name: Create stub frontend dist (for go:embed)
         run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
 
-      - name: Compile (gives DinD extra startup time)
-        run: go build ./...
+      - name: Compile and vet (gives DinD extra startup time)
+        run: go build ./... && go vet ./...
 
-      - name: Wait for Docker daemon
+      - name: Wait for Docker daemon and pre-pull images
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
             sleep 2
           done
           docker info
+          docker pull postgres:16-alpine &
+          wait
 
       - name: Start postgres
         run: |
@@ -606,6 +622,7 @@ jobs:
             docker exec postgres pg_isready -U azimuthal_test && break
             sleep 2
           done
+          docker exec postgres pg_isready -U azimuthal_test || (echo "❌ postgres never became ready" && exit 1)
 
       - name: Build Docker image
         run: |
