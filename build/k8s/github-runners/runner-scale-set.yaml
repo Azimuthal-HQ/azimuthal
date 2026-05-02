@@ -1,4 +1,10 @@
-# GitHub Actions Runner Scale Set — Azimuthal-HQ/azimuthal
+# GitHub Actions Runner Scale Set — Azimuthal-HQ (organization-level)
+#
+# Registered at the ORG level so the same pool serves both
+# Azimuthal-HQ/azimuthal AND Azimuthal-HQ/azimuthal-private.
+# Workflows in either repo using `runs-on: azimuthal` dispatch here.
+#
+# PAT requires Organization permissions → Self-hosted runners: Read and write.
 #
 # Uses Docker-in-Docker so `services:` blocks (postgres, minio) work exactly
 # as they do on GitHub-hosted ubuntu-latest runners.
@@ -12,12 +18,14 @@
 #     --values build/k8s/github-runners/runner-scale-set.yaml \
 #     oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
 
-githubConfigUrl: "https://github.com/Azimuthal-HQ/azimuthal"
+githubConfigUrl: "https://github.com/Azimuthal-HQ"
 githubConfigSecret: "azimuthal-runner-secret"
 
-# Scale: keep 1 warm, burst up to 4 for parallel matrix jobs
+# Scale: keep 1 warm for instant pickup. No upper cap — k8s scheduler will
+# queue runner pods that don't fit current capacity until nodes free up,
+# so an unlimited maxRunners just means "use everything available".
 minRunners: 1
-maxRunners: 4
+# maxRunners intentionally omitted (unbounded)
 
 # Label used in ci.yml: runs-on: [self-hosted, azimuthal]
 runnerScaleSetName: "azimuthal"
@@ -35,14 +43,24 @@ template:
             mountPath: /home/runner/tmpDir
 
     containers:
-      # Actions runner — the actual job executor
+      # Actions runner — the actual job executor.
+      # Resources sized for the cluster (3 nodes, 16 CPU / 48Gi total).
+      # 2 CPU + 4Gi per container ⇒ 4 CPU + 8Gi per runner pod.
+      # At maxRunners=6 that's 24 CPU + 48Gi headroom required at peak;
+      # k8s schedules across nodes so this is fine in practice.
       - name: runner
         image: ghcr.io/actions/actions-runner:latest
         command: ["/home/runner/run.sh"]
+        # Cluster has ~1 CPU + 1Gi free across nodes after other workloads;
+        # request just enough to schedule, but allow large bursts via limits
+        # (the cluster is already overcommitted on limits — that's fine).
         resources:
           requests:
-            cpu: "200m"
-            memory: "512Mi"
+            cpu: "300m"
+            memory: "768Mi"
+          limits:
+            cpu: "3000m"
+            memory: "6Gi"
         env:
           - name: DOCKER_HOST
             value: unix:///var/run/docker.sock
@@ -60,10 +78,16 @@ template:
         args: ["dockerd", "--host=unix:///var/run/docker.sock", "--host=tcp://0.0.0.0:2376"]
         securityContext:
           privileged: true
+        # Cluster has ~1 CPU + 1Gi free across nodes after other workloads;
+        # request just enough to schedule, but allow large bursts via limits
+        # (the cluster is already overcommitted on limits — that's fine).
         resources:
           requests:
-            cpu: "200m"
-            memory: "512Mi"
+            cpu: "300m"
+            memory: "768Mi"
+          limits:
+            cpu: "3000m"
+            memory: "6Gi"
         volumeMounts:
           - name: work
             mountPath: /home/runner/_work

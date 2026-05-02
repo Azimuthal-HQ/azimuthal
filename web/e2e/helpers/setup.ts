@@ -48,47 +48,57 @@ export async function createUserAndLogin(page: Page): Promise<{
 }
 
 /**
- * Creates a space of the given type and waits for navigation into it.
- * Returns the space ID extracted from the URL.
+ * Creates a space of the given type via direct API call and navigates into it.
+ * Returns the space ID.
+ *
+ * Uses the API directly (not the UI dialog) so tests are decoupled from dialog
+ * implementation details, parallel workers never collide on key uniqueness, and
+ * failures surface as clear errors rather than silent URL timeouts.
  */
 export async function createSpace(
   page: Page,
   name: string,
   type: 'service_desk' | 'wiki' | 'project'
 ): Promise<string> {
-  // Open modal
-  await page.click('button:has-text("Create Space")')
-  await expect(page.locator('text=Create a new space')).toBeVisible({ timeout: 5000 })
+  const token = await getAuthToken(page)
+  const { orgId } = await getCurrentUser(page)
 
-  // Append timestamp to name to ensure unique slugs across test runs
-  const uniqueName = `${name} ${Date.now()}`
+  const ts = Date.now()
+  const uniqueName = `${name} ${ts}`
+  const slug = uniqueName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
-  // Fill name — use the actual input id from DashboardPage.tsx
-  await page.fill('#space-name', uniqueName)
+  // Key must match ^[A-Z0-9]{1,10}$ and be unique per org.
+  // Suffix with last 4 digits of timestamp so parallel workers never collide.
+  const prefix = name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 6) || 'SP'
+  const key = prefix + ts.toString().slice(-4)
 
-  // Select type card inside the dialog
-  const typeLabel = {
-    service_desk: 'Service Desk',
-    wiki: 'Wiki',
-    project: 'Project',
-  }[type]
-  await page.locator(`[role="dialog"] button:has-text("${typeLabel}")`).click()
+  const response = await page.request.post(
+    `/api/v1/orgs/${orgId}/spaces`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      data: { name: uniqueName, slug, key, type },
+    }
+  )
 
-  // Service desk requires a Key field (uppercase, max 10 chars) — fill it now
-  if (type === 'service_desk') {
-    const key = name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) + 'SD'
-    await page.fill('#space-key', key)
+  if (response.status() !== 201) {
+    const body = await response.text()
+    throw new Error(`createSpace API failed: ${response.status()} ${body}`)
   }
 
-  // Submit — click the Create Space button in the dialog footer
-  await page.locator('[role="dialog"] button:has-text("Create Space"):not(:has-text("Service Desk")):not(:has-text("Wiki")):not(:has-text("Project"))').click()
+  const space = await response.json() as { id: string }
 
-  // Wait for redirect into the space
+  const spaceUrl =
+    type === 'service_desk' ? `/spaces/${space.id}/tickets` :
+    type === 'wiki'         ? `/spaces/${space.id}/wiki` :
+                              `/spaces/${space.id}/backlog`
+
+  await page.goto(spaceUrl)
   await expect(page).toHaveURL(/\/spaces\//, { timeout: 15000 })
 
-  // Extract and return space ID
-  const match = page.url().match(/\/spaces\/([^/]+)/)
-  return match ? match[1] : ''
+  return space.id
 }
 
 /**

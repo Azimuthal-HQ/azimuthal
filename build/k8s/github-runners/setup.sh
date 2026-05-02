@@ -6,14 +6,20 @@
 #   - helm 3.x installed
 #   - A GitHub Fine-Grained PAT (see instructions below)
 #
-# HOW TO CREATE THE PAT:
+# HOW TO CREATE THE PAT (org-level scope, serves both repos):
 #   1. Go to: https://github.com/settings/tokens?type=beta
 #   2. Click "Generate new token"
 #   3. Token name: azimuthal-arc-runner
 #   4. Resource owner: Azimuthal-HQ  (switch from personal to org)
-#   5. Repository access: Only select repositories → azimuthal
-#   6. Permissions → Repository permissions → Actions: Read and write
-#   7. Generate token → copy it
+#   5. Repository access: Public Repositories AND Private Repositories
+#      (or "All repositories" — the runner is registered at the ORG level
+#      so the same pool serves azimuthal AND azimuthal-private)
+#   6. Permissions → Organization permissions:
+#        - Self-hosted runners: Read and write   ← REQUIRED for org runners
+#   7. Permissions → Repository permissions:
+#        - Actions: Read and write
+#        - Administration: Read (so the listener can read repo metadata)
+#   8. Generate token → copy it
 #
 # Then run:
 #   GITHUB_PAT=github_pat_xxxx bash build/k8s/github-runners/setup.sh
@@ -50,4 +56,4 @@ echo "Watch runners come up:"
 echo "  kubectl get pods -n $NAMESPACE -w"
 echo ""
 echo "Once a runner pod appears, check GitHub:"
-echo "  https://github.com/Azimuthal-HQ/azimuthal/settings/actions/runners"
+echo "  https://github.com/organizations/Azimuthal-HQ/settings/actions/runner-groups"

@@ -44,7 +44,10 @@ data/
 cmd/server/data/
 
 # Claude Code local settings (never commit)
-.claude/.gitleaks.toml
+.claude/
+
+# CI progress tracking (private repo only — never push to public)
+github-actions-progress/.gitleaks.toml
 CLAUDE.md
 docs/agent-briefs.md
 docs/github-setup-checklist.md
@@ -52,8 +55,11 @@ docs/project-state.md
 docs/regression-test-checklist.md
 scripts/local-test.sh
 scripts/push-private.sh
+scripts/release-private.sh
 scripts/release-public.sh
 scripts/remote-test-host-deploy.sh
-.claude/
+.github/workflows/release-private.yml
 current-agent-progress/
+github-actions-progress/
+release-progress/
 server
