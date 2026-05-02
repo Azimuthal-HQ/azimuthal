@@ -7,7 +7,7 @@ on:
   pull_request:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci2-${{ github.ref }}
   cancel-in-progress: true
 
 
