@@ -258,17 +258,20 @@ jobs:
       - name: Create stub frontend dist (for go:embed)
         run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
 
-      - name: Run gosec (SARIF output)
-        uses: securego/gosec@master
-        continue-on-error: true  # SARIF step may fail if action can't upload; real gate is below
-        with:
-          args: >-
-            -severity high
-            -confidence high
-            -exclude-dir=vendor
-            -fmt sarif
-            -out gosec-results.sarif
-            ./...
+      # Install gosec binary — avoids the securego/gosec Docker action which
+      # pre-pulls ghcr.io/securego/gosec during job setup before DinD is ready.
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run gosec (SARIF output for Security tab)
+        run: |
+          gosec \
+            -severity high \
+            -confidence high \
+            -exclude-dir=vendor \
+            -fmt sarif \
+            -out gosec-results.sarif \
+            ./... || true
 
       - name: Upload SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
@@ -277,9 +280,6 @@ jobs:
         with:
           sarif_file: gosec-results.sarif
           category: gosec
-
-      - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       - name: Fail on HIGH+ findings
         run: |
