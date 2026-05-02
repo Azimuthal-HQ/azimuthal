@@ -1,0 +1,8 @@
+# CI-only Dockerfile — binary is pre-built by the GitHub Actions runner.
+# This avoids pulling golang/node from Docker Hub (rate-limited on self-hosted runners).
+# Only gcr.io/distroless (GCR, no rate limit) is needed here.
+FROM gcr.io/distroless/static:nonroot
+USER nonroot:nonroot
+COPY azimuthal /azimuthal
+EXPOSE 8080
+ENTRYPOINT ["/azimuthal", "serve"]
