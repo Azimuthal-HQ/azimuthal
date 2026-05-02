@@ -478,6 +478,10 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
+      # Build frontend first — go:embed all:dist requires web/dist to exist before go build
+      - name: Build frontend
+        run: cd web && npm ci && npm run build
+
       - name: Compile and vet (gives DinD extra startup time)
         run: go build ./... && go vet ./...
 
@@ -536,9 +540,6 @@ jobs:
 
       - name: Run migrations
         run: go run ./cmd/migrate
-
-      - name: Build frontend
-        run: cd web && npm ci && npm run build
 
       - name: Build binary
         run: |
