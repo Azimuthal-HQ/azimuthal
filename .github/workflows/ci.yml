@@ -106,6 +106,20 @@ jobs:
           done
           docker info
 
+      # Pull images explicitly with retry BEFORE docker run.
+      # docker run pulls synchronously and exits non-zero on pull failure;
+      # bash -e would kill the step before the readiness loop even runs.
+      - name: Pull container images (with retry)
+        run: |
+          for img in postgres:16-alpine quay.io/minio/minio:latest; do
+            for attempt in 1 2 3 4 5; do
+              echo "Pulling $img (attempt $attempt)..."
+              docker pull "$img" && break
+              [ $attempt -lt 5 ] && echo "Pull failed, retrying in 10s..." && sleep 10
+              [ $attempt -eq 5 ] && echo "❌ Failed to pull $img after 5 attempts" && exit 1
+            done
+          done
+
       - name: Start postgres
         run: |
           docker run -d --name postgres \
@@ -114,8 +128,7 @@ jobs:
             -e POSTGRES_PASSWORD=testpassword \
             -e POSTGRES_DB=azimuthal_test \
             postgres:16-alpine
-          # 90 iterations = 180s — covers first-run image pull + startup
-          for i in $(seq 1 90); do
+          for i in $(seq 1 30); do
             docker exec postgres pg_isready -U azimuthal_test 2>/dev/null && \
               echo "postgres ready after $((i*2))s" && break
             sleep 2
@@ -130,8 +143,7 @@ jobs:
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
             quay.io/minio/minio:latest server /data
-          # 60 iterations = 120s — covers first-run image pull + startup
-          for i in $(seq 1 60); do
+          for i in $(seq 1 15); do
             curl -sf http://localhost:9001/minio/health/live 2>/dev/null && \
               echo "MinIO ready after $((i*2))s" && break
             sleep 2
@@ -455,6 +467,17 @@ jobs:
           done
           docker info
 
+      - name: Pull container images (with retry)
+        run: |
+          for img in postgres:16-alpine quay.io/minio/minio:latest; do
+            for attempt in 1 2 3 4 5; do
+              echo "Pulling $img (attempt $attempt)..."
+              docker pull "$img" && break
+              [ $attempt -lt 5 ] && echo "Pull failed, retrying in 10s..." && sleep 10
+              [ $attempt -eq 5 ] && echo "❌ Failed to pull $img after 5 attempts" && exit 1
+            done
+          done
+
       - name: Start postgres
         run: |
           docker run -d --name postgres \
@@ -463,7 +486,7 @@ jobs:
             -e POSTGRES_PASSWORD=testpassword \
             -e POSTGRES_DB=azimuthal_test \
             postgres:16-alpine
-          for i in $(seq 1 90); do
+          for i in $(seq 1 30); do
             docker exec postgres pg_isready -U azimuthal_test 2>/dev/null && \
               echo "postgres ready after $((i*2))s" && break
             sleep 2
@@ -478,7 +501,7 @@ jobs:
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
             quay.io/minio/minio:latest server /data
-          for i in $(seq 1 60); do
+          for i in $(seq 1 15); do
             curl -sf http://localhost:9001/minio/health/live 2>/dev/null && \
               echo "MinIO ready after $((i*2))s" && break
             sleep 2
@@ -600,15 +623,24 @@ jobs:
       - name: Compile and vet (gives DinD extra startup time)
         run: go build ./... && go vet ./...
 
-      - name: Wait for Docker daemon and pre-pull images
+      - name: Wait for Docker daemon
         run: |
           for i in $(seq 1 90); do
             docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
             sleep 2
           done
           docker info
-          docker pull postgres:16-alpine &
-          wait
+
+      - name: Pull container images (with retry)
+        run: |
+          for img in postgres:16-alpine; do
+            for attempt in 1 2 3 4 5; do
+              echo "Pulling $img (attempt $attempt)..."
+              docker pull "$img" && break
+              [ $attempt -lt 5 ] && echo "Pull failed, retrying in 10s..." && sleep 10
+              [ $attempt -eq 5 ] && echo "❌ Failed to pull $img after 5 attempts" && exit 1
+            done
+          done
 
       - name: Start postgres
         run: |
@@ -618,7 +650,7 @@ jobs:
             -e POSTGRES_PASSWORD=testpassword \
             -e POSTGRES_DB=azimuthal_test \
             postgres:16-alpine
-          for i in $(seq 1 90); do
+          for i in $(seq 1 30); do
             docker exec postgres pg_isready -U azimuthal_test 2>/dev/null && \
               echo "postgres ready after $((i*2))s" && break
             sleep 2
