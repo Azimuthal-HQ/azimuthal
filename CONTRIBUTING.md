@@ -1,6 +1,6 @@
 # Contributing to Azimuthal
 
-Thank you for your interest in contributing to Azimuthal.
+Thank you for your interest in contributing to Azimuthal. We welcome all contributions.
 
 ## Contributor License Agreement (CLA)
 
