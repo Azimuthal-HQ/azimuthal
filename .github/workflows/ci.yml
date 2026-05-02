@@ -73,7 +73,8 @@ jobs:
       STORAGE_SECRET_KEY: minioadmin
       STORAGE_BUCKET: azimuthal-test
       APP_ENV: test
-      CGO_ENABLED: "1"
+      # CGO_ENABLED is NOT set here — only go test -race needs it, set per-step below.
+      # Setting it job-wide causes every go run/build to need gcc before it's installed.
 
     steps:
       - uses: actions/checkout@v4
@@ -92,8 +93,6 @@ jobs:
       # Compile + vet before Docker wait — DinD startup is variable (10-180s on k3s);
       # this gives the daemon ~90s of initialization time before we need it.
       - name: Compile and vet (gives DinD extra startup time)
-        env:
-          CGO_ENABLED: "0"  # gcc not installed yet; only go test -race needs CGO=1
         run: go build ./... && go vet ./...
 
       # By now DinD has had ~90s to start — confirm it's ready.
@@ -166,6 +165,8 @@ jobs:
             (sudo apt-get update -qq && sudo apt-get install -y -q build-essential)
 
       - name: Run tests with race detector
+        env:
+          CGO_ENABLED: "1"  # -race requires CGO; gcc installed in previous step
         run: |
           go test \
             -v \
