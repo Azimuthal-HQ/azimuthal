@@ -89,24 +89,14 @@ jobs:
       - name: Create stub frontend dist (for go:embed)
         run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
 
+      # Pinned to go.mod version — avoids @latest proxy resolution call.
+      - name: Install goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@v3.27.0
+
       # Compile + vet before Docker wait — DinD startup is variable (10-180s on k3s);
       # this gives the daemon ~90s of initialization time before we need it.
       - name: Compile and vet (gives DinD extra startup time)
-        run: |
-          echo "=== go build ==="
-          go build ./...
-          echo "=== go vet ==="
-          go vet ./...
-          echo "=== compile done ==="
-
-      # Install goose AFTER go build so the module cache is fully warm.
-      # Use go build (not go install @latest) to avoid module proxy network call.
-      - name: Install goose
-        run: |
-          GOPATH="$(go env GOPATH)"
-          echo "Building goose from module cache..."
-          go build -o "$GOPATH/bin/goose" github.com/pressly/goose/v3/cmd/goose
-          echo "goose installed: $("$GOPATH/bin/goose" --version 2>&1 | head -1)"
+        run: go build ./... && go vet ./...
 
       # By now DinD has had ~90s to start — confirm it's ready.
       - name: Wait for Docker daemon
