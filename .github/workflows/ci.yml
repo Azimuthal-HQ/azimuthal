@@ -113,22 +113,27 @@ jobs:
         run: |
           echo "Waiting for Docker daemon..."
           for i in $(seq 1 90); do
-            docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
+            docker info >/dev/null 2>&1 && echo "Docker daemon ready after $((i*2))s" && break
             sleep 2
           done
           docker info
+          # DinD bridge networking takes extra time after daemon starts.
+          # Without this sleep, docker pull fails immediately with network errors.
+          echo "Sleeping 30s for DinD bridge networking to settle..."
+          sleep 30
+          echo "Proceeding with image pulls."
 
       # Pull images explicitly with retry BEFORE docker run.
-      # docker run pulls synchronously and exits non-zero on pull failure;
-      # bash -e would kill the step before the readiness loop even runs.
+      # docker run pulls synchronously and exits non-zero on pull failure.
       - name: Pull container images (with retry)
         run: |
           for img in postgres:16-alpine quay.io/minio/minio:latest; do
-            for attempt in 1 2 3 4 5; do
-              echo "Pulling $img (attempt $attempt)..."
-              docker pull "$img" && break
-              [ $attempt -lt 5 ] && echo "Pull failed, retrying in 10s..." && sleep 10
-              [ $attempt -eq 5 ] && echo "❌ Failed to pull $img after 5 attempts" && exit 1
+            echo "=== Pulling $img ==="
+            for attempt in $(seq 1 10); do
+              docker pull "$img" && echo "✅ Pulled $img" && break
+              echo "Pull attempt $attempt/10 failed, retrying in 30s..."
+              sleep 30
+              [ "$attempt" = "10" ] && echo "❌ Failed to pull $img after 10 attempts" && exit 1
             done
           done
 
@@ -480,19 +485,22 @@ jobs:
       - name: Wait for Docker daemon
         run: |
           for i in $(seq 1 90); do
-            docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
+            docker info >/dev/null 2>&1 && echo "Docker daemon ready after $((i*2))s" && break
             sleep 2
           done
           docker info
+          echo "Sleeping 30s for DinD bridge networking to settle..."
+          sleep 30
 
       - name: Pull container images (with retry)
         run: |
           for img in postgres:16-alpine quay.io/minio/minio:latest; do
-            for attempt in 1 2 3 4 5; do
-              echo "Pulling $img (attempt $attempt)..."
-              docker pull "$img" && break
-              [ $attempt -lt 5 ] && echo "Pull failed, retrying in 10s..." && sleep 10
-              [ $attempt -eq 5 ] && echo "❌ Failed to pull $img after 5 attempts" && exit 1
+            echo "=== Pulling $img ==="
+            for attempt in $(seq 1 10); do
+              docker pull "$img" && echo "✅ Pulled $img" && break
+              echo "Pull attempt $attempt/10 failed, retrying in 30s..."
+              sleep 30
+              [ "$attempt" = "10" ] && echo "❌ Failed to pull $img after 10 attempts" && exit 1
             done
           done
 
@@ -644,19 +652,22 @@ jobs:
       - name: Wait for Docker daemon
         run: |
           for i in $(seq 1 90); do
-            docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
+            docker info >/dev/null 2>&1 && echo "Docker daemon ready after $((i*2))s" && break
             sleep 2
           done
           docker info
+          echo "Sleeping 30s for DinD bridge networking to settle..."
+          sleep 30
 
       - name: Pull container images (with retry)
         run: |
           for img in postgres:16-alpine; do
-            for attempt in 1 2 3 4 5; do
-              echo "Pulling $img (attempt $attempt)..."
-              docker pull "$img" && break
-              [ $attempt -lt 5 ] && echo "Pull failed, retrying in 10s..." && sleep 10
-              [ $attempt -eq 5 ] && echo "❌ Failed to pull $img after 5 attempts" && exit 1
+            echo "=== Pulling $img ==="
+            for attempt in $(seq 1 10); do
+              docker pull "$img" && echo "✅ Pulled $img" && break
+              echo "Pull attempt $attempt/10 failed, retrying in 30s..."
+              sleep 30
+              [ "$attempt" = "10" ] && echo "❌ Failed to pull $img after 10 attempts" && exit 1
             done
           done
 
