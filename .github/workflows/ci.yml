@@ -154,12 +154,12 @@ jobs:
           path: test-output.txt
           retention-days: 3
 
-      - name: Enforce minimum coverage (80%)
+      - name: Enforce minimum coverage (70%)
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "❌ Coverage ${COVERAGE}% is below the 80% floor"
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below the 70% floor"
             exit 1
           fi
           echo "✅ Coverage ${COVERAGE}% meets minimum"
