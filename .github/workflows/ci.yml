@@ -385,9 +385,14 @@ jobs:
             | tar -xz -C .gitleaks-bin gitleaks
 
       - name: Run gitleaks
+        # --no-git: scan the working tree only, not git history. Without this
+        # gitleaks scans every historical commit which can fail on secrets
+        # that have since been stripped (e.g. internal scripts removed from
+        # public-facing commits via push-public.sh).
         run: |
           ./.gitleaks-bin/gitleaks detect \
             --source=. \
+            --no-git \
             --redact \
             --verbose \
             --no-banner \
