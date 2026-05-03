@@ -51,6 +51,39 @@ helm upgrade --install azimuthal-runners \
   oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
 
 echo ""
+echo "=== Patching ARC controller to bypass cluster DNS ==="
+# The controller chart doesn't expose dnsConfig, but the controller itself
+# needs to resolve api.github.com to mint runner registration tokens. On
+# k3s with systemd-resolved, cluster DNS frequently breaks (host resolv.conf
+# only has 127.0.0.53, which doesn't work in pod netns), so the controller
+# stalls forever waiting for DNS. Patching it to use public resolvers
+# directly. Idempotent — safe to re-run.
+kubectl patch deployment arc-gha-rs-controller -n "$NAMESPACE" --type=strategic -p '{
+  "spec": {
+    "template": {
+      "spec": {
+        "dnsPolicy": "None",
+        "dnsConfig": {
+          "nameservers": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
+          "options": [
+            {"name": "ndots", "value": "1"},
+            {"name": "timeout", "value": "3"},
+            {"name": "attempts", "value": "3"}
+          ]
+        }
+      }
+    }
+  }
+}' 2>/dev/null || echo "  (controller deployment not present yet — will be patched on next setup.sh run)"
+
+echo ""
+echo "=== Applying coredns-custom ConfigMap (per-zone DNS overrides) ==="
+# Survives k3s addon-manager reconciliation because it's a USER ConfigMap.
+# The default Corefile has `import /etc/coredns/custom/*.server` which picks
+# up these per-zone forwarder blocks for github.com, ghcr.io, docker, etc.
+kubectl apply -f "$(dirname "$0")/coredns-custom.yaml"
+
+echo ""
 echo "=== Done ==="
 echo "Watch runners come up:"
 echo "  kubectl get pods -n $NAMESPACE -w"

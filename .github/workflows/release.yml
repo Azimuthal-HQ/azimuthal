@@ -171,32 +171,208 @@ jobs:
           files: ${{ env.BINARY_NAME }}-*
           body: |
             ## Azimuthal ${{ env.VERSION }}
- 
+
             The self-hostable, open-source alternative to Jira, Confluence,
             and Jira Service Desk. Know exactly where your team is headed.
- 
+
             **Free and open source for everyone — every feature, no tiers.**
             Apache 2.0 licensed.
- 
-            ### Docker (recommended)
+
+            ---
+
+            ## Choose your install path
+
+            Pick the option that matches your environment. Each path below is
+            self-contained — you don't need to read any other docs to get
+            running. After install, jump to **First-Run: Create an Admin User**
+            below before logging in.
+
+            ### Option 1 — Docker Compose (recommended for self-hosting)
+
+            Brings up Azimuthal + PostgreSQL + MinIO with healthchecks and
+            persistent volumes. One command, one file.
+
+            ```bash
+            # 1. Grab the compose file and env template
+            curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/build/docker-compose.yml
+            curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/.env.example
+
+            # 2. Create your env and fill in secrets
+            cp .env.example .env
+
+            # 3. Generate a secure JWT secret (64 hex chars) and pick passwords
+            sed -i "s/change-me-run-openssl-rand-hex-32/$(openssl rand -hex 32)/" .env
+            #   Then edit .env and set:
+            #     POSTGRES_PASSWORD=...      # database password
+            #     MINIO_ROOT_USER=...        # storage access key (e.g. azimuthal)
+            #     MINIO_ROOT_PASSWORD=...    # storage secret key (16+ chars)
+            #     AZIMUTHAL_VERSION=${{ env.VERSION }}
+
+            # 4. Start everything
+            docker compose -f docker-compose.yml up -d
+
+            # 5. (Optional) Watch logs while it boots
+            docker compose logs -f app
+            ```
+
+            ### Option 2 — Single Docker container (bring your own Postgres + S3/MinIO)
+
+            For when you already have a managed database and object store.
+
             ```bash
             docker run -d \
-              -e DATABASE_URL=postgres://... \
-              -e STORAGE_ENDPOINT=http://your-minio:9000 \
+              --name azimuthal \
               -p 8080:8080 \
+              -e DATABASE_URL='postgres://USER:PASS@DBHOST:5432/azimuthal?sslmode=require' \
+              -e JWT_SECRET="$(openssl rand -hex 32)" \
+              -e STORAGE_ENDPOINT='https://s3.us-east-1.amazonaws.com' \
+              -e STORAGE_ACCESS_KEY='AKIA...' \
+              -e STORAGE_SECRET_KEY='...' \
+              -e STORAGE_BUCKET='azimuthal-prod' \
+              -e APP_ENV=production \
+              -e APP_BASE_URL='https://azimuthal.your-domain.com' \
               ghcr.io/azimuthal-hq/azimuthal:${{ env.VERSION }}
             ```
- 
-            ### Single binary
+
+            ### Option 3 — Single binary, no container (bare metal or VM)
+
+            Static binary for Linux/macOS/Windows — no runtime deps.
+
             ```bash
-            ./azimuthal   # that's it
+            # 1. Pick your platform
+            curl -LO https://github.com/Azimuthal-HQ/azimuthal/releases/download/${{ env.VERSION }}/azimuthal-linux-amd64
+            chmod +x azimuthal-linux-amd64
+
+            # 2. Verify checksum
+            curl -LO https://github.com/Azimuthal-HQ/azimuthal/releases/download/${{ env.VERSION }}/azimuthal-linux-amd64.sha256
+            sha256sum -c azimuthal-linux-amd64.sha256
+
+            # 3. Set required env + start. The binary embeds the frontend —
+            #    nothing else to install.
+            export DATABASE_URL='postgres://USER:PASS@HOST:5432/azimuthal?sslmode=require'
+            export JWT_SECRET="$(openssl rand -hex 32)"
+            export STORAGE_ENDPOINT='http://localhost:9000'
+            export STORAGE_ACCESS_KEY='minioadmin'
+            export STORAGE_SECRET_KEY='your-minio-password'
+            export STORAGE_BUCKET='azimuthal'
+            export APP_BASE_URL='http://localhost:8080'
+
+            ./azimuthal-linux-amd64 serve
             ```
- 
-            ### Verify your download
+
+            ---
+
+            ## Setting up PostgreSQL (Options 2 & 3)
+
+            If you're not using Compose, create the database and a least-privileged
+            user before pointing Azimuthal at it. Migrations run automatically on
+            first start.
+
+            ```bash
+            # Connect to your postgres as a superuser
+            psql -h DBHOST -U postgres
+
+            # Inside psql:
+            CREATE USER azimuthal WITH PASSWORD 'pick-a-strong-password';
+            CREATE DATABASE azimuthal OWNER azimuthal;
+            \q
+            ```
+
+            Then your `DATABASE_URL` is:
+            `postgres://azimuthal:pick-a-strong-password@DBHOST:5432/azimuthal?sslmode=require`
+
+            ## Setting up MinIO (Options 2 & 3, if not using S3)
+
+            ```bash
+            docker run -d \
+              --name azimuthal-minio \
+              -p 9000:9000 -p 9001:9001 \
+              -v minio-data:/data \
+              -e MINIO_ROOT_USER='azimuthal' \
+              -e MINIO_ROOT_PASSWORD='pick-a-strong-16-char-password' \
+              minio/minio server /data --console-address ':9001'
+
+            # Create the bucket (one-time)
+            docker exec azimuthal-minio mc alias set local http://localhost:9000 azimuthal pick-a-strong-16-char-password
+            docker exec azimuthal-minio mc mb local/azimuthal
+            ```
+
+            ---
+
+            ## First-Run: Create an Admin User
+
+            **Required** before you can log in. Azimuthal does not ship with a
+            default account — you create the first one via CLI.
+
+            **Compose:**
+            ```bash
+            docker compose exec app /azimuthal admin create-user \
+              --email admin@example.com \
+              --name "Admin" \
+              --password 'pick-a-strong-password'
+            ```
+
+            **Single Docker container:**
+            ```bash
+            docker exec azimuthal /azimuthal admin create-user \
+              --email admin@example.com \
+              --name "Admin" \
+              --password 'pick-a-strong-password'
+            ```
+
+            **Single binary:**
+            ```bash
+            ./azimuthal-linux-amd64 admin create-user \
+              --email admin@example.com \
+              --name "Admin" \
+              --password 'pick-a-strong-password'
+            ```
+
+            All three paths use the same `DATABASE_URL` env you set above. Each
+            invocation also auto-creates a personal organization for the user
+            and grants owner role.
+
+            > **Change the password from the UI immediately after first login.**
+
+            ## Reset a forgotten password
+
+            ```bash
+            docker compose exec app /azimuthal admin reset-password \
+              --email admin@example.com \
+              --password 'new-strong-password'
+            ```
+
+            ---
+
+            ## Required environment variables
+
+            | Variable | What it is |
+            |---|---|
+            | `DATABASE_URL` | Full Postgres DSN, e.g. `postgres://user:pass@host:5432/azimuthal?sslmode=require` |
+            | `JWT_SECRET` | 64-char hex secret for signing tokens. Generate: `openssl rand -hex 32` |
+            | `STORAGE_ENDPOINT` | S3-compatible URL (S3, MinIO, R2, etc.) |
+            | `STORAGE_ACCESS_KEY` | Access key for the storage backend |
+            | `STORAGE_SECRET_KEY` | Secret key for the storage backend |
+            | `STORAGE_BUCKET` | Bucket name (created beforehand) |
+
+            ### Common optional vars
+
+            | Variable | Default | Use |
+            |---|---|---|
+            | `APP_PORT` | `8080` | HTTP port |
+            | `APP_BASE_URL` | `http://localhost:8080` | Public URL — used in emails and external links |
+            | `APP_ENV` | `production` | `development` / `test` / `production` |
+            | `JWT_EXPIRY` | `24h` | Access token lifetime (Go duration) |
+            | `SMTP_HOST` / `SMTP_PORT` | `localhost` / `25` | Outbound email |
+            | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+
+            ---
+
+            ## Verify your download
+
             ```bash
             sha256sum -c azimuthal-linux-amd64.sha256
             ```
- 
-            ### Self-hosting docs
-            See [docs/self-hosting.md](docs/self-hosting.md) for the
-            complete setup guide including Docker Compose and backup/restore.
+
+            Each binary in this release ships with its matching `.sha256` file —
+            verify before running on production hosts.

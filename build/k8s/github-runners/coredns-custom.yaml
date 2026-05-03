@@ -1,0 +1,80 @@
+# coredns-custom — survives k3s addon reconciliation.
+#
+# k3s embeds a default Corefile that forwards `.` to /etc/resolv.conf, which
+# on systemd-resolved hosts contains only `127.0.0.53` (a localhost stub
+# that DOES NOT WORK inside pod network namespaces). Result: every cluster
+# DNS query times out, runners can't reach api.github.com, etc.
+#
+# This ConfigMap is mounted at /etc/coredns/custom inside CoreDNS. The
+# default Corefile imports anything matching:
+#   - *.override   (directives added INSIDE the .:53 block)
+#   - *.server     (whole new server blocks added OUTSIDE)
+#
+# We can't redefine `forward .` (only one allowed per block), so instead
+# we add explicit per-zone blocks for the domains our runners actually
+# need to resolve. CoreDNS prefers the most-specific zone match, so any
+# query for these domains (and their subdomains) goes to public DNS,
+# bypassing the broken default forward entirely.
+#
+# Apply once:  kubectl apply -f coredns-custom.yaml
+# (No CoreDNS restart needed — the default Corefile has `reload` plugin.)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  github.server: |
+    github.com:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    githubusercontent.com:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    githubapp.com:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    ghcr.io:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+  build-mirrors.server: |
+    docker.io:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    docker.com:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    quay.io:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    gcr.io:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    pkg.go.dev:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    proxy.golang.org:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    sum.golang.org:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    npmjs.org:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }
+    npmjs.com:53 {
+      forward . 1.1.1.1 8.8.8.8 9.9.9.9
+      cache 60
+    }

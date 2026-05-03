@@ -34,6 +34,33 @@ template:
   spec:
     securityContext:
       supplementalGroups: [2375]
+    # Runners only need public-internet DNS (api.github.com, ghcr.io, npm,
+    # Go module proxy, etc.) — they do NOT need cluster DNS. Going direct
+    # to public resolvers means CoreDNS health (which on k3s defaults to
+    # forwarding to host's 127.0.0.53 stub that doesn't work inside pods)
+    # can't break our CI. dnsPolicy: None + explicit nameservers is the
+    # supported, persistent, no-sudo fix.
+    dnsPolicy: None
+    dnsConfig:
+      nameservers:
+        - 1.1.1.1
+        - 8.8.8.8
+        - 9.9.9.9
+      options:
+        - name: ndots
+          value: "1"
+        - name: timeout
+          value: "3"
+        - name: attempts
+          value: "3"
+    # Share PID namespace so dind can see when the runner process exits and
+    # gracefully shut itself down. Without this, dind keeps running after
+    # the runner container exits → pod stays 1/2 NotReady forever, ARC
+    # controller can't replace it, jobs queue against zombie pods.
+    shareProcessNamespace: true
+    # Belt-and-suspenders: cap pod lifetime so even if the wrapper script
+    # below somehow misses, k8s force-terminates after this many seconds.
+    activeDeadlineSeconds: 7200
     initContainers:
       - name: init-dind-externals
         image: ghcr.io/actions/actions-runner:latest
@@ -72,10 +99,40 @@ template:
           - name: dind-externals
             mountPath: /home/runner/externals
 
-      # Docker-in-Docker daemon — needed for `services:` and docker build
+      # Docker-in-Docker daemon — needed for `services:` and docker build.
+      #
+      # The wrapper script starts dockerd, then watches for the runner
+      # process (run.sh / Runner.Listener) to disappear. Once gone, it
+      # cleanly shuts dockerd down so the pod can terminate. Requires
+      # shareProcessNamespace: true (set above) so dind can see runner's
+      # PIDs via /proc.
+      #
+      # Without this wrapper: dockerd never exits when the runner job
+      # completes → pod stays 1/2 NotReady → ARC can't replace it → jobs
+      # pile up against zombies.
       - name: dind
         image: docker:dind
-        args: ["dockerd", "--host=unix:///var/run/docker.sock", "--host=tcp://0.0.0.0:2376"]
+        command: ["sh", "-c"]
+        args:
+          - |
+            dockerd \
+              --host=unix:///var/run/docker.sock \
+              --host=tcp://0.0.0.0:2376 &
+            DOCKERD_PID=$!
+            # Give the runner container a chance to start.
+            sleep 30
+            # Watch: as long as the runner process is alive, keep going.
+            while pgrep -f 'Runner.Listener|run\.sh' >/dev/null 2>&1; do
+              sleep 10
+            done
+            echo "[dind-wrapper] runner exited — shutting down dockerd"
+            kill -TERM $DOCKERD_PID 2>/dev/null || true
+            # Wait up to 30s for dockerd to exit cleanly
+            for i in $(seq 1 30); do
+              kill -0 $DOCKERD_PID 2>/dev/null || break
+              sleep 1
+            done
+            exit 0
         securityContext:
           privileged: true
         # Cluster has ~1 CPU + 1Gi free across nodes after other workloads;
