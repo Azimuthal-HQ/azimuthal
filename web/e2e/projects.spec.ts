@@ -60,10 +60,27 @@ test.describe('Projects', () => {
     await expect(page).toHaveURL('/')
   })
 
-  test.fixme('clicking a backlog item opens detail view with edit capability', async () => {
-    // FEATURE GAP (not a bug): the project item detail view is read-only — no editable fields and no save action.
-    // Audit ref: testing-audit.md §3.3
-    // Re-enable when: the item detail view exposes editable fields and a save action.
+  test('clicking a backlog item opens detail view with edit capability', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Edit Capability Project', 'project')
+    await page.click('button:has-text("Create Item")')
+    await page.fill('#item-title', 'Editable Item')
+    await page.locator('[role="dialog"] button:has-text("Create Item")').click()
+    await expect(page.locator('text=Editable Item')).toBeVisible({ timeout: 5000 })
+    await page.click('text=Editable Item')
+    await expect(page).not.toHaveURL(/\/login/)
+
+    // Enter edit mode, change title and description, save.
+    await page.click('button:has-text("Edit")')
+    await page.fill('#edit-item-title', 'Editable Item Renamed')
+    await page.fill('#edit-item-description', 'Updated via edit form')
+    await page.click('button:has-text("Save")')
+    await expect(page.locator('h1:has-text("Editable Item Renamed")')).toBeVisible({ timeout: 5000 })
+
+    // Reload — the edit persisted to the database.
+    await page.reload()
+    await expect(page.locator('h1:has-text("Editable Item Renamed")')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=Updated via edit form')).toBeVisible()
   })
 
   test('project item status can be changed', async ({ page }) => {

@@ -1,6 +1,6 @@
 -- name: CreateOrganization :one
-INSERT INTO organizations (id, slug, name, description, plan)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO organizations (id, slug, name, description)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetOrganizationByID :one
@@ -14,7 +14,7 @@ SELECT * FROM organizations WHERE deleted_at IS NULL ORDER BY name ASC;
 
 -- name: UpdateOrganization :one
 UPDATE organizations
-SET name = $2, description = $3, plan = $4
+SET name = $2, description = $3
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 

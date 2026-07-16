@@ -115,7 +115,6 @@ type Organization struct {
 	Slug        string             `json:"slug"`
 	Name        string             `json:"name"`
 	Description *string            `json:"description"`
-	Plan        string             `json:"plan"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`

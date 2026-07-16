@@ -164,7 +164,7 @@ type updateOrgRequest struct {
 // UpdateOrg updates an organization's details.
 //
 // @Summary      Update organization
-// @Description  Updates an organization's name and description (preserves plan).
+// @Description  Updates an organization's name and description.
 // @Tags         spaces
 // @Accept       json
 // @Produce      json
@@ -195,8 +195,8 @@ func (h *Handler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch current org to preserve plan
-	current, err := h.queries.GetOrganizationByID(r.Context(), orgID)
+	// Verify the org exists before updating.
+	_, err = h.queries.GetOrganizationByID(r.Context(), orgID)
 	if err != nil {
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "organization not found")
 		return
@@ -206,7 +206,6 @@ func (h *Handler) UpdateOrg(w http.ResponseWriter, r *http.Request) {
 		ID:          orgID,
 		Name:        req.Name,
 		Description: req.Description,
-		Plan:        current.Plan,
 	})
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to update organization")

@@ -150,10 +150,17 @@ func ensureOrgForUser(ctx context.Context, queries *generated.Queries, displayNa
 		Slug:        orgSlug,
 		Name:        displayName,
 		Description: &orgDesc,
-		Plan:        "free",
 	})
 	if err != nil {
 		return uuid.Nil, "", fmt.Errorf("creating organization: %w", err)
+	}
+
+	// Every org needs its seeded default workflows, no matter which path
+	// created it — without them AssignDefaultWorkflowToSpace fails for
+	// every space in the org. (The register endpoint seeds via
+	// OrgProvisionerAdapterWithWorkflows; the CLI must do the same.)
+	if err := adapters.NewWorkflowAdapter(queries).SeedDefaultWorkflows(ctx, orgID); err != nil {
+		return uuid.Nil, "", fmt.Errorf("seeding default workflows: %w", err)
 	}
 	return orgID, orgSlug, nil
 }

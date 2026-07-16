@@ -47,7 +47,6 @@ func (a *OrgProvisionerAdapter) ProvisionOrg(ctx context.Context, displayName st
 		Slug:        slug,
 		Name:        displayName,
 		Description: &desc,
-		Plan:        "free",
 	})
 	if err != nil {
 		return uuid.Nil, "", fmt.Errorf("provisioning org: %w", err)
