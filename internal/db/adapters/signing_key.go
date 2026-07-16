@@ -3,6 +3,7 @@ package adapters
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 
@@ -29,7 +30,7 @@ func (a *SigningKeyAdapter) GetPrivateKeyPEM(ctx context.Context) (string, error
 		return "", auth.ErrNoSigningKey
 	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("signing key adapter get: %w", err)
 	}
 	return pemStr, nil
 }
@@ -37,6 +38,8 @@ func (a *SigningKeyAdapter) GetPrivateKeyPEM(ctx context.Context) (string, error
 // InsertPrivateKeyPEM stores the key unless one already exists; losing the
 // first-writer race is not an error (the caller re-reads the winner).
 func (a *SigningKeyAdapter) InsertPrivateKeyPEM(ctx context.Context, pemData string) error {
-	_, err := a.q.InsertSigningKey(ctx, pemData)
-	return err
+	if _, err := a.q.InsertSigningKey(ctx, pemData); err != nil {
+		return fmt.Errorf("signing key adapter insert: %w", err)
+	}
+	return nil
 }
