@@ -36,21 +36,73 @@ test.describe('Wiki', () => {
     await expect(page).toHaveURL('/')
   })
 
-  test.fixme('wiki edit button opens editor', async () => {
-    // FEATURE GAP (not a bug): the wiki edit pencil button has no onClick handler because the TipTap-based editor component has not been built yet.
-    // Audit ref: testing-audit.md §3.3
-    // Re-enable when: the editor component is wired and pointed at PUT /api/v1/spaces/{spaceID}/wiki/{pageID}.
+  test('wiki edit button opens editor and edit persists', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Editor Wiki', 'wiki')
+
+    await page.click('button:has-text("New Page")')
+    await page.fill('#page-title', 'Editable Page')
+    await page.locator('[role="dialog"] button:has-text("Create Page")').click()
+    await expect(page.locator('text=Editable Page').first()).toBeVisible({ timeout: 5000 })
+
+    // Open the editor (TipTap-based rich text editor)
+    await page.click('button:has-text("Edit")')
+    const editor = page.locator('.ProseMirror').first()
+    await expect(editor).toBeVisible({ timeout: 5000 })
+
+    // Type content and save
+    await editor.click()
+    await editor.pressSequentially('Content written in the editor')
+    await page.click('button:has-text("Save")')
+
+    // Content renders after save, and persists across reload
+    await expect(page.locator('text=Content written in the editor').first()).toBeVisible({ timeout: 5000 })
+    await page.reload()
+    await expect(page.locator('text=Content written in the editor').first()).toBeVisible({ timeout: 10000 })
   })
 
-  test.fixme('wiki page tree shows hierarchy', async () => {
-    // FEATURE GAP (not a bug): the wiki sidebar renders a flat list even though pages.parent_id supports nesting.
-    // Audit ref: testing-audit.md §3.3
-    // Re-enable when: the frontend renders parent_id as a tree instead of a flat list.
+  test('wiki page tree shows hierarchy', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Tree Wiki', 'wiki')
+
+    // Create a top-level page…
+    await page.click('button:has-text("New Page")')
+    await page.fill('#page-title', 'Parent Node')
+    await page.locator('[role="dialog"] button:has-text("Create Page")').click()
+    await expect(page.locator('text=Parent Node').first()).toBeVisible({ timeout: 5000 })
+
+    // …and a child nested under it via the parent selector.
+    await page.click('button:has-text("New Page")')
+    await page.fill('#page-title', 'Child Node')
+    await page.selectOption('#page-parent', { label: 'Parent Node' })
+    await page.locator('[role="dialog"] button:has-text("Create Page")').click()
+    await expect(page.locator('text=Child Node').first()).toBeVisible({ timeout: 5000 })
+
+    // The sidebar must render real hierarchy: the child sits at depth 1
+    // under its parent — not in a flat list.
+    const childEntry = page.locator('[data-tree-depth="1"]').filter({ hasText: 'Child Node' })
+    await expect(childEntry).toBeVisible({ timeout: 5000 })
+    const parentEntry = page.locator('[data-tree-depth="0"]').filter({ hasText: 'Parent Node' }).first()
+    await expect(parentEntry).toBeVisible()
   })
 
-  test.fixme('wiki page comments are visible', async () => {
-    // FEATURE GAP (not a bug): the wiki page does not call the comments endpoint or render a comment thread.
-    // Audit ref: testing-audit.md §3.3
-    // Re-enable when: the frontend posts to and renders from /api/v1/orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments.
+  test('wiki page comments are visible and can be posted', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Comments Wiki', 'wiki')
+
+    await page.click('button:has-text("New Page")')
+    await page.fill('#page-title', 'Commented Page')
+    await page.locator('[role="dialog"] button:has-text("Create Page")').click()
+    await expect(page.locator('text=Commented Page').first()).toBeVisible({ timeout: 5000 })
+
+    // Post a comment and verify it renders and persists after reload.
+    const commentBox = page.locator('textarea[placeholder*="comment" i], input[placeholder*="comment" i]').first()
+    await expect(commentBox).toBeVisible({ timeout: 5000 })
+    await commentBox.fill('A wiki page comment')
+    await page.locator('button:has-text("Comment")').first().click()
+    await expect(page.locator('text=A wiki page comment').first()).toBeVisible({ timeout: 5000 })
+
+    await page.reload()
+    await expect(page.locator('text=A wiki page comment').first()).toBeVisible({ timeout: 10000 })
   })
 })

@@ -136,7 +136,6 @@ export interface Organization {
   name: string;
   slug: string;
   description: string | null;
-  plan: string;
   created_at: string;
   updated_at: string;
 }

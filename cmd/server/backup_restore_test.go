@@ -256,7 +256,6 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	require.NoError(t, err, "org row must round-trip")
 	require.Equal(t, seed.org.Slug, gotOrg.Slug)
 	require.Equal(t, seed.org.Name, gotOrg.Name)
-	require.Equal(t, seed.org.Plan, gotOrg.Plan)
 
 	gotUser, err := dstQueries.GetUserByID(ctx, seed.user.ID)
 	require.NoError(t, err, "user row must round-trip")
@@ -323,7 +322,6 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 		Slug:        "rt-org-" + suffix,
 		Name:        "Round Trip Org " + suffix,
 		Description: &desc,
-		Plan:        "free",
 	})
 	require.NoError(t, err)
 

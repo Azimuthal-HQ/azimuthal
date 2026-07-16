@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, type ReactElement } from 'react';
 import { useParams } from 'react-router-dom';
 import { FileText, Edit, Plus, AlertCircle, Search, History, X, ChevronRight, Lock } from 'lucide-react';
 import { MarkdownEditor } from '../../components/ui/MarkdownEditor';
@@ -74,25 +74,68 @@ function WikiSidebar({ pages, activeId, onSelect, spaceId }: SidebarProps) {
           <p className="px-2 py-3 text-[var(--text-sm)] text-[var(--color-text-muted)]">
             {search.length > 1 ? 'No results.' : 'No pages yet.'}
           </p>
-        ) : showing.map(p => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => onSelect(p.id)}
-            className={cn(
-              'flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 text-left text-[var(--text-sm)] transition-colors',
-              activeId === p.id
-                ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-medium'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]',
-            )}
-          >
-            <FileText className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{p.title}</span>
-          </button>
-        ))}
+        ) : search.length > 1 ? (
+          // Search results stay flat — hierarchy only applies to the tree view.
+          showing.map(p => (
+            <SidebarPageButton key={p.id} page={p} depth={0} activeId={activeId} onSelect={onSelect} />
+          ))
+        ) : (
+          <SidebarTree pages={showing} activeId={activeId} onSelect={onSelect} />
+        )}
       </div>
     </div>
   );
+}
+
+interface SidebarPageButtonProps {
+  page: { id: string; title: string };
+  depth: number;
+  activeId: string | null;
+  onSelect: (id: string) => void;
+}
+
+function SidebarPageButton({ page, depth, activeId, onSelect }: SidebarPageButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(page.id)}
+      style={{ paddingLeft: `${8 + depth * 16}px` }}
+      className={cn(
+        'flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 text-left text-[var(--text-sm)] transition-colors',
+        activeId === page.id
+          ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-medium'
+          : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]',
+      )}
+    >
+      <FileText className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">{page.title}</span>
+    </button>
+  );
+}
+
+// SidebarTree renders the real page hierarchy: children nest (indented)
+// under their parent via parent_id — never a flat list.
+function SidebarTree({ pages, activeId, onSelect }: Omit<SidebarProps, 'spaceId'>) {
+  const byParent = new Map<string, typeof pages>();
+  const ids = new Set(pages.map(p => p.id));
+  for (const p of pages) {
+    // Pages whose parent isn't in this space's list render at the root.
+    const key = p.parent_id && ids.has(p.parent_id) ? p.parent_id : '';
+    const list = byParent.get(key) ?? [];
+    list.push(p);
+    byParent.set(key, list);
+  }
+
+  function renderLevel(parentKey: string, depth: number): ReactElement[] {
+    return (byParent.get(parentKey) ?? []).map(p => (
+      <div key={p.id} data-tree-depth={depth}>
+        <SidebarPageButton page={p} depth={depth} activeId={activeId} onSelect={onSelect} />
+        {renderLevel(p.id, depth + 1)}
+      </div>
+    ));
+  }
+
+  return <>{renderLevel('', 0)}</>;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +233,7 @@ export function WikiPage() {
   // New Page modal state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formTitle, setFormTitle] = useState('');
+  const [formParentId, setFormParentId] = useState('');
 
   // Auto-select first page
   useMemo(() => {
@@ -261,10 +305,15 @@ export function WikiPage() {
     const title = formTitle.trim();
     if (!title) return;
     try {
-      const created = await createMutation.mutateAsync({ title, content: '' });
+      const created = await createMutation.mutateAsync({
+        title,
+        content: '',
+        parent_id: formParentId || null,
+      });
       setActiveId(created.id);
       setDialogOpen(false);
       setFormTitle('');
+      setFormParentId('');
     } catch (err) {
       console.error('[WikiPage] Create page error:', err);
     }
@@ -535,6 +584,20 @@ export function WikiPage() {
                 onChange={(e) => setFormTitle(e.target.value)}
                 autoFocus
               />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="page-parent" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Parent page</label>
+              <select
+                id="page-parent"
+                value={formParentId}
+                onChange={(e) => setFormParentId(e.target.value)}
+                className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+              >
+                <option value="">None (top level)</option>
+                {pages.map((p) => (
+                  <option key={p.id} value={p.id}>{p.title}</option>
+                ))}
+              </select>
             </div>
             {createMutation.error && (
               <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{createMutation.error.message}</p>

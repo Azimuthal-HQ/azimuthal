@@ -18,11 +18,13 @@ test.describe('Notifications — P1', () => {
     await expect(page).not.toHaveURL(/\/login/, { timeout: 5000 })
     await expect(page).toHaveURL(/\/tickets\//, { timeout: 5000 })
 
-    // Assignee dropdown must show at least one member (creator is auto-added)
+    // Assignee dropdown must show at least one member (creator is auto-added).
+    // NOTE: <option> elements inside a closed native <select> are never
+    // "visible" to Playwright — assert on count, as service-desk.spec does.
     const assigneeSelect = page.locator('select').filter({ hasText: 'Unassigned' }).first()
     await expect(assigneeSelect).toBeVisible({ timeout: 5000 })
     const memberOptions = assigneeSelect.locator('option:not([value=""])')
-    await expect(memberOptions.first()).toBeVisible({ timeout: 5000 })
+    await expect(memberOptions).not.toHaveCount(0, { timeout: 5000 })
 
     // Assign to self — pick the first (and only) member
     const memberValue = await memberOptions.first().getAttribute('value')

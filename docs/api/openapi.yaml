@@ -1115,7 +1115,7 @@ paths:
       tags:
       - spaces
     patch:
-      description: Updates an organization's name and description (preserves plan).
+      description: Updates an organization's name and description.
       parameters:
       - description: Organization ID (UUID)
         in: path

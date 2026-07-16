@@ -14,6 +14,28 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
+// TestAdminCreateUser_SeedsDefaultWorkflows: every org — regardless of which
+// path created it (register endpoint OR admin CLI) — must have the two
+// seeded default workflows, otherwise AssignDefaultWorkflowToSpace fails on
+// every space created in that org.
+func TestAdminCreateUser_SeedsDefaultWorkflows(t *testing.T) {
+	tdb := testutil.NewTestDB(t)
+	queries := generated.New(tdb.Pool)
+	ctx := context.Background()
+
+	orgID, _, err := ensureOrgForUser(ctx, queries, "Workflow Seeded User")
+	require.NoError(t, err)
+
+	for _, appliesTo := range []string{"tickets", "project_items"} {
+		wf, err := queries.GetDefaultWorkflow(ctx, generated.GetDefaultWorkflowParams{
+			OrgID:     orgID,
+			AppliesTo: appliesTo,
+		})
+		require.NoError(t, err, "org created via admin CLI must have a default %s workflow", appliesTo)
+		require.True(t, wf.IsDefault)
+	}
+}
+
 // Audit ref: testing-audit.md §6 — v0.1.3 admin create-user chain was uncovered.
 // This test exercises the same query sequence that runCreateUser executes,
 // verifying that a user, organization, and owner-role membership all land

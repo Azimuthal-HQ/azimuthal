@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Clock, AlertCircle, Trash2, Link2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { cn } from '../../lib/utils';
@@ -61,6 +62,11 @@ export function ItemDetailPage() {
 
   const [newComment, setNewComment] = useState('');
 
+  // Edit mode for title + description
+  const [isEditing, setIsEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+
   // Relations state
   const { data: relations = [] } = useRelations(spaceId, itemId);
   const createRelationMutation = useCreateRelation(spaceId, itemId);
@@ -93,6 +99,23 @@ export function ItemDetailPage() {
     await createCommentMutation.mutateAsync({ content: newComment.trim() });
     setNewComment('');
     refetchComments();
+  }
+
+  function startEditing() {
+    setEditTitle(item?.title ?? '');
+    setEditDescription(item?.description ?? '');
+    setIsEditing(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!editTitle.trim()) return;
+    await updateMutation.mutateAsync({
+      title: editTitle.trim(),
+      description: editDescription,
+      priority: item?.priority,
+    });
+    setIsEditing(false);
+    refetchItem();
   }
 
   if (isLoading) {
@@ -151,22 +174,52 @@ export function ItemDetailPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main content */}
         <div className="space-y-6 lg:col-span-2">
-          <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">{item.title}</h1>
-
-          <Card>
-            <CardHeader><CardTitle>Description</CardTitle></CardHeader>
-            <CardContent>
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                {item.description ? (
-                  <ReactMarkdown>{item.description}</ReactMarkdown>
-                ) : (
-                  <span className="italic text-[var(--color-text-muted)] text-[var(--text-sm)]">
-                    No description provided.
-                  </span>
-                )}
+          {isEditing ? (
+            <div className="space-y-3">
+              <input
+                id="edit-item-title"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-2xl)] font-bold text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+              />
+              <textarea
+                id="edit-item-description"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                rows={6}
+                placeholder="Description (markdown supported)"
+                className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+              />
+              <div className="flex gap-2">
+                <Button onClick={handleSaveEdit} disabled={!editTitle.trim() || updateMutation.isPending}>
+                  {updateMutation.isPending ? 'Saving...' : 'Save'}
+                </Button>
+                <Button variant="secondary" onClick={() => setIsEditing(false)}>Cancel</Button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          ) : (
+            <div className="flex items-start justify-between gap-3">
+              <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">{item.title}</h1>
+              <Button variant="secondary" onClick={startEditing}>Edit</Button>
+            </div>
+          )}
+
+          {!isEditing && (
+            <Card>
+              <CardHeader><CardTitle>Description</CardTitle></CardHeader>
+              <CardContent>
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  {item.description ? (
+                    <ReactMarkdown>{item.description}</ReactMarkdown>
+                  ) : (
+                    <span className="italic text-[var(--color-text-muted)] text-[var(--text-sm)]">
+                      No description provided.
+                    </span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Relations section */}
           <div className="border-t border-[var(--color-border)] pt-6">
