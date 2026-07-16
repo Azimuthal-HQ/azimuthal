@@ -34,6 +34,10 @@ go.work.sum
 # .vscode/
 bin/
 
+# Locally built CLI binaries (build outputs of cmd/*; never commit compiled artifacts)
+/migrate
+/azimuthal
+
 # Frontend
 web/node_modules/
 web/playwright-report/

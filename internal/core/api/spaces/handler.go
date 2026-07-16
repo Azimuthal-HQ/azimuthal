@@ -3,14 +3,17 @@ package spaces
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
@@ -34,6 +37,27 @@ func deriveKey(name string) string {
 		return "SPACE"
 	}
 	return first
+}
+
+// uniqueViolation reports whether err is a Postgres unique-constraint
+// violation, and if so on which constraint.
+func uniqueViolation(err error) (constraint string, ok bool) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return pgErr.ConstraintName, true
+	}
+	return "", false
+}
+
+// dedupeKey produces the next candidate key for a derived key that collided:
+// KEY → KEY2 → KEY3 … The numeric suffix replaces trailing characters when
+// needed so the result never exceeds 10 characters.
+func dedupeKey(base string, attempt int) string {
+	suffix := strconv.Itoa(attempt + 1)
+	if len(base)+len(suffix) > 10 {
+		base = base[:10-len(suffix)]
+	}
+	return base + suffix
 }
 
 // WorkflowAssigner assigns a default workflow to a newly created space.
@@ -224,6 +248,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // @Success      201    {object}  map[string]interface{}          "Created space"
 // @Failure      400    {object}  api.SwaggerErrorResponse        "Validation error"
 // @Failure      401    {object}  api.SwaggerErrorResponse        "Not authenticated"
+// @Failure      409    {object}  api.SwaggerErrorResponse        "Duplicate key or slug in this organization"
 // @Failure      500    {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /orgs/{orgID}/spaces [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // HTTP handler; validation + key derivation + member seeding requires branching
@@ -250,8 +275,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 		return
 	}
 
+	keyDerived := req.Key == ""
 	key := req.Key
-	if key == "" {
+	if keyDerived {
 		key = deriveKey(req.Name)
 	}
 	if !validKey.MatchString(key) {
@@ -259,21 +285,43 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 		return
 	}
 
-	space, err := h.queries.CreateSpace(r.Context(), generated.CreateSpaceParams{
-		ID:          uuid.New(),
-		OrgID:       orgID,
-		Slug:        req.Slug,
-		Name:        req.Name,
-		Description: req.Description,
-		Type:        req.Type,
-		Icon:        req.Icon,
-		IsPrivate:   req.IsPrivate,
-		CreatedBy:   claims.UserID,
-		Key:         key,
-	})
-	if err != nil {
-		slog.Error("CreateSpace failed", "error", err, "org_id", orgID) //nolint:gosec // G706: org_id is a UUID, not attacker-controlled
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create space")
+	// A derived key that collides is retried with a numeric suffix (KEY →
+	// KEY2 → KEY3 …); an explicit key that collides is the client's conflict.
+	const maxKeyAttempts = 20
+	var space generated.Space
+	baseKey := key
+	for attempt := 0; ; attempt++ {
+		space, err = h.queries.CreateSpace(r.Context(), generated.CreateSpaceParams{
+			ID:          uuid.New(),
+			OrgID:       orgID,
+			Slug:        req.Slug,
+			Name:        req.Name,
+			Description: req.Description,
+			Type:        req.Type,
+			Icon:        req.Icon,
+			IsPrivate:   req.IsPrivate,
+			CreatedBy:   claims.UserID,
+			Key:         key,
+		})
+		if err == nil {
+			break
+		}
+		constraint, isUnique := uniqueViolation(err)
+		if !isUnique {
+			slog.Error("CreateSpace failed", "error", err, "org_id", orgID) //nolint:gosec // G706: org_id is a UUID, not attacker-controlled
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create space")
+			return
+		}
+		if constraint == "idx_spaces_org_key" {
+			if keyDerived && attempt < maxKeyAttempts {
+				key = dedupeKey(baseKey, attempt)
+				continue
+			}
+			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "a space with this key already exists in the organization")
+			return
+		}
+		// Any other unique violation (org_id, slug) is a client conflict.
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "a space with this slug already exists in the organization")
 		return
 	}
 
