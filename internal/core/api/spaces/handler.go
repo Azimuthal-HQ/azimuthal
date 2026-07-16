@@ -84,16 +84,24 @@ func (h *Handler) WithWorkflowAssigner(wa WorkflowAssigner) *Handler {
 }
 
 // Routes returns a chi.Router with all space endpoints mounted.
-func (h *Handler) Routes() chi.Router {
+// Routes returns the space router. spaceGuard (may be nil in unit tests) is
+// applied to every {spaceID}-scoped route so a space accessed under an org
+// that does not own it 404s — org-level list/create are not guarded.
+func (h *Handler) Routes(spaceGuard func(http.Handler) http.Handler) chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.List)
 	r.Post("/", h.Create)
-	r.Get("/{spaceID}", h.Get)
-	r.Put("/{spaceID}", h.Update)
-	r.Delete("/{spaceID}", h.Delete)
-	r.Get("/{spaceID}/members", h.ListMembers)
-	r.Post("/{spaceID}/members", h.AddMember)
-	r.Delete("/{spaceID}/members/{userID}", h.RemoveMember)
+	r.Route("/{spaceID}", func(r chi.Router) {
+		if spaceGuard != nil {
+			r.Use(spaceGuard)
+		}
+		r.Get("/", h.Get)
+		r.Put("/", h.Update)
+		r.Delete("/", h.Delete)
+		r.Get("/members", h.ListMembers)
+		r.Post("/members", h.AddMember)
+		r.Delete("/members/{userID}", h.RemoveMember)
+	})
 	return r
 }
 

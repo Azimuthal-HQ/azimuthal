@@ -82,12 +82,13 @@ type movePageRequest struct {
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID (UUID)"
 // @Success      200      {array}   map[string]interface{}    "List of pages"
 // @Failure      400      {object}  api.SwaggerErrorResponse  "Invalid space ID"
 // @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      500      {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/wiki [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki [get]
 func (h *Handler) ListPages(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -111,13 +112,14 @@ func (h *Handler) ListPages(w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string                        true  "Space ID (UUID)"
 // @Param        body     body      api.SwaggerCreatePageRequest  true  "Page details"
 // @Success      201      {object}  map[string]interface{}         "Created page"
 // @Failure      400      {object}  api.SwaggerErrorResponse       "Validation error"
 // @Failure      401      {object}  api.SwaggerErrorResponse       "Not authenticated"
 // @Failure      500      {object}  api.SwaggerErrorResponse       "Internal error"
-// @Router       /spaces/{spaceID}/wiki [post]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki [post]
 func (h *Handler) CreatePage(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -167,6 +169,7 @@ func (h *Handler) CreatePage(w http.ResponseWriter, r *http.Request) {
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID (UUID)"
 // @Param        pageID   path      string  true  "Page ID (UUID)"
 // @Success      200      {object}  map[string]interface{}    "Page details"
@@ -174,7 +177,7 @@ func (h *Handler) CreatePage(w http.ResponseWriter, r *http.Request) {
 // @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404      {object}  api.SwaggerErrorResponse  "Not found"
 // @Failure      500      {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/wiki/{pageID} [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID} [get]
 func (h *Handler) GetPage(w http.ResponseWriter, r *http.Request) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
@@ -198,6 +201,7 @@ func (h *Handler) GetPage(w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string                        true  "Space ID (UUID)"
 // @Param        pageID   path      string                        true  "Page ID (UUID)"
 // @Param        body     body      api.SwaggerUpdatePageRequest  true  "Updated fields"
@@ -207,7 +211,7 @@ func (h *Handler) GetPage(w http.ResponseWriter, r *http.Request) {
 // @Failure      404      {object}  api.SwaggerErrorResponse       "Not found"
 // @Failure      409      {object}  map[string]interface{}          "Version conflict"
 // @Failure      500      {object}  api.SwaggerErrorResponse       "Internal error"
-// @Router       /spaces/{spaceID}/wiki/{pageID} [put]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID} [put]
 func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
@@ -255,6 +259,7 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 // @Description  Soft-deletes a wiki page by ID.
 // @Tags         wiki
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path  string  true  "Space ID (UUID)"
 // @Param        pageID   path  string  true  "Page ID (UUID)"
 // @Success      204  "Deleted"
@@ -262,7 +267,7 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 // @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
 // @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/wiki/{pageID} [delete]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID} [delete]
 func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
@@ -292,6 +297,7 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string                       true  "Space ID (UUID)"
 // @Param        pageID   path      string                       true  "Page ID (UUID)"
 // @Param        body     body      api.SwaggerMovePageRequest   true  "New position"
@@ -300,7 +306,7 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 // @Failure      401      {object}  api.SwaggerErrorResponse     "Not authenticated"
 // @Failure      404      {object}  api.SwaggerErrorResponse     "Not found"
 // @Failure      500      {object}  api.SwaggerErrorResponse     "Internal error"
-// @Router       /spaces/{spaceID}/wiki/{pageID}/move [post]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/move [post]
 func (h *Handler) MovePage(w http.ResponseWriter, r *http.Request) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
@@ -343,12 +349,13 @@ func (h *Handler) MovePage(w http.ResponseWriter, r *http.Request) {
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID (UUID)"
 // @Success      200      {array}   map[string]interface{}    "Page tree"
 // @Failure      400      {object}  api.SwaggerErrorResponse  "Invalid space ID"
 // @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      500      {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/wiki/tree [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/tree [get]
 func (h *Handler) Tree(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -371,6 +378,7 @@ func (h *Handler) Tree(w http.ResponseWriter, r *http.Request) {
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID (UUID)"
 // @Param        pageID   path      string  true  "Page ID (UUID)"
 // @Success      200      {array}   map[string]interface{}    "Revision history"
@@ -378,7 +386,7 @@ func (h *Handler) Tree(w http.ResponseWriter, r *http.Request) {
 // @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404      {object}  api.SwaggerErrorResponse  "Not found"
 // @Failure      500      {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/wiki/{pageID}/revisions [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/revisions [get]
 func (h *Handler) ListRevisions(w http.ResponseWriter, r *http.Request) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
@@ -401,6 +409,7 @@ func (h *Handler) ListRevisions(w http.ResponseWriter, r *http.Request) {
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID (UUID)"
 // @Param        pageID   path      string  true  "Page ID (UUID)"
 // @Param        version  path      int     true  "Version number"
@@ -409,7 +418,7 @@ func (h *Handler) ListRevisions(w http.ResponseWriter, r *http.Request) {
 // @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404      {object}  api.SwaggerErrorResponse  "Not found"
 // @Failure      500      {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/wiki/{pageID}/revisions/{version} [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/revisions/{version} [get]
 func (h *Handler) GetRevision(w http.ResponseWriter, r *http.Request) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
@@ -439,6 +448,7 @@ func (h *Handler) GetRevision(w http.ResponseWriter, r *http.Request) {
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID (UUID)"
 // @Param        pageID   path      string  true  "Page ID (UUID)"
 // @Param        from     query     int     true  "From version number"
@@ -448,7 +458,7 @@ func (h *Handler) GetRevision(w http.ResponseWriter, r *http.Request) {
 // @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404      {object}  api.SwaggerErrorResponse  "Not found"
 // @Failure      500      {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/wiki/{pageID}/diff [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/diff [get]
 func (h *Handler) DiffRevisions(w http.ResponseWriter, r *http.Request) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
@@ -489,6 +499,7 @@ func (h *Handler) DiffRevisions(w http.ResponseWriter, r *http.Request) {
 // @Tags         wiki
 // @Produce      html
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path  string  true  "Space ID (UUID)"
 // @Param        pageID   path  string  true  "Page ID (UUID)"
 // @Success      200  {string}  string                    "Rendered HTML"
@@ -496,7 +507,7 @@ func (h *Handler) DiffRevisions(w http.ResponseWriter, r *http.Request) {
 // @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
 // @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/wiki/{pageID}/render [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/render [get]
 func (h *Handler) RenderPage(w http.ResponseWriter, r *http.Request) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
@@ -530,6 +541,7 @@ func (h *Handler) RenderPage(w http.ResponseWriter, r *http.Request) {
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true   "Space ID (UUID)"
 // @Param        q        query     string  true   "Search query"
 // @Param        limit    query     int     false  "Max results (1-200, default 50)"
@@ -537,7 +549,7 @@ func (h *Handler) RenderPage(w http.ResponseWriter, r *http.Request) {
 // @Failure      400      {object}  api.SwaggerErrorResponse  "Missing query"
 // @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      500      {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/wiki/search [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/search [get]
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -593,11 +605,12 @@ func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID"
 // @Param        pageID   path      string  true  "Page ID"
 // @Success      200      {object}  map[string]interface{}
 // @Failure      404      {object}  api.SwaggerErrorResponse
-// @Router       /spaces/{spaceID}/wiki/{pageID}/lock [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock [get]
 func (h *Handler) GetLock(w http.ResponseWriter, r *http.Request) {
 	pageID, err := pageIDFromURL(r)
 	if err != nil {
@@ -618,11 +631,12 @@ func (h *Handler) GetLock(w http.ResponseWriter, r *http.Request) {
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID"
 // @Param        pageID   path      string  true  "Page ID"
 // @Success      200      {object}  map[string]interface{}
 // @Failure      409      {object}  api.SwaggerErrorResponse
-// @Router       /spaces/{spaceID}/wiki/{pageID}/lock [post]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock [post]
 func (h *Handler) AcquireLock(w http.ResponseWriter, r *http.Request) {
 	pageID, err := pageIDFromURL(r)
 	if err != nil {
@@ -651,10 +665,11 @@ func (h *Handler) AcquireLock(w http.ResponseWriter, r *http.Request) {
 // @Summary      Release page lock
 // @Tags         wiki
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID"
 // @Param        pageID   path      string  true  "Page ID"
 // @Success      204
-// @Router       /spaces/{spaceID}/wiki/{pageID}/lock [delete]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock [delete]
 func (h *Handler) ReleaseLock(w http.ResponseWriter, r *http.Request) {
 	pageID, err := pageIDFromURL(r)
 	if err != nil {

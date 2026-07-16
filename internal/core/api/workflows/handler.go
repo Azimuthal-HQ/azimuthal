@@ -467,12 +467,13 @@ func (h *Handler) DeleteTransition(w http.ResponseWriter, r *http.Request) {
 // @Tags         workflows
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID"
 // @Success      200      {object}  workflow.Workflow           "Workflow"
 // @Failure      400      {object}  api.SwaggerErrorResponse   "Invalid ID"
 // @Failure      401      {object}  api.SwaggerErrorResponse   "Not authenticated"
 // @Failure      404      {object}  api.SwaggerErrorResponse   "Not found"
-// @Router       /spaces/{spaceID}/workflow [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/workflow [get]
 func (h *Handler) GetSpaceWorkflow(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -494,12 +495,13 @@ func (h *Handler) GetSpaceWorkflow(w http.ResponseWriter, r *http.Request) {
 // @Tags         workflows
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string  true  "Space ID"
 // @Success      200      {array}   workflow.State             "States"
 // @Failure      400      {object}  api.SwaggerErrorResponse  "Invalid ID"
 // @Failure      401      {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      500      {object}  api.SwaggerErrorResponse  "Internal error"
-// @Router       /spaces/{spaceID}/workflow/states [get]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/workflow/states [get]
 func (h *Handler) GetSpaceWorkflowStates(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -536,6 +538,7 @@ func (h *Handler) GetSpaceWorkflowStates(w http.ResponseWriter, r *http.Request)
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID   path      string                          true  "Space ID"
 // @Param        ticketID  path      string                          true  "Ticket ID"
 // @Param        body      body      workflowTransitionRequest       true  "Target state ID"
@@ -545,7 +548,7 @@ func (h *Handler) GetSpaceWorkflowStates(w http.ResponseWriter, r *http.Request)
 // @Failure      404       {object}  api.SwaggerErrorResponse        "Not found"
 // @Failure      409       {object}  api.SwaggerErrorResponse        "Invalid transition"
 // @Failure      500       {object}  api.SwaggerErrorResponse        "Internal error"
-// @Router       /spaces/{spaceID}/tickets/{ticketID}/workflow-state [post]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/workflow-state [post]
 func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // workflow state machine validation requires multiple guard branches
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
@@ -628,6 +631,7 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID  path      string                          true  "Space ID"
 // @Param        itemID   path      string                          true  "Item ID"
 // @Param        body     body      workflowTransitionRequest       true  "Target state ID"
@@ -637,7 +641,7 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 // @Failure      404      {object}  api.SwaggerErrorResponse        "Not found"
 // @Failure      409      {object}  api.SwaggerErrorResponse        "Invalid transition"
 // @Failure      500      {object}  api.SwaggerErrorResponse        "Internal error"
-// @Router       /spaces/{spaceID}/projects/items/{itemID}/workflow-state [post]
+// @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/workflow-state [post]
 func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // workflow state machine validation requires multiple guard branches
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {

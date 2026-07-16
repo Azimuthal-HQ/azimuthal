@@ -77,6 +77,15 @@ export function isAuthenticated(): boolean {
   return !isTokenExpired(token);
 }
 
+// getCurrentOrgId returns the org the current session belongs to, decoded
+// from the stored JWT. Every space resource URL is org+space scoped, so the
+// API client needs this without threading orgId through each component.
+export function getCurrentOrgId(): string {
+  const token = getToken();
+  if (!token) return '';
+  return decodeJWTPayload(token)?.org_id ?? '';
+}
+
 export function logout(): void {
   removeToken();
   removeRefreshToken();

@@ -151,41 +151,41 @@ expect_code "create second 'Shared…' space (same first word) returns 201 — d
 # ── Beacon (tickets) ─────────────────────────────────────────
 echo ""
 echo "=== Beacon — tickets ==="
-request POST "/api/v1/spaces/${DESK_ID}/tickets" \
+request POST "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets" \
   '{"title":"Regression ticket","priority":"high"}'
 expect_code "create ticket returns 201" 201
 TICKET_ID=$(jsonval id)
 check "created ticket has status open" $([ "$(jsonval status)" = "open" ] && echo 0 || echo 1)
 
-request GET "/api/v1/spaces/${DESK_ID}/tickets/${TICKET_ID}"
+request GET "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets/${TICKET_ID}"
 expect_code "get ticket returns 200" 200
 check "ticket priority persists as high" $([ "$(jsonval priority)" = "high" ] && echo 0 || echo 1)
 
 # Assign to self, then unassign with explicit null — the null-vs-absent contract.
-request POST "/api/v1/spaces/${DESK_ID}/tickets/${TICKET_ID}/assign" \
+request POST "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets/${TICKET_ID}/assign" \
   "{\"assignee_id\":\"${USER_ID}\"}"
 expect_code "assign ticket returns 200" 200
-request GET "/api/v1/spaces/${DESK_ID}/tickets/${TICKET_ID}"
+request GET "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets/${TICKET_ID}"
 check "assignee_id set after assign" $([ "$(jsonval assignee_id)" = "$USER_ID" ] && echo 0 || echo 1)
 
 # PATCH without assignee field must NOT clear the assignee (absent ≠ null).
-request PATCH "/api/v1/spaces/${DESK_ID}/tickets/${TICKET_ID}" \
+request PATCH "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets/${TICKET_ID}" \
   '{"title":"Regression ticket renamed","description":"updated","priority":"high"}'
 expect_code "update ticket returns 200" 200
-request GET "/api/v1/spaces/${DESK_ID}/tickets/${TICKET_ID}"
+request GET "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets/${TICKET_ID}"
 check "assignee survives an update that omits assignee (absent ≠ clear)" \
   $([ "$(jsonval assignee_id)" = "$USER_ID" ] && echo 0 || echo 1)
 
-request DELETE "/api/v1/spaces/${DESK_ID}/tickets/${TICKET_ID}/assign"
+request DELETE "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets/${TICKET_ID}/assign"
 expect_code "unassign ticket returns 200" 200
-request GET "/api/v1/spaces/${DESK_ID}/tickets/${TICKET_ID}"
+request GET "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets/${TICKET_ID}"
 check "assignee_id empty after explicit unassign" $([ -z "$(jsonval assignee_id)" ] && echo 0 || echo 1)
 
-request POST "/api/v1/spaces/${DESK_ID}/tickets/${TICKET_ID}/status" \
+request POST "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets/${TICKET_ID}/status" \
   '{"status":"in_progress"}'
 expect_code "transition ticket to in_progress returns 200" 200
 
-request GET "/api/v1/spaces/${DESK_ID}/tickets/kanban"
+request GET "/api/v1/orgs/${ORG_ID}/spaces/${DESK_ID}/tickets/kanban"
 expect_code "kanban returns 200" 200
 check "kanban contains the ticket" $(echo "$RESPONSE" | grep -q "$TICKET_ID" && echo 0 || echo 1)
 
@@ -200,47 +200,47 @@ check "comment content round-trips" $(echo "$RESPONSE" | grep -q "regression com
 # ── Vector (project items) ───────────────────────────────────
 echo ""
 echo "=== Vector — project items ==="
-request POST "/api/v1/spaces/${PROJ_ID}/projects/items" \
+request POST "/api/v1/orgs/${ORG_ID}/spaces/${PROJ_ID}/projects/items" \
   '{"title":"Regression item","kind":"task","priority":"medium"}'
 expect_code "create project item returns 201" 201
 ITEM_ID=$(jsonval id)
 
-request POST "/api/v1/spaces/${PROJ_ID}/projects/items/${ITEM_ID}/status" \
+request POST "/api/v1/orgs/${ORG_ID}/spaces/${PROJ_ID}/projects/items/${ITEM_ID}/status" \
   '{"status":"in_progress"}'
 expect_code "transition item status returns 200" 200
-request GET "/api/v1/spaces/${PROJ_ID}/projects/items/${ITEM_ID}"
+request GET "/api/v1/orgs/${ORG_ID}/spaces/${PROJ_ID}/projects/items/${ITEM_ID}"
 check "item status persists as in_progress" $([ "$(jsonval status)" = "in_progress" ] && echo 0 || echo 1)
 
-request GET "/api/v1/spaces/${PROJ_ID}/projects/backlog"
+request GET "/api/v1/orgs/${ORG_ID}/spaces/${PROJ_ID}/projects/backlog"
 expect_code "backlog returns 200" 200
 check "backlog contains the item" $(echo "$RESPONSE" | grep -q "$ITEM_ID" && echo 0 || echo 1)
 
 # ── Codex (wiki) ─────────────────────────────────────────────
 echo ""
 echo "=== Codex — wiki ==="
-request POST "/api/v1/spaces/${WIKI_ID}/wiki" \
+request POST "/api/v1/orgs/${ORG_ID}/spaces/${WIKI_ID}/wiki" \
   '{"title":"Parent page","content":"<p>parent</p>"}'
 expect_code "create wiki page returns 201" 201
 PAGE_ID=$(jsonval id)
 
-request POST "/api/v1/spaces/${WIKI_ID}/wiki" \
+request POST "/api/v1/orgs/${ORG_ID}/spaces/${WIKI_ID}/wiki" \
   "{\"title\":\"Child page\",\"content\":\"<p>child</p>\",\"parent_id\":\"${PAGE_ID}\"}"
 expect_code "create child page returns 201" 201
 CHILD_ID=$(jsonval id)
 
-request GET "/api/v1/spaces/${WIKI_ID}/wiki/tree"
+request GET "/api/v1/orgs/${ORG_ID}/spaces/${WIKI_ID}/wiki/tree"
 expect_code "wiki tree returns 200" 200
 check "tree contains parent and child" \
   $(echo "$RESPONSE" | grep -q "$PAGE_ID" && echo "$RESPONSE" | grep -q "$CHILD_ID" && echo 0 || echo 1)
 
-request GET "/api/v1/spaces/${WIKI_ID}/wiki/${PAGE_ID}"
+request GET "/api/v1/orgs/${ORG_ID}/spaces/${WIKI_ID}/wiki/${PAGE_ID}"
 VERSION=$(echo "$RESPONSE" | grep -o '"version":[0-9]*' | head -1 | cut -d: -f2)
-request PUT "/api/v1/spaces/${WIKI_ID}/wiki/${PAGE_ID}" \
+request PUT "/api/v1/orgs/${ORG_ID}/spaces/${WIKI_ID}/wiki/${PAGE_ID}" \
   "{\"title\":\"Parent page\",\"content\":\"<p>edited</p>\",\"expected_version\":${VERSION:-1}}"
 expect_code "update page with expected_version returns 200" 200
 
 # Stale version must be rejected (optimistic backstop) — 409, not success.
-request PUT "/api/v1/spaces/${WIKI_ID}/wiki/${PAGE_ID}" \
+request PUT "/api/v1/orgs/${ORG_ID}/spaces/${WIKI_ID}/wiki/${PAGE_ID}" \
   "{\"title\":\"Parent page\",\"content\":\"<p>stale</p>\",\"expected_version\":${VERSION:-1}}"
 expect_code "update with stale expected_version returns 409" 409
 

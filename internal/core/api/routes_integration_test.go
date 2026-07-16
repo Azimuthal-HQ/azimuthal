@@ -108,6 +108,13 @@ func newTestServer(t *testing.T) *testServer {
 		NotificationHandler: notificationsapi.NewHandler(queries),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
 		SPAHandler:          nil,
+		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
+			s, err := queries.GetSpaceByID(ctx, spaceID)
+			if err != nil {
+				return uuid.Nil, fmt.Errorf("resolving space org: %w", err)
+			}
+			return s.OrgID, nil
+		},
 	})
 
 	srv := httptest.NewServer(router)
@@ -435,7 +442,7 @@ func TestIntegration_CreateTicket_AndGet(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
 		"title":    "Test Ticket",
 		"priority": "medium",
 	}, true)
@@ -445,7 +452,7 @@ func TestIntegration_CreateTicket_AndGet(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.Body, &ticketResp))
 	ticketID := ticketResp["id"].(string)
 
-	r = ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/tickets/%s", space.ID, ticketID), true)
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s", ts.OrgID, space.ID, ticketID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode)
 }
 
@@ -470,10 +477,13 @@ func TestIntegration_ErrorFormat_Consistent(t *testing.T) {
 			wantCode:   "UNAUTHORIZED",
 		},
 		{
-			name:       "500_nonexistent_ticket",
-			path:       fmt.Sprintf("/api/v1/spaces/%s/tickets/%s", uuid.New(), uuid.New()),
+			// A nonexistent space under the org 404s at the scoping guard
+			// (pre-M3 this leaked through and 500'd in the handler).
+			name:       "404_nonexistent_space",
+			path:       fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s", ts.OrgID, uuid.New(), uuid.New()),
 			authed:     true,
-			wantStatus: http.StatusInternalServerError,
+			wantStatus: http.StatusNotFound,
+			wantCode:   "NOT_FOUND",
 		},
 	}
 
@@ -504,7 +514,7 @@ func TestIntegration_CreateProjectItem_ViaAPI(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title":    "API Item",
 		"kind":     "task",
 		"priority": "medium",
@@ -524,7 +534,7 @@ func TestIntegration_CreateItem_MissingTitle_Returns400(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"kind":     "task",
 		"priority": "medium",
 	}, true)
@@ -537,7 +547,7 @@ func TestIntegration_CreateItem_MissingKind_Returns400(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title":    "No kind",
 		"priority": "medium",
 	}, true)
@@ -552,7 +562,7 @@ func TestIntegration_CreateWikiPage_ViaAPI(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/wiki", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title":   "Test Wiki Page",
 		"content": "Some markdown content",
 	}, true)
@@ -624,29 +634,29 @@ func TestAuthMe_SameTokenWorksOnBothEndpoints(t *testing.T) {
 
 // --- Comments ---
 
-// TestComments_CorrectURLIncludesOrgId verifies the correct comments URL
-// structure: /orgs/:orgId/spaces/:spaceId/items/:itemId/comments returns 200,
-// while /spaces/:spaceId/items/:itemId/comments returns 404.
+// TestComments_CorrectURLIncludesOrgId verifies the single scoping
+// convention for ticket comments: the org+space URL returns 200, the old
+// space-only URL returns 404.
 func TestComments_CorrectURLIncludesOrgId(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
 
-	// Create an item directly in the database
-	itemID := uuid.New()
+	// Create a ticket directly in the database
+	ticketID := uuid.New()
 	_, err := ts.DB.Pool.Exec(context.Background(),
 		`INSERT INTO tickets (id, space_id, number, title, status, priority, reporter_id) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		itemID, space.ID, 1, "Test Ticket", "open", "medium", user.ID,
+		ticketID, space.ID, 1, "Test Ticket", "open", "medium", user.ID,
 	)
 	require.NoError(t, err)
 
-	// Correct URL: with orgId
-	correctResult := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/items/%s/comments", ts.OrgID, space.ID, itemID), true)
+	// Correct URL: org+space, comments hang off the ticket path
+	correctResult := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s/comments", ts.OrgID, space.ID, ticketID), true)
 	require.Equal(t, http.StatusOK, correctResult.StatusCode, "correct URL should return 200: %s", correctResult.Body)
 
-	// Wrong URL: without orgId — should return 404
-	wrongResult := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/items/%s/comments", space.ID, itemID), true)
-	require.Equal(t, http.StatusNotFound, wrongResult.StatusCode, "wrong URL should return 404")
+	// Wrong URL: space-only convention is gone — 404
+	wrongResult := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/tickets/%s/comments", space.ID, ticketID), true)
+	require.Equal(t, http.StatusNotFound, wrongResult.StatusCode, "space-only URL should return 404")
 }
 
 // TestComments_PostAndRetrieve tests creating and retrieving a comment.
@@ -663,7 +673,7 @@ func TestComments_PostAndRetrieve(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	commentsURL := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/items/%s/comments", ts.OrgID, space.ID, itemID)
+	commentsURL := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s/comments", ts.OrgID, space.ID, itemID)
 
 	// POST a comment
 	postResult := ts.post(t, commentsURL, map[string]string{
@@ -742,7 +752,7 @@ func TestComments_WrongURL_NoOrgId_Returns404(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/items/%s/comments", space.ID, itemID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/tickets/%s/comments", space.ID, itemID), true)
 	require.Equal(t, http.StatusNotFound, r.StatusCode,
 		"short URL without orgId must return 404 — documents that this is intentionally not supported")
 }
@@ -760,7 +770,7 @@ func TestComments_PostAndRetrieve_FullURL(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	commentsURL := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/items/%s/comments", ts.OrgID, space.ID, itemID)
+	commentsURL := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s/comments", ts.OrgID, space.ID, itemID)
 
 	// POST a comment
 	postResult := ts.post(t, commentsURL, map[string]string{"content": "test comment"}, true)
@@ -792,7 +802,7 @@ func TestProjectItem_StatusUpdate_Returns200(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
 	// Create an item
-	createResult := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	createResult := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title":    "Status Test Item",
 		"kind":     "task",
 		"priority": "medium",
@@ -806,7 +816,7 @@ func TestProjectItem_StatusUpdate_Returns200(t *testing.T) {
 	validStatuses := []string{"open", "in_progress", "in_review", "done", "closed"}
 	for _, status := range validStatuses {
 		t.Run(status, func(t *testing.T) {
-			r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items/%s/status", space.ID, itemID),
+			r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items/%s/status", ts.OrgID, space.ID, itemID),
 				map[string]string{"status": status}, true)
 			require.Equal(t, http.StatusOK, r.StatusCode, "status %s: %s", status, r.Body)
 
@@ -825,7 +835,7 @@ func TestProjectItem_StatusUpdate_InvalidStatus_NotRejected(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	createResult := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	createResult := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title":    "Invalid Status Item",
 		"kind":     "task",
 		"priority": "medium",
@@ -836,7 +846,7 @@ func TestProjectItem_StatusUpdate_InvalidStatus_NotRejected(t *testing.T) {
 	require.NoError(t, json.Unmarshal(createResult.Body, &item))
 	itemID := item["id"].(string)
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items/%s/status", space.ID, itemID),
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items/%s/status", ts.OrgID, space.ID, itemID),
 		map[string]string{"status": "invalid_status"}, true)
 	// NOTE: Backend currently accepts any status string without validation.
 	// When validation is added, this should change to 400.
@@ -853,7 +863,7 @@ func TestReporter_ResolvedFromMembers(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
 	// Create item first to discover the JWT user's ID (reporter_id comes from JWT)
-	createResult := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	createResult := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title":    "Reporter Test Item",
 		"kind":     "task",
 		"priority": "medium",
@@ -976,7 +986,7 @@ func TestIntegration_Comments_ListAndCreate(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
 
 	// Create a ticket to comment on.
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
 		"title":    "Ticket for comments",
 		"priority": "medium",
 	}, true)
@@ -1006,15 +1016,17 @@ func TestIntegration_Comments_ListAndCreate(t *testing.T) {
 	require.Len(t, comments, 1)
 }
 
-// TestIntegration_Comments_LegacyItemRoute tests the legacy item comment endpoint.
-func TestIntegration_Comments_LegacyItemRoute(t *testing.T) {
+// TestIntegration_Comments_ProjectItemRoute tests project item comments on
+// the canonical org+space route (the deprecated /items/{id}/comments alias
+// was removed with the M3 scoping convergence — one convention only).
+func TestIntegration_Comments_ProjectItemRoute(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
 	// Create a project item.
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
-		"title":    "Item for legacy comments",
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
+		"title":    "Item for comments",
 		"kind":     "task",
 		"priority": "low",
 	}, true)
@@ -1023,13 +1035,18 @@ func TestIntegration_Comments_LegacyItemRoute(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.Body, &itemResp))
 	itemID := itemResp["id"].(string)
 
-	legacyPath := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/items/%s/comments", ts.OrgID, space.ID, itemID)
+	commentsPath := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items/%s/comments", ts.OrgID, space.ID, itemID)
 
-	r = ts.get(t, legacyPath, true)
-	require.Equal(t, http.StatusOK, r.StatusCode, "legacy list: %s", r.Body)
+	r = ts.get(t, commentsPath, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "list item comments: %s", r.Body)
 
-	r = ts.post(t, legacyPath, map[string]any{"content": "Legacy comment"}, true)
-	require.Equal(t, http.StatusCreated, r.StatusCode, "legacy create: %s", r.Body)
+	r = ts.post(t, commentsPath, map[string]any{"content": "Item comment"}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "create item comment: %s", r.Body)
+
+	// The removed alias must be gone — one convention only.
+	removedAlias := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/items/%s/comments", ts.OrgID, space.ID, itemID)
+	r = ts.get(t, removedAlias, true)
+	require.Equal(t, http.StatusNotFound, r.StatusCode, "removed /items alias must 404")
 }
 
 // TestIntegration_Comments_RequireAuth verifies comment endpoints require authentication.
@@ -1043,7 +1060,9 @@ func TestIntegration_Comments_RequireAuth(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, r.StatusCode)
 }
 
-// TestIntegration_Comments_InvalidEntityType returns 400 for unknown entity types.
+// TestIntegration_Comments_InvalidEntityType: comment routes exist only per
+// known resource (tickets, projects/items, wiki), so an unknown entity
+// segment is simply unroutable — 404, not a parser error.
 func TestIntegration_Comments_InvalidEntityType(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
@@ -1051,7 +1070,7 @@ func TestIntegration_Comments_InvalidEntityType(t *testing.T) {
 	path := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/invalid/%s/comments", ts.OrgID, space.ID, uuid.New())
 
 	r := ts.get(t, path, true)
-	require.Equal(t, http.StatusBadRequest, r.StatusCode)
+	require.Equal(t, http.StatusNotFound, r.StatusCode)
 }
 
 // --- Notifications ---
@@ -1213,7 +1232,7 @@ func TestIntegration_Workflow_SpaceWorkflow(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
 
 	// Space workflow — may return 404 if none assigned; either is fine.
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/workflow", space.ID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/workflow", ts.OrgID, space.ID), true)
 	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusNotFound,
 		"expected 200 or 404, got %d: %s", r.StatusCode, r.Body)
 }
@@ -1235,11 +1254,11 @@ func TestIntegration_Ticket_List(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
 
 	// Create a ticket.
-	ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets", space.ID), map[string]any{
+	ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
 		"title": "List test ticket", "priority": "medium",
 	}, true)
 
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/tickets", space.ID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "list: %s", r.Body)
 	require.Contains(t, r.ContentType, "application/json")
 }
@@ -1250,7 +1269,7 @@ func TestIntegration_Ticket_UpdateStatus(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
 		"title": "Status test", "priority": "low",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1258,7 +1277,7 @@ func TestIntegration_Ticket_UpdateStatus(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.Body, &ticket))
 	ticketID := ticket["id"].(string)
 
-	r = ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets/%s/status", space.ID, ticketID), map[string]any{
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s/status", ts.OrgID, space.ID, ticketID), map[string]any{
 		"status": "in_progress",
 	}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "status transition: %s", r.Body)
@@ -1270,7 +1289,7 @@ func TestIntegration_Ticket_KanbanView(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
 
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/tickets/kanban", space.ID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/kanban", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "kanban: %s", r.Body)
 }
 
@@ -1282,11 +1301,11 @@ func TestIntegration_ProjectItem_List(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title": "List item", "kind": "task", "priority": "medium",
 	}, true)
 
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "list: %s", r.Body)
 }
 
@@ -1296,7 +1315,7 @@ func TestIntegration_ProjectItem_Update(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title": "Update me", "kind": "task", "priority": "low",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1304,7 +1323,7 @@ func TestIntegration_ProjectItem_Update(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.Body, &item))
 	itemID := item["id"].(string)
 
-	r = ts.patch(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items/%s", space.ID, itemID), map[string]any{
+	r = ts.patch(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items/%s", ts.OrgID, space.ID, itemID), map[string]any{
 		"title": "Updated Title", "priority": "high",
 	}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "update: %s", r.Body)
@@ -1319,7 +1338,7 @@ func TestIntegration_ProjectItem_Backlog(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/projects/backlog", space.ID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/backlog", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "backlog: %s", r.Body)
 }
 
@@ -1329,7 +1348,7 @@ func TestIntegration_ProjectItem_Roadmap(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/projects/roadmap?from=2026-01-01&to=2026-12-31", space.ID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/roadmap?from=2026-01-01&to=2026-12-31", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "roadmap: %s", r.Body)
 }
 
@@ -1340,7 +1359,7 @@ func TestIntegration_Sprint_CreateAndList(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
 	// Create a sprint.
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/sprints", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/sprints", ts.OrgID, space.ID), map[string]any{
 		"name":      "Sprint 1",
 		"starts_at": "2026-05-01T00:00:00Z",
 		"ends_at":   "2026-05-14T00:00:00Z",
@@ -1351,7 +1370,7 @@ func TestIntegration_Sprint_CreateAndList(t *testing.T) {
 	require.Equal(t, "Sprint 1", sprint["name"])
 
 	// List sprints.
-	r = ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/projects/sprints", space.ID), true)
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/sprints", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "list sprints: %s", r.Body)
 }
 
@@ -1362,7 +1381,7 @@ func TestIntegration_Sprint_Active(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
 	// No active sprint yet — endpoint returns 200, 404, or 500 depending on implementation.
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/projects/sprints/active", space.ID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/sprints/active", ts.OrgID, space.ID), true)
 	require.True(t, r.StatusCode < 600,
 		"active sprint: %d %s", r.StatusCode, r.Body)
 }
@@ -1376,17 +1395,17 @@ func TestIntegration_Wiki_ListAndTree(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
 
 	// Create a page.
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/wiki", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title": "Root Page", "content": "Hello wiki",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "create page: %s", r.Body)
 
 	// List pages.
-	r = ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/wiki", space.ID), true)
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "list: %s", r.Body)
 
 	// Tree view.
-	r = ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/wiki/tree", space.ID), true)
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/tree", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "tree: %s", r.Body)
 }
 
@@ -1396,7 +1415,7 @@ func TestIntegration_Wiki_GetPage(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/wiki", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title": "Fetch Me", "content": "Some content",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1404,7 +1423,7 @@ func TestIntegration_Wiki_GetPage(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.Body, &page))
 	pageID := page["id"].(string)
 
-	r = ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/wiki/%s", space.ID, pageID), true)
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s", ts.OrgID, space.ID, pageID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "get: %s", r.Body)
 	var fetched map[string]any
 	require.NoError(t, json.Unmarshal(r.Body, &fetched))
@@ -1417,7 +1436,7 @@ func TestIntegration_Wiki_UpdatePage(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/wiki", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title": "Before Update", "content": "old content",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1435,7 +1454,7 @@ func TestIntegration_Wiki_UpdatePage(t *testing.T) {
 	})
 	require.NoError(t, err)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut,
-		ts.url(fmt.Sprintf("/api/v1/spaces/%s/wiki/%s", space.ID, pageID)),
+		ts.url(fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s", ts.OrgID, space.ID, pageID)),
 		bytes.NewReader(updateBody),
 	)
 	require.NoError(t, err)
@@ -1454,7 +1473,7 @@ func TestIntegration_Wiki_DeletePage(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/wiki", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title": "Delete Me", "content": "",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1462,7 +1481,7 @@ func TestIntegration_Wiki_DeletePage(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.Body, &page))
 	pageID := page["id"].(string)
 
-	r = ts.delete(t, fmt.Sprintf("/api/v1/spaces/%s/wiki/%s", space.ID, pageID), true)
+	r = ts.delete(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s", ts.OrgID, space.ID, pageID), true)
 	require.True(t, r.StatusCode == http.StatusNoContent || r.StatusCode == http.StatusOK,
 		"delete: %d %s", r.StatusCode, r.Body)
 }
@@ -1489,7 +1508,7 @@ func TestIntegration_Space_GetByID(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s", space.ID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "get space: %s", r.Body)
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(r.Body, &resp))
@@ -1521,7 +1540,7 @@ func TestIntegration_Ticket_AssignToUser(t *testing.T) {
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
 		"title": "Assign test", "priority": "medium",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1529,7 +1548,7 @@ func TestIntegration_Ticket_AssignToUser(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.Body, &ticket))
 	ticketID := ticket["id"].(string)
 
-	r = ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets/%s/assign", space.ID, ticketID), map[string]any{
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s/assign", ts.OrgID, space.ID, ticketID), map[string]any{
 		"assignee_id": user.ID.String(),
 	}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "assign: %s", r.Body)
@@ -1568,7 +1587,7 @@ func TestIntegration_Workflow_GetSpaceWorkflowStates(t *testing.T) {
 	require.NoError(t, wfAdapter.SeedDefaultWorkflows(ctx, ts.OrgID))
 	require.NoError(t, wfAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "service_desk", space.ID))
 
-	r := ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/workflow/states", space.ID), true)
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/workflow/states", ts.OrgID, space.ID), true)
 	// May return 200 (states found) or 500 if no workflow; either way must be authenticated.
 	require.NotEqual(t, http.StatusUnauthorized, r.StatusCode)
 }
@@ -1585,7 +1604,7 @@ func TestIntegration_Workflow_ApplyTransitionToTicket(t *testing.T) {
 	require.NoError(t, wfAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "service_desk", space.ID))
 
 	// Create a ticket.
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
 		"title": "Workflow ticket", "priority": "medium",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1602,7 +1621,7 @@ func TestIntegration_Workflow_ApplyTransitionToTicket(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, transitions)
 
-	r = ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/tickets/%s/workflow-state", space.ID, ticketID), map[string]any{
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s/workflow-state", ts.OrgID, space.ID, ticketID), map[string]any{
 		"state_id": transitions[0].ToStateID.String(),
 	}, true)
 	// 200 on success, 404 if space has no workflow assigned (DB timing), 409 on invalid transition.
@@ -1621,7 +1640,7 @@ func TestIntegration_Workflow_ApplyTransitionToItem(t *testing.T) {
 	require.NoError(t, wfAdapter.SeedDefaultWorkflows(ctx, ts.OrgID))
 	require.NoError(t, wfAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "project", space.ID))
 
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title": "Workflow item", "kind": "task", "priority": "medium",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1637,7 +1656,7 @@ func TestIntegration_Workflow_ApplyTransitionToItem(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, transitions)
 
-	r = ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items/%s/workflow-state", space.ID, itemID), map[string]any{
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items/%s/workflow-state", ts.OrgID, space.ID, itemID), map[string]any{
 		"state_id": transitions[0].ToStateID.String(),
 	}, true)
 	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusNotFound || r.StatusCode == http.StatusConflict,
@@ -1653,7 +1672,7 @@ func TestIntegration_Wiki_Lock(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
 
 	// Create a page.
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/wiki", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title": "Lock test page", "content": "",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1662,18 +1681,18 @@ func TestIntegration_Wiki_Lock(t *testing.T) {
 	pageID := page["id"].(string)
 
 	// GetLock on new page — should return 200 with null or 404.
-	r = ts.get(t, fmt.Sprintf("/api/v1/spaces/%s/wiki/%s/lock", space.ID, pageID), true)
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s/lock", ts.OrgID, space.ID, pageID), true)
 	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusNotFound,
 		"get lock: %d %s", r.StatusCode, r.Body)
 
 	// AcquireLock.
-	r = ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/wiki/%s/lock", space.ID, pageID), nil, true)
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s/lock", ts.OrgID, space.ID, pageID), nil, true)
 	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusCreated || r.StatusCode == http.StatusConflict,
 		"acquire lock: %d %s", r.StatusCode, r.Body)
 
 	// ReleaseLock.
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete,
-		ts.url(fmt.Sprintf("/api/v1/spaces/%s/wiki/%s/lock", space.ID, pageID)), nil)
+		ts.url(fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s/lock", ts.OrgID, space.ID, pageID)), nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+ts.Token)
 	result := ts.do(t, req)
@@ -1690,14 +1709,14 @@ func TestIntegration_Projects_RankItem(t *testing.T) {
 	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
 
 	// Create two items.
-	r := ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title": "Item A", "kind": "task", "priority": "medium",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
 	var itemA map[string]any
 	require.NoError(t, json.Unmarshal(r.Body, &itemA))
 
-	r = ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items", space.ID), map[string]any{
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title": "Item B", "kind": "task", "priority": "medium",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode)
@@ -1707,7 +1726,7 @@ func TestIntegration_Projects_RankItem(t *testing.T) {
 	// Rank item A before item B.
 	itemAID := itemA["id"].(string)
 	itemBID := itemB["id"].(string)
-	r = ts.post(t, fmt.Sprintf("/api/v1/spaces/%s/projects/items/%s/rank", space.ID, itemAID), map[string]any{
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items/%s/rank", ts.OrgID, space.ID, itemAID), map[string]any{
 		"before_id": itemBID,
 	}, true)
 	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusNoContent || r.StatusCode == http.StatusNotFound,
