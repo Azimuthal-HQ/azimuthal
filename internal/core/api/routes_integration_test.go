@@ -343,6 +343,80 @@ func TestIntegration_CreateSpace_AndList(t *testing.T) {
 	require.GreaterOrEqual(t, len(spaces), 1)
 }
 
+// TestIntegration_CreateSpace_DerivedKeyCollision: two spaces whose names
+// share a first word (so both derive the same default key) must BOTH be
+// creatable — the derived key is de-duplicated automatically, never a 500.
+func TestIntegration_CreateSpace_DerivedKeyCollision(t *testing.T) {
+	ts := newTestServer(t)
+
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
+		"name": "Shared Desk",
+		"slug": "shared-desk",
+		"type": "service_desk",
+	}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "first create: %s", r.Body)
+
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
+		"name": "Shared Wiki",
+		"slug": "shared-wiki",
+		"type": "wiki",
+	}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode,
+		"second create with colliding derived key must succeed via de-dupe: %s", r.Body)
+
+	var second struct {
+		Key string `json:"key"`
+	}
+	require.NoError(t, json.Unmarshal(r.Body, &second))
+	require.NotEqual(t, "SHARED", second.Key,
+		"second space must not reuse the colliding derived key")
+	require.Regexp(t, `^[A-Z0-9]{1,10}$`, second.Key, "de-duped key must stay valid")
+}
+
+// TestIntegration_CreateSpace_ExplicitDuplicateKey: an explicit key that
+// already exists in the org is a client error — 409, never a 500.
+func TestIntegration_CreateSpace_ExplicitDuplicateKey(t *testing.T) {
+	ts := newTestServer(t)
+
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
+		"name": "Keyed One",
+		"slug": "keyed-one",
+		"type": "project",
+		"key":  "DUPKEY",
+	}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "first create: %s", r.Body)
+
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
+		"name": "Keyed Two",
+		"slug": "keyed-two",
+		"type": "project",
+		"key":  "DUPKEY",
+	}, true)
+	require.Equal(t, http.StatusConflict, r.StatusCode,
+		"explicit duplicate key must be 409: %s", r.Body)
+}
+
+// TestIntegration_CreateSpace_DuplicateSlug: a duplicate slug in the same org
+// is a client error — 409, never a 500.
+func TestIntegration_CreateSpace_DuplicateSlug(t *testing.T) {
+	ts := newTestServer(t)
+
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
+		"name": "Slugged Alpha",
+		"slug": "same-slug",
+		"type": "project",
+	}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "first create: %s", r.Body)
+
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
+		"name": "Beta Slugged",
+		"slug": "same-slug",
+		"type": "project",
+	}, true)
+	require.Equal(t, http.StatusConflict, r.StatusCode,
+		"duplicate slug must be 409: %s", r.Body)
+}
+
 // TestIntegration_CreateSpace_MissingName returns 400.
 func TestIntegration_CreateSpace_MissingName(t *testing.T) {
 	ts := newTestServer(t)

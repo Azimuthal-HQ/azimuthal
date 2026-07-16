@@ -38,6 +38,10 @@ trap cleanup EXIT
 : "${APP_PORT:=8080}"
 BASE_URL="http://localhost:${APP_PORT}"
 
+# Unique per-run suffix so the script stays rerunnable against a persistent
+# test database — fixed slugs would 409 on the second run.
+RUN="v$$$(date +%s | tail -c 5)"
+
 # ── Step 3 — Build and start the binary ──────────────────────
 echo "=== Step 3 — Start the binary ==="
 go build -o /tmp/azimuthal-test ./cmd/server
@@ -102,7 +106,7 @@ SPACE=$(curl -fsS -X POST \
   "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"Test Desk","type":"service_desk","slug":"test-desk"}')
+  -d "{\"name\":\"Test Desk ${RUN}\",\"type\":\"service_desk\",\"slug\":\"test-desk-${RUN}\"}")
 SPACE_ID=$(echo "$SPACE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 echo "Space ID: $SPACE_ID"
 
@@ -123,7 +127,7 @@ WIKI=$(curl -fsS -X POST \
   "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"Test Wiki","type":"wiki","slug":"test-wiki"}')
+  -d "{\"name\":\"Test Wiki ${RUN}\",\"type\":\"wiki\",\"slug\":\"test-wiki-${RUN}\"}")
 WIKI_ID=$(echo "$WIKI" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Page with minimum fields — uses /api/v1/spaces/{spaceID}/wiki per the live router.
@@ -143,7 +147,7 @@ PROJ=$(curl -fsS -X POST \
   "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"Test Project","type":"project","slug":"test-project"}')
+  -d "{\"name\":\"Test Project ${RUN}\",\"type\":\"project\",\"slug\":\"test-project-${RUN}\"}")
 PROJ_ID=$(echo "$PROJ" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Item with minimum fields — uses /api/v1/spaces/{spaceID}/projects/items per the live router.

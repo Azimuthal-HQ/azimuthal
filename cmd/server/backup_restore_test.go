@@ -357,6 +357,7 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 		Type:        "service_desk",
 		IsPrivate:   false,
 		CreatedBy:   user.ID,
+		Key:         "RT",
 	})
 	require.NoError(t, err)
 

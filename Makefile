@@ -5,15 +5,23 @@
         dev migrate rollback sqlc clean pre-push verify-api \
         frontend frontend-install frontend-type-check \
         test-db-up test-db-down test-db-reset test-live test-live-verbose \
-        e2e-test e2e-report e2e-headed docs docs-check
+        regression-test e2e-test e2e-report e2e-headed docs docs-check
 
 # ── Config ────────────────────────────────────────────────────
 BINARY_NAME    := azimuthal
 VERSION        := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME     := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS        := -s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)
-GO_TEST_FLAGS  := -race -timeout 120s -coverprofile=coverage.out -covermode=atomic
+# Test timeout is per-package; the whole suite runs packages in parallel, so on
+# low-core machines integration packages can exceed 120s under -race. Override
+# with e.g. `make test-live GO_TEST_TIMEOUT=600s` — never by weakening tests.
+GO_TEST_TIMEOUT ?= 300s
+GO_TEST_FLAGS  := -race -timeout $(GO_TEST_TIMEOUT) -coverprofile=coverage.out -covermode=atomic
 DATABASE_URL   ?= postgres://azimuthal:dev@localhost:5432/azimuthal_dev?sslmode=disable
+
+# Strips comments/blank lines so `export $(ENV_TEST_VARS)` works — .env.test
+# contains comment lines that break a bare `cat .env.test | xargs`.
+ENV_TEST_VARS   = $$(grep -v '^\#' .env.test | grep -v '^$$' | xargs)
 
 # ── Help ──────────────────────────────────────────────────────
 help:
@@ -216,7 +224,7 @@ test-db-up: ## Start test database and storage (postgres on :5433, minio on :900
 		sleep 1; \
 	done
 	@echo "→ Running migrations..."
-	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && goose -dir migrations postgres "$$DATABASE_URL" up
+	@export $(ENV_TEST_VARS) && goose -dir migrations postgres "$$DATABASE_URL" up
 	@echo "✓ Test database ready at localhost:5433"
 
 test-db-down: ## Stop and remove test database
@@ -230,17 +238,23 @@ test-db-reset: ## Wipe and recreate test database from scratch
 
 test-live: test-db-up ## Run all tests including integration tests requiring a real database
 	@echo "→ Running all tests with real database..."
-	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && go test -race ./... -count=1 -timeout=120s
+	@export $(ENV_TEST_VARS) && go test -race ./... -count=1 -timeout=$(GO_TEST_TIMEOUT)
 	@echo "✓ All tests complete"
 
 test-live-verbose: test-db-up ## Run all tests with verbose output
-	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && go test -race -v ./... -count=1 -timeout=120s
+	@export $(ENV_TEST_VARS) && go test -race -v ./... -count=1 -timeout=$(GO_TEST_TIMEOUT)
 
 test-live-coverage: test-db-up ## Run tests with real database and generate coverage report
-	@export $$(cat .env.test | grep -v '^#' | grep -v '^$$' | xargs) && go test ./internal/... -coverprofile=coverage.out -covermode=atomic -coverpkg=./internal/... -timeout=300s
+	@export $(ENV_TEST_VARS) && go test ./internal/... -coverprofile=coverage.out -covermode=atomic -coverpkg=./internal/... -timeout=300s
 	@go tool cover -html=coverage.out -o coverage.html
 	@go tool cover -func=coverage.out | tail -5
 	@echo "✓ Coverage report: coverage.html"
+
+regression-test: test-db-up ## Run the full API regression suite against a live server (L2 gate)
+	@echo "→ Running API regression suite..."
+	@chmod +x scripts/regression-test.sh
+	@export $(ENV_TEST_VARS) && ./scripts/regression-test.sh
+	@echo "✓ Regression suite complete"
 
 # ── E2E Tests ──────────────────────────────────────────────────────────────────
 
@@ -251,7 +265,7 @@ e2e-test: ## Run Playwright E2E tests against a live server
 	@cd web && npm ci && npm run build
 	@go build -o /tmp/azimuthal-test ./cmd/server
 	@echo "→ Running Playwright E2E tests..."
-	@export $$(cat .env.test | xargs) && cd web && npx playwright test
+	@export $(ENV_TEST_VARS) && cd web && npx playwright test
 	@echo "✓ E2E tests complete"
 	@$(MAKE) test-db-down
 
@@ -259,7 +273,7 @@ e2e-report: ## Open the last Playwright HTML report
 	@cd web && npx playwright show-report
 
 e2e-headed: ## Run E2E tests in headed mode (visible browser)
-	@export $$(cat .env.test | xargs) && cd web && npx playwright test --headed
+	@export $(ENV_TEST_VARS) && cd web && npx playwright test --headed
 
 # ── Housekeeping ──────────────────────────────────────────────
 clean:

@@ -2,8 +2,11 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 30000,
-  globalTimeout: 300000,
+  timeout: Number(process.env.PW_TEST_TIMEOUT || 30000),
+  // Whole-suite budget. The default assumes fast local hardware; slower
+  // machines (small CI boxes, sandboxed containers) can raise it via env
+  // without touching this file. Raising a budget is not weakening a test.
+  globalTimeout: Number(process.env.PW_GLOBAL_TIMEOUT || 300000),
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
