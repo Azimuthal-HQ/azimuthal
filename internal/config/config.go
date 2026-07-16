@@ -23,8 +23,9 @@ type Config struct {
 	StorageBucket    string
 	StorageUseSSL    bool
 
-	// Auth
-	JWTSecret         string
+	// Auth. JWT signing uses an RS256 key persisted in the database;
+	// JWTPrivateKeyPath is only a one-time import path for deployments
+	// upgrading from the legacy file-based key.
 	JWTExpiry         time.Duration
 	JWTPrivateKeyPath string
 
@@ -74,7 +75,6 @@ func Load() (*Config, error) {
 		StorageSecretKey:  v.GetString("STORAGE_SECRET_KEY"),
 		StorageBucket:     v.GetString("STORAGE_BUCKET"),
 		StorageUseSSL:     v.GetBool("STORAGE_USE_SSL"),
-		JWTSecret:         v.GetString("JWT_SECRET"),
 		JWTPrivateKeyPath: v.GetString("JWT_PRIVATE_KEY_PATH"),
 		QueueEnabled:      v.GetBool("AZIMUTHAL_QUEUE_ENABLED"),
 		AllowedOrigins:    parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS"), v.GetString("APP_ENV")),
@@ -144,10 +144,6 @@ func (c *Config) validate() error {
 
 	if c.DatabaseURL == "" {
 		errs = append(errs, "DATABASE_URL is required")
-	}
-
-	if c.JWTSecret == "" {
-		errs = append(errs, "JWT_SECRET is required")
 	}
 
 	if len(errs) > 0 {

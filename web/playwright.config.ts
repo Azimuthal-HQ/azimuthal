@@ -28,7 +28,6 @@ export default defineConfig({
     timeout: 60000,
     env: {
       DATABASE_URL: process.env.DATABASE_URL || '',
-      JWT_SECRET: process.env.JWT_SECRET || '',
       STORAGE_ENDPOINT: process.env.STORAGE_ENDPOINT || '',
       STORAGE_ACCESS_KEY: process.env.STORAGE_ACCESS_KEY || '',
       STORAGE_SECRET_KEY: process.env.STORAGE_SECRET_KEY || '',

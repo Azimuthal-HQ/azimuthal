@@ -2,7 +2,7 @@
 # verify-api.sh — Full API verification suite for Azimuthal
 #
 # Usage:
-#   DATABASE_URL=... JWT_SECRET=... ./scripts/verify-api.sh
+#   DATABASE_URL=... ./scripts/verify-api.sh
 #
 # Runs Steps 4-7 from the Testing Requirements in CLAUDE.md.
 # Expects the server to NOT be running — this script builds, starts,
@@ -29,7 +29,6 @@ trap cleanup EXIT
 
 # ── Defaults ─────────────────────────────────────────────────
 : "${DATABASE_URL:=postgres://azimuthal:dev@localhost:5432/azimuthal_dev?sslmode=disable}"
-: "${JWT_SECRET:=test-secret-for-local-testing-only}"
 : "${STORAGE_ENDPOINT:=http://localhost:9000}"
 : "${STORAGE_ACCESS_KEY:=minioadmin}"
 : "${STORAGE_SECRET_KEY:=minioadmin}"
@@ -47,7 +46,6 @@ echo "=== Step 3 — Start the binary ==="
 go build -o /tmp/azimuthal-test ./cmd/server
 
 DATABASE_URL="$DATABASE_URL" \
-JWT_SECRET="$JWT_SECRET" \
 STORAGE_ENDPOINT="$STORAGE_ENDPOINT" \
 STORAGE_ACCESS_KEY="$STORAGE_ACCESS_KEY" \
 STORAGE_SECRET_KEY="$STORAGE_SECRET_KEY" \

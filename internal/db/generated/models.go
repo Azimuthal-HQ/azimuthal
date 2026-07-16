@@ -24,6 +24,13 @@ type AuditLog struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type AuthSigningKey struct {
+	ID            int16              `json:"id"`
+	PrivateKeyPem string             `json:"private_key_pem"`
+	Algorithm     string             `json:"algorithm"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type Comment struct {
 	ID         uuid.UUID          `json:"id"`
 	ItemID     pgtype.UUID        `json:"item_id"`
