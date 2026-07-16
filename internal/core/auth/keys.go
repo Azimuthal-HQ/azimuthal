@@ -89,24 +89,9 @@ func EnsureSigningKey(ctx context.Context, store SigningKeyStore, importPath str
 		return nil, fmt.Errorf("loading signing key: %w", err)
 	}
 
-	var key *rsa.PrivateKey
-	if importPath != "" {
-		data, readErr := os.ReadFile(importPath) //nolint:gosec // G304 — path is operator-supplied configuration
-		switch {
-		case readErr == nil:
-			key, err = parseRSAPrivateKeyPEM(data)
-			if err != nil {
-				return nil, fmt.Errorf("importing legacy signing key from %q: %w", importPath, err)
-			}
-		case !errors.Is(readErr, os.ErrNotExist):
-			return nil, fmt.Errorf("reading legacy signing key %q: %w", importPath, readErr)
-		}
-	}
-	if key == nil {
-		key, err = rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			return nil, fmt.Errorf("generating signing key: %w", err)
-		}
+	key, err := importOrGenerateSigningKey(importPath)
+	if err != nil {
+		return nil, err
 	}
 
 	pemBytes := pem.EncodeToMemory(&pem.Block{
@@ -128,6 +113,29 @@ func EnsureSigningKey(ctx context.Context, store SigningKeyStore, importPath str
 		return nil, fmt.Errorf("parsing stored signing key: %w", err)
 	}
 	return winner, nil
+}
+
+// importOrGenerateSigningKey reads the legacy PEM file at importPath when it
+// exists (upgrade path from file-based keys), otherwise generates a new key.
+func importOrGenerateSigningKey(importPath string) (*rsa.PrivateKey, error) {
+	if importPath != "" {
+		data, readErr := os.ReadFile(importPath) //nolint:gosec // G304 — path is operator-supplied configuration
+		switch {
+		case readErr == nil:
+			key, err := parseRSAPrivateKeyPEM(data)
+			if err != nil {
+				return nil, fmt.Errorf("importing legacy signing key from %q: %w", importPath, err)
+			}
+			return key, nil
+		case !errors.Is(readErr, os.ErrNotExist):
+			return nil, fmt.Errorf("reading legacy signing key %q: %w", importPath, readErr)
+		}
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("generating signing key: %w", err)
+	}
+	return key, nil
 }
 
 // parseRSAPrivateKeyPEM decodes a PKCS#1 RSA private key from PEM bytes.
