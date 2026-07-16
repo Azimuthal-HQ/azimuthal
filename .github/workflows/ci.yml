@@ -67,7 +67,6 @@ jobs:
     # (DinD daemon may not be ready when services: fires, causing instant failure)
     env:
       DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
-      JWT_SECRET: ci-test-secret-32-chars-minimum-xx
       STORAGE_ENDPOINT: http://localhost:9001
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: minioadmin
@@ -512,7 +511,6 @@ jobs:
     # No services: block — postgres + minio started manually after Docker-wait
     env:
       DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
-      JWT_SECRET: ci-e2e-test-secret-32-chars-minimum
       STORAGE_ENDPOINT: http://localhost:9001
       STORAGE_ACCESS_KEY: minioadmin
       STORAGE_SECRET_KEY: minioadmin
@@ -800,7 +798,6 @@ jobs:
             --name azimuthal-boot \
             --network host \
             -e DATABASE_URL=postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable \
-            -e JWT_SECRET=ci-docker-boot-secret-32-chars-min \
             -e STORAGE_ENDPOINT=http://localhost:9001 \
             -e STORAGE_ACCESS_KEY=minioadmin \
             -e STORAGE_SECRET_KEY=minioadmin \

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -10,6 +11,22 @@ import (
 	"os"
 	"path/filepath"
 )
+
+// ErrNoSigningKey is returned by a SigningKeyStore when no key is stored yet.
+var ErrNoSigningKey = errors.New("no signing key stored")
+
+// SigningKeyStore persists the RS256 JWT signing key. The database-backed
+// implementation lives in internal/db/adapters; keys must survive process
+// and container restarts, so environment variables and ephemeral files are
+// not acceptable stores.
+type SigningKeyStore interface {
+	// GetPrivateKeyPEM returns the stored key, or ErrNoSigningKey when the
+	// store is empty.
+	GetPrivateKeyPEM(ctx context.Context) (string, error)
+	// InsertPrivateKeyPEM stores a key if and only if none is stored yet;
+	// losing a concurrent race is not an error.
+	InsertPrivateKeyPEM(ctx context.Context, pemData string) error
+}
 
 // pemBlockTypeRSAPrivateKey is the PEM block type used when persisting the
 // JWT signing key. PKCS#1 keeps the file readable by openssl and Go alike.
@@ -51,6 +68,66 @@ func LoadOrGenerateRSAKey(path string) (*rsa.PrivateKey, error) {
 		return nil, err
 	}
 	return key, nil
+}
+
+// EnsureSigningKey returns the RS256 signing key from the store, creating it
+// on first boot. When the store is empty and importPath names an existing PEM
+// file (a deployment upgrading from the legacy file-based key), that key is
+// imported so existing tokens stay valid. Concurrent first boots are safe:
+// the insert is first-writer-wins and the winning key is re-read, so every
+// instance ends up with the same key.
+func EnsureSigningKey(ctx context.Context, store SigningKeyStore, importPath string) (*rsa.PrivateKey, error) {
+	pemStr, err := store.GetPrivateKeyPEM(ctx)
+	if err == nil {
+		key, parseErr := parseRSAPrivateKeyPEM([]byte(pemStr))
+		if parseErr != nil {
+			return nil, fmt.Errorf("parsing stored signing key: %w", parseErr)
+		}
+		return key, nil
+	}
+	if !errors.Is(err, ErrNoSigningKey) {
+		return nil, fmt.Errorf("loading signing key: %w", err)
+	}
+
+	var key *rsa.PrivateKey
+	if importPath != "" {
+		data, readErr := os.ReadFile(importPath) //nolint:gosec // G304 — path is operator-supplied configuration
+		switch {
+		case readErr == nil:
+			key, err = parseRSAPrivateKeyPEM(data)
+			if err != nil {
+				return nil, fmt.Errorf("importing legacy signing key from %q: %w", importPath, err)
+			}
+		case !errors.Is(readErr, os.ErrNotExist):
+			return nil, fmt.Errorf("reading legacy signing key %q: %w", importPath, readErr)
+		}
+	}
+	if key == nil {
+		key, err = rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return nil, fmt.Errorf("generating signing key: %w", err)
+		}
+	}
+
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  pemBlockTypeRSAPrivateKey,
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+	if err := store.InsertPrivateKeyPEM(ctx, string(pemBytes)); err != nil {
+		return nil, fmt.Errorf("storing signing key: %w", err)
+	}
+
+	// Re-read: a concurrent instance may have won the insert race, and its
+	// key — not ours — is the persisted truth.
+	pemStr, err = store.GetPrivateKeyPEM(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("re-reading signing key after store: %w", err)
+	}
+	winner, err := parseRSAPrivateKeyPEM([]byte(pemStr))
+	if err != nil {
+		return nil, fmt.Errorf("parsing stored signing key: %w", err)
+	}
+	return winner, nil
 }
 
 // parseRSAPrivateKeyPEM decodes a PKCS#1 RSA private key from PEM bytes.

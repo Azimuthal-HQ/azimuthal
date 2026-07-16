@@ -26,10 +26,6 @@ func TestSmoke(t *testing.T) {
 		t.Skip("DATABASE_URL not set — skipping smoke test")
 	}
 
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		t.Setenv("JWT_SECRET", "smoke-test-secret-not-for-production-use-1234")
-	}
 	t.Setenv("APP_ENV", "test")
 	t.Setenv("DATABASE_URL", dbURL)
 

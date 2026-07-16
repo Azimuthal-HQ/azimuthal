@@ -171,7 +171,10 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 // buildRouter constructs all domain services with DB-backed adapters and
 // returns the fully wired API router.
 func buildRouter(cfg *config.Config, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, queueStatus string) (http.Handler, error) {
-	privateKey, err := auth.LoadOrGenerateRSAKey(cfg.JWTPrivateKeyPath)
+	// The signing key lives in the database so restarts never invalidate
+	// tokens. JWTPrivateKeyPath is only consulted as a one-time import for
+	// deployments upgrading from the legacy file-based key.
+	privateKey, err := auth.EnsureSigningKey(context.Background(), adapters.NewSigningKeyAdapter(queries), cfg.JWTPrivateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("loading RSA signing key: %w", err)
 	}

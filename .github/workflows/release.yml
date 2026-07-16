@@ -224,7 +224,6 @@ jobs:
               --name azimuthal \
               -p 8080:8080 \
               -e DATABASE_URL='postgres://USER:PASS@DBHOST:5432/azimuthal?sslmode=require' \
-              -e JWT_SECRET="$(openssl rand -hex 32)" \
               -e STORAGE_ENDPOINT='https://s3.us-east-1.amazonaws.com' \
               -e STORAGE_ACCESS_KEY='AKIA...' \
               -e STORAGE_SECRET_KEY='...' \
@@ -250,7 +249,6 @@ jobs:
             # 3. Set required env + start. The binary embeds the frontend —
             #    nothing else to install.
             export DATABASE_URL='postgres://USER:PASS@HOST:5432/azimuthal?sslmode=require'
-            export JWT_SECRET="$(openssl rand -hex 32)"
             export STORAGE_ENDPOINT='http://localhost:9000'
             export STORAGE_ACCESS_KEY='minioadmin'
             export STORAGE_SECRET_KEY='your-minio-password'
@@ -349,7 +347,6 @@ jobs:
             | Variable | What it is |
             |---|---|
             | `DATABASE_URL` | Full Postgres DSN, e.g. `postgres://user:pass@host:5432/azimuthal?sslmode=require` |
-            | `JWT_SECRET` | 64-char hex secret for signing tokens. Generate: `openssl rand -hex 32` |
             | `STORAGE_ENDPOINT` | S3-compatible URL (S3, MinIO, R2, etc.) |
             | `STORAGE_ACCESS_KEY` | Access key for the storage backend |
             | `STORAGE_SECRET_KEY` | Secret key for the storage backend |

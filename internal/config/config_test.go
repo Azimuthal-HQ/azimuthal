@@ -10,7 +10,6 @@ import (
 
 func TestLoad_MissingRequiredVars(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
-	t.Setenv("JWT_SECRET", "")
 
 	_, err := config.Load()
 	if err == nil {
@@ -20,14 +19,10 @@ func TestLoad_MissingRequiredVars(t *testing.T) {
 	if !strings.Contains(err.Error(), "DATABASE_URL") {
 		t.Errorf("error should mention DATABASE_URL, got: %s", err.Error())
 	}
-	if !strings.Contains(err.Error(), "JWT_SECRET") {
-		t.Errorf("error should mention JWT_SECRET, got: %s", err.Error())
-	}
 }
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
-	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
 
 	_, err := config.Load()
 	if err == nil {
@@ -38,22 +33,21 @@ func TestLoad_MissingDatabaseURL(t *testing.T) {
 	}
 }
 
-func TestLoad_MissingJWTSecret(t *testing.T) {
+// TestLoad_NoJWTSecretRequired: JWT signing uses an RS256 key persisted in
+// the database (migration 018), so no JWT_SECRET env var exists or is
+// required — deployments must not be forced to set a dead secret.
+func TestLoad_NoJWTSecretRequired(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
 	t.Setenv("JWT_SECRET", "")
 
 	_, err := config.Load()
-	if err == nil {
-		t.Fatal("expected error when JWT_SECRET is missing")
-	}
-	if !strings.Contains(err.Error(), "JWT_SECRET") {
-		t.Errorf("error should mention JWT_SECRET, got: %s", err.Error())
+	if err != nil {
+		t.Fatalf("config must load without JWT_SECRET, got: %s", err.Error())
 	}
 }
 
 func TestLoad_Defaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
-	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
 	// Unset optional vars to verify defaults
 	t.Setenv("APP_ENV", "")
 	t.Setenv("APP_PORT", "")
@@ -86,7 +80,6 @@ func TestLoad_Defaults(t *testing.T) {
 
 func TestLoad_ValidConfig(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
-	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
 	t.Setenv("APP_ENV", "test")
 	t.Setenv("APP_PORT", "9090")
 	t.Setenv("LOG_LEVEL", "debug")
@@ -120,7 +113,6 @@ func TestLoad_ValidConfig(t *testing.T) {
 
 func TestLoad_InvalidJWTExpiry(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
-	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
 	t.Setenv("JWT_EXPIRY", "not-a-duration")
 
 	_, err := config.Load()
@@ -134,7 +126,6 @@ func TestLoad_InvalidJWTExpiry(t *testing.T) {
 
 func TestConfig_IsTest(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
-	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
 	t.Setenv("APP_ENV", "test")
 
 	cfg, err := config.Load()
@@ -151,7 +142,6 @@ func TestConfig_IsTest(t *testing.T) {
 
 func TestConfig_IsProduction(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
-	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
 	t.Setenv("APP_ENV", "production")
 
 	cfg, err := config.Load()
@@ -165,7 +155,6 @@ func TestConfig_IsProduction(t *testing.T) {
 
 func TestConfig_IsProduction_False(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
-	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
 	t.Setenv("APP_ENV", "development")
 
 	cfg, err := config.Load()
@@ -179,7 +168,6 @@ func TestConfig_IsProduction_False(t *testing.T) {
 
 func TestConfig_AllowedOrigins_Explicit(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
-	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("AZIMUTHAL_ALLOWED_ORIGINS", "https://app.example.com, https://admin.example.com")
 
@@ -197,7 +185,6 @@ func TestConfig_AllowedOrigins_Explicit(t *testing.T) {
 
 func TestConfig_AllowedOrigins_ProductionEmpty(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
-	t.Setenv("JWT_SECRET", "supersecretjwttokenfortest")
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("AZIMUTHAL_ALLOWED_ORIGINS", "")
 
