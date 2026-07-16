@@ -227,7 +227,20 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, notifEnqueuer j
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		QueueStatus:         queueStatus,
+		SpaceOrgResolver:    spaceOrgResolver(queries),
 	}), nil
+}
+
+// spaceOrgResolver returns the org that owns a space, backing the router's
+// org+space scoping guard.
+func spaceOrgResolver(queries *generated.Queries) api.SpaceOrgResolver {
+	return func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
+		s, err := queries.GetSpaceByID(ctx, spaceID)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("resolving space org: %w", err)
+		}
+		return s.OrgID, nil
+	}
 }
 
 // newSPAHandler returns an http.Handler that serves the embedded frontend

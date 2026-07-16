@@ -1,13 +1,53 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 )
+
+// SpaceOrgResolver returns the org that owns a space, or an error when the
+// space does not exist. Used by RequireSpaceInOrg.
+type SpaceOrgResolver func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error)
+
+// RequireSpaceInOrg enforces the single org+space scoping convention: a
+// request to /orgs/{orgID}/spaces/{spaceID}/... only proceeds when the space
+// exists AND belongs to that org — otherwise 404. Requests whose route has no
+// spaceID parameter (org-level space list/create) pass through untouched.
+func RequireSpaceInOrg(resolve SpaceOrgResolver) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			spaceIDRaw := chi.URLParam(r, "spaceID")
+			if spaceIDRaw == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+			if err != nil {
+				respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+				return
+			}
+			spaceID, err := uuid.Parse(spaceIDRaw)
+			if err != nil {
+				respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+				return
+			}
+			ownerOrg, err := resolve(r.Context(), spaceID)
+			if err != nil || ownerOrg != orgID {
+				respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "space not found")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 // RequestID is middleware that assigns a unique request ID to each request.
 var RequestID = respond.RequestID

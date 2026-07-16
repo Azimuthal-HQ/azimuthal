@@ -4,7 +4,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import type { UseQueryOptions } from '@tanstack/react-query';
-import { getToken, setToken, setRefreshToken, getRefreshToken, removeToken, removeRefreshToken } from './auth';
+import { getToken, setToken, setRefreshToken, getRefreshToken, removeToken, removeRefreshToken, getCurrentOrgId } from './auth';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -37,6 +37,13 @@ export class APIError extends Error {
     this.status = status;
     this.requestId = body.error.request_id;
   }
+}
+
+
+// spaceBase builds the org+space scoped URL prefix for a space resource —
+// the single scoping convention: /orgs/{orgId}/spaces/{spaceId}/...
+function spaceBase(spaceId: string): string {
+  return `/orgs/${getCurrentOrgId()}/spaces/${spaceId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +362,7 @@ export async function refreshAccessToken(): Promise<RefreshResponse> {
 // ---------------------------------------------------------------------------
 
 async function fetchSpace(spaceId: string): Promise<Space> {
-  return apiFetch<Space>(`/spaces/${spaceId}`);
+  return apiFetch<Space>(`${spaceBase(spaceId)}`);
 }
 
 async function fetchSpaces(orgId: string): Promise<Space[]> {
@@ -388,13 +395,13 @@ async function createSpace(orgId: string, req: CreateSpaceRequest): Promise<Spac
 
 async function fetchTickets(spaceId: string): Promise<Ticket[]> {
   // Audit ref: testing-audit.md §7.5 — null-instead-of-[] regression.
-  const data = await apiFetch<Ticket[] | Ticket | null>(`/spaces/${spaceId}/tickets`);
+  const data = await apiFetch<Ticket[] | Ticket | null>(`${spaceBase(spaceId)}/tickets`);
   if (data == null) return [];
   return Array.isArray(data) ? data : [data];
 }
 
 async function fetchTicket(spaceId: string, ticketId: string): Promise<Ticket> {
-  return apiFetch<Ticket>(`/spaces/${spaceId}/tickets/${ticketId}`);
+  return apiFetch<Ticket>(`${spaceBase(spaceId)}/tickets/${ticketId}`);
 }
 
 interface CreateTicketRequest {
@@ -406,7 +413,7 @@ interface CreateTicketRequest {
 }
 
 async function createTicket(spaceId: string, req: CreateTicketRequest): Promise<Ticket> {
-  return apiFetch<Ticket>(`/spaces/${spaceId}/tickets`, {
+  return apiFetch<Ticket>(`${spaceBase(spaceId)}/tickets`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -426,7 +433,7 @@ async function updateTicket(
   ticketId: string,
   req: UpdateTicketRequest,
 ): Promise<Ticket> {
-  return apiFetch<Ticket>(`/spaces/${spaceId}/tickets/${ticketId}`, {
+  return apiFetch<Ticket>(`${spaceBase(spaceId)}/tickets/${ticketId}`, {
     method: 'PATCH',
     body: JSON.stringify(req),
   });
@@ -437,7 +444,7 @@ async function transitionTicketStatus(
   ticketId: string,
   status: TicketStatus,
 ): Promise<Ticket> {
-  return apiFetch<Ticket>(`/spaces/${spaceId}/tickets/${ticketId}/status`, {
+  return apiFetch<Ticket>(`${spaceBase(spaceId)}/tickets/${ticketId}/status`, {
     method: 'POST',
     body: JSON.stringify({ status }),
   });
@@ -449,13 +456,13 @@ async function transitionTicketStatus(
 
 async function fetchWikiPages(spaceId: string): Promise<WikiPage[]> {
   // Audit ref: testing-audit.md §7.5 — null-instead-of-[] regression.
-  const data = await apiFetch<WikiPage[] | WikiPage | null>(`/spaces/${spaceId}/wiki`);
+  const data = await apiFetch<WikiPage[] | WikiPage | null>(`${spaceBase(spaceId)}/wiki`);
   if (data == null) return [];
   return Array.isArray(data) ? data : [data];
 }
 
 async function fetchWikiPage(spaceId: string, pageId: string): Promise<WikiPage> {
-  return apiFetch<WikiPage>(`/spaces/${spaceId}/wiki/${pageId}`);
+  return apiFetch<WikiPage>(`${spaceBase(spaceId)}/wiki/${pageId}`);
 }
 
 interface CreateWikiPageRequest {
@@ -466,7 +473,7 @@ interface CreateWikiPageRequest {
 }
 
 async function createWikiPage(spaceId: string, req: CreateWikiPageRequest): Promise<WikiPage> {
-  return apiFetch<WikiPage>(`/spaces/${spaceId}/wiki`, {
+  return apiFetch<WikiPage>(`${spaceBase(spaceId)}/wiki`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -483,7 +490,7 @@ async function updateWikiPage(
   pageId: string,
   req: UpdateWikiPageRequest,
 ): Promise<WikiPage> {
-  return apiFetch<WikiPage>(`/spaces/${spaceId}/wiki/${pageId}`, {
+  return apiFetch<WikiPage>(`${spaceBase(spaceId)}/wiki/${pageId}`, {
     method: 'PUT',
     body: JSON.stringify(req),
   });
@@ -495,13 +502,13 @@ async function updateWikiPage(
 
 async function fetchProjectItems(spaceId: string): Promise<ProjectItem[]> {
   // Audit ref: testing-audit.md §7.5 — null-instead-of-[] regression.
-  const data = await apiFetch<ProjectItem[] | ProjectItem | null>(`/spaces/${spaceId}/projects/items`);
+  const data = await apiFetch<ProjectItem[] | ProjectItem | null>(`${spaceBase(spaceId)}/projects/items`);
   if (data == null) return [];
   return Array.isArray(data) ? data : [data];
 }
 
 export async function fetchProjectItem(spaceId: string, itemId: string): Promise<ProjectItem> {
-  return apiFetch<ProjectItem>(`/spaces/${spaceId}/projects/items/${itemId}`);
+  return apiFetch<ProjectItem>(`${spaceBase(spaceId)}/projects/items/${itemId}`);
 }
 
 interface CreateProjectItemRequest {
@@ -518,7 +525,7 @@ async function createProjectItem(
   spaceId: string,
   req: CreateProjectItemRequest,
 ): Promise<ProjectItem> {
-  return apiFetch<ProjectItem>(`/spaces/${spaceId}/projects/items`, {
+  return apiFetch<ProjectItem>(`${spaceBase(spaceId)}/projects/items`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -537,18 +544,18 @@ async function updateProjectItem(
   itemId: string,
   req: UpdateProjectItemRequest,
 ): Promise<ProjectItem> {
-  return apiFetch<ProjectItem>(`/spaces/${spaceId}/projects/items/${itemId}`, {
+  return apiFetch<ProjectItem>(`${spaceBase(spaceId)}/projects/items/${itemId}`, {
     method: 'PATCH',
     body: JSON.stringify(req),
   });
 }
 
-async function transitionProjectItemStatus(
+export async function transitionProjectItemStatus(
   spaceId: string,
   itemId: string,
   status: string,
 ): Promise<ProjectItem> {
-  return apiFetch<ProjectItem>(`/spaces/${spaceId}/projects/items/${itemId}/status`, {
+  return apiFetch<ProjectItem>(`${spaceBase(spaceId)}/projects/items/${itemId}/status`, {
     method: 'POST',
     body: JSON.stringify({ status }),
   });
@@ -559,7 +566,7 @@ async function transitionProjectItemStatus(
 // ---------------------------------------------------------------------------
 
 async function fetchSprints(spaceId: string): Promise<Sprint[]> {
-  return apiFetch<Sprint[]>(`/spaces/${spaceId}/projects/sprints`);
+  return apiFetch<Sprint[]>(`${spaceBase(spaceId)}/projects/sprints`);
 }
 
 interface CreateSprintRequest {
@@ -570,7 +577,7 @@ interface CreateSprintRequest {
 }
 
 async function createSprint(spaceId: string, req: CreateSprintRequest): Promise<Sprint> {
-  return apiFetch<Sprint>(`/spaces/${spaceId}/projects/sprints`, {
+  return apiFetch<Sprint>(`${spaceBase(spaceId)}/projects/sprints`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -578,7 +585,7 @@ async function createSprint(spaceId: string, req: CreateSprintRequest): Promise<
 
 async function fetchActiveSprint(spaceId: string): Promise<Sprint | null> {
   try {
-    return await apiFetch<Sprint>(`/spaces/${spaceId}/projects/sprints/active`);
+    return await apiFetch<Sprint>(`${spaceBase(spaceId)}/projects/sprints/active`);
   } catch (err) {
     if (err instanceof APIError && err.status === 404) return null;
     throw err;
@@ -587,7 +594,7 @@ async function fetchActiveSprint(spaceId: string): Promise<Sprint | null> {
 
 async function fetchSprintItems(spaceId: string, sprintId: string): Promise<ProjectItem[]> {
   const data = await apiFetch<ProjectItem[] | ProjectItem | null>(
-    `/spaces/${spaceId}/projects/sprints/${sprintId}/items`,
+    `${spaceBase(spaceId)}/projects/sprints/${sprintId}/items`,
   );
   if (data == null) return [];
   return Array.isArray(data) ? data : [data];
@@ -660,7 +667,7 @@ async function fetchMembers(orgId: string, spaceId: string): Promise<Member[]> {
 function entityTypeToPath(entityType: string): string {
   switch (entityType) {
     case 'ticket': return 'tickets';
-    case 'project_item': return 'project-items';
+    case 'project_item': return 'projects/items';
     case 'page': return 'wiki';
     default: return entityType;
   }
@@ -705,7 +712,7 @@ async function markAllNotificationsRead(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function assignTicket(spaceId: string, ticketId: string, assigneeId: string | null): Promise<void> {
-  return apiFetch<void>(`/spaces/${spaceId}/tickets/${ticketId}/assign`, {
+  return apiFetch<void>(`${spaceBase(spaceId)}/tickets/${ticketId}/assign`, {
     method: 'POST',
     body: JSON.stringify({ assignee_id: assigneeId }),
   });
@@ -716,26 +723,26 @@ async function assignTicket(spaceId: string, ticketId: string, assigneeId: strin
 // ---------------------------------------------------------------------------
 
 async function fetchWikiTree(spaceId: string): Promise<WikiTreeNode[]> {
-  const data = await apiFetch<WikiTreeNode[] | null>(`/spaces/${spaceId}/wiki/tree`);
+  const data = await apiFetch<WikiTreeNode[] | null>(`${spaceBase(spaceId)}/wiki/tree`);
   return data ?? [];
 }
 
 async function searchWikiPages(spaceId: string, q: string): Promise<WikiPage[]> {
-  const data = await apiFetch<WikiPage[] | null>(`/spaces/${spaceId}/wiki/search?q=${encodeURIComponent(q)}`);
+  const data = await apiFetch<WikiPage[] | null>(`${spaceBase(spaceId)}/wiki/search?q=${encodeURIComponent(q)}`);
   return data ?? [];
 }
 
 async function fetchWikiRevisions(spaceId: string, pageId: string): Promise<WikiRevision[]> {
-  const data = await apiFetch<WikiRevision[] | null>(`/spaces/${spaceId}/wiki/${pageId}/revisions`);
+  const data = await apiFetch<WikiRevision[] | null>(`${spaceBase(spaceId)}/wiki/${pageId}/revisions`);
   return data ?? [];
 }
 
 async function fetchWikiRevision(spaceId: string, pageId: string, version: number): Promise<WikiPage> {
-  return apiFetch<WikiPage>(`/spaces/${spaceId}/wiki/${pageId}/revisions/${version}`);
+  return apiFetch<WikiPage>(`${spaceBase(spaceId)}/wiki/${pageId}/revisions/${version}`);
 }
 
 async function fetchWikiDiff(spaceId: string, pageId: string, from: number, to: number): Promise<{ diff: string }> {
-  return apiFetch<{ diff: string }>(`/spaces/${spaceId}/wiki/${pageId}/diff?from=${from}&to=${to}`);
+  return apiFetch<{ diff: string }>(`${spaceBase(spaceId)}/wiki/${pageId}/diff?from=${from}&to=${to}`);
 }
 
 interface MoveWikiPageRequest {
@@ -744,7 +751,7 @@ interface MoveWikiPageRequest {
 }
 
 async function moveWikiPage(spaceId: string, pageId: string, req: MoveWikiPageRequest): Promise<WikiPage> {
-  return apiFetch<WikiPage>(`/spaces/${spaceId}/wiki/${pageId}/move`, {
+  return apiFetch<WikiPage>(`${spaceBase(spaceId)}/wiki/${pageId}/move`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -755,7 +762,7 @@ async function moveWikiPage(spaceId: string, pageId: string, req: MoveWikiPageRe
 // ---------------------------------------------------------------------------
 
 async function fetchRelations(spaceId: string, itemId: string): Promise<Relation[]> {
-  const data = await apiFetch<Relation[] | null>(`/spaces/${spaceId}/projects/items/${itemId}/relations`);
+  const data = await apiFetch<Relation[] | null>(`${spaceBase(spaceId)}/projects/items/${itemId}/relations`);
   return data ?? [];
 }
 
@@ -765,14 +772,14 @@ interface CreateRelationRequest {
 }
 
 async function createRelation(spaceId: string, itemId: string, req: CreateRelationRequest): Promise<Relation> {
-  return apiFetch<Relation>(`/spaces/${spaceId}/projects/items/${itemId}/relations`, {
+  return apiFetch<Relation>(`${spaceBase(spaceId)}/projects/items/${itemId}/relations`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
 }
 
 async function deleteRelation(spaceId: string, relationId: string): Promise<void> {
-  return apiFetch<void>(`/spaces/${spaceId}/projects/relations/${relationId}`, { method: 'DELETE' });
+  return apiFetch<void>(`${spaceBase(spaceId)}/projects/relations/${relationId}`, { method: 'DELETE' });
 }
 
 // ---------------------------------------------------------------------------
@@ -785,14 +792,14 @@ interface RankItemRequest {
 }
 
 async function rankItem(spaceId: string, itemId: string, req: RankItemRequest): Promise<void> {
-  return apiFetch<void>(`/spaces/${spaceId}/projects/items/${itemId}/rank`, {
+  return apiFetch<void>(`${spaceBase(spaceId)}/projects/items/${itemId}/rank`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
 }
 
 async function searchItems(spaceId: string, q: string): Promise<ProjectItem[]> {
-  const data = await apiFetch<ProjectItem[] | null>(`/spaces/${spaceId}/projects/items/search?q=${encodeURIComponent(q)}`);
+  const data = await apiFetch<ProjectItem[] | null>(`${spaceBase(spaceId)}/projects/items/search?q=${encodeURIComponent(q)}`);
   return data ?? [];
 }
 
@@ -801,11 +808,11 @@ async function searchItems(spaceId: string, q: string): Promise<ProjectItem[]> {
 // ---------------------------------------------------------------------------
 
 async function startSprint(spaceId: string, sprintId: string): Promise<Sprint> {
-  return apiFetch<Sprint>(`/spaces/${spaceId}/projects/sprints/${sprintId}/start`, { method: 'POST' });
+  return apiFetch<Sprint>(`${spaceBase(spaceId)}/projects/sprints/${sprintId}/start`, { method: 'POST' });
 }
 
 async function completeSprint(spaceId: string, sprintId: string): Promise<Sprint> {
-  return apiFetch<Sprint>(`/spaces/${spaceId}/projects/sprints/${sprintId}/complete`, { method: 'POST' });
+  return apiFetch<Sprint>(`${spaceBase(spaceId)}/projects/sprints/${sprintId}/complete`, { method: 'POST' });
 }
 
 // ---------------------------------------------------------------------------
@@ -813,17 +820,17 @@ async function completeSprint(spaceId: string, sprintId: string): Promise<Sprint
 // ---------------------------------------------------------------------------
 
 async function fetchRoadmap(spaceId: string): Promise<RoadmapItem[]> {
-  const data = await apiFetch<RoadmapItem[] | null>(`/spaces/${spaceId}/projects/roadmap`);
+  const data = await apiFetch<RoadmapItem[] | null>(`${spaceBase(spaceId)}/projects/roadmap`);
   return data ?? [];
 }
 
 async function fetchRoadmapOverdue(spaceId: string): Promise<RoadmapItem[]> {
-  const data = await apiFetch<RoadmapItem[] | null>(`/spaces/${spaceId}/projects/roadmap/overdue`);
+  const data = await apiFetch<RoadmapItem[] | null>(`${spaceBase(spaceId)}/projects/roadmap/overdue`);
   return data ?? [];
 }
 
 async function fetchRoadmapSprints(spaceId: string): Promise<RoadmapSprint[]> {
-  const data = await apiFetch<RoadmapSprint[] | null>(`/spaces/${spaceId}/projects/roadmap/sprints`);
+  const data = await apiFetch<RoadmapSprint[] | null>(`${spaceBase(spaceId)}/projects/roadmap/sprints`);
   return data ?? [];
 }
 
@@ -1236,7 +1243,7 @@ export function usePageLock(spaceId: string, pageId: string, opts?: QueryOpts<Pa
   return useQuery<PageLock | null, APIError>({
     queryKey: queryKeys.wikiLock(spaceId, pageId),
     queryFn: async () => {
-      const data = await apiFetch<PageLock | null>(`/spaces/${spaceId}/wiki/${pageId}/lock`);
+      const data = await apiFetch<PageLock | null>(`${spaceBase(spaceId)}/wiki/${pageId}/lock`);
       return data;
     },
     enabled: !!spaceId && !!pageId,
@@ -1248,7 +1255,7 @@ export function usePageLock(spaceId: string, pageId: string, opts?: QueryOpts<Pa
 export function useAcquirePageLock(spaceId: string, pageId: string) {
   const queryClient = useQueryClient();
   return useMutation<PageLock, APIError, void>({
-    mutationFn: () => apiFetch<PageLock>(`/spaces/${spaceId}/wiki/${pageId}/lock`, { method: 'POST' }),
+    mutationFn: () => apiFetch<PageLock>(`${spaceBase(spaceId)}/wiki/${pageId}/lock`, { method: 'POST' }),
     onSuccess: (data) => queryClient.setQueryData(queryKeys.wikiLock(spaceId, pageId), data),
   });
 }
@@ -1256,7 +1263,7 @@ export function useAcquirePageLock(spaceId: string, pageId: string) {
 export function useReleasePageLock(spaceId: string, pageId: string) {
   const queryClient = useQueryClient();
   return useMutation<void, APIError, void>({
-    mutationFn: () => apiFetch<void>(`/spaces/${spaceId}/wiki/${pageId}/lock`, { method: 'DELETE' }),
+    mutationFn: () => apiFetch<void>(`${spaceBase(spaceId)}/wiki/${pageId}/lock`, { method: 'DELETE' }),
     onSuccess: () => queryClient.setQueryData(queryKeys.wikiLock(spaceId, pageId), null),
   });
 }
@@ -1409,7 +1416,7 @@ export function useCreateSprint(spaceId: string) {
 }
 
 async function fetchWorkflowStates(spaceId: string): Promise<WorkflowState[]> {
-  return apiFetch<WorkflowState[]>(`/api/v1/spaces/${spaceId}/workflow/states`);
+  return apiFetch<WorkflowState[]>(`${spaceBase(spaceId)}/workflow/states`);
 }
 
 export function useWorkflowStates(spaceId: string, opts?: QueryOpts<WorkflowState[]>) {

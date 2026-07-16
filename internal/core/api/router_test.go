@@ -721,7 +721,7 @@ func TestProtectedEndpointUnauthorized(t *testing.T) {
 	router, _ := setupRouter(t)
 
 	spaceID := uuid.New()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/spaces/"+spaceID.String()+"/tickets/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orgs/"+uuid.New().String()+"/spaces/"+spaceID.String()+"/tickets/", nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
@@ -735,7 +735,7 @@ func TestTicketCRUD(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/tickets"
 
 	// Create ticket
 	createBody := jsonBody(t, map[string]string{
@@ -815,7 +815,7 @@ func TestTicketNotFound(t *testing.T) {
 	spaceID := uuid.New()
 	fakeID := uuid.New()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/spaces/"+spaceID.String()+"/tickets/"+fakeID.String(), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orgs/"+uuid.New().String()+"/spaces/"+spaceID.String()+"/tickets/"+fakeID.String(), nil)
 	req.Header.Set("Authorization", token)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -840,7 +840,7 @@ func TestWikiPageCRUD(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	// Create page
 	createBody := jsonBody(t, map[string]interface{}{
@@ -909,7 +909,7 @@ func TestProjectItemCRUD(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/items"
 
 	// Create item
 	createBody := jsonBody(t, map[string]string{
@@ -963,7 +963,7 @@ func TestConsistentErrorFormat(t *testing.T) {
 	token := authHeader(t, jwtSvc, uuid.New())
 
 	// Request with invalid UUID
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/spaces/not-a-uuid/tickets/also-not-uuid", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orgs/"+uuid.New().String()+"/spaces/not-a-uuid/tickets/also-not-uuid", nil)
 	req.Header.Set("Authorization", token)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
@@ -1095,7 +1095,7 @@ func TestTicketUpdate(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/tickets"
 
 	// Create ticket first
 	createBody := jsonBody(t, map[string]string{
@@ -1148,7 +1148,7 @@ func TestTicketAssignAndUnassign(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/tickets"
 
 	// Create ticket
 	createBody := jsonBody(t, map[string]string{
@@ -1202,7 +1202,7 @@ func TestTicketSearch(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/tickets"
 
 	// Search with query
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/search?q=test", nil)
@@ -1219,7 +1219,7 @@ func TestTicketSearchMissingQuery(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/tickets"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/search", nil)
 	req.Header.Set("Authorization", token)
@@ -1235,7 +1235,7 @@ func TestTicketKanban(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/tickets"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/tickets"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/kanban", nil)
 	req.Header.Set("Authorization", token)
@@ -1251,7 +1251,7 @@ func TestWikiTree(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/tree", nil)
 	req.Header.Set("Authorization", token)
@@ -1267,7 +1267,7 @@ func TestWikiSearch(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/search?q=hello", nil)
 	req.Header.Set("Authorization", token)
@@ -1283,7 +1283,7 @@ func TestWikiSearchMissingQuery(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/search", nil)
 	req.Header.Set("Authorization", token)
@@ -1300,7 +1300,7 @@ func TestWikiMovePage(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	// Create a page first
 	createBody := jsonBody(t, map[string]interface{}{
@@ -1342,7 +1342,7 @@ func TestWikiListRevisions(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	// Create page
 	createBody := jsonBody(t, map[string]interface{}{
@@ -1380,7 +1380,7 @@ func TestWikiRenderPage(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	// Create page with markdown
 	createBody := jsonBody(t, map[string]interface{}{
@@ -1423,7 +1423,7 @@ func TestWikiDiffRevisions(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	// Create page
 	createBody := jsonBody(t, map[string]interface{}{
@@ -1479,7 +1479,7 @@ func TestWikiDiffMissingParams(t *testing.T) {
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
 	pageID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	// Missing both from and to
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/"+pageID.String()+"/diff", nil)
@@ -1497,7 +1497,7 @@ func TestWikiVersionConflictOnUpdate(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/wiki"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/wiki"
 
 	// Create page (version 1)
 	createBody := jsonBody(t, map[string]interface{}{
@@ -1557,7 +1557,7 @@ func TestProjectItemUpdate(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/items"
 
 	// Create item
 	createBody := jsonBody(t, map[string]string{
@@ -1603,7 +1603,7 @@ func TestProjectItemUpdateStatus(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/items"
 
 	// Create item
 	createBody := jsonBody(t, map[string]string{
@@ -1645,7 +1645,7 @@ func TestProjectItemAssignToSprint(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects"
 
 	// Create sprint first
 	sprintBody := jsonBody(t, map[string]string{
@@ -1708,7 +1708,7 @@ func TestProjectSearchItems(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/items"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/search?q=test", nil)
 	req.Header.Set("Authorization", token)
@@ -1724,7 +1724,7 @@ func TestProjectSearchItemsMissingQuery(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/items"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/search", nil)
 	req.Header.Set("Authorization", token)
@@ -1740,7 +1740,7 @@ func TestProjectListItems(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/items"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/items"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
 	req.Header.Set("Authorization", token)
@@ -1757,7 +1757,7 @@ func TestProjectSprintCRUD(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/sprints"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/sprints"
 
 	// Create sprint
 	createBody := jsonBody(t, map[string]string{
@@ -1833,7 +1833,7 @@ func TestProjectListSprints(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/sprints"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/sprints"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
 	req.Header.Set("Authorization", token)
@@ -1850,7 +1850,7 @@ func TestProjectGetActiveSprint(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/sprints"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/sprints"
 
 	// No active sprint should return 404
 	req := httptest.NewRequest(http.MethodGet, baseURL+"/active", nil)
@@ -1908,7 +1908,7 @@ func TestProjectSprintItems(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/sprints"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/sprints"
 
 	// Create sprint
 	createBody := jsonBody(t, map[string]string{
@@ -1945,7 +1945,7 @@ func TestProjectBacklog(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/backlog"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/backlog"
 
 	// Get backlog
 	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
@@ -1963,7 +1963,7 @@ func TestProjectBacklogMoveToSprint(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects"
 
 	// Create sprint
 	sprintBody := jsonBody(t, map[string]string{
@@ -2041,7 +2041,7 @@ func TestProjectRoadmap(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/roadmap"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/roadmap"
 
 	// Get roadmap with date range
 	req := httptest.NewRequest(http.MethodGet, baseURL+"?from=2026-01-01&to=2026-12-31", nil)
@@ -2058,7 +2058,7 @@ func TestProjectRoadmapMissingDates(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/roadmap"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/roadmap"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
 	req.Header.Set("Authorization", token)
@@ -2074,7 +2074,7 @@ func TestProjectOverdueItems(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/roadmap/overdue"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/roadmap/overdue"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
 	req.Header.Set("Authorization", token)
@@ -2090,7 +2090,7 @@ func TestProjectSprintRoadmap(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 	token := authHeader(t, jwtSvc, uuid.New())
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects/roadmap/sprints"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects/roadmap/sprints"
 
 	req := httptest.NewRequest(http.MethodGet, baseURL, nil)
 	req.Header.Set("Authorization", token)
@@ -2107,7 +2107,7 @@ func TestProjectRelationsCRUD(t *testing.T) {
 	userID := uuid.New()
 	token := authHeader(t, jwtSvc, userID)
 	spaceID := uuid.New()
-	baseURL := "/api/v1/spaces/" + spaceID.String() + "/projects"
+	baseURL := "/api/v1/orgs/" + uuid.New().String() + "/spaces/" + spaceID.String() + "/projects"
 
 	// Create two items
 	item1Body := jsonBody(t, map[string]string{

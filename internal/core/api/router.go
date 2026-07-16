@@ -33,6 +33,9 @@ type RouterConfig struct {
 	AllowedOrigins []string
 	// QueueStatus is reported in the /health response: "ok", "disabled", or "error".
 	QueueStatus string
+	// SpaceOrgResolver backs the RequireSpaceInOrg middleware that enforces
+	// the single /orgs/{orgID}/spaces/{spaceID}/... scoping convention.
+	SpaceOrgResolver SpaceOrgResolver
 }
 
 // NewRouter builds the unified chi router with all routes and middleware.
@@ -81,23 +84,17 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 		r.Get("/orgs/{orgID}", cfg.SpaceHandler.GetOrg)
 		r.Patch("/orgs/{orgID}", cfg.SpaceHandler.UpdateOrg)
 
-		// Spaces (scoped by org)
-		r.Route("/orgs/{orgID}/spaces", func(r chi.Router) {
-			r.Mount("/", cfg.SpaceHandler.Routes())
-		})
-
-		// Comments — new polymorphic routes (tickets, project-items, wiki)
-		if cfg.CommentHandler != nil {
-			r.Route("/orgs/{orgID}/spaces/{spaceID}/{entityType}/{entityID}/comments", func(r chi.Router) {
-				r.Get("/", cfg.CommentHandler.List)
-				r.Post("/", cfg.CommentHandler.Create)
-			})
-			// Legacy item-scoped comments route (deprecated, kept for one release)
-			r.Route("/orgs/{orgID}/spaces/{spaceID}/items/{itemID}/comments", func(r chi.Router) {
-				r.Get("/", cfg.CommentHandler.ListLegacy)
-				r.Post("/", cfg.CommentHandler.CreateLegacy)
-			})
+		// The single scoping convention: every space resource lives under
+		// /orgs/{orgID}/spaces/{spaceID}/... — spaceGuard 404s any request
+		// whose space does not belong to the org in the URL. A nil resolver
+		// (routing-only unit tests) disables the ownership check; every real
+		// construction site wires one.
+		spaceGuard := func(next http.Handler) http.Handler { return next }
+		if cfg.SpaceOrgResolver != nil {
+			spaceGuard = RequireSpaceInOrg(cfg.SpaceOrgResolver)
 		}
+
+		mountSpaceResources(r, cfg, spaceGuard)
 
 		// Notifications (scoped to current user)
 		if cfg.NotificationHandler != nil {
@@ -120,36 +117,6 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			})
 		}
 
-		// Space lookup by ID (no org prefix needed for child pages)
-		r.Get("/spaces/{spaceID}", cfg.SpaceHandler.Get)
-
-		// Tickets (scoped by space)
-		r.Route("/spaces/{spaceID}/tickets", func(r chi.Router) {
-			r.Mount("/", cfg.TicketHandler.Routes())
-			if cfg.WorkflowHandler != nil {
-				r.Post("/{ticketID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToTicket)
-			}
-		})
-
-		// Wiki pages (scoped by space)
-		r.Route("/spaces/{spaceID}/wiki", func(r chi.Router) {
-			r.Mount("/", cfg.WikiHandler.Routes())
-		})
-
-		// Projects (scoped by space)
-		r.Route("/spaces/{spaceID}/projects", func(r chi.Router) {
-			r.Mount("/", cfg.ProjectHandler.Routes())
-			if cfg.WorkflowHandler != nil {
-				r.Post("/items/{itemID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToItem)
-			}
-		})
-
-		// Space workflow (read-only, space-scoped)
-		if cfg.WorkflowHandler != nil {
-			r.Route("/spaces/{spaceID}/workflow", func(r chi.Router) {
-				r.Mount("/", cfg.WorkflowHandler.SpaceRoutes())
-			})
-		}
 	})
 
 	// SPA frontend: serve static assets and fall back to index.html
@@ -158,4 +125,59 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	}
 
 	return r
+}
+
+// mountSpaceResources registers every space-scoped resource tree under the
+// single /orgs/{orgID}/spaces/{spaceID}/... convention, with spaceGuard
+// enforcing that the space belongs to the org. Comments hang off their
+// resource's own path.
+func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard func(http.Handler) http.Handler) {
+	// Spaces (scoped by org)
+	r.Route("/orgs/{orgID}/spaces", func(r chi.Router) {
+		r.Mount("/", cfg.SpaceHandler.Routes(spaceGuard))
+	})
+
+	// Tickets
+	r.Route("/orgs/{orgID}/spaces/{spaceID}/tickets", func(r chi.Router) {
+		r.Use(spaceGuard)
+		r.Mount("/", cfg.TicketHandler.Routes())
+		if cfg.WorkflowHandler != nil {
+			r.Post("/{ticketID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToTicket)
+		}
+		if cfg.CommentHandler != nil {
+			r.Get("/{ticketID}/comments", cfg.CommentHandler.ListTicketComments)
+			r.Post("/{ticketID}/comments", cfg.CommentHandler.CreateTicketComment)
+		}
+	})
+
+	// Wiki pages
+	r.Route("/orgs/{orgID}/spaces/{spaceID}/wiki", func(r chi.Router) {
+		r.Use(spaceGuard)
+		r.Mount("/", cfg.WikiHandler.Routes())
+		if cfg.CommentHandler != nil {
+			r.Get("/{pageID}/comments", cfg.CommentHandler.ListPageComments)
+			r.Post("/{pageID}/comments", cfg.CommentHandler.CreatePageComment)
+		}
+	})
+
+	// Projects
+	r.Route("/orgs/{orgID}/spaces/{spaceID}/projects", func(r chi.Router) {
+		r.Use(spaceGuard)
+		r.Mount("/", cfg.ProjectHandler.Routes())
+		if cfg.WorkflowHandler != nil {
+			r.Post("/items/{itemID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToItem)
+		}
+		if cfg.CommentHandler != nil {
+			r.Get("/items/{itemID}/comments", cfg.CommentHandler.ListItemComments)
+			r.Post("/items/{itemID}/comments", cfg.CommentHandler.CreateItemComment)
+		}
+	})
+
+	// Space workflow (read-only)
+	if cfg.WorkflowHandler != nil {
+		r.Route("/orgs/{orgID}/spaces/{spaceID}/workflow", func(r chi.Router) {
+			r.Use(spaceGuard)
+			r.Mount("/", cfg.WorkflowHandler.SpaceRoutes())
+		})
+	}
 }

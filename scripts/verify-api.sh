@@ -108,9 +108,9 @@ SPACE=$(curl -fsS -X POST \
 SPACE_ID=$(echo "$SPACE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 echo "Space ID: $SPACE_ID"
 
-# Ticket with minimum fields — uses /api/v1/spaces/{spaceID}/tickets per the live router.
+# Ticket with minimum fields — org+space scoped route.
 if curl -fsS -X POST \
-  "${BASE_URL}/api/v1/spaces/$SPACE_ID/tickets" \
+  "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/tickets" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title":"Test ticket","priority":"medium"}' >/dev/null; then
@@ -128,9 +128,9 @@ WIKI=$(curl -fsS -X POST \
   -d "{\"name\":\"Test Wiki ${RUN}\",\"type\":\"wiki\",\"slug\":\"test-wiki-${RUN}\"}")
 WIKI_ID=$(echo "$WIKI" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
-# Page with minimum fields — uses /api/v1/spaces/{spaceID}/wiki per the live router.
+# Page with minimum fields — org+space scoped route.
 if curl -fsS -X POST \
-  "${BASE_URL}/api/v1/spaces/$WIKI_ID/wiki" \
+  "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$WIKI_ID/wiki" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title":"Test page","content":""}' >/dev/null; then
@@ -148,9 +148,9 @@ PROJ=$(curl -fsS -X POST \
   -d "{\"name\":\"Test Project ${RUN}\",\"type\":\"project\",\"slug\":\"test-project-${RUN}\"}")
 PROJ_ID=$(echo "$PROJ" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
-# Item with minimum fields — uses /api/v1/spaces/{spaceID}/projects/items per the live router.
+# Item with minimum fields — org+space scoped route.
 if curl -fsS -X POST \
-  "${BASE_URL}/api/v1/spaces/$PROJ_ID/projects/items" \
+  "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$PROJ_ID/projects/items" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title":"Test item","kind":"task","priority":"medium"}' >/dev/null; then
@@ -167,7 +167,7 @@ echo "=== Step 7 — Verify API routes return correct Content-Type ==="
 # API routes must return application/json — use GET and discard body so the
 # router's response Content-Type is captured (chi returns 405 on HEAD).
 CT_API=$(curl -fsS -D - -o /dev/null \
-  "${BASE_URL}/api/v1/spaces/$SPACE_ID/tickets" \
+  "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/tickets" \
   -H "Authorization: Bearer $TOKEN" \
   | grep -i content-type || true)
 echo "API Content-Type: $CT_API"

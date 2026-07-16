@@ -21,7 +21,7 @@ test.describe('Null collection responses do not crash the UI', () => {
     await createUserAndLogin(page)
     const spaceId = await createSpace(page, 'Null Tickets', 'service_desk')
 
-    await page.route('**/api/v1/spaces/*/tickets', (route) =>
+    await page.route('**/api/v1/orgs/*/spaces/*/tickets', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }),
     )
     await page.goto(`/spaces/${spaceId}/tickets`)
@@ -32,7 +32,7 @@ test.describe('Null collection responses do not crash the UI', () => {
     await createUserAndLogin(page)
     const spaceId = await createSpace(page, 'Null Wiki', 'wiki')
 
-    await page.route('**/api/v1/spaces/*/wiki', (route) =>
+    await page.route('**/api/v1/orgs/*/spaces/*/wiki', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }),
     )
     await page.goto(`/spaces/${spaceId}/wiki`)
@@ -43,7 +43,7 @@ test.describe('Null collection responses do not crash the UI', () => {
     await createUserAndLogin(page)
     const spaceId = await createSpace(page, 'Null Backlog', 'project')
 
-    await page.route('**/api/v1/spaces/*/projects/items', (route) =>
+    await page.route('**/api/v1/orgs/*/spaces/*/projects/items', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }),
     )
     await page.goto(`/spaces/${spaceId}/backlog`)

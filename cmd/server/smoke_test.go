@@ -218,7 +218,7 @@ func TestSmoke(t *testing.T) {
 			"priority":    "medium",
 			"labels":      []string{},
 		}
-		url := fmt.Sprintf("%s/api/v1/spaces/%s/tickets", base, spaceID)
+		url := fmt.Sprintf("%s/api/v1/orgs/%s/spaces/%s/tickets", base, orgID, spaceID)
 		body := doPost(t, client, url, payload, accessToken, http.StatusCreated)
 
 		id, ok := body["id"].(string)
@@ -238,7 +238,7 @@ func TestSmoke(t *testing.T) {
 
 	// 7. Retrieve the ticket and verify it matches
 	t.Run("get_ticket", func(t *testing.T) {
-		url := fmt.Sprintf("%s/api/v1/spaces/%s/tickets/%s", base, spaceID, ticketID)
+		url := fmt.Sprintf("%s/api/v1/orgs/%s/spaces/%s/tickets/%s", base, orgID, spaceID, ticketID)
 		body := doGet(t, client, url, accessToken, http.StatusOK)
 
 		title := body["title"]

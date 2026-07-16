@@ -26,6 +26,7 @@ import {
   useWorkflowStates,
   useSpace,
   queryKeys,
+  transitionProjectItemStatus,
   type ProjectItem,
   type WorkflowState,
 } from '../../lib/api';
@@ -258,14 +259,9 @@ export function SprintBoardPage() {
       setPendingStatus((prev) => ({ ...prev, [draggedId]: targetStatus }));
 
       try {
-        await fetch(`/api/v1/spaces/${spaceId}/projects/items/${draggedId}/status`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${localStorage.getItem('azimuthal_token') ?? ''}`,
-          },
-          body: JSON.stringify({ status: targetStatus }),
-        });
+        // Always through the canonical API client — a raw fetch here once
+        // bypassed auth/refresh handling and failed silently on error.
+        await transitionProjectItemStatus(spaceId, draggedId, targetStatus);
         // Invalidate to sync server state
         queryClient.invalidateQueries({ queryKey: queryKeys.sprintItems(spaceId, sprintId) });
       } catch {
