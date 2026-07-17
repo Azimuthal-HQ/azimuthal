@@ -355,6 +355,7 @@ export function WikiPage() {
             onClick={() => setDialogOpen(true)}
             className="rounded p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-colors"
             title="New page"
+            aria-label="New page"
           >
             <Plus className="h-4 w-4" />
           </button>

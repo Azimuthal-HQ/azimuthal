@@ -356,6 +356,7 @@ export function ItemDetailPage() {
                     {STATUS_LABEL[item.status] ?? item.status}
                   </Badge>
                   <select
+                    aria-label="Status"
                     value={item.status}
                     onChange={(e) => handleStatusChange(e.target.value)}
                     className={cn(
@@ -387,6 +388,7 @@ export function ItemDetailPage() {
                   Assignee
                 </label>
                 <select
+                  aria-label="Assignee"
                   value={item.assignee_id ?? ''}
                   onChange={(e) => handleAssigneeChange(e.target.value)}
                   className={cn(
