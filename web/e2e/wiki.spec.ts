@@ -45,15 +45,17 @@ test.describe('Wiki', () => {
     await page.locator('[role="dialog"] button:has-text("Create Page")').click()
     await expect(page.locator('text=Editable Page').first()).toBeVisible({ timeout: 5000 })
 
-    // Open the editor (TipTap-based rich text editor)
-    await page.click('button:has-text("Edit")')
+    // Open the editor (TipTap-based rich text editor). Use an exact-name
+    // locator: the sidebar renders each page title as a button, so a
+    // substring match on "Edit" would also match a page titled "Editable…".
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
     const editor = page.locator('.ProseMirror').first()
     await expect(editor).toBeVisible({ timeout: 5000 })
 
     // Type content and save
     await editor.click()
     await editor.pressSequentially('Content written in the editor')
-    await page.click('button:has-text("Save")')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
 
     // Content renders after save, and persists across reload
     await expect(page.locator('text=Content written in the editor').first()).toBeVisible({ timeout: 5000 })
@@ -99,7 +101,9 @@ test.describe('Wiki', () => {
     const commentBox = page.locator('textarea[placeholder*="comment" i], input[placeholder*="comment" i]').first()
     await expect(commentBox).toBeVisible({ timeout: 5000 })
     await commentBox.fill('A wiki page comment')
-    await page.locator('button:has-text("Comment")').first().click()
+    // Exact-name locator: the sidebar page button "Commented Page" would
+    // otherwise match a substring "Comment" search.
+    await page.getByRole('button', { name: 'Comment', exact: true }).click()
     await expect(page.locator('text=A wiki page comment').first()).toBeVisible({ timeout: 5000 })
 
     await page.reload()

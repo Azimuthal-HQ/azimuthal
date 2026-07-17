@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, type ReactElement } from 'react';
+import { useState, useEffect, useRef, type ReactElement } from 'react';
 import { useParams } from 'react-router-dom';
 import { FileText, Edit, Plus, AlertCircle, Search, History, X, ChevronRight, Lock } from 'lucide-react';
 import { MarkdownEditor } from '../../components/ui/MarkdownEditor';
@@ -235,8 +235,11 @@ export function WikiPage() {
   const [formTitle, setFormTitle] = useState('');
   const [formParentId, setFormParentId] = useState('');
 
-  // Auto-select first page
-  useMemo(() => {
+  // Auto-select first page once pages load (e.g. after a reload with no page
+  // in the URL). This is a side effect, so it belongs in useEffect — a
+  // useMemo runs inconsistently and made the selection (and the comments/
+  // content that depend on it) race on reload.
+  useEffect(() => {
     if (pages.length > 0 && !activeId) {
       setActiveId(pages[0].id);
     }
@@ -393,7 +396,7 @@ export function WikiPage() {
                     <History className="h-3.5 w-3.5" />
                     History
                   </button>
-                  <Button variant="secondary" size="sm" onClick={startEdit} disabled={!!lockedByOther}>
+                  <Button variant="secondary" size="sm" onClick={startEdit} disabled={!activePage || !!lockedByOther}>
                     <Edit className="mr-1.5 h-3.5 w-3.5" />
                     Edit
                   </Button>

@@ -6,6 +6,13 @@ import { ThemeProvider } from './components/theme/ThemeProvider';
 import { AuthProvider } from './lib/auth';
 import { ToastProvider } from './components/ui/toast';
 import { App } from './App';
+// Self-hosted fonts (bundled into the single binary) — Azimuthal must run
+// fully offline / air-gapped, so no external font CDN.
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
+import '@fontsource-variable/jetbrains-mono/index.css';
 import './styles/globals.css';
 
 const queryClient = new QueryClient({
