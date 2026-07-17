@@ -176,15 +176,20 @@ the restart.
 
 ---
 
-## 8. CORS Allows All Origins
+## 8. ~~CORS Allows All Origins~~ (RESOLVED)
 
 **Severity**: Medium (security)
-**Status**: Open — documented with skipped test
+**Status**: Resolved — production denies all origins unless an allow-list is set
 
-`internal/core/api/middleware.go` sets `Access-Control-Allow-Origin: *`.
-This is appropriate for development but a security risk in production.
+`api.NewCORS` now echoes `Access-Control-Allow-Origin` only for origins on an
+explicit allow-list from `AZIMUTHAL_ALLOWED_ORIGINS`. `config.parseAllowedOrigins`
+returns `["*"]` in development/test but an empty list in production, so an
+unconfigured production deployment denies all cross-origin requests by default
+and forces the operator to name allowed origins. The legacy permissive `CORS`
+middleware is only used when the allow-list is `nil` (non-production defaults).
 
-**Test**: `internal/core/api/known_issues_test.go` — `TestCORS_RestrictedInProduction` (skipped)
+**Tests**: `internal/config/config_test.go` — `TestConfig_AllowedOrigins_ProductionEmpty`,
+`TestConfig_AllowedOrigins_Explicit`.
 
 ---
 
