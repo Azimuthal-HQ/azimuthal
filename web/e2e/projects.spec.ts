@@ -94,7 +94,7 @@ test.describe('Projects', () => {
     await expect(page).not.toHaveURL(/\/login/)
 
     // Find status dropdown and change it
-    const statusSelect = page.locator('select').filter({ hasText: 'Open' }).first()
+    const statusSelect = page.getByLabel('Status')
     await expect(statusSelect).toBeVisible({ timeout: 5000 })
     await statusSelect.selectOption('in_progress')
 
@@ -114,7 +114,7 @@ test.describe('Projects', () => {
     await expect(page).not.toHaveURL(/\/login/)
 
     // Change status to In Progress
-    const statusSelect = page.locator('select').filter({ hasText: 'Open' }).first()
+    const statusSelect = page.getByLabel('Status')
     await expect(statusSelect).toBeVisible({ timeout: 5000 })
     await statusSelect.selectOption('in_progress')
 
@@ -126,8 +126,7 @@ test.describe('Projects', () => {
     await expect(page).not.toHaveURL(/\/login/)
 
     // Status select must show in_progress after reload — not revert to open
-    const statusAfterReload = page.locator('select').first()
-    await expect(statusAfterReload).toHaveValue('in_progress', { timeout: 5000 })
+    await expect(page.getByLabel('Status')).toHaveValue('in_progress', { timeout: 5000 })
   })
 
   test('no 404 errors in network tab when viewing project item detail', async ({ page }) => {

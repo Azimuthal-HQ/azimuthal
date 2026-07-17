@@ -20,7 +20,7 @@ test.describe('Wiki', () => {
     await createUserAndLogin(page)
     await createSpace(page, 'Page Create Wiki', 'wiki')
 
-    await page.click('button:has-text("New Page")')
+    await page.getByRole('button', { name: 'New page' }).click()
     await expect(page.locator('#page-title')).toBeVisible()
 
     await page.fill('#page-title', 'E2E Test Page')
@@ -40,7 +40,7 @@ test.describe('Wiki', () => {
     await createUserAndLogin(page)
     await createSpace(page, 'Editor Wiki', 'wiki')
 
-    await page.click('button:has-text("New Page")')
+    await page.getByRole('button', { name: 'New page' }).click()
     await page.fill('#page-title', 'Editable Page')
     await page.locator('[role="dialog"] button:has-text("Create Page")').click()
     await expect(page.locator('text=Editable Page').first()).toBeVisible({ timeout: 5000 })
@@ -66,13 +66,13 @@ test.describe('Wiki', () => {
     await createSpace(page, 'Tree Wiki', 'wiki')
 
     // Create a top-level page…
-    await page.click('button:has-text("New Page")')
+    await page.getByRole('button', { name: 'New page' }).click()
     await page.fill('#page-title', 'Parent Node')
     await page.locator('[role="dialog"] button:has-text("Create Page")').click()
     await expect(page.locator('text=Parent Node').first()).toBeVisible({ timeout: 5000 })
 
     // …and a child nested under it via the parent selector.
-    await page.click('button:has-text("New Page")')
+    await page.getByRole('button', { name: 'New page' }).click()
     await page.fill('#page-title', 'Child Node')
     await page.selectOption('#page-parent', { label: 'Parent Node' })
     await page.locator('[role="dialog"] button:has-text("Create Page")').click()
@@ -90,7 +90,7 @@ test.describe('Wiki', () => {
     await createUserAndLogin(page)
     await createSpace(page, 'Comments Wiki', 'wiki')
 
-    await page.click('button:has-text("New Page")')
+    await page.getByRole('button', { name: 'New page' }).click()
     await page.fill('#page-title', 'Commented Page')
     await page.locator('[role="dialog"] button:has-text("Create Page")').click()
     await expect(page.locator('text=Commented Page').first()).toBeVisible({ timeout: 5000 })
