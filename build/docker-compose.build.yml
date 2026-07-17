@@ -1,0 +1,15 @@
+# Build overlay — build the Azimuthal image from source instead of pulling
+# the published ghcr.io image. Use this when running from a source checkout
+# (e.g. a feature branch) before an official release image exists.
+#
+# From the repository root:
+#   docker compose -f build/docker-compose.yml -f build/docker-compose.build.yml \
+#     --env-file .env up -d --build
+#
+# The build context is the repo root so the multi-stage build/Dockerfile can
+# see web/, go.mod, and the rest of the source tree.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile
