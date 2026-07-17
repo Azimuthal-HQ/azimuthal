@@ -63,8 +63,10 @@ jobs:
     name: Test
     needs: build
     runs-on: ubuntu-latest
-    # No services: block — postgres + minio started manually after Docker-wait
-    # (DinD daemon may not be ready when services: fires, causing instant failure)
+    # postgres + minio are started manually via docker (below) rather than a
+    # services: block, so the Docker-wait/pull-retry steps stay portable across
+    # GitHub-hosted and any future self-managed runners. On ubuntu-latest the
+    # daemon is ready immediately, so the waits fall through quickly.
     env:
       DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
       STORAGE_ENDPOINT: http://localhost:9001
