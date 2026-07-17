@@ -81,7 +81,6 @@ func setupOrg(t *testing.T, q *generated.Queries, suffix string) generated.Organ
 		ID:   uuid.New(),
 		Slug: "test-" + suffix,
 		Name: "Test Org " + suffix,
-		Plan: "community",
 	})
 	if err != nil {
 		t.Fatalf("setupOrg: %v", err)
@@ -147,7 +146,6 @@ func TestOrganizationCRUD(t *testing.T) {
 		ID:   uuid.New(),
 		Slug: slug,
 		Name: "CRUD Org",
-		Plan: "community",
 	})
 	if err != nil {
 		t.Fatalf("CreateOrganization: %v", err)
@@ -175,7 +173,6 @@ func TestOrganizationCRUD(t *testing.T) {
 		ID:          org.ID,
 		Name:        "Updated Org",
 		Description: &desc,
-		Plan:        "community",
 	})
 	if err != nil {
 		t.Fatalf("UpdateOrganization: %v", err)

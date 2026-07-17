@@ -737,7 +737,7 @@ func TestWithTx(t *testing.T) {
 	q := generated.New(pool).WithTx(tx)
 	org, err := q.CreateOrganization(ctx, generated.CreateOrganizationParams{
 		ID: uuid.New(), Slug: "tx-" + uuid.New().String()[:8],
-		Name: "Tx Org", Plan: "community",
+		Name: "Tx Org",
 	})
 	if err != nil {
 		t.Fatalf("CreateOrganization in tx: %v", err)
