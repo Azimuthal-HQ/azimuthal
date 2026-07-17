@@ -156,17 +156,23 @@ default labels to `[]` in the item adapter layer (fixed in v0.1.5).
 
 ---
 
-## 7. RSA Key Generated at Runtime on Every Startup
+## 7. ~~RSA Key Generated at Runtime on Every Startup~~ (RESOLVED)
 
 **Severity**: Medium
-**Status**: Open — documented with skipped test
+**Status**: Resolved — RS256 signing key persisted in the database (migration 018)
 
-JWT signing uses an RSA key pair generated fresh each time the server starts
-(`cmd/server/main.go`). All issued JWTs and sessions are invalidated on every
-restart. The key should be loaded from persistent storage or derived from `JWT_SECRET`.
+JWT signing previously used an RSA key pair generated fresh on every server
+start, invalidating all issued JWTs and sessions on restart. The signing key
+now lives in a singleton `auth_signing_keys` row and is loaded (or generated
+first-writer-wins) on startup via `auth.EnsureSigningKey`. `JWTPrivateKeyPath`
+remains only as a one-time import path for deployments upgrading from the legacy
+file-based key. There is no `JWT_SECRET` to configure.
 
-**Test**: `internal/core/api/known_issues_test.go` — `TestRSAKey_SurvivesRestart` (skipped)
-**See also**: `docs/project-state.md` Section 4, issue #1
+Verified live in the Docker Compose stack: a token issued before
+`docker compose restart app` still returns HTTP 200 on `/api/v1/auth/me` after
+the restart.
+
+**Tests**: signing-key restart-safety suite in `internal/core/auth` (real Postgres).
 
 ---
 
@@ -290,3 +296,25 @@ restructured anyway.
 **Proper fix**: P5 (Items Table Split) makes `item_relations` polymorphic — `entity_type TEXT + entity_id UUID` with no FK, or a union FK pattern. Once P5 lands, ticket relations can be added with a single handler and no migration.
 
 **Do not fix before P5.**
+
+---
+
+## 16. Object Storage Service Not Yet Wired (attachments/uploads)
+
+**Severity**: Low
+**Status**: Open — future feature scope
+
+`build/docker-compose.yml` brings up a MinIO `storage` service and the app
+accepts `STORAGE_*` env vars, but the running server does not yet wire an
+`ObjectStore` into any handler. `storage.NewS3Store` / `EnsureBucket` have no
+production caller, and there is no attachment/upload API or UI. As a result the
+`storage` container is currently inert — the app boots and every module
+(service desk, wiki, projects, comments) works without it.
+
+**Impact for testers**: file attachments/uploads are not available yet; nothing
+else is affected. The MinIO service is retained in Compose because attachments
+are planned and the deploy topology is already documented for them.
+
+**Proper fix**: construct an `S3Store`, call `EnsureBucket` on startup, and
+pass it to the handlers that need it, behind a failing test that uploads and
+retrieves an object end-to-end.

@@ -200,9 +200,9 @@ jobs:
             # 2. Create your env and fill in secrets
             cp .env.example .env
 
-            # 3. Generate a secure JWT secret (64 hex chars) and pick passwords
-            sed -i "s/change-me-run-openssl-rand-hex-32/$(openssl rand -hex 32)/" .env
-            #   Then edit .env and set:
+            # 3. Edit .env and set your secrets. Azimuthal generates and
+            #    persists its own RS256 signing key in the database on first
+            #    start — there is no JWT secret to configure.
             #     POSTGRES_PASSWORD=...      # database password
             #     MINIO_ROOT_USER=...        # storage access key (e.g. azimuthal)
             #     MINIO_ROOT_PASSWORD=...    # storage secret key (16+ chars)
