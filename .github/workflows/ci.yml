@@ -23,7 +23,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   build:
     name: Build
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -62,7 +62,7 @@ jobs:
   test:
     name: Test
     needs: build
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     # No services: block — postgres + minio started manually after Docker-wait
     # (DinD daemon may not be ready when services: fires, causing instant failure)
     env:
@@ -213,7 +213,7 @@ jobs:
   lint:
     name: Lint
     needs: build
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -245,7 +245,7 @@ jobs:
   sast:
     name: SAST (gosec)
     needs: build
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     # Security scans gate the PUBLIC release only. Private is the dev
     # sandbox — we expect work-in-progress code that may not be clean yet.
     if: endsWith(github.repository, '/azimuthal')
@@ -314,7 +314,7 @@ jobs:
   vuln-scan:
     name: Dependency Scan (govulncheck)
     needs: build
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     # Security scans gate the PUBLIC release only.
     if: endsWith(github.repository, '/azimuthal')
     steps:
@@ -353,7 +353,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   secret-scan:
     name: Secret Scan (gitleaks)
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     # Security scans gate the PUBLIC release only. Private is dev-sandbox;
     # in-progress work may legitimately have placeholder secrets, etc.
     if: endsWith(github.repository, '/azimuthal')
@@ -414,7 +414,7 @@ jobs:
   container-scan:
     name: Container Scan (trivy)
     needs: build
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     # Security scans gate the PUBLIC release only.
     if: endsWith(github.repository, '/azimuthal')
     permissions:
@@ -507,7 +507,7 @@ jobs:
   e2e:
     name: E2E Tests (Playwright)
     needs: [build, test]
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     # No services: block — postgres + minio started manually after Docker-wait
     env:
       DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
@@ -661,7 +661,7 @@ jobs:
   docs-check:
     name: API Docs Check
     needs: build
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -709,7 +709,7 @@ jobs:
   docker-e2e:
     name: Docker image boot
     needs: build
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     # No services: block — postgres started manually after Docker-wait
 
     steps:
@@ -847,7 +847,7 @@ jobs:
   all-checks:
     name: All Gates Passed
     needs: [build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e]
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check all gates
