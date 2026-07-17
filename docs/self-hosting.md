@@ -22,10 +22,10 @@ curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/.env.examp
 # 2. Create your .env file
 cp .env.example .env
 
-# 3. Generate a secure JWT secret and set passwords
-# On Linux/macOS:
-sed -i "s/change-me-run-openssl-rand-hex-32/$(openssl rand -hex 32)/" .env
-# Then edit .env and set POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD
+# 3. Edit .env and set your passwords. There is no JWT secret to configure —
+#    Azimuthal generates and persists its own RS256 signing key in the
+#    database on first start, so tokens survive restarts.
+#    Set POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD.
 
 # 4. Start Azimuthal
 docker compose -f docker-compose.yml up -d
@@ -38,6 +38,29 @@ docker compose exec app /azimuthal admin create-user \
 ```
 
 Azimuthal is now running at http://localhost:8080.
+
+## Running from a source checkout (before a release)
+
+The Quick Start above pulls the published `ghcr.io/azimuthal-hq/azimuthal`
+image, which is only available once a version has been tagged and released.
+To run from a source checkout (e.g. a feature branch) that has no release
+image yet, build the image locally with the build overlay:
+
+```bash
+git clone https://github.com/Azimuthal-HQ/azimuthal
+cd azimuthal
+cp .env.example .env          # then edit POSTGRES_PASSWORD and MINIO_ROOT_PASSWORD
+
+docker compose -f build/docker-compose.yml -f build/docker-compose.build.yml \
+  --env-file .env up -d --build
+
+docker compose -f build/docker-compose.yml -f build/docker-compose.build.yml \
+  --env-file .env exec app /azimuthal admin create-user \
+    --email admin@example.com --name "Admin" --password your-secure-password
+```
+
+Everything else (migrations on first boot, admin CLI, the app at
+http://localhost:8080) behaves identically to the published-image path.
 
 ## First-Run: Create an Admin User
 
