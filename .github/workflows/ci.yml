@@ -245,7 +245,7 @@ jobs:
   # GATE 4A: SAST
   # ─────────────────────────────────────────────────────────────
   sast:
-    name: SAST (gosec)
+    name: SAST
     needs: build
     runs-on: ubuntu-latest
     # Security scans gate the PUBLIC release only. Private is the dev
@@ -314,7 +314,7 @@ jobs:
   # GATE 4B: Dependency vulnerability scanning
   # ─────────────────────────────────────────────────────────────
   vuln-scan:
-    name: Dependency Scan (govulncheck)
+    name: Dependency Scan
     needs: build
     runs-on: ubuntu-latest
     # Security scans gate the PUBLIC release only.
@@ -354,7 +354,7 @@ jobs:
   # GATE 4C: Secret scanning
   # ─────────────────────────────────────────────────────────────
   secret-scan:
-    name: Secret Scan (gitleaks)
+    name: Secret Scan
     runs-on: ubuntu-latest
     # Security scans gate the PUBLIC release only. Private is dev-sandbox;
     # in-progress work may legitimately have placeholder secrets, etc.
@@ -414,7 +414,7 @@ jobs:
   # GATE 4D: Container scanning
   # ─────────────────────────────────────────────────────────────
   container-scan:
-    name: Container Scan (trivy)
+    name: Container Scan
     needs: build
     runs-on: ubuntu-latest
     # Security scans gate the PUBLIC release only.
