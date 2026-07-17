@@ -15,7 +15,7 @@ jobs:
 
   build-release:
     name: Build Release Binaries
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     if: endsWith(github.repository, '/azimuthal')
     permissions:
       contents: write
@@ -85,7 +85,7 @@ jobs:
  
   docker-release:
     name: Build & Push to GHCR
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     if: endsWith(github.repository, '/azimuthal')
     permissions:
       contents: read
@@ -145,7 +145,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: [build-release, docker-release]
-    runs-on: azimuthal
+    runs-on: ubuntu-latest
     if: endsWith(github.repository, '/azimuthal')
     permissions:
       contents: write
