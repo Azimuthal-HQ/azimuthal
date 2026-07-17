@@ -7,7 +7,7 @@ services:
 
   app:
     image: ghcr.io/azimuthal-hq/azimuthal:${AZIMUTHAL_VERSION:-latest}
-    command: serve
+    # The image ENTRYPOINT already runs `serve`; no command override needed.
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8080}:8080"
