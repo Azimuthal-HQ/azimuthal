@@ -2,9 +2,11 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -225,9 +227,14 @@ func (a *SprintAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Sp
 	return dbSprintToProject(row), nil
 }
 
-// GetActiveBySpace returns the currently active sprint for a space.
+// GetActiveBySpace returns the currently active sprint for a space. Having no
+// active sprint is the repository contract's ErrNotFound, not an internal
+// error — the API maps it to 404 and the frontend treats that as "no sprint".
 func (a *SprintAdapter) GetActiveBySpace(ctx context.Context, spaceID uuid.UUID) (*projects.Sprint, error) {
 	row, err := a.q.GetActiveSprintBySpace(ctx, spaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sprint adapter get active by space: %w", err)
 	}

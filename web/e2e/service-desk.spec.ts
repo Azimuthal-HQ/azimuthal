@@ -17,6 +17,21 @@ test.describe('Service Desk', () => {
     await expect(page.locator('text=Unknown')).not.toBeVisible()
   })
 
+  test('Reports view renders content — regression: blank screen', async ({ page }) => {
+    // P0 defect: the sidebar linked to /spaces/:id/reports but no route existed,
+    // so React Router rendered nothing — an entirely blank document body.
+    await createUserAndLogin(page)
+    await createSpace(page, 'Reports Desk', 'service_desk')
+
+    await page.getByRole('link', { name: 'Reports' }).click()
+    await expect(page).toHaveURL(/\/spaces\/.*\/reports/, { timeout: 10000 })
+
+    // The route must render non-empty content — a blank body is never acceptable.
+    await expect(page.locator('h1:has-text("Reports")')).toBeVisible({ timeout: 5000 })
+    expect((await page.locator('body').innerText()).trim()).not.toBe('')
+    await assertNoErrors(page)
+  })
+
   test('can create a ticket with minimum fields', async ({ page }) => {
     await createUserAndLogin(page)
     await createSpace(page, 'Ticket Create Test', 'service_desk')
@@ -111,6 +126,47 @@ test.describe('Service Desk', () => {
       expect(items[0].priority).toBe('medium')
       expect(items[0].status).toBe('open')
     }
+  })
+
+  test('kanban card dragged to another column persists across reload — regression: drag not wired', async ({ page }) => {
+    // P0 defect: the board rendered dnd-kit scaffolding but the drag-end
+    // handler did nothing — no status change, no persistence. Note the
+    // pre-fix board also had no per-column landmarks, so on the unfixed UI
+    // this fails at the first column locator.
+    await createUserAndLogin(page)
+    await createSpace(page, 'Drag Desk', 'service_desk')
+
+    await page.click('button:has-text("New Ticket")')
+    await page.fill('#ticket-title', 'Drag Me Ticket')
+    await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
+    await expect(page.locator('text=Drag Me Ticket')).toBeVisible({ timeout: 5000 })
+
+    await page.getByRole('link', { name: 'Kanban Board' }).click()
+    await expect(page).toHaveURL(/\/spaces\/.*\/kanban/, { timeout: 10000 })
+
+    const card = page.locator('[data-column-id="open"]').locator('text=Drag Me Ticket')
+    await expect(card).toBeVisible({ timeout: 5000 })
+
+    // dnd-kit's PointerSensor needs a real pointer gesture: press, move past
+    // the 5px activation threshold in small steps, glide to the target column.
+    const cardBox = await card.boundingBox()
+    const target = page.locator('[data-column-id="in_progress"]')
+    const targetBox = await target.boundingBox()
+    if (!cardBox || !targetBox) throw new Error('could not measure drag source/target')
+
+    await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(cardBox.x + cardBox.width / 2 + 12, cardBox.y + cardBox.height / 2, { steps: 4 })
+    await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + Math.min(120, targetBox.height / 2), { steps: 15 })
+    await page.mouse.up()
+
+    // The card lands in In Progress…
+    await expect(page.locator('[data-column-id="in_progress"]').locator('text=Drag Me Ticket')).toBeVisible({ timeout: 5000 })
+
+    // …and the move survives a reload — persisted through the API, not just local state.
+    await page.reload()
+    await expect(page.locator('[data-column-id="in_progress"]').locator('text=Drag Me Ticket')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('[data-column-id="open"]').locator('text=Drag Me Ticket')).not.toBeVisible()
   })
 
   test('kanban board loads without error', async ({ page }) => {

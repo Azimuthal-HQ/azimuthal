@@ -46,6 +46,84 @@ test.describe('Projects', () => {
     await expect(page.locator('text=Unknown')).not.toBeVisible()
   })
 
+  test('sprint with start and end dates can be created — regression: 400 invalid request body', async ({ page }) => {
+    // P0 defect: the New Sprint dialog posted bare YYYY-MM-DD strings from its
+    // date inputs; the API's RFC3339 timestamp contract rejected them with
+    // 400 "invalid request body", so every dated sprint creation failed.
+    await createUserAndLogin(page)
+    await createSpace(page, 'Sprint Dates Project', 'project')
+
+    await page.getByRole('link', { name: 'Sprints' }).click()
+    await expect(page).toHaveURL(/\/spaces\/.*\/sprints/, { timeout: 10000 })
+
+    await page.click('button:has-text("New Sprint")')
+    await page.fill('input[placeholder="Sprint 1"]', 'Dated Sprint')
+    await page.locator('input[type="date"]').first().fill('2026-07-20')
+    await page.locator('input[type="date"]').nth(1).fill('2026-08-03')
+    await page.locator('[role="dialog"] button:has-text("Create Sprint")').click()
+
+    // The sprint must appear with its dates — and no 400 error text anywhere.
+    await expect(page.locator('text=Dated Sprint')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=2026-07-20')).toBeVisible()
+    await assertNoErrors(page)
+  })
+
+  test('priority selector is one connected segmented control — regression: cramped chips', async ({ page }) => {
+    // P0 defect: the create-item form rendered Critical/High/Medium/Low as
+    // four loose content-width chips with almost no padding. Rebuilt as a
+    // single segmented control: equal option widths above a sane minimum,
+    // options joined edge-to-edge with no gaps.
+    await createUserAndLogin(page)
+    await createSpace(page, 'Priority Segments Project', 'project')
+
+    await page.click('button:has-text("Create Item")')
+    const group = page.getByRole('radiogroup', { name: 'Priority' })
+    await expect(group).toBeVisible({ timeout: 5000 })
+
+    const options = group.getByRole('radio')
+    await expect(options).toHaveCount(4)
+
+    const boxes = []
+    for (let i = 0; i < 4; i++) {
+      const box = await options.nth(i).boundingBox()
+      if (!box) throw new Error(`priority option ${i} has no bounding box`)
+      boxes.push(box)
+    }
+
+    // Equal widths (sub-pixel tolerance) above a usable minimum.
+    const widths = boxes.map((b) => b.width)
+    expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1.5)
+    expect(Math.min(...widths)).toBeGreaterThanOrEqual(64)
+
+    // Connected: adjacent options touch (divider only, no gaps between them).
+    for (let i = 1; i < 4; i++) {
+      const gap = boxes[i].x - (boxes[i - 1].x + boxes[i - 1].width)
+      expect(gap).toBeLessThanOrEqual(2)
+    }
+
+    // Still functional: selecting an option marks it checked and the default
+    // selection (Medium) starts out checked.
+    await expect(options.nth(2)).toHaveAttribute('aria-checked', 'true')
+    await options.nth(0).click()
+    await expect(options.nth(0)).toHaveAttribute('aria-checked', 'true')
+    await expect(options.nth(2)).toHaveAttribute('aria-checked', 'false')
+  })
+
+  test('Labels view renders content — regression: blank screen', async ({ page }) => {
+    // P0 defect: the sidebar linked to /spaces/:id/labels but no route existed,
+    // so React Router rendered nothing — an entirely blank document body.
+    await createUserAndLogin(page)
+    await createSpace(page, 'Labels Project', 'project')
+
+    await page.getByRole('link', { name: 'Labels' }).click()
+    await expect(page).toHaveURL(/\/spaces\/.*\/labels/, { timeout: 10000 })
+
+    // The route must render non-empty content — a blank body is never acceptable.
+    await expect(page.locator('h1:has-text("Labels")')).toBeVisible({ timeout: 5000 })
+    expect((await page.locator('body').innerText()).trim()).not.toBe('')
+    await assertNoErrors(page)
+  })
+
   test('sprint board loads without error', async ({ page }) => {
     await createUserAndLogin(page)
     await createSpace(page, 'Sprint Test', 'project')
