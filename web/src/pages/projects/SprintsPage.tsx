@@ -14,7 +14,7 @@ import {
 } from '../../lib/api';
 
 const STATUS_STYLES: Record<string, string> = {
-  planning:  'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]',
+  planned:   'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]',
   active:    'bg-[var(--color-primary-muted)] text-[var(--color-primary)]',
   completed: 'bg-[var(--color-success)]/15 text-[var(--color-success)]',
 };
@@ -42,7 +42,7 @@ function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: str
           {isActive && (
             <span className="rounded-full bg-[var(--color-primary)] px-2 py-0.5 text-[var(--text-xs)] text-white font-semibold">Active</span>
           )}
-          <span className={cn('rounded-full px-2 py-0.5 text-[var(--text-xs)] font-medium capitalize', STATUS_STYLES[sprint.status] ?? STATUS_STYLES.planning)}>
+          <span className={cn('rounded-full px-2 py-0.5 text-[var(--text-xs)] font-medium capitalize', STATUS_STYLES[sprint.status] ?? STATUS_STYLES.planned)}>
             {sprint.status}
           </span>
         </div>
@@ -65,7 +65,7 @@ function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: str
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
-        {sprint.status === 'planning' && (
+        {sprint.status === 'planned' && (
           <Button size="sm" variant="outline" onClick={handleStart} disabled={startMutation.isPending}>
             <Play className="mr-1.5 h-3.5 w-3.5" />
             {startMutation.isPending ? 'Starting…' : 'Start'}
@@ -119,7 +119,7 @@ export function SprintsPage() {
   }
 
   const sorted = [...sprints].sort((a, b) => {
-    const order = { active: 0, planning: 1, completed: 2 };
+    const order = { active: 0, planned: 1, completed: 2 };
     return (order[a.status as keyof typeof order] ?? 3) - (order[b.status as keyof typeof order] ?? 3);
   });
 
