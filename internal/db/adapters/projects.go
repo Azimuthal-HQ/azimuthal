@@ -2,9 +2,11 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -51,9 +53,13 @@ func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
 	return nil
 }
 
-// GetByID retrieves an item by primary key. Returns an error if absent or soft-deleted.
+// GetByID retrieves an item by primary key. Returns projects.ErrNotFound if
+// absent or soft-deleted.
 func (a *ItemAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Item, error) {
 	row, err := a.q.GetProjectItemByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("item adapter get by id: %w", err)
 	}
@@ -216,18 +222,27 @@ func (a *SprintAdapter) Create(ctx context.Context, sprint *projects.Sprint) err
 	return nil
 }
 
-// GetByID retrieves a sprint by primary key.
+// GetByID retrieves a sprint by primary key. Returns projects.ErrNotFound if
+// absent.
 func (a *SprintAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Sprint, error) {
 	row, err := a.q.GetSprintByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sprint adapter get by id: %w", err)
 	}
 	return dbSprintToProject(row), nil
 }
 
-// GetActiveBySpace returns the currently active sprint for a space.
+// GetActiveBySpace returns the currently active sprint for a space. Having no
+// active sprint is the repository contract's ErrNotFound, not an internal
+// error — the API maps it to 404 and the frontend treats that as "no sprint".
 func (a *SprintAdapter) GetActiveBySpace(ctx context.Context, spaceID uuid.UUID) (*projects.Sprint, error) {
 	row, err := a.q.GetActiveSprintBySpace(ctx, spaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sprint adapter get active by space: %w", err)
 	}
