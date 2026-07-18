@@ -13,7 +13,10 @@ export async function createUserAndLogin(page: Page): Promise<{
   password: string
 }> {
   const ts = Date.now()
-  const email = `e2e-${ts}@azimuthal.dev`
+  // Random suffix: parallel workers can hit the same millisecond, and a bare
+  // timestamp then collides on the users_org_id_email_key unique constraint.
+  const suffix = Math.random().toString(36).slice(2, 8)
+  const email = `e2e-${ts}-${suffix}@azimuthal.dev`
   const password = 'E2eTestPass123!'
 
   // Create user via admin CLI — only supported first-user flow

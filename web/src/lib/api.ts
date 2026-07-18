@@ -118,7 +118,7 @@ async function apiFetch<T>(
 
 export type SpaceType = 'service_desk' | 'wiki' | 'project';
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
-export type SprintStatus = 'planning' | 'active' | 'completed';
+export type SprintStatus = 'planned' | 'active' | 'completed';
 
 export interface WorkflowState {
   id: string;
