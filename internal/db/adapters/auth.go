@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -38,6 +40,9 @@ func (a *UserAdapter) Create(ctx context.Context, u *auth.User) error {
 // GetByID retrieves a user by primary key. Returns auth.ErrNotFound if absent.
 func (a *UserAdapter) GetByID(ctx context.Context, id uuid.UUID) (*auth.User, error) {
 	row, err := a.q.GetUserByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, auth.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("user adapter get by id: %w", err)
 	}
@@ -48,6 +53,9 @@ func (a *UserAdapter) GetByID(ctx context.Context, id uuid.UUID) (*auth.User, er
 // Returns auth.ErrNotFound if absent.
 func (a *UserAdapter) GetByEmail(ctx context.Context, email string) (*auth.User, error) {
 	row, err := a.q.GetUserByEmail(ctx, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, auth.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("user adapter get by email: %w", err)
 	}
@@ -158,9 +166,12 @@ func (a *SessionAdapter) Create(ctx context.Context, s *auth.Session) error {
 
 // GetByToken retrieves a session by its opaque token. The adapter hashes the
 // token before querying, bridging the domain's plain-token API to the DB's
-// hash-based lookup.
+// hash-based lookup. Returns auth.ErrNotFound when no session matches.
 func (a *SessionAdapter) GetByToken(ctx context.Context, token string) (*auth.Session, error) {
 	row, err := a.q.GetSessionByTokenHash(ctx, hashToken(token))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, auth.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("session adapter get by token: %w", err)
 	}

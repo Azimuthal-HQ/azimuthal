@@ -2,9 +2,11 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -49,9 +51,13 @@ func (a *TicketAdapter) Create(ctx context.Context, t *tickets.Ticket) error {
 	return nil
 }
 
-// GetByID retrieves a ticket by primary key. Returns an error if absent.
+// GetByID retrieves a ticket by primary key. Returns tickets.ErrNotFound if
+// absent.
 func (a *TicketAdapter) GetByID(ctx context.Context, id uuid.UUID) (*tickets.Ticket, error) {
 	row, err := a.q.GetTicketByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, tickets.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("ticket adapter get by id: %w", err)
 	}
