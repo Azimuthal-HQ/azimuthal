@@ -9,6 +9,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -19,7 +20,7 @@ import { AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent } from '../../components/ui/card';
 import { cn } from '../../lib/utils';
-import { useTickets, useSpace, type Ticket } from '../../lib/api';
+import { useTickets, useSpace, useTicketStatusTransition, type Ticket, type TicketStatus } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -138,8 +139,19 @@ interface DroppableColumnProps {
 }
 
 function DroppableColumn({ column, tickets, spaceId, spaceKey }: DroppableColumnProps) {
+  // The column itself must be a droppable: sortable cards only cover the space
+  // they occupy, so without this an empty column would reject every drop.
+  const { setNodeRef, isOver } = useDroppable({ id: column.id });
+
   return (
-    <div className="flex w-72 shrink-0 flex-col rounded-[var(--radius-lg)] bg-[var(--color-bg)] p-3">
+    <div
+      ref={setNodeRef}
+      data-column-id={column.id}
+      className={cn(
+        'flex w-72 shrink-0 flex-col rounded-[var(--radius-lg)] bg-[var(--color-bg)] p-3',
+        isOver && 'ring-2 ring-[var(--color-primary)]',
+      )}
+    >
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
           {column.label}
@@ -152,7 +164,7 @@ function DroppableColumn({ column, tickets, spaceId, spaceKey }: DroppableColumn
         items={tickets.map((t) => t.id)}
         strategy={verticalListSortingStrategy}
       >
-        <div className="flex flex-1 flex-col gap-2">
+        <div className="flex min-h-16 flex-1 flex-col gap-2">
           {tickets.map((ticket) => (
             <SortableTicketCard key={ticket.id} ticket={ticket} spaceId={spaceId} spaceKey={spaceKey} />
           ))}
@@ -172,6 +184,8 @@ export function KanbanPage() {
   const { data: space } = useSpace(spaceId);
   const { data: tickets, isLoading, error } = useTickets(spaceId);
   const [activeTicket, setActiveTicket] = useState<Ticket | null>(null);
+  const [transitionError, setTransitionError] = useState<string | null>(null);
+  const transitionMutation = useTicketStatusTransition(spaceId);
 
   const columns = useMemo(() => {
     const map: Record<ColumnId, Ticket[]> = {
@@ -196,6 +210,7 @@ export function KanbanPage() {
 
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
+      setTransitionError(null);
       const id = event.active.id as string;
       const ticket = tickets?.find((t) => t.id === id);
       if (ticket) setActiveTicket(ticket);
@@ -203,11 +218,38 @@ export function KanbanPage() {
     [tickets],
   );
 
-  const handleDragEnd = useCallback(
-    (_event: DragEndEvent) => {
-      setActiveTicket(null);
+  // Resolves a drop target to its column: either the column droppable itself
+  // or the column of the card the pointer was over.
+  const columnForDropTarget = useCallback(
+    (overId: string): ColumnId | null => {
+      if (COLUMNS.some((c) => c.id === overId)) return overId as ColumnId;
+      const overTicket = tickets?.find((t) => t.id === overId);
+      return overTicket && COLUMNS.some((c) => c.id === overTicket.status)
+        ? (overTicket.status as ColumnId)
+        : null;
     },
-    [],
+    [tickets],
+  );
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setActiveTicket(null);
+      const { active, over } = event;
+      if (!over) return;
+
+      const ticket = tickets?.find((t) => t.id === active.id);
+      const targetColumn = columnForDropTarget(over.id as string);
+      if (!ticket || !targetColumn || ticket.status === targetColumn) return;
+
+      transitionMutation.mutate(
+        { ticketId: ticket.id, status: targetColumn as TicketStatus },
+        {
+          onError: (err) =>
+            setTransitionError(`Could not move "${ticket.title}": ${err.message}`),
+        },
+      );
+    },
+    [tickets, columnForDropTarget, transitionMutation],
   );
 
   if (isLoading) {
@@ -234,6 +276,13 @@ export function KanbanPage() {
       <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
         Kanban Board
       </h1>
+
+      {transitionError && (
+        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-3">
+          <AlertCircle className="h-4 w-4 shrink-0 text-[var(--color-danger)]" />
+          <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{transitionError}</p>
+        </div>
+      )}
 
       <DndContext
         sensors={sensors}

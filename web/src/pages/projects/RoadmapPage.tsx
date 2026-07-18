@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, formatUTCDate } from '../../lib/utils';
 import { useRoadmap, useRoadmapSprints, type RoadmapItem, type RoadmapSprint } from '../../lib/api';
 
 type ViewMode = 'items' | 'sprints';
@@ -51,7 +51,7 @@ function SprintCard({ rs }: { rs: RoadmapSprint }) {
           <h3 className="font-semibold text-[var(--color-text)]">{rs.sprint.name}</h3>
           {(rs.sprint.starts_at || rs.sprint.ends_at) && (
             <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
-              {rs.sprint.starts_at?.slice(0, 10) ?? '—'} → {rs.sprint.ends_at?.slice(0, 10) ?? '—'}
+              {rs.sprint.starts_at ? formatUTCDate(rs.sprint.starts_at) : '—'} → {rs.sprint.ends_at ? formatUTCDate(rs.sprint.ends_at) : '—'}
             </p>
           )}
         </div>

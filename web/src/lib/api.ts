@@ -571,7 +571,9 @@ async function fetchSprints(spaceId: string): Promise<Sprint[]> {
 interface CreateSprintRequest {
   name: string;
   goal?: string;
+  /** RFC3339 date-time — the API rejects bare YYYY-MM-DD dates with 400. */
   starts_at?: string;
+  /** RFC3339 date-time — the API rejects bare YYYY-MM-DD dates with 400. */
   ends_at?: string;
 }
 
@@ -1115,6 +1117,38 @@ export function useTransitionTicketStatus(spaceId: string, ticketId: string) {
   return useMutation<Ticket, APIError, TicketStatus>({
     mutationFn: (status) => transitionTicketStatus(spaceId, ticketId, status),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
+    },
+  });
+}
+
+/**
+ * Status transition for boards where the ticket varies per call (kanban drag).
+ * Optimistically moves the ticket in the cached list so the card lands in its
+ * new column immediately, and rolls back if the API rejects the transition.
+ */
+export function useTicketStatusTransition(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Ticket, APIError, { ticketId: string; status: TicketStatus }, { previous?: Ticket[] }>({
+    mutationFn: ({ ticketId, status }) => transitionTicketStatus(spaceId, ticketId, status),
+    onMutate: async ({ ticketId, status }) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.tickets(spaceId) });
+      const previous = queryClient.getQueryData<Ticket[]>(queryKeys.tickets(spaceId));
+      if (previous) {
+        queryClient.setQueryData<Ticket[]>(
+          queryKeys.tickets(spaceId),
+          previous.map((t) => (t.id === ticketId ? { ...t, status } : t)),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) {
+        queryClient.setQueryData(queryKeys.tickets(spaceId), ctx.previous);
+      }
+    },
+    onSettled: (_data, _err, { ticketId }) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
     },

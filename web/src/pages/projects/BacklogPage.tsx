@@ -258,45 +258,52 @@ export function BacklogPage() {
               <Input id="item-title" placeholder="e.g. Implement user registration flow" value={formTitle} onChange={(e) => setFormTitle(e.target.value)} autoFocus />
             </div>
 
-            <div className="flex gap-4">
-              <div className="space-y-2 flex-1">
-                <label htmlFor="item-kind" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Type</label>
-                <select
-                  id="item-kind"
-                  value={formKind}
-                  onChange={(e) => setFormKind(e.target.value)}
-                  className={cn(
-                    'flex h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                    'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
-                  )}
-                >
-                  <option value="task">Task</option>
-                  <option value="story">Story</option>
-                  <option value="bug">Bug</option>
-                  <option value="epic">Epic</option>
-                </select>
-              </div>
+            <div className="space-y-2">
+              <label htmlFor="item-kind" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Type</label>
+              <select
+                id="item-kind"
+                value={formKind}
+                onChange={(e) => setFormKind(e.target.value)}
+                className={cn(
+                  'flex h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
+                  'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+                )}
+              >
+                <option value="task">Task</option>
+                <option value="story">Story</option>
+                <option value="bug">Bug</option>
+                <option value="epic">Epic</option>
+              </select>
+            </div>
 
-              <div className="space-y-2 flex-1">
-                <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Priority</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {([['urgent', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']] as const).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setFormPriority(value)}
-                      className={cn(
-                        'rounded-[var(--radius-md)] border px-2 py-1.5 text-[var(--text-sm)] transition-colors',
-                        formPriority === value
-                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-medium'
-                          : 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]',
-                      )}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+            <div className="space-y-2">
+              <label id="item-priority-label" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Priority</label>
+              {/* One connected segmented control: shared border, joined corners,
+                  divider-separated options of equal width. */}
+              <div
+                role="radiogroup"
+                aria-labelledby="item-priority-label"
+                className="flex w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] divide-x divide-[var(--color-border)]"
+              >
+                {([['urgent', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={formPriority === value}
+                    onClick={() => setFormPriority(value)}
+                    className={cn(
+                      'min-w-16 flex-1 px-3 py-1.5 text-center text-[var(--text-sm)] transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]',
+                      formPriority === value
+                        ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-medium'
+                        : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
             </div>
 
