@@ -70,10 +70,12 @@ export async function createSpace(
   const uniqueName = `${name} ${ts}`
   const slug = uniqueName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
-  // Key must match ^[A-Z0-9]{1,10}$ and be unique per org.
-  // Suffix with last 4 digits of timestamp so parallel workers never collide.
+  // Key must match ^[A-Z0-9]{1,10}$ and be unique per org. A random base36
+  // suffix keeps parallel workers AND repeated runs from colliding — the last
+  // digits of Date.now() cycle every 10s, which produced real 409s across
+  // back-to-back runs of the same test.
   const prefix = name.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 6) || 'SP'
-  const key = prefix + ts.toString().slice(-4)
+  const key = prefix + Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(0, 4).toUpperCase().padEnd(4, '0')
 
   const response = await page.request.post(
     `/api/v1/orgs/${orgId}/spaces`,

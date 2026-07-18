@@ -23,6 +23,20 @@ DATABASE_URL   ?= postgres://azimuthal:dev@localhost:5432/azimuthal_dev?sslmode=
 # contains comment lines that break a bare `cat .env.test | xargs`.
 ENV_TEST_VARS   = $$(grep -v '^\#' .env.test | grep -v '^$$' | xargs)
 
+# Where the E2E server binary lives. Playwright's webServer is spawned by Node
+# through cmd.exe on Windows, which cannot execute a POSIX /tmp path, so build
+# into the gitignored bin/ and hand Playwright a native path. Linux (and CI,
+# which invokes playwright directly) keeps the /tmp path. E2E_BINARY_EXPR is
+# expanded by the recipe's bash — `pwd -W` is a bash builtin there; make's
+# $(shell) would direct-exec coreutils pwd, which has no -W.
+ifeq ($(OS),Windows_NT)
+E2E_BINARY_OUT  := bin/azimuthal-e2e.exe
+E2E_BINARY_EXPR := "$$(pwd -W)/bin/azimuthal-e2e.exe"
+else
+E2E_BINARY_OUT  := /tmp/azimuthal-test
+E2E_BINARY_EXPR := /tmp/azimuthal-test
+endif
+
 # ── Help ──────────────────────────────────────────────────────
 help:
 	@echo ""
@@ -263,9 +277,9 @@ e2e-test: ## Run Playwright E2E tests against a live server
 	@$(MAKE) test-db-up
 	@echo "→ Building binary and frontend..."
 	@cd web && npm ci && npm run build
-	@go build -o /tmp/azimuthal-test ./cmd/server
+	@go build -o $(E2E_BINARY_OUT) ./cmd/server
 	@echo "→ Running Playwright E2E tests..."
-	@export $(ENV_TEST_VARS) && cd web && npx playwright test
+	@export $(ENV_TEST_VARS) && export AZIMUTHAL_BINARY=$(E2E_BINARY_EXPR) && cd web && npx playwright test
 	@echo "✓ E2E tests complete"
 	@$(MAKE) test-db-down
 
@@ -273,7 +287,7 @@ e2e-report: ## Open the last Playwright HTML report
 	@cd web && npx playwright show-report
 
 e2e-headed: ## Run E2E tests in headed mode (visible browser)
-	@export $(ENV_TEST_VARS) && cd web && npx playwright test --headed
+	@export $(ENV_TEST_VARS) && export AZIMUTHAL_BINARY=$(E2E_BINARY_EXPR) && cd web && npx playwright test --headed
 
 # ── Housekeeping ──────────────────────────────────────────────
 clean:

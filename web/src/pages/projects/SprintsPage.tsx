@@ -7,7 +7,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogClose,
 } from '../../components/ui/dialog';
-import { cn } from '../../lib/utils';
+import { cn, formatUTCDate } from '../../lib/utils';
 import {
   useSprints, useActiveSprint, useCreateSprint, useStartSprint, useCompleteSprint,
   type Sprint,
@@ -52,9 +52,9 @@ function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: str
         {(sprint.starts_at || sprint.ends_at) && (
           <p className="mt-0.5 flex items-center gap-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">
             <Clock className="h-3 w-3" />
-            {sprint.starts_at ? sprint.starts_at.slice(0, 10) : '—'}
+            {sprint.starts_at ? formatUTCDate(sprint.starts_at) : '—'}
             {' → '}
-            {sprint.ends_at ? sprint.ends_at.slice(0, 10) : '—'}
+            {sprint.ends_at ? formatUTCDate(sprint.ends_at) : '—'}
           </p>
         )}
         {startError && (
@@ -96,13 +96,19 @@ export function SprintsPage() {
 
   function resetForm() { setName(''); setGoal(''); setStartsAt(''); setEndsAt(''); }
 
+  // The API decodes starts_at/ends_at as RFC3339 timestamps; a bare
+  // YYYY-MM-DD from <input type="date"> is rejected with 400.
+  function toRFC3339(date: string): string | undefined {
+    return date ? `${date}T00:00:00Z` : undefined;
+  }
+
   async function handleCreate() {
     if (!name.trim()) return;
     await createMutation.mutateAsync({
       name: name.trim(),
       goal: goal.trim() || undefined,
-      starts_at: startsAt || undefined,
-      ends_at: endsAt || undefined,
+      starts_at: toRFC3339(startsAt),
+      ends_at: toRFC3339(endsAt),
     });
     setDialogOpen(false);
     resetForm();

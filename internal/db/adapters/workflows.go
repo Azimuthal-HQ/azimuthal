@@ -2,9 +2,11 @@ package adapters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
@@ -21,21 +23,29 @@ func NewWorkflowAdapter(q *generated.Queries) *WorkflowAdapter {
 	return &WorkflowAdapter{q: q}
 }
 
-// GetWorkflow retrieves a workflow by ID.
+// GetWorkflow retrieves a workflow by ID. Returns workflow.ErrNotFound if
+// absent.
 func (a *WorkflowAdapter) GetWorkflow(ctx context.Context, id uuid.UUID) (*workflow.Workflow, error) {
 	row, err := a.q.GetWorkflow(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, workflow.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("workflow adapter get: %w", err)
 	}
 	return rowToWorkflow(row), nil
 }
 
-// GetDefaultWorkflow retrieves the default workflow for an org and entity type.
+// GetDefaultWorkflow retrieves the default workflow for an org and entity
+// type. Returns workflow.ErrNotFound if none is configured.
 func (a *WorkflowAdapter) GetDefaultWorkflow(ctx context.Context, orgID uuid.UUID, appliesTo string) (*workflow.Workflow, error) {
 	row, err := a.q.GetDefaultWorkflow(ctx, generated.GetDefaultWorkflowParams{
 		OrgID:     orgID,
 		AppliesTo: appliesTo,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, workflow.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("workflow adapter get default: %w", err)
 	}
@@ -110,18 +120,27 @@ func (a *WorkflowAdapter) ListStates(ctx context.Context, workflowID uuid.UUID) 
 	return out, nil
 }
 
-// GetState retrieves a single state by ID.
+// GetState retrieves a single state by ID. Returns workflow.ErrNotFound if
+// absent.
 func (a *WorkflowAdapter) GetState(ctx context.Context, id uuid.UUID) (*workflow.State, error) {
 	row, err := a.q.GetWorkflowState(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, workflow.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("workflow adapter get state: %w", err)
 	}
 	return rowToState(row), nil
 }
 
-// GetInitialState retrieves the initial state for a workflow.
+// GetInitialState retrieves the initial state for a workflow. Returns
+// workflow.ErrNotFound if the workflow has no initial state (or does not
+// exist).
 func (a *WorkflowAdapter) GetInitialState(ctx context.Context, workflowID uuid.UUID) (*workflow.State, error) {
 	row, err := a.q.GetInitialWorkflowState(ctx, workflowID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, workflow.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("workflow adapter get initial state: %w", err)
 	}
