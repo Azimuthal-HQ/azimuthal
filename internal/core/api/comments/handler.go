@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
@@ -220,6 +221,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idP
 	entityID, err := uuid.Parse(chi.URLParam(r, idParam))
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid entity ID")
+		return
+	}
+	spaceID, err := uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapComment, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 

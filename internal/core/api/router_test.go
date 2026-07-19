@@ -9,11 +9,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
@@ -25,6 +27,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -543,8 +546,25 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		SpaceHandler:   spaceHandler,
 	})
 
-	return router, jwtSvc
+	// This harness runs without an AccessResolver (no DB), so the in-handler
+	// capability checks would fail closed on every mutation. Stamp an
+	// org-admin resolution for the URL's space onto each request — the
+	// DB-less stand-in for ResolveAccess, mirroring the real harness whose
+	// default user is an org admin.
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if m := spacePathPattern.FindStringSubmatch(r.URL.Path); m != nil {
+			if spaceID, err := uuid.Parse(m[1]); err == nil {
+				r = r.WithContext(access.WithResolution(r.Context(), testutil.OrgAdminResolution(t, spaceID)))
+			}
+		}
+		router.ServeHTTP(w, r)
+	})
+
+	return wrapped, jwtSvc
 }
+
+// spacePathPattern extracts the {spaceID} segment of space-scoped URLs.
+var spacePathPattern = regexp.MustCompile(`/spaces/([0-9a-fA-F-]{36})`)
 
 func authHeader(t *testing.T, jwtSvc *auth.JWTService, userID uuid.UUID) string {
 	t.Helper()

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
@@ -225,6 +226,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
 	var req updateTicketRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -235,6 +241,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	existing, err := h.svc.Get(r.Context(), id)
 	if err != nil {
 		handleTicketError(w, r, err)
+		return
+	}
+	if !access.CanEditEntity(r.Context(), spaceID, existing.ReporterID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 
@@ -278,6 +288,21 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+
+	existing, err := h.svc.Get(r.Context(), id)
+	if err != nil {
+		handleTicketError(w, r, err)
+		return
+	}
+	if !access.CanEditEntity(r.Context(), spaceID, existing.ReporterID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
 
 	if err := h.svc.Delete(r.Context(), id); err != nil {
 		handleTicketError(w, r, err)
@@ -316,6 +341,15 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := ticketIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")
+		return
+	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapTransitionAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 
@@ -364,6 +398,15 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
 	id, err := ticketIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")
+		return
+	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 
@@ -431,6 +474,15 @@ func (h *Handler) Unassign(w http.ResponseWriter, r *http.Request) {
 	id, err := ticketIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")
+		return
+	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 

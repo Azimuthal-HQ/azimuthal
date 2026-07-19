@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
@@ -312,6 +313,11 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
 	var req updateItemRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -322,6 +328,10 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	existing, err := h.items.GetItem(r.Context(), id)
 	if err != nil {
 		handleProjectError(w, r, err)
+		return
+	}
+	if !access.CanEditEntity(r.Context(), spaceID, existing.ReporterID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 
@@ -369,6 +379,21 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+
+	existing, err := h.items.GetItem(r.Context(), id)
+	if err != nil {
+		handleProjectError(w, r, err)
+		return
+	}
+	if !access.CanEditEntity(r.Context(), spaceID, existing.ReporterID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
 
 	if err := h.items.DeleteItem(r.Context(), id); err != nil {
 		handleProjectError(w, r, err)
@@ -407,6 +432,15 @@ func (h *Handler) UpdateItemStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := itemIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
+		return
+	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapTransitionAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 
@@ -456,6 +490,15 @@ func (h *Handler) AssignToSprint(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
 
 	var req sprintAssignRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -495,15 +538,19 @@ func (h *Handler) RankItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req rankItemRequest
-	if err := respond.DecodeJSON(r, &req); err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
-		return
-	}
-
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
+
+	var req rankItemRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
 		return
 	}
 
@@ -736,6 +783,10 @@ func (h *Handler) CreateSprint(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
 		return
 	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
 
 	var req createSprintRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -815,6 +866,15 @@ func (h *Handler) UpdateSprint(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid sprint ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
 
 	var req updateSprintRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -864,6 +924,15 @@ func (h *Handler) StartSprint(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid sprint ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
 
 	sprint, err := h.sprints.StartSprint(r.Context(), id)
 	if err != nil {
@@ -894,6 +963,15 @@ func (h *Handler) CompleteSprint(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "sprintID"))
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid sprint ID")
+		return
+	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 
@@ -1014,6 +1092,16 @@ func (h *Handler) GetBacklog(w http.ResponseWriter, r *http.Request) {
 // @Failure      500      {object}  api.SwaggerErrorResponse
 // @Router       /orgs/{orgID}/spaces/{spaceID}/projects/backlog/move-to-sprint [post]
 func (h *Handler) MoveToSprint(w http.ResponseWriter, r *http.Request) {
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
+
 	var req moveToSprintRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
@@ -1045,6 +1133,16 @@ func (h *Handler) MoveToSprint(w http.ResponseWriter, r *http.Request) {
 // @Failure      500      {object}  api.SwaggerErrorResponse
 // @Router       /orgs/{orgID}/spaces/{spaceID}/projects/backlog/move-to-backlog [post]
 func (h *Handler) MoveToBacklog(w http.ResponseWriter, r *http.Request) {
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
+
 	var req moveToBacklogRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")

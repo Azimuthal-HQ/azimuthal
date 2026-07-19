@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -562,6 +563,10 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")
 		return
 	}
+	if !access.Can(r.Context(), access.CapTransitionAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
 
 	var req workflowTransitionRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
@@ -653,6 +658,10 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 	itemID, err := uuid.Parse(chi.URLParam(r, "itemID"))
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
+		return
+	}
+	if !access.Can(r.Context(), access.CapTransitionAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 
