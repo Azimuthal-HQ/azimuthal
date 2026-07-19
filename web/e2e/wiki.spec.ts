@@ -57,7 +57,13 @@ test.describe('Wiki', () => {
     await editor.pressSequentially('Content written in the editor')
     await page.getByRole('button', { name: 'Save', exact: true }).click()
 
-    // Content renders after save, and persists across reload
+    // Save must actually exit edit mode (the read-mode Edit button returns).
+    // The TipTap editor is contentEditable, so the typed text is live DOM
+    // that text= matches even if the save request never fired — and on a
+    // failed save the page stays in edit mode with the text still mounted.
+    // Asserting read mode first makes the content check mean "rendered from
+    // the saved page", then the reload proves persistence.
+    await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=Content written in the editor').first()).toBeVisible({ timeout: 5000 })
     await page.reload()
     await expect(page.locator('text=Content written in the editor').first()).toBeVisible({ timeout: 10000 })

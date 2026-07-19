@@ -14,6 +14,7 @@ export function DarkModeToggle({ className }: DarkModeToggleProps) {
   return (
     <button
       type="button"
+      data-testid="theme-toggle"
       onClick={toggleTheme}
       className={cn(
         'relative inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)]',

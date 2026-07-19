@@ -6,7 +6,10 @@ test.describe('Projects', () => {
     await createUserAndLogin(page)
     await createSpace(page, 'E2E Project', 'vector')
     await expect(page).toHaveURL(/\/vector\/.*\/backlog/, { timeout: 10000 })
-    await expect(page.locator('text=Backlog').first()).toBeVisible()
+    // The page's own h1, not the sidebar: bare text=Backlog resolved to the
+    // VectorSidebar nav item in DOM order, which renders on every vector
+    // route — the assertion passed even with the page body broken.
+    await expect(page.getByRole('heading', { level: 1, name: 'Backlog', exact: true })).toBeVisible()
     await assertNoErrors(page)
   })
 
