@@ -190,7 +190,7 @@ func runCreateUser(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("setting up organization: %w", err)
 	}
 
-	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, orgID))
+	userSvc := auth.NewUserService(adapters.NewUserAdapter(pool, orgID))
 	u, err := userSvc.CreateUser(ctx, createUserEmail, createUserName, createUserPassword)
 	if err != nil {
 		return fmt.Errorf("creating user: %w", err)
@@ -256,9 +256,7 @@ func runResetPassword(_ *cobra.Command, _ []string) error {
 	}
 	defer pool.Close()
 
-	queries := generated.New(pool)
-
-	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, uuid.Nil))
+	userSvc := auth.NewUserService(adapters.NewUserAdapter(pool, uuid.Nil))
 	u, err := userSvc.GetUserByEmail(ctx, resetEmail)
 	if err != nil {
 		return fmt.Errorf("finding user: %w", err)

@@ -70,6 +70,29 @@ const (
 	EventTypePermissionChanged EventType = "permission.changed"
 	// EventTypeSettingsChanged records a settings change.
 	EventTypeSettingsChanged EventType = "settings.changed"
+
+	// EventTypeTeamCreated records a team being created (v0.3 spec §6).
+	EventTypeTeamCreated EventType = "team.created"
+	// EventTypeTeamUpdated records a team rename or description change.
+	EventTypeTeamUpdated EventType = "team.updated"
+	// EventTypeTeamReparented records a team moving in the tree.
+	EventTypeTeamReparented EventType = "team.reparented"
+	// EventTypeTeamDeleted records a team being deleted.
+	EventTypeTeamDeleted EventType = "team.deleted"
+	// EventTypeTeamMemberAdded records a user joining a team.
+	EventTypeTeamMemberAdded EventType = "team_member.added"
+	// EventTypeTeamMemberRemoved records a user leaving a team.
+	EventTypeTeamMemberRemoved EventType = "team_member.removed"
+	// EventTypeGrantCreated records a space grant being created.
+	EventTypeGrantCreated EventType = "grant.created"
+	// EventTypeGrantUpdated records a space grant's role changing.
+	EventTypeGrantUpdated EventType = "grant.updated"
+	// EventTypeGrantRevoked records a space grant being revoked.
+	EventTypeGrantRevoked EventType = "grant.revoked"
+	// EventTypeSpaceVisibilityChanged records a space visibility change.
+	EventTypeSpaceVisibilityChanged EventType = "space.visibility_changed"
+	// EventTypeSpaceOwnerTeamChanged records a space owner-team change.
+	EventTypeSpaceOwnerTeamChanged EventType = "space.owner_team_changed"
 )
 
 // Event is the structured record written to the audit log.

@@ -18,8 +18,7 @@ func TestUserAdapter_Update(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	queries := generated.New(db.Pool)
-	adapter := adapters.NewUserAdapter(queries, org.ID)
+	adapter := adapters.NewUserAdapter(db.Pool, org.ID)
 	ctx := context.Background()
 
 	u, err := adapter.GetByID(ctx, user.ID)
@@ -39,8 +38,7 @@ func TestUserAdapter_UpdateProfile(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	queries := generated.New(db.Pool)
-	adapter := adapters.NewUserAdapter(queries, org.ID)
+	adapter := adapters.NewUserAdapter(db.Pool, org.ID)
 	ctx := context.Background()
 
 	updated, err := adapter.UpdateProfile(ctx, user.ID, "Profile Name", user.Email)
@@ -52,8 +50,7 @@ func TestUserAdapter_Delete(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	queries := generated.New(db.Pool)
-	adapter := adapters.NewUserAdapter(queries, org.ID)
+	adapter := adapters.NewUserAdapter(db.Pool, org.ID)
 	ctx := context.Background()
 
 	err := adapter.Delete(ctx, user.ID)
@@ -68,8 +65,7 @@ func TestUserAdapter_GetByEmail(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	queries := generated.New(db.Pool)
-	adapter := adapters.NewUserAdapter(queries, org.ID)
+	adapter := adapters.NewUserAdapter(db.Pool, org.ID)
 	ctx := context.Background()
 
 	fetched, err := adapter.GetByEmail(ctx, user.Email)

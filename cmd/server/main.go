@@ -54,19 +54,24 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/config"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
+	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
@@ -151,7 +156,7 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 		slog.Warn("job queue disabled via AZIMUTHAL_QUEUE_ENABLED=false")
 	}
 
-	handler, err := buildRouter(cfg, queries, notifEnqueuer, queueStatus)
+	handler, err := buildRouter(cfg, pool, queries, notifEnqueuer, queueStatus)
 	if err != nil {
 		pool.Close()
 		return nil, deps, noop, err
@@ -170,7 +175,7 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 
 // buildRouter constructs all domain services with DB-backed adapters and
 // returns the fully wired API router.
-func buildRouter(cfg *config.Config, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, queueStatus string) (http.Handler, error) {
+func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, queueStatus string) (http.Handler, error) {
 	// The signing key lives in the database so restarts never invalidate
 	// tokens. JWTPrivateKeyPath is only consulted as a one-time import for
 	// deployments upgrading from the legacy file-based key.
@@ -187,7 +192,7 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, notifEnqueuer j
 		Issuer:     "azimuthal",
 	})
 
-	userAdapter := adapters.NewUserAdapter(queries, uuid.Nil)
+	userAdapter := adapters.NewUserAdapter(pool, uuid.Nil)
 	userSvc := auth.NewUserService(userAdapter)
 	sessionSvc := auth.NewSessionService(adapters.NewSessionAdapter(queries), auth.SessionConfig{TTL: cfg.JWTExpiry})
 	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc)
@@ -214,20 +219,34 @@ func buildRouter(cfg *config.Config, queries *generated.Queries, notifEnqueuer j
 
 	auditLog := audit.NewDBLogger(queries)
 
+	// v0.3 access control (ADR-0006/0007): teams, grants, per-request
+	// resolution. The org provisioner seeds the default team and enrols new
+	// users so nobody is ever teamless.
+	teamAdapter := adapters.NewTeamAdapter(pool)
+	teamSvc := teams.NewService(teamAdapter)
+	accessAdapter := adapters.NewAccessAdapter(pool)
+	accessResolver := access.NewResolver(accessAdapter)
+	grantSvc := access.NewGrantService(accessAdapter)
+	explainer := access.NewExplainer(accessAdapter, accessAdapter)
+	orgProvisioner.WithTeamSeeder(teamAdapter)
+
 	return api.NewRouter(api.RouterConfig{
 		Authenticator:       authenticator,
 		AuthHandler:         authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner).WithAuditLogger(auditLog),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithAuditLogger(auditLog),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog),
-		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter),
+		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		NotificationHandler: notificationsapi.NewHandler(queries),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
+		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
+		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		QueueStatus:         queueStatus,
 		SpaceOrgResolver:    spaceOrgResolver(queries),
+		AccessResolver:      accessResolver,
 	}), nil
 }
 

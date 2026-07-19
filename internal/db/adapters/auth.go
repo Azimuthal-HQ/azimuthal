@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -19,13 +20,16 @@ import (
 // injects a default OrgID (typically the single-tenant org) on every write
 // and scopes reads to that org.
 type UserAdapter struct {
+	pool  *pgxpool.Pool
 	q     *generated.Queries
 	orgID uuid.UUID
 }
 
 // NewUserAdapter creates a UserAdapter that scopes all user queries to orgID.
-func NewUserAdapter(q *generated.Queries, orgID uuid.UUID) *UserAdapter {
-	return &UserAdapter{q: q, orgID: orgID}
+// The pool backs the transactional Delete — a user and their space grants go
+// away atomically (spec §4 referential obligation, matrix case 22).
+func NewUserAdapter(pool *pgxpool.Pool, orgID uuid.UUID) *UserAdapter {
+	return &UserAdapter{pool: pool, q: generated.New(pool), orgID: orgID}
 }
 
 // Create persists a new user. Returns auth.ErrEmailTaken if the email exists.
@@ -89,10 +93,28 @@ func (a *UserAdapter) UpdateProfile(ctx context.Context, id uuid.UUID, displayNa
 	return dbUserToDomain(row), nil
 }
 
-// Delete soft-deletes a user by setting deleted_at.
+// Delete soft-deletes a user and removes their space grants in the same
+// transaction. subject_id carries no FK, so leaving the grants behind would
+// leak access to whoever inherited the UUID — the deletion is atomic or not
+// at all (matrix case 22).
 func (a *UserAdapter) Delete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.SoftDeleteUser(ctx, id); err != nil {
+	if a.pool == nil {
+		return fmt.Errorf("user adapter delete: no pool configured for transactional delete")
+	}
+	tx, err := a.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("user adapter delete: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := a.q.WithTx(tx)
+	if err := qtx.SoftDeleteUser(ctx, id); err != nil {
 		return fmt.Errorf("user adapter delete: %w", err)
+	}
+	if err := qtx.DeleteGrantsBySubjectUser(ctx, id); err != nil {
+		return fmt.Errorf("user adapter delete grants: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("user adapter delete: commit: %w", err)
 	}
 	return nil
 }

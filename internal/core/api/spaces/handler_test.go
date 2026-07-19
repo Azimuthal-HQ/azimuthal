@@ -107,7 +107,7 @@ func TestRemoveMemberInvalidSpaceID(t *testing.T) {
 
 func TestRoutesReturnsRouter(t *testing.T) {
 	h := setupHandler()
-	if h.Routes(nil) == nil {
+	if h.Routes(nil, nil) == nil {
 		t.Fatal("Routes() returned nil")
 	}
 }

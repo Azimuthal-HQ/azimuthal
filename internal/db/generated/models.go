@@ -204,6 +204,19 @@ type Space struct {
 	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
 	WorkflowID  pgtype.UUID        `json:"workflow_id"`
 	Key         string             `json:"key"`
+	OwnerTeamID uuid.UUID          `json:"owner_team_id"`
+	Visibility  string             `json:"visibility"`
+}
+
+type SpaceGrant struct {
+	ID          uuid.UUID          `json:"id"`
+	OrgID       uuid.UUID          `json:"org_id"`
+	SpaceID     uuid.UUID          `json:"space_id"`
+	SubjectType string             `json:"subject_type"`
+	SubjectID   uuid.UUID          `json:"subject_id"`
+	Role        string             `json:"role"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
 }
 
 type SpaceMember struct {
@@ -225,6 +238,31 @@ type Sprint struct {
 	CreatedBy uuid.UUID          `json:"created_by"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Team struct {
+	ID          uuid.UUID          `json:"id"`
+	OrgID       uuid.UUID          `json:"org_id"`
+	ParentID    pgtype.UUID        `json:"parent_id"`
+	Path        []uuid.UUID        `json:"path"`
+	Slug        string             `json:"slug"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	IsDefault   bool               `json:"is_default"`
+	Source      string             `json:"source"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type TeamMember struct {
+	TeamID    uuid.UUID          `json:"team_id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	Role      string             `json:"role"`
+	IsPrimary bool               `json:"is_primary"`
+	Source    string             `json:"source"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Ticket struct {
