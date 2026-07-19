@@ -8,6 +8,7 @@ package teams
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -225,39 +226,16 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	current := team
-	if req.Name != nil || req.Description != nil {
-		name := current.Name
-		if req.Name != nil {
-			name = *req.Name
-		}
-		description := current.Description
-		if req.Description != nil {
-			description = *req.Description
-		}
-		updated, err := h.svc.Rename(r.Context(), current.ID, name, description)
-		if err != nil {
-			mapTeamError(w, r, err)
-			return
-		}
-		current = updated
-		h.logEvent(r, audit.EventTypeTeamUpdated, "team", current.ID, map[string]string{"name": name})
+	current, ok := h.applyRename(w, r, team, req)
+	if !ok {
+		return
 	}
 
 	if len(req.ParentID) > 0 {
-		var newParent *uuid.UUID
-		if string(req.ParentID) != "null" {
-			var raw string
-			if err := json.Unmarshal(req.ParentID, &raw); err != nil {
-				respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "invalid parent_id")
-				return
-			}
-			id, err := uuid.Parse(raw)
-			if err != nil {
-				respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "invalid parent_id")
-				return
-			}
-			newParent = &id
+		newParent, err := parseReparentTarget(req.ParentID)
+		if err != nil {
+			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "invalid parent_id")
+			return
 		}
 		moved, err := h.svc.Reparent(r.Context(), current.OrgID, current.ID, newParent)
 		if err != nil {
@@ -273,6 +251,47 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusOK, current)
+}
+
+// applyRename applies the name/description part of a team PATCH (absent
+// fields keep their current values) and writes the team.updated audit
+// event. Returns ok=false after writing an error response.
+func (h *Handler) applyRename(w http.ResponseWriter, r *http.Request, current teams.Team, req patchTeamRequest) (teams.Team, bool) {
+	if req.Name == nil && req.Description == nil {
+		return current, true
+	}
+	name := current.Name
+	if req.Name != nil {
+		name = *req.Name
+	}
+	description := current.Description
+	if req.Description != nil {
+		description = *req.Description
+	}
+	updated, err := h.svc.Rename(r.Context(), current.ID, name, description)
+	if err != nil {
+		mapTeamError(w, r, err)
+		return current, false
+	}
+	h.logEvent(r, audit.EventTypeTeamUpdated, "team", updated.ID, map[string]string{"name": name})
+	return updated, true
+}
+
+// parseReparentTarget decodes the tri-state parent_id: JSON null means the
+// root (nil), anything else must be a UUID string.
+func parseReparentTarget(raw json.RawMessage) (*uuid.UUID, error) {
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, fmt.Errorf("parent_id is not a string: %w", err)
+	}
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return nil, fmt.Errorf("parent_id is not a uuid: %w", err)
+	}
+	return &id, nil
 }
 
 // Delete deletes a team.

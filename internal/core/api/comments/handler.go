@@ -211,7 +211,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, entityType, idPar
 
 // create adds a new comment to the entity whose ID is carried by the idParam
 // URL parameter.
-func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idParam string) { //nolint:funlen // HTTP handler; validation + author lookup + notification dispatch requires length
+func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idParam string) { //nolint:funlen,cyclop // HTTP handler; polymorphic entity dispatch + validation + capability check + notification dispatch
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")

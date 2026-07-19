@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/config"
@@ -216,17 +217,25 @@ func runCreateUser(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("creating membership: %w", err)
 	}
 
-	// Same team provisioning as the register endpoint: the org has a default
-	// team and every member belongs to it (ADR-0006 point 4).
+	if err := provisionDefaultTeam(ctx, pool, orgID, u.ID); err != nil {
+		return err
+	}
+
+	printCreateUserSuccess(u, orgSlug, createUserRole)
+	return nil
+}
+
+// provisionDefaultTeam mirrors the register endpoint's team provisioning:
+// the org has a default team and every member belongs to it (ADR-0006
+// point 4).
+func provisionDefaultTeam(ctx context.Context, pool *pgxpool.Pool, orgID, userID uuid.UUID) error {
 	teamAdapter := adapters.NewTeamAdapter(pool)
 	if err := teamAdapter.SeedDefaultTeam(ctx, orgID); err != nil {
 		return fmt.Errorf("seeding default team: %w", err)
 	}
-	if err := teamAdapter.EnsureDefaultMembership(ctx, orgID, u.ID); err != nil {
+	if err := teamAdapter.EnsureDefaultMembership(ctx, orgID, userID); err != nil {
 		return fmt.Errorf("enrolling in default team: %w", err)
 	}
-
-	printCreateUserSuccess(u, orgSlug, createUserRole)
 	return nil
 }
 

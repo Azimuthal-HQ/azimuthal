@@ -71,9 +71,9 @@ import (
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
-	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
@@ -175,7 +175,7 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 
 // buildRouter constructs all domain services with DB-backed adapters and
 // returns the fully wired API router.
-func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, queueStatus string) (http.Handler, error) {
+func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, queueStatus string) (http.Handler, error) { //nolint:funlen // router wiring naturally enumerates all dependencies, like newServer above
 	// The signing key lives in the database so restarts never invalidate
 	// tokens. JWTPrivateKeyPath is only consulted as a one-time import for
 	// deployments upgrading from the legacy file-based key.

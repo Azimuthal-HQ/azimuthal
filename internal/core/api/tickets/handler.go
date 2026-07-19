@@ -394,7 +394,7 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 // @Failure      409       {object}  api.SwaggerErrorResponse   "Already assigned"
 // @Failure      500       {object}  api.SwaggerErrorResponse   "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/assign [post]
-func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) { //nolint:cyclop // validation + capability check + assignment + notification fan-out
 	id, err := ticketIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")

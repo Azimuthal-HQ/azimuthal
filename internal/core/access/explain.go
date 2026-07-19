@@ -95,17 +95,18 @@ func (e *Explainer) Explain(ctx context.Context, orgID, spaceID, targetUser uuid
 	out := &Explanation{UserID: targetUser, SpaceID: spaceID, Grants: []MatchedGrant{}}
 
 	orgRole, err := e.resStore.OrgRole(ctx, orgID, targetUser)
-	switch {
-	case err == nil && orgRole.Admin:
+	if err != nil {
+		if errors.Is(err, ErrNotOrgMember) {
+			// Non-members hold no access by definition: the empty chain.
+			return out, nil
+		}
+		return nil, fmt.Errorf("resolving target org role: %w", err)
+	}
+	if orgRole.Admin {
 		out.Access = true
 		out.OrgAdmin = true
 		out.Role = RoleSpaceAdmin.String()
 		return out, nil
-	case errors.Is(err, ErrNotOrgMember):
-		// Non-members hold no access by definition; return the empty chain.
-		return out, nil
-	case err != nil:
-		return nil, fmt.Errorf("resolving target org role: %w", err)
 	}
 
 	visibility, err := e.store.SpaceVisibility(ctx, spaceID)
@@ -127,38 +128,7 @@ func (e *Explainer) Explain(ctx context.Context, orgID, spaceID, targetUser uuid
 		return nil, fmt.Errorf("listing matching grants: %w", err)
 	}
 
-	best := RoleNone
-	for _, m := range matches {
-		role, err := ParseRole(m.Role)
-		if err != nil {
-			continue // fail closed on unparseable rows
-		}
-		mg := MatchedGrant{
-			GrantID:     m.GrantID,
-			SubjectType: m.SubjectType,
-			SubjectID:   m.SubjectID,
-			Role:        role.String(),
-			TeamName:    m.TeamName,
-		}
-		if m.SubjectType == string(SubjectTeam) {
-			// The matched direct team is the deepest ancestor (or the team
-			// itself) on the granted team's path that the user belongs to;
-			// depth is the remaining distance down to the granted team.
-			for i := len(m.TeamPath) - 1; i >= 0; i-- {
-				if ref, ok := directByID[m.TeamPath[i]]; ok {
-					id := ref.ID
-					mg.MatchedTeamID = &id
-					mg.MatchedTeamName = ref.Name
-					mg.Depth = len(m.TeamPath) - 1 - i
-					break
-				}
-			}
-		}
-		out.Grants = append(out.Grants, mg)
-		if role > best {
-			best = role
-		}
-	}
+	best := collectChain(out, matches, directByID)
 
 	if visibility == VisibilityOrg && best < RoleViewer {
 		best = RoleViewer
@@ -168,4 +138,48 @@ func (e *Explainer) Explain(ctx context.Context, orgID, spaceID, targetUser uuid
 	out.Access = best > RoleNone
 	out.Role = best.String()
 	return out, nil
+}
+
+// collectChain appends every parseable match to the explanation's chain and
+// returns the highest role seen. Unparseable rows are dropped — fail closed.
+func collectChain(out *Explanation, matches []RawMatch, directByID map[uuid.UUID]TeamRef) Role {
+	best := RoleNone
+	for _, m := range matches {
+		role, err := ParseRole(m.Role)
+		if err != nil {
+			continue
+		}
+		out.Grants = append(out.Grants, annotateMatch(m, role, directByID))
+		if role > best {
+			best = role
+		}
+	}
+	return best
+}
+
+// annotateMatch turns a raw grant match into a chain link. For team grants,
+// the matched direct team is the deepest ancestor (or the granted team
+// itself) on the granted team's path that the user belongs to; depth is the
+// remaining distance down to the granted team.
+func annotateMatch(m RawMatch, role Role, directByID map[uuid.UUID]TeamRef) MatchedGrant {
+	mg := MatchedGrant{
+		GrantID:     m.GrantID,
+		SubjectType: m.SubjectType,
+		SubjectID:   m.SubjectID,
+		Role:        role.String(),
+		TeamName:    m.TeamName,
+	}
+	if m.SubjectType != string(SubjectTeam) {
+		return mg
+	}
+	for i := len(m.TeamPath) - 1; i >= 0; i-- {
+		if ref, ok := directByID[m.TeamPath[i]]; ok {
+			id := ref.ID
+			mg.MatchedTeamID = &id
+			mg.MatchedTeamName = ref.Name
+			mg.Depth = len(m.TeamPath) - 1 - i
+			break
+		}
+	}
+	return mg
 }

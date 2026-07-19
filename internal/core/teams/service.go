@@ -18,9 +18,9 @@ const MaxDepth = 5
 
 // Team is a team row in domain form.
 type Team struct {
-	ID          uuid.UUID  `json:"id"`
-	OrgID       uuid.UUID  `json:"org_id"`
-	ParentID    *uuid.UUID `json:"parent_id,omitempty"`
+	ID       uuid.UUID  `json:"id"`
+	OrgID    uuid.UUID  `json:"org_id"`
+	ParentID *uuid.UUID `json:"parent_id,omitempty"`
 	// Path is the materialised ancestor chain ending in the team's own id;
 	// its length is the team's depth.
 	Path        []uuid.UUID `json:"path"`
@@ -117,7 +117,7 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, parentID *uuid.UU
 	if !validSlug.MatchString(slug) {
 		return Team{}, ErrInvalidSlug
 	}
-	return s.store.Create(ctx, Team{
+	team, err := s.store.Create(ctx, Team{
 		ID:          uuid.New(),
 		OrgID:       orgID,
 		ParentID:    parentID,
@@ -126,21 +126,37 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, parentID *uuid.UU
 		Description: description,
 		Source:      "manual",
 	})
+	if err != nil {
+		return Team{}, fmt.Errorf("creating team: %w", err)
+	}
+	return team, nil
 }
 
 // Get returns one team.
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (Team, error) {
-	return s.store.Get(ctx, id)
+	out, err := s.store.Get(ctx, id)
+	if err != nil {
+		return Team{}, fmt.Errorf("getting team: %w", err)
+	}
+	return out, nil
 }
 
 // GetDefault returns the org's default team.
 func (s *Service) GetDefault(ctx context.Context, orgID uuid.UUID) (Team, error) {
-	return s.store.GetDefault(ctx, orgID)
+	out, err := s.store.GetDefault(ctx, orgID)
+	if err != nil {
+		return Team{}, fmt.Errorf("getting default team: %w", err)
+	}
+	return out, nil
 }
 
 // List returns every live team in the org.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Team, error) {
-	return s.store.ListByOrg(ctx, orgID)
+	out, err := s.store.ListByOrg(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("listing teams: %w", err)
+	}
+	return out, nil
 }
 
 // Rename updates name and description.
@@ -148,7 +164,11 @@ func (s *Service) Rename(ctx context.Context, id uuid.UUID, name, description st
 	if name == "" {
 		return Team{}, ErrNameRequired
 	}
-	return s.store.Update(ctx, id, name, description)
+	team, err := s.store.Update(ctx, id, name, description)
+	if err != nil {
+		return Team{}, fmt.Errorf("renaming team: %w", err)
+	}
+	return team, nil
 }
 
 // Reparent moves a team (with its subtree) under a new parent. The store
@@ -159,12 +179,19 @@ func (s *Service) Reparent(ctx context.Context, orgID, teamID uuid.UUID, newPare
 	if newParent != nil && *newParent == teamID {
 		return Team{}, ErrCycle
 	}
-	return s.store.Reparent(ctx, orgID, teamID, newParent)
+	team, err := s.store.Reparent(ctx, orgID, teamID, newParent)
+	if err != nil {
+		return Team{}, fmt.Errorf("reparenting team: %w", err)
+	}
+	return team, nil
 }
 
 // Delete removes a team per the ADR-0006 rules.
 func (s *Service) Delete(ctx context.Context, orgID, teamID uuid.UUID) error {
-	return s.store.Delete(ctx, orgID, teamID)
+	if err := s.store.Delete(ctx, orgID, teamID); err != nil {
+		return fmt.Errorf("deleting team: %w", err)
+	}
+	return nil
 }
 
 // AddMember validates the metadata role and org membership, then enrols the
@@ -183,26 +210,44 @@ func (s *Service) AddMember(ctx context.Context, teamID, userID, orgID uuid.UUID
 	if !member {
 		return Member{}, ErrNotOrgMember
 	}
-	return s.store.AddMember(ctx, teamID, userID, orgID, role)
+	added, err := s.store.AddMember(ctx, teamID, userID, orgID, role)
+	if err != nil {
+		return Member{}, fmt.Errorf("adding team member: %w", err)
+	}
+	return added, nil
 }
 
 // RemoveMember removes the user from the team (default-team fallback rules
 // in the store).
 func (s *Service) RemoveMember(ctx context.Context, teamID, userID, orgID uuid.UUID) error {
-	return s.store.RemoveMember(ctx, teamID, userID, orgID)
+	if err := s.store.RemoveMember(ctx, teamID, userID, orgID); err != nil {
+		return fmt.Errorf("removing team member: %w", err)
+	}
+	return nil
 }
 
 // ListMembers returns the team's members with user identity.
 func (s *Service) ListMembers(ctx context.Context, teamID uuid.UUID) ([]Member, error) {
-	return s.store.ListMembers(ctx, teamID)
+	out, err := s.store.ListMembers(ctx, teamID)
+	if err != nil {
+		return nil, fmt.Errorf("listing team members: %w", err)
+	}
+	return out, nil
 }
 
 // GetMember returns one membership row (ErrMemberNotFound when absent).
 func (s *Service) GetMember(ctx context.Context, teamID, userID uuid.UUID) (Member, error) {
-	return s.store.GetMember(ctx, teamID, userID)
+	out, err := s.store.GetMember(ctx, teamID, userID)
+	if err != nil {
+		return Member{}, fmt.Errorf("getting team member: %w", err)
+	}
+	return out, nil
 }
 
 // SetPrimary makes the team the user's primary team.
 func (s *Service) SetPrimary(ctx context.Context, teamID, userID, orgID uuid.UUID) error {
-	return s.store.SetPrimary(ctx, teamID, userID, orgID)
+	if err := s.store.SetPrimary(ctx, teamID, userID, orgID); err != nil {
+		return fmt.Errorf("setting primary team: %w", err)
+	}
+	return nil
 }

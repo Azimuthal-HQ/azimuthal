@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// AccessRow is one (space, role) pair produced by the resolution query: a
+// Row is one (space, role) pair produced by the resolution query: a
 // grant matching the user directly or via their effective teams, or the
 // implicit viewer row of an org-visible space.
-type AccessRow struct {
+type Row struct {
 	SpaceID uuid.UUID
 	Role    string
 }
@@ -23,7 +23,7 @@ type Store interface {
 	// ErrNotOrgMember when no membership exists.
 	OrgRole(ctx context.Context, orgID, userID uuid.UUID) (OrgRole, error)
 	// ResolveAccessRows runs the single resolution query of spec §5.
-	ResolveAccessRows(ctx context.Context, orgID, userID uuid.UUID) ([]AccessRow, error)
+	ResolveAccessRows(ctx context.Context, orgID, userID uuid.UUID) ([]Row, error)
 	// ListSpaceIDsByOrg returns every non-deleted space id in the org —
 	// the org-admin bypass set.
 	ListSpaceIDsByOrg(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error)
@@ -75,7 +75,8 @@ type Resolution struct {
 func (r *Resolver) Resolve(ctx context.Context, orgID, userID uuid.UUID) (*Resolution, error) {
 	orgRole, err := r.store.OrgRole(ctx, orgID, userID)
 	if err != nil {
-		return nil, err // ErrNotOrgMember passes through untouched
+		// %w keeps errors.Is(err, ErrNotOrgMember) true for the middleware.
+		return nil, fmt.Errorf("resolving caller org role: %w", err)
 	}
 
 	res := &Resolution{

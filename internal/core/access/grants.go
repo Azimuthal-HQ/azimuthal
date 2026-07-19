@@ -82,7 +82,7 @@ func (s *GrantService) Create(ctx context.Context, orgID, spaceID uuid.UUID, sub
 		return Grant{}, fmt.Errorf("unknown grant subject type %q", subjectType)
 	}
 
-	return s.store.CreateGrant(ctx, Grant{
+	grant, err := s.store.CreateGrant(ctx, Grant{
 		ID:          uuid.New(),
 		OrgID:       orgID,
 		SpaceID:     spaceID,
@@ -91,25 +91,44 @@ func (s *GrantService) Create(ctx context.Context, orgID, spaceID uuid.UUID, sub
 		Role:        role,
 		CreatedBy:   &createdBy,
 	})
+	if err != nil {
+		return Grant{}, fmt.Errorf("creating grant: %w", err)
+	}
+	return grant, nil
 }
 
 // Get returns one grant.
 func (s *GrantService) Get(ctx context.Context, id uuid.UUID) (Grant, error) {
-	return s.store.GetGrant(ctx, id)
+	grant, err := s.store.GetGrant(ctx, id)
+	if err != nil {
+		return Grant{}, fmt.Errorf("getting grant: %w", err)
+	}
+	return grant, nil
 }
 
 // UpdateRole changes a grant's role.
 func (s *GrantService) UpdateRole(ctx context.Context, id uuid.UUID, role Role) (Grant, error) {
-	return s.store.UpdateGrantRole(ctx, id, role)
+	grant, err := s.store.UpdateGrantRole(ctx, id, role)
+	if err != nil {
+		return Grant{}, fmt.Errorf("updating grant role: %w", err)
+	}
+	return grant, nil
 }
 
 // Revoke deletes a grant. Effective access is computed per request, so the
 // revocation takes effect on the next request with no cache to invalidate.
 func (s *GrantService) Revoke(ctx context.Context, id uuid.UUID) error {
-	return s.store.DeleteGrant(ctx, id)
+	if err := s.store.DeleteGrant(ctx, id); err != nil {
+		return fmt.Errorf("revoking grant: %w", err)
+	}
+	return nil
 }
 
 // ListBySpace returns every grant on the space.
 func (s *GrantService) ListBySpace(ctx context.Context, spaceID uuid.UUID) ([]Grant, error) {
-	return s.store.ListGrantsBySpace(ctx, spaceID)
+	grants, err := s.store.ListGrantsBySpace(ctx, spaceID)
+	if err != nil {
+		return nil, fmt.Errorf("listing grants: %w", err)
+	}
+	return grants, nil
 }

@@ -180,7 +180,7 @@ func orgAdminGuard(cfg RouterConfig) func(http.Handler) http.Handler {
 // belongs to the org, 404), readableGuard (the space is in the caller's
 // resolved readable set, 404), writeFloor (mutating methods need at least
 // create_items, 403). Comments hang off their resource's own path.
-func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGuard, writeFloor func(http.Handler) http.Handler) {
+func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGuard, writeFloor func(http.Handler) http.Handler) { //nolint:funlen // route registration naturally grows with resources, like NewRouter above
 	// Spaces (org-level list/create plus {spaceID} resources). The space
 	// handler carries its own capability checks (manage_space) — the
 	// create_items floor does not apply to space governance.

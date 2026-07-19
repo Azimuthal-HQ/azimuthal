@@ -154,38 +154,15 @@ func (a *TeamAdapter) Reparent(ctx context.Context, orgID, teamID uuid.UUID, new
 		if len(subtree) == 0 || subtree[0].ID != teamID {
 			return teams.ErrNotFound
 		}
-		root := subtree[0]
-		if root.IsDefault {
+		if subtree[0].IsDefault {
 			return teams.ErrDefaultTeam
 		}
 
-		newParentPath := []uuid.UUID{}
-		if newParent != nil {
-			parent, err := q.GetTeamForUpdate(ctx, *newParent)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return teams.ErrParentNotFound
-			}
-			if err != nil {
-				return fmt.Errorf("locking new parent: %w", err)
-			}
-			if parent.OrgID != orgID {
-				return teams.ErrParentNotFound
-			}
-			for _, ancestor := range parent.Path {
-				if ancestor == teamID {
-					return teams.ErrCycle
-				}
-			}
-			newParentPath = parent.Path
+		newParentPath, err := lockReparentTarget(ctx, q, orgID, teamID, newParent)
+		if err != nil {
+			return err
 		}
-
-		height := 0
-		for _, node := range subtree {
-			if h := len(node.Path) - len(root.Path) + 1; h > height {
-				height = h
-			}
-		}
-		if len(newParentPath)+height > teams.MaxDepth {
+		if len(newParentPath)+subtreeHeight(subtree) > teams.MaxDepth {
 			return teams.ErrDepthExceeded
 		}
 
@@ -211,59 +188,56 @@ func (a *TeamAdapter) Reparent(ctx context.Context, orgID, teamID uuid.UUID, new
 	return dbTeamToDomain(moved), nil
 }
 
+// lockReparentTarget locks the prospective parent and validates it: it must
+// be a live team in the same org whose ancestor chain does not contain the
+// moved team (the cycle check). A nil parent means the root — empty path.
+func lockReparentTarget(ctx context.Context, q *generated.Queries, orgID, teamID uuid.UUID, newParent *uuid.UUID) ([]uuid.UUID, error) {
+	if newParent == nil {
+		return []uuid.UUID{}, nil
+	}
+	parent, err := q.GetTeamForUpdate(ctx, *newParent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, teams.ErrParentNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("locking new parent: %w", err)
+	}
+	if parent.OrgID != orgID {
+		return nil, teams.ErrParentNotFound
+	}
+	for _, ancestor := range parent.Path {
+		if ancestor == teamID {
+			return nil, teams.ErrCycle
+		}
+	}
+	return parent.Path, nil
+}
+
+// subtreeHeight is the height of a locked subtree relative to its root —
+// the term the reparent depth check must add to the new parent's depth.
+func subtreeHeight(subtree []generated.Team) int {
+	height := 0
+	rootDepth := len(subtree[0].Path)
+	for _, node := range subtree {
+		if h := len(node.Path) - rootDepth + 1; h > height {
+			height = h
+		}
+	}
+	return height
+}
+
 // Delete soft-deletes a team per ADR-0006: RESTRICT when it has children or
 // owns spaces; members move to the org default team; anyone whose primary it
 // was gets the default as primary; the team's grants are removed in the same
 // transaction (symmetric with user deletion — subject_id has no FK).
 func (a *TeamAdapter) Delete(ctx context.Context, orgID, teamID uuid.UUID) error {
 	return a.inTx(ctx, func(q *generated.Queries) error {
-		subtree, err := q.ListSubtreeForUpdate(ctx, generated.ListSubtreeForUpdateParams{OrgID: orgID, TeamID: teamID})
-		if err != nil {
-			return fmt.Errorf("locking team: %w", err)
-		}
-		if len(subtree) == 0 || subtree[0].ID != teamID {
-			return teams.ErrNotFound
-		}
-		if subtree[0].IsDefault {
-			return teams.ErrDefaultTeam
-		}
-		if len(subtree) > 1 {
-			return teams.ErrHasChildren
-		}
-		owned, err := q.CountTeamOwnedSpaces(ctx, teamID)
-		if err != nil {
-			return fmt.Errorf("counting owned spaces: %w", err)
-		}
-		if owned > 0 {
-			return teams.ErrOwnsSpaces
+		if err := lockTeamForDeletion(ctx, q, orgID, teamID); err != nil {
+			return err
 		}
 
-		def, err := q.GetDefaultTeam(ctx, orgID)
-		if err != nil {
-			return fmt.Errorf("resolving default team: %w", err)
-		}
-
-		primaries, err := q.ListPrimaryUserIDsOfTeam(ctx, teamID)
-		if err != nil {
-			return fmt.Errorf("listing primary members: %w", err)
-		}
-
-		if err := q.BulkEnrollInTeam(ctx, generated.BulkEnrollInTeamParams{
-			DestTeamID: def.ID,
-			SrcTeamID:  teamID,
-		}); err != nil {
-			return fmt.Errorf("moving members to default team: %w", err)
-		}
-		if err := q.DeleteTeamMembers(ctx, teamID); err != nil {
-			return fmt.Errorf("removing old memberships: %w", err)
-		}
-		if len(primaries) > 0 {
-			if err := q.SetPrimaryForUsers(ctx, generated.SetPrimaryForUsersParams{
-				TeamID:  def.ID,
-				UserIds: primaries,
-			}); err != nil {
-				return fmt.Errorf("reassigning primary team: %w", err)
-			}
+		if err := migrateMembersToDefault(ctx, q, orgID, teamID); err != nil {
+			return err
 		}
 		if err := q.DeleteGrantsBySubjectTeam(ctx, teamID); err != nil {
 			return fmt.Errorf("removing team grants: %w", err)
@@ -273,6 +247,65 @@ func (a *TeamAdapter) Delete(ctx context.Context, orgID, teamID uuid.UUID) error
 		}
 		return nil
 	})
+}
+
+// lockTeamForDeletion locks the team's subtree and applies the ADR-0006
+// deletion RESTRICT rules: the team must exist, must not be the org default,
+// must have no children, and must own no spaces.
+func lockTeamForDeletion(ctx context.Context, q *generated.Queries, orgID, teamID uuid.UUID) error {
+	subtree, err := q.ListSubtreeForUpdate(ctx, generated.ListSubtreeForUpdateParams{OrgID: orgID, TeamID: teamID})
+	if err != nil {
+		return fmt.Errorf("locking team: %w", err)
+	}
+	if len(subtree) == 0 || subtree[0].ID != teamID {
+		return teams.ErrNotFound
+	}
+	if subtree[0].IsDefault {
+		return teams.ErrDefaultTeam
+	}
+	if len(subtree) > 1 {
+		return teams.ErrHasChildren
+	}
+	owned, err := q.CountTeamOwnedSpaces(ctx, teamID)
+	if err != nil {
+		return fmt.Errorf("counting owned spaces: %w", err)
+	}
+	if owned > 0 {
+		return teams.ErrOwnsSpaces
+	}
+	return nil
+}
+
+// migrateMembersToDefault moves every member of the doomed team into the org
+// default team, reassigning primary there for anyone whose primary the
+// doomed team was. Runs inside the deletion transaction.
+func migrateMembersToDefault(ctx context.Context, q *generated.Queries, orgID, teamID uuid.UUID) error {
+	def, err := q.GetDefaultTeam(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("resolving default team: %w", err)
+	}
+	primaries, err := q.ListPrimaryUserIDsOfTeam(ctx, teamID)
+	if err != nil {
+		return fmt.Errorf("listing primary members: %w", err)
+	}
+	if err := q.BulkEnrollInTeam(ctx, generated.BulkEnrollInTeamParams{
+		DestTeamID: def.ID,
+		SrcTeamID:  teamID,
+	}); err != nil {
+		return fmt.Errorf("moving members to default team: %w", err)
+	}
+	if err := q.DeleteTeamMembers(ctx, teamID); err != nil {
+		return fmt.Errorf("removing old memberships: %w", err)
+	}
+	if len(primaries) > 0 {
+		if err := q.SetPrimaryForUsers(ctx, generated.SetPrimaryForUsersParams{
+			TeamID:  def.ID,
+			UserIds: primaries,
+		}); err != nil {
+			return fmt.Errorf("reassigning primary team: %w", err)
+		}
+	}
+	return nil
 }
 
 // AddMember enrols an org member into a team. Adding an existing member only
@@ -316,39 +349,46 @@ func (a *TeamAdapter) RemoveMember(ctx context.Context, teamID, userID, orgID uu
 		if err := q.RemoveTeamMember(ctx, generated.RemoveTeamMemberParams{TeamID: teamID, UserID: userID}); err != nil {
 			return fmt.Errorf("removing membership: %w", err)
 		}
+		return restoreMembershipInvariants(ctx, q, orgID, userID, existing.IsPrimary)
+	})
+}
 
-		remaining, err := q.CountUserTeamsInOrg(ctx, generated.CountUserTeamsInOrgParams{UserID: userID, OrgID: orgID})
+// restoreMembershipInvariants runs after a membership removal, inside the
+// same transaction: a user with no teams left is re-added to the org default
+// team as primary (never teamless), and a user who lost their primary
+// membership gets it reassigned to the fallback team.
+func restoreMembershipInvariants(ctx context.Context, q *generated.Queries, orgID, userID uuid.UUID, wasPrimary bool) error {
+	remaining, err := q.CountUserTeamsInOrg(ctx, generated.CountUserTeamsInOrgParams{UserID: userID, OrgID: orgID})
+	if err != nil {
+		return fmt.Errorf("counting remaining teams: %w", err)
+	}
+	if remaining == 0 {
+		def, err := q.GetDefaultTeam(ctx, orgID)
 		if err != nil {
-			return fmt.Errorf("counting remaining teams: %w", err)
+			return fmt.Errorf("resolving default team: %w", err)
 		}
-		if remaining == 0 {
-			def, err := q.GetDefaultTeam(ctx, orgID)
-			if err != nil {
-				return fmt.Errorf("resolving default team: %w", err)
-			}
-			if _, err := q.AddTeamMember(ctx, generated.AddTeamMemberParams{
-				TeamID:    def.ID,
-				UserID:    userID,
-				OrgID:     orgID,
-				Role:      "member",
-				IsPrimary: true,
-				Source:    "manual",
-			}); err != nil {
-				return fmt.Errorf("re-adding to default team: %w", err)
-			}
-			return nil
-		}
-		if existing.IsPrimary {
-			fallback, err := q.GetFallbackPrimaryTeam(ctx, generated.GetFallbackPrimaryTeamParams{UserID: userID, OrgID: orgID})
-			if err != nil {
-				return fmt.Errorf("resolving fallback primary: %w", err)
-			}
-			if err := q.SetPrimaryFlag(ctx, generated.SetPrimaryFlagParams{TeamID: fallback, UserID: userID}); err != nil {
-				return fmt.Errorf("reassigning primary: %w", err)
-			}
+		if _, err := q.AddTeamMember(ctx, generated.AddTeamMemberParams{
+			TeamID:    def.ID,
+			UserID:    userID,
+			OrgID:     orgID,
+			Role:      "member",
+			IsPrimary: true,
+			Source:    "manual",
+		}); err != nil {
+			return fmt.Errorf("re-adding to default team: %w", err)
 		}
 		return nil
-	})
+	}
+	if wasPrimary {
+		fallback, err := q.GetFallbackPrimaryTeam(ctx, generated.GetFallbackPrimaryTeamParams{UserID: userID, OrgID: orgID})
+		if err != nil {
+			return fmt.Errorf("resolving fallback primary: %w", err)
+		}
+		if err := q.SetPrimaryFlag(ctx, generated.SetPrimaryFlagParams{TeamID: fallback, UserID: userID}); err != nil {
+			return fmt.Errorf("reassigning primary: %w", err)
+		}
+	}
+	return nil
 }
 
 // ListMembers returns team members joined with live user identity.

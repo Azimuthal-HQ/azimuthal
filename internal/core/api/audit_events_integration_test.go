@@ -188,4 +188,3 @@ func TestAuditEvents_SpaceGovernance(t *testing.T) {
 	require.Len(t, auditRowsFor(t, ts, "space.visibility_changed"), 1, "no-op must not re-log")
 	require.Len(t, auditRowsFor(t, ts, "space.owner_team_changed"), 1, "no-op must not re-log")
 }
-

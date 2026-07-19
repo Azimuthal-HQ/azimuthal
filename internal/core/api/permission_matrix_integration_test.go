@@ -30,9 +30,9 @@ type apiMatrix struct {
 
 	eng, platform, design coreteams.Team
 
-	vp, dev, designer         testutil.User
-	vpTok, devTok, designTok  string
-	spaceID                   string
+	vp, dev, designer        testutil.User
+	vpTok, devTok, designTok string
+	spaceID                  string
 }
 
 func newAPIMatrix(t *testing.T) *apiMatrix {

@@ -311,15 +311,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	moduleFilter := r.URL.Query().Get("module")
-	var teamFilter *uuid.UUID
-	if raw := r.URL.Query().Get("team_id"); raw != "" {
-		id, err := uuid.Parse(raw)
-		if err != nil {
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid team_id")
-			return
-		}
-		teamFilter = &id
+	moduleFilter, teamFilter, ok := parseDirectoryFilters(w, r)
+	if !ok {
+		return
 	}
 
 	spaces, err := h.queries.ListSpacesByOrg(r.Context(), orgID)
@@ -340,29 +334,51 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		if teamFilter != nil && s.OwnerTeamID != *teamFilter {
 			continue
 		}
-		// Fail closed: a missing resolution reads nothing.
-		readable := res != nil && res.CanReadSpace(s.ID)
-		switch {
-		case readable:
-			rows = append(rows, directoryRow{
-				ID: s.ID, Name: s.Name, Slug: s.Slug, Type: s.Type,
-				Description: s.Description, Icon: s.Icon, Key: s.Key,
-				OwnerTeamID: s.OwnerTeamID, Visibility: s.Visibility,
-				Readable: true, Role: res.RoleOn(s.ID).String(),
-				CreatedBy: &s.CreatedBy,
-			})
-		case s.Visibility == access.VisibilityDiscoverable:
-			// Locked row: listed but unreadable — identity fields only.
-			rows = append(rows, directoryRow{
-				ID: s.ID, Name: s.Name, Slug: s.Slug, Type: s.Type,
-				OwnerTeamID: s.OwnerTeamID, Visibility: s.Visibility,
-				Readable: false,
-			})
-		default:
-			// hidden (or org-visible with no resolution): absent entirely.
+		if row, visible := directoryRowFor(s, res); visible {
+			rows = append(rows, row)
 		}
 	}
 	respond.JSON(w, http.StatusOK, rows)
+}
+
+// parseDirectoryFilters reads the directory's ?module= and ?team_id= query
+// filters, writing the 400 response itself on a malformed team id.
+func parseDirectoryFilters(w http.ResponseWriter, r *http.Request) (string, *uuid.UUID, bool) {
+	moduleFilter := r.URL.Query().Get("module")
+	raw := r.URL.Query().Get("team_id")
+	if raw == "" {
+		return moduleFilter, nil, true
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid team_id")
+		return "", nil, false
+	}
+	return moduleFilter, &id, true
+}
+
+// directoryRowFor maps one space onto its directory representation for the
+// caller: readable spaces in full with the effective role, unreadable
+// discoverable spaces as locked identity-only rows, hidden spaces absent.
+// A missing resolution reads nothing — fail closed.
+func directoryRowFor(s generated.Space, res *access.Resolution) (directoryRow, bool) {
+	if res != nil && res.CanReadSpace(s.ID) {
+		return directoryRow{
+			ID: s.ID, Name: s.Name, Slug: s.Slug, Type: s.Type,
+			Description: s.Description, Icon: s.Icon, Key: s.Key,
+			OwnerTeamID: s.OwnerTeamID, Visibility: s.Visibility,
+			Readable: true, Role: res.RoleOn(s.ID).String(),
+			CreatedBy: &s.CreatedBy,
+		}, true
+	}
+	if s.Visibility == access.VisibilityDiscoverable {
+		return directoryRow{
+			ID: s.ID, Name: s.Name, Slug: s.Slug, Type: s.Type,
+			OwnerTeamID: s.OwnerTeamID, Visibility: s.Visibility,
+			Readable: false,
+		}, true
+	}
+	return directoryRow{}, false
 }
 
 // Create creates a new space.
@@ -611,7 +627,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // @Failure      404      {object}  api.SwaggerErrorResponse         "Not found"
 // @Failure      500      {object}  api.SwaggerErrorResponse         "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID} [put]
-func (h *Handler) Update(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // governance fields (visibility, owner team) need per-field validation and audit
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	id, err := spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
@@ -623,24 +639,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 		return
 	}
 
-	var req updateSpaceRequest
-	if err := respond.DecodeJSON(r, &req); err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
-		return
-	}
-
-	if req.Name == "" {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "name is required")
-		return
-	}
-
-	if req.Key != "" && !validKey.MatchString(req.Key) {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "key must be 1–10 uppercase letters or digits")
-		return
-	}
-
-	if req.Visibility != "" && !validVisibilities[req.Visibility] {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "visibility must be one of 'hidden', 'discoverable', or 'org'")
+	req, ok := decodeSpaceUpdate(w, r)
+	if !ok {
 		return
 	}
 
@@ -668,52 +668,96 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 		return
 	}
 
-	// Visibility change (audited: space.visibility_changed).
-	if req.Visibility != "" && req.Visibility != current.Visibility {
-		space, err = h.queries.SetSpaceVisibility(r.Context(), generated.SetSpaceVisibilityParams{
-			ID: id, Visibility: req.Visibility,
-		})
-		if err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to change visibility")
-			return
-		}
-		h.logSpaceEvent(r, audit.EventTypeSpaceVisibilityChanged, id, map[string]string{
-			"from": current.Visibility, "to": req.Visibility,
-		})
+	space, ok = h.applyVisibilityChange(w, r, current, req.Visibility, space)
+	if !ok {
+		return
 	}
-
-	// Owner-team change (requires manage_space — already checked; audited:
-	// space.owner_team_changed).
-	if req.OwnerTeamID != nil && *req.OwnerTeamID != "" {
-		newOwner, err := uuid.Parse(*req.OwnerTeamID)
-		if err != nil {
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "invalid owner_team_id")
-			return
-		}
-		if newOwner != current.OwnerTeamID {
-			if h.teamSvc == nil {
-				respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "team service not configured")
-				return
-			}
-			team, err := h.teamSvc.Get(r.Context(), newOwner)
-			if err != nil || team.OrgID != current.OrgID {
-				respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "owner_team_id does not name a team in this organization")
-				return
-			}
-			space, err = h.queries.SetSpaceOwnerTeam(r.Context(), generated.SetSpaceOwnerTeamParams{
-				ID: id, OwnerTeamID: newOwner,
-			})
-			if err != nil {
-				respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to change owner team")
-				return
-			}
-			h.logSpaceEvent(r, audit.EventTypeSpaceOwnerTeamChanged, id, map[string]string{
-				"from": current.OwnerTeamID.String(), "to": newOwner.String(),
-			})
-		}
+	space, ok = h.applyOwnerTeamChange(w, r, current, req.OwnerTeamID, space)
+	if !ok {
+		return
 	}
 
 	respond.JSON(w, http.StatusOK, space)
+}
+
+// decodeSpaceUpdate parses and validates the space-update body, writing the
+// 400 response itself on failure.
+func decodeSpaceUpdate(w http.ResponseWriter, r *http.Request) (updateSpaceRequest, bool) {
+	var req updateSpaceRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return req, false
+	}
+	if req.Name == "" {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "name is required")
+		return req, false
+	}
+	if req.Key != "" && !validKey.MatchString(req.Key) {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "key must be 1–10 uppercase letters or digits")
+		return req, false
+	}
+	if req.Visibility != "" && !validVisibilities[req.Visibility] {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "visibility must be one of 'hidden', 'discoverable', or 'org'")
+		return req, false
+	}
+	return req, true
+}
+
+// applyVisibilityChange persists a requested visibility change and writes
+// the space.visibility_changed audit event. No-ops (empty or unchanged
+// values) write nothing. Returns ok=false after writing an error response.
+func (h *Handler) applyVisibilityChange(w http.ResponseWriter, r *http.Request, current generated.Space, visibility string, space generated.Space) (generated.Space, bool) {
+	if visibility == "" || visibility == current.Visibility {
+		return space, true
+	}
+	updated, err := h.queries.SetSpaceVisibility(r.Context(), generated.SetSpaceVisibilityParams{
+		ID: current.ID, Visibility: visibility,
+	})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to change visibility")
+		return space, false
+	}
+	h.logSpaceEvent(r, audit.EventTypeSpaceVisibilityChanged, current.ID, map[string]string{
+		"from": current.Visibility, "to": visibility,
+	})
+	return updated, true
+}
+
+// applyOwnerTeamChange persists a requested owner-team change (validating
+// the team lives in the same org) and writes the space.owner_team_changed
+// audit event. Returns ok=false after writing an error response.
+func (h *Handler) applyOwnerTeamChange(w http.ResponseWriter, r *http.Request, current generated.Space, ownerTeamID *string, space generated.Space) (generated.Space, bool) {
+	if ownerTeamID == nil || *ownerTeamID == "" {
+		return space, true
+	}
+	newOwner, err := uuid.Parse(*ownerTeamID)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "invalid owner_team_id")
+		return space, false
+	}
+	if newOwner == current.OwnerTeamID {
+		return space, true
+	}
+	if h.teamSvc == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "team service not configured")
+		return space, false
+	}
+	team, err := h.teamSvc.Get(r.Context(), newOwner)
+	if err != nil || team.OrgID != current.OrgID {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "owner_team_id does not name a team in this organization")
+		return space, false
+	}
+	updated, err := h.queries.SetSpaceOwnerTeam(r.Context(), generated.SetSpaceOwnerTeamParams{
+		ID: current.ID, OwnerTeamID: newOwner,
+	})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to change owner team")
+		return space, false
+	}
+	h.logSpaceEvent(r, audit.EventTypeSpaceOwnerTeamChanged, current.ID, map[string]string{
+		"from": current.OwnerTeamID.String(), "to": newOwner.String(),
+	})
+	return updated, true
 }
 
 // Delete soft-deletes a space.

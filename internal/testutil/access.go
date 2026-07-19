@@ -17,7 +17,7 @@ func (s staticAccessStore) OrgRole(context.Context, uuid.UUID, uuid.UUID) (acces
 	return access.OrgRole{Name: "owner", Admin: true}, nil
 }
 
-func (s staticAccessStore) ResolveAccessRows(context.Context, uuid.UUID, uuid.UUID) ([]access.AccessRow, error) {
+func (s staticAccessStore) ResolveAccessRows(context.Context, uuid.UUID, uuid.UUID) ([]access.Row, error) {
 	return nil, nil
 }
 

@@ -45,14 +45,14 @@ func (a *AccessAdapter) OrgRole(ctx context.Context, orgID, userID uuid.UUID) (a
 }
 
 // ResolveAccessRows runs the single resolution query of spec §5.
-func (a *AccessAdapter) ResolveAccessRows(ctx context.Context, orgID, userID uuid.UUID) ([]access.AccessRow, error) {
+func (a *AccessAdapter) ResolveAccessRows(ctx context.Context, orgID, userID uuid.UUID) ([]access.Row, error) {
 	rows, err := a.q.ResolveAccessRows(ctx, generated.ResolveAccessRowsParams{UserID: userID, OrgID: orgID})
 	if err != nil {
 		return nil, fmt.Errorf("resolving access rows: %w", err)
 	}
-	out := make([]access.AccessRow, 0, len(rows))
+	out := make([]access.Row, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, access.AccessRow{SpaceID: r.SpaceID, Role: r.Role})
+		out = append(out, access.Row{SpaceID: r.SpaceID, Role: r.Role})
 	}
 	return out, nil
 }

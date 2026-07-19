@@ -81,6 +81,31 @@ func toGrantResponse(g access.Grant) grantResponse {
 	}
 }
 
+// decodeCreateGrant parses and validates the create-grant body, writing the
+// 400 response itself on failure.
+func decodeCreateGrant(w http.ResponseWriter, r *http.Request) (access.SubjectType, uuid.UUID, access.Role, bool) {
+	var req createGrantRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return "", uuid.Nil, access.RoleNone, false
+	}
+	role, err := access.ParseRole(req.Role)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "role must be one of viewer, contributor, agent, space_admin")
+		return "", uuid.Nil, access.RoleNone, false
+	}
+	subjectType := access.SubjectType(req.SubjectType)
+	if subjectType != access.SubjectUser && subjectType != access.SubjectTeam {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "subject_type must be 'user' or 'team'")
+		return "", uuid.Nil, access.RoleNone, false
+	}
+	if req.SubjectID == uuid.Nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "subject_id is required")
+		return "", uuid.Nil, access.RoleNone, false
+	}
+	return subjectType, req.SubjectID, role, true
+}
+
 // requireManageGrants enforces the manage_grants capability on the URL
 // space. The space is already known readable (router guards); lacking the
 // capability is 403.
@@ -156,23 +181,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
 		return
 	}
-	var req createGrantRequest
-	if err := respond.DecodeJSON(r, &req); err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
-		return
-	}
-	role, err := access.ParseRole(req.Role)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "role must be one of viewer, contributor, agent, space_admin")
-		return
-	}
-	subjectType := access.SubjectType(req.SubjectType)
-	if subjectType != access.SubjectUser && subjectType != access.SubjectTeam {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "subject_type must be 'user' or 'team'")
-		return
-	}
-	if req.SubjectID == uuid.Nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "subject_id is required")
+	subjectType, subjectID, role, ok := decodeCreateGrant(w, r)
+	if !ok {
 		return
 	}
 	claims := auth.ClaimsFromContext(r.Context())
@@ -181,7 +191,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grant, err := h.grants.Create(r.Context(), orgID, spaceID, subjectType, req.SubjectID, role, claims.UserID)
+	grant, err := h.grants.Create(r.Context(), orgID, spaceID, subjectType, subjectID, role, claims.UserID)
 	switch {
 	case errors.Is(err, access.ErrSubjectNotOrgMember), errors.Is(err, access.ErrSubjectTeamNotFound):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
