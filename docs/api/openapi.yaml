@@ -114,7 +114,7 @@ components:
     api.SwaggerCreateSpaceRequest:
       properties:
         description:
-          example: A project space
+          example: A vector space
           type: string
         icon:
           example: rocket
@@ -123,13 +123,13 @@ components:
           example: false
           type: boolean
         name:
-          example: My Project
+          example: My Space
           type: string
         slug:
-          example: my-project
+          example: my-space
           type: string
         type:
-          example: project
+          example: vector
           type: string
       type: object
     api.SwaggerCreateSprintRequest:
@@ -1357,8 +1357,8 @@ paths:
       tags:
       - spaces
     post:
-      description: Creates a new space in the organization. Type must be 'project',
-        'wiki', or 'service_desk'.
+      description: Creates a new space in the organization. Type must be 'beacon',
+        'codex', or 'vector'.
       parameters:
       - description: Organization ID (UUID)
         in: path

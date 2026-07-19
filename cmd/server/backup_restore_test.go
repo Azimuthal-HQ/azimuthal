@@ -141,7 +141,7 @@ func TestBackupRestore_FixturesAreReadable(t *testing.T) {
 
 	org := testutil.CreateTestOrg(t, tdb.Pool)
 	user := testutil.CreateTestUser(t, tdb.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, tdb.Pool, org.ID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, tdb.Pool, org.ID, user.ID, "beacon")
 
 	gotOrg, err := queries.GetOrganizationByID(ctx, org.ID)
 	require.NoError(t, err)
@@ -352,7 +352,7 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 		Slug:        "rt-space-" + suffix,
 		Name:        "Round Trip Space",
 		Description: &spaceDesc,
-		Type:        "service_desk",
+		Type:        "beacon",
 		IsPrivate:   false,
 		CreatedBy:   user.ID,
 		Key:         "RT",

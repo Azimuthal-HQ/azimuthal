@@ -92,10 +92,10 @@ type SwaggerHealthResponse struct {
 
 // SwaggerCreateSpaceRequest matches createSpaceRequest in spaces handler.
 type SwaggerCreateSpaceRequest struct {
-	Slug        string  `json:"slug" example:"my-project"`
-	Name        string  `json:"name" example:"My Project"`
-	Description *string `json:"description,omitempty" example:"A project space"`
-	Type        string  `json:"type" example:"project"`
+	Slug        string  `json:"slug" example:"my-space"`
+	Name        string  `json:"name" example:"My Space"`
+	Description *string `json:"description,omitempty" example:"A vector space"`
+	Type        string  `json:"type" example:"vector"`
 	Icon        *string `json:"icon,omitempty" example:"rocket"`
 	IsPrivate   bool    `json:"is_private" example:"false"`
 }

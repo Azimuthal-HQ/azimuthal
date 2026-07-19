@@ -9,9 +9,9 @@ test.describe('Sprints', () => {
   // and could never be started from the UI.
   test('newly created sprint shows Start button — status literal matches backend "planned" (regression)', async ({ page }) => {
     await createUserAndLogin(page)
-    const spaceId = await createSpace(page, 'Sprint Start Regression', 'project')
+    const spaceId = await createSpace(page, 'Sprint Start Regression', 'vector')
 
-    await page.goto(`/spaces/${spaceId}/sprints`)
+    await page.goto(`/vector/${spaceId}/sprints`)
     await expect(page.locator('h1:has-text("Sprints")')).toBeVisible({ timeout: 10000 })
 
     // Create a sprint through the page's own dialog.
@@ -24,8 +24,10 @@ test.describe('Sprints', () => {
     await expect(page.locator('text=planned')).toBeVisible()
 
     // A planned sprint must offer Start. This is the defect: with the
-    // frontend expecting 'planning', the button never rendered.
-    const startButton = page.getByRole('button', { name: 'Start' })
+    // frontend expecting 'planning', the button never rendered. Exact name:
+    // the sidebar space picker's accessible name contains this space's own
+    // name ("Sprint Start Regression …"), which a substring match would hit.
+    const startButton = page.getByRole('button', { name: 'Start', exact: true })
     await expect(startButton).toBeVisible()
 
     // And the transition works end-to-end: planned → active.

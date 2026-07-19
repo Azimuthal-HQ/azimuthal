@@ -5,17 +5,17 @@ test.describe('Navigation', () => {
   test('navigating between all three module types shows no blank screens', async ({ page }) => {
     await createUserAndLogin(page)
 
-    await createSpace(page, 'Nav SD', 'service_desk')
+    await createSpace(page, 'Nav SD', 'beacon')
     await assertNoErrors(page)
-    await page.click('text=Back to Dashboard')
+    await page.getByTestId('product-tab-home').click()
 
-    await createSpace(page, 'Nav Wiki', 'wiki')
+    await createSpace(page, 'Nav Wiki', 'codex')
     await assertNoErrors(page)
-    await page.click('text=Back to Dashboard')
+    await page.getByTestId('product-tab-home').click()
 
-    await createSpace(page, 'Nav Proj', 'project')
+    await createSpace(page, 'Nav Proj', 'vector')
     await assertNoErrors(page)
-    await page.click('text=Back to Dashboard')
+    await page.getByTestId('product-tab-home').click()
 
     await expect(page).toHaveURL('/')
     await expect(page.locator('text=Welcome back')).toBeVisible()
@@ -23,13 +23,14 @@ test.describe('Navigation', () => {
 
   test('sidebar does not duplicate when navigating within a module', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Sidebar Stability Test', 'service_desk')
+    await createSpace(page, 'Sidebar Stability Test', 'beacon')
 
     // Navigate between views inside the module multiple times
-    await page.click('text=Kanban Board')
-    await page.click('text=Tickets')
-    await page.click('text=Kanban Board')
-    await page.click('text=Tickets')
+    const sidebar = page.getByTestId('space-sidebar')
+    await sidebar.getByRole('link', { name: 'Board', exact: true }).click()
+    await sidebar.getByRole('link', { name: 'Tickets', exact: true }).click()
+    await sidebar.getByRole('link', { name: 'Board', exact: true }).click()
+    await sidebar.getByRole('link', { name: 'Tickets', exact: true }).click()
 
     // Count nav items — duplication bug produced 50+ items
     const navItems = await page.locator('nav a, aside a, [role="navigation"] a').count()
@@ -55,8 +56,9 @@ test.describe('Navigation', () => {
       document.documentElement.getAttribute('data-theme') === 'dark'
     )
 
-    // Toggle to light mode
+    // Toggle to light mode — the theme toggle lives in the avatar menu now
     const initial = await getTheme()
+    await page.getByTestId('avatar-menu').click()
     await page.click('[data-testid="theme-toggle"], button[aria-label*="theme"], button[aria-label*="mode"], .theme-toggle')
     const toggled = await getTheme()
     expect(toggled).toBe(!initial)

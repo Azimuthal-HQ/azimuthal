@@ -4,22 +4,22 @@ import { createUserAndLogin, createSpace, assertNoErrors, getAuthToken } from '.
 test.describe('Projects', () => {
   test('can create a project space and land on backlog', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'E2E Project', 'project')
-    await expect(page).toHaveURL(/\/spaces\/.*\/backlog/, { timeout: 10000 })
+    await createSpace(page, 'E2E Project', 'vector')
+    await expect(page).toHaveURL(/\/vector\/.*\/backlog/, { timeout: 10000 })
     await expect(page.locator('text=Backlog').first()).toBeVisible()
     await assertNoErrors(page)
   })
 
   test('backlog loads empty without error', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Empty Project', 'project')
+    await createSpace(page, 'Empty Project', 'vector')
     await assertNoErrors(page)
     await expect(page.locator('text=Unknown')).not.toBeVisible()
   })
 
   test('can create a backlog item and it appears', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Item Create Project', 'project')
+    await createSpace(page, 'Item Create Project', 'vector')
 
     await page.click('button:has-text("Create Item")')
     await expect(page.locator('#item-title')).toBeVisible()
@@ -36,7 +36,7 @@ test.describe('Projects', () => {
     // backend actually returns ("open", "medium"), so unmapped fallbacks
     // never surface as "Unknown".
     await createUserAndLogin(page)
-    await createSpace(page, 'Priority Project', 'project')
+    await createSpace(page, 'Priority Project', 'vector')
 
     await page.click('button:has-text("Create Item")')
     await page.fill('#item-title', 'Priority Check Item')
@@ -51,10 +51,10 @@ test.describe('Projects', () => {
     // date inputs; the API's RFC3339 timestamp contract rejected them with
     // 400 "invalid request body", so every dated sprint creation failed.
     await createUserAndLogin(page)
-    await createSpace(page, 'Sprint Dates Project', 'project')
+    await createSpace(page, 'Sprint Dates Project', 'vector')
 
-    await page.getByRole('link', { name: 'Sprints' }).click()
-    await expect(page).toHaveURL(/\/spaces\/.*\/sprints/, { timeout: 10000 })
+    await page.getByTestId('space-sidebar').getByRole('link', { name: 'Sprints', exact: true }).click()
+    await expect(page).toHaveURL(/\/vector\/.*\/sprints/, { timeout: 10000 })
 
     await page.click('button:has-text("New Sprint")')
     await page.fill('input[placeholder="Sprint 1"]', 'Dated Sprint')
@@ -74,7 +74,7 @@ test.describe('Projects', () => {
     // single segmented control: equal option widths above a sane minimum,
     // options joined edge-to-edge with no gaps.
     await createUserAndLogin(page)
-    await createSpace(page, 'Priority Segments Project', 'project')
+    await createSpace(page, 'Priority Segments Project', 'vector')
 
     await page.click('button:has-text("Create Item")')
     const group = page.getByRole('radiogroup', { name: 'Priority' })
@@ -113,10 +113,10 @@ test.describe('Projects', () => {
     // P0 defect: the sidebar linked to /spaces/:id/labels but no route existed,
     // so React Router rendered nothing — an entirely blank document body.
     await createUserAndLogin(page)
-    await createSpace(page, 'Labels Project', 'project')
+    await createSpace(page, 'Labels Project', 'vector')
 
-    await page.getByRole('link', { name: 'Labels' }).click()
-    await expect(page).toHaveURL(/\/spaces\/.*\/labels/, { timeout: 10000 })
+    await page.getByTestId('space-sidebar').getByRole('link', { name: 'Labels', exact: true }).click()
+    await expect(page).toHaveURL(/\/vector\/.*\/labels/, { timeout: 10000 })
 
     // The route must render non-empty content — a blank body is never acceptable.
     await expect(page.locator('h1:has-text("Labels")')).toBeVisible({ timeout: 5000 })
@@ -126,21 +126,21 @@ test.describe('Projects', () => {
 
   test('sprint board loads without error', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Sprint Test', 'project')
-    await page.click('text=Sprint Board')
+    await createSpace(page, 'Sprint Test', 'vector')
+    await page.getByTestId('space-sidebar').getByRole('link', { name: 'Board', exact: true }).click()
     await assertNoErrors(page)
   })
 
-  test('back to dashboard link works', async ({ page }) => {
+  test('Home product tab returns to the overview from a project', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Nav Test Project', 'project')
-    await page.click('text=Back to Dashboard')
+    await createSpace(page, 'Nav Test Project', 'vector')
+    await page.getByTestId('product-tab-home').click()
     await expect(page).toHaveURL('/')
   })
 
   test('clicking a backlog item opens detail view with edit capability', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Edit Capability Project', 'project')
+    await createSpace(page, 'Edit Capability Project', 'vector')
     await page.click('button:has-text("Create Item")')
     await page.fill('#item-title', 'Editable Item')
     await page.locator('[role="dialog"] button:has-text("Create Item")').click()
@@ -148,11 +148,13 @@ test.describe('Projects', () => {
     await page.click('text=Editable Item')
     await expect(page).not.toHaveURL(/\/login/)
 
-    // Enter edit mode, change title and description, save.
-    await page.click('button:has-text("Edit")')
+    // Enter edit mode, change title and description, save. Exact-name role
+    // locators: the space picker's accessible name ("Edit Capability
+    // Project …") would collide with a substring "Edit" match.
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
     await page.fill('#edit-item-title', 'Editable Item Renamed')
     await page.fill('#edit-item-description', 'Updated via edit form')
-    await page.click('button:has-text("Save")')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page.locator('h1:has-text("Editable Item Renamed")')).toBeVisible({ timeout: 5000 })
 
     // Reload — the edit persisted to the database.
@@ -163,7 +165,7 @@ test.describe('Projects', () => {
 
   test('project item status can be changed', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Status Change Project', 'project')
+    await createSpace(page, 'Status Change Project', 'vector')
     await page.click('button:has-text("Create Item")')
     await page.fill('#item-title', 'Status Test Item')
     await page.locator('[role="dialog"] button:has-text("Create Item")').click()
@@ -183,7 +185,7 @@ test.describe('Projects', () => {
 
   test('project item status change persists after page reload', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Status Persist Project', 'project')
+    await createSpace(page, 'Status Persist Project', 'vector')
     await page.click('button:has-text("Create Item")')
     await page.fill('#item-title', 'Status Persist Item')
     await page.locator('[role="dialog"] button:has-text("Create Item")').click()
@@ -216,7 +218,7 @@ test.describe('Projects', () => {
     })
 
     await createUserAndLogin(page)
-    await createSpace(page, 'No 404 Project', 'project')
+    await createSpace(page, 'No 404 Project', 'vector')
     await page.click('button:has-text("Create Item")')
     await page.fill('#item-title', 'No 404 Item')
     await page.locator('[role="dialog"] button:has-text("Create Item")').click()

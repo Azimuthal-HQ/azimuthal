@@ -4,15 +4,15 @@ import { createUserAndLogin, createSpace, assertNoErrors, getAuthToken, getCurre
 test.describe('Service Desk', () => {
   test('can create a service desk space and land on ticket list', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'E2E Service Desk', 'service_desk')
-    await expect(page).toHaveURL(/\/spaces\/.*\/tickets/, { timeout: 10000 })
+    await createSpace(page, 'E2E Service Desk', 'beacon')
+    await expect(page).toHaveURL(/\/beacon\/.*\/tickets/, { timeout: 10000 })
     await expect(page.locator('h1:has-text("Tickets"), h2:has-text("Tickets"), [role="heading"]:has-text("Tickets")').first()).toBeVisible()
     await assertNoErrors(page)
   })
 
   test('ticket list loads without error on empty space', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Empty Desk', 'service_desk')
+    await createSpace(page, 'Empty Desk', 'beacon')
     await assertNoErrors(page)
     await expect(page.locator('text=Unknown')).not.toBeVisible()
   })
@@ -21,10 +21,10 @@ test.describe('Service Desk', () => {
     // P0 defect: the sidebar linked to /spaces/:id/reports but no route existed,
     // so React Router rendered nothing — an entirely blank document body.
     await createUserAndLogin(page)
-    await createSpace(page, 'Reports Desk', 'service_desk')
+    await createSpace(page, 'Reports Desk', 'beacon')
 
     await page.getByRole('link', { name: 'Reports' }).click()
-    await expect(page).toHaveURL(/\/spaces\/.*\/reports/, { timeout: 10000 })
+    await expect(page).toHaveURL(/\/beacon\/.*\/reports/, { timeout: 10000 })
 
     // The route must render non-empty content — a blank body is never acceptable.
     await expect(page.locator('h1:has-text("Reports")')).toBeVisible({ timeout: 5000 })
@@ -34,7 +34,7 @@ test.describe('Service Desk', () => {
 
   test('can create a ticket with minimum fields', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Ticket Create Test', 'service_desk')
+    await createSpace(page, 'Ticket Create Test', 'beacon')
 
     await page.click('button:has-text("New Ticket")')
     await expect(page.locator('#ticket-title')).toBeVisible()
@@ -52,7 +52,7 @@ test.describe('Service Desk', () => {
     // `text=Medium`.first() locator picked the hidden filter `<option>` in
     // the toolbar; scope to the row to assert the badge text exactly.
     await createUserAndLogin(page)
-    await createSpace(page, 'Priority Display Test', 'service_desk')
+    await createSpace(page, 'Priority Display Test', 'beacon')
 
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Priority Check Ticket')
@@ -76,7 +76,7 @@ test.describe('Service Desk', () => {
     // Scope to the row's status cell so the assertion does not match the
     // hidden filter `<option value="open">Open</option>` in the toolbar.
     await createUserAndLogin(page)
-    await createSpace(page, 'Status Display Test', 'service_desk')
+    await createSpace(page, 'Status Display Test', 'beacon')
 
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Status Check Ticket')
@@ -93,9 +93,9 @@ test.describe('Service Desk', () => {
 
   test('ticket creation is confirmed by API', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'API Verify Desk', 'service_desk')
+    await createSpace(page, 'API Verify Desk', 'beacon')
 
-    const spaceId = page.url().match(/\/spaces\/([^/]+)/)?.[1]
+    const spaceId = page.url().match(/\/beacon\/([^/]+)/)?.[1]
 
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'API Verify Ticket')
@@ -134,15 +134,15 @@ test.describe('Service Desk', () => {
     // pre-fix board also had no per-column landmarks, so on the unfixed UI
     // this fails at the first column locator.
     await createUserAndLogin(page)
-    await createSpace(page, 'Drag Desk', 'service_desk')
+    await createSpace(page, 'Drag Desk', 'beacon')
 
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Drag Me Ticket')
     await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
     await expect(page.locator('text=Drag Me Ticket')).toBeVisible({ timeout: 5000 })
 
-    await page.getByRole('link', { name: 'Kanban Board' }).click()
-    await expect(page).toHaveURL(/\/spaces\/.*\/kanban/, { timeout: 10000 })
+    await page.getByTestId('space-sidebar').getByRole('link', { name: 'Board', exact: true }).click()
+    await expect(page).toHaveURL(/\/beacon\/.*\/board/, { timeout: 10000 })
 
     const card = page.locator('[data-column-id="open"]').locator('text=Drag Me Ticket')
     await expect(card).toBeVisible({ timeout: 5000 })
@@ -171,23 +171,25 @@ test.describe('Service Desk', () => {
 
   test('kanban board loads without error', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Kanban Test', 'service_desk')
-    await page.click('text=Kanban Board')
+    await createSpace(page, 'Kanban Test', 'beacon')
+    await page.getByTestId('space-sidebar').getByRole('link', { name: 'Board', exact: true }).click()
     await assertNoErrors(page)
     await expect(page.locator('text=Unknown')).not.toBeVisible()
   })
 
-  test('back to dashboard link works', async ({ page }) => {
+  test('Home product tab returns to the overview from a space', async ({ page }) => {
+    // The old sidebar's "Back to Dashboard" link is gone (ADR-0005): the way
+    // home is the Home tab in the top-bar product switcher.
     await createUserAndLogin(page)
-    await createSpace(page, 'Nav Test Desk', 'service_desk')
-    await page.click('text=Back to Dashboard')
+    await createSpace(page, 'Nav Test Desk', 'beacon')
+    await page.getByTestId('product-tab-home').click()
     await expect(page).toHaveURL('/')
     await expect(page.locator('text=Welcome back')).toBeVisible()
   })
 
   test('clicking a ticket opens detail view and stays there — no redirect to login', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Detail View Test', 'service_desk')
+    await createSpace(page, 'Detail View Test', 'beacon')
 
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Detail Test Ticket')
@@ -209,7 +211,7 @@ test.describe('Service Desk', () => {
 
   test('ticket detail comments section loads without 404 error', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Comments Test Desk', 'service_desk')
+    await createSpace(page, 'Comments Test Desk', 'beacon')
 
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Comments Test Ticket')
@@ -230,7 +232,7 @@ test.describe('Service Desk', () => {
 
   test('can add a comment to a ticket', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Add Comment Test', 'service_desk')
+    await createSpace(page, 'Add Comment Test', 'beacon')
 
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Comment Target Ticket')
@@ -241,7 +243,7 @@ test.describe('Service Desk', () => {
 
     // Add a comment
     await page.fill('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]', 'This is a test comment')
-    await page.click('button:has-text("Comment")')
+    await page.getByRole('button', { name: 'Comment', exact: true }).click()
 
     // Comment must appear in the thread
     await expect(page.locator('text=This is a test comment')).toBeVisible({ timeout: 5000 })
@@ -256,12 +258,16 @@ test.describe('Service Desk', () => {
     })
 
     await createUserAndLogin(page)
-    await createSpace(page, 'Assignee Test Desk', 'service_desk')
+    await createSpace(page, 'Assignee Test Desk', 'beacon')
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Assignee Test')
     await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
-    await expect(page.locator('text=Assignee Test')).toBeVisible({ timeout: 5000 })
-    await page.click('text=Assignee Test')
+    // Exact link-role locator: the space picker's accessible name ("Assignee
+    // Test Desk …") contains this ticket title, so a bare text= match hits
+    // the sidebar first.
+    const ticketLink = page.getByRole('link', { name: 'Assignee Test', exact: true })
+    await expect(ticketLink).toBeVisible({ timeout: 5000 })
+    await ticketLink.click()
     await expect(page).not.toHaveURL(/\/login/)
 
     // Assignee dropdown must be visible — verifies the members endpoint loaded
@@ -277,7 +283,7 @@ test.describe('Service Desk', () => {
 
   test('comments section loads and a comment can be posted', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Comment Post Test', 'service_desk')
+    await createSpace(page, 'Comment Post Test', 'beacon')
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Comment Test Ticket')
     await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
@@ -294,7 +300,7 @@ test.describe('Service Desk', () => {
     const commentBox = page.locator('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]')
     await expect(commentBox).toBeVisible({ timeout: 5000 })
     await commentBox.fill('This is a regression test comment')
-    await page.click('button:has-text("Comment")')
+    await page.getByRole('button', { name: 'Comment', exact: true }).click()
 
     // Comment must appear
     await expect(page.locator('text=This is a regression test comment')).toBeVisible({ timeout: 5000 })
@@ -309,7 +315,7 @@ test.describe('Service Desk', () => {
     })
 
     await createUserAndLogin(page)
-    await createSpace(page, 'No 404 Test', 'service_desk')
+    await createSpace(page, 'No 404 Test', 'beacon')
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'No 404 Ticket')
     await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
@@ -327,7 +333,7 @@ test.describe('Service Desk', () => {
 
   test('assignee dropdown shows org members — not just Unassigned', async ({ page }) => {
     await createUserAndLogin(page)
-    const spaceId = await createSpace(page, 'Assignee Members Test', 'service_desk')
+    const spaceId = await createSpace(page, 'Assignee Members Test', 'beacon')
 
     // Space creation does not auto-add creator as member — do it via API
     const { orgId } = await getCurrentUser(page)
@@ -362,7 +368,7 @@ test.describe('Service Desk', () => {
 
   test('reporter shows actual user name — not Unknown', async ({ page }) => {
     await createUserAndLogin(page)
-    const spaceId = await createSpace(page, 'Reporter Name Test', 'service_desk')
+    const spaceId = await createSpace(page, 'Reporter Name Test', 'beacon')
 
     // Add current user as space member so reporter_id resolves to a name
     const { orgId } = await getCurrentUser(page)
@@ -393,7 +399,7 @@ test.describe('Service Desk', () => {
 
   test('adding a comment saves and persists after page reload', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Comment Persist Test', 'service_desk')
+    await createSpace(page, 'Comment Persist Test', 'beacon')
 
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Comment Persist Ticket')
@@ -406,7 +412,7 @@ test.describe('Service Desk', () => {
     const commentBox = page.locator('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]')
     await expect(commentBox).toBeVisible({ timeout: 5000 })
     await commentBox.fill('Persisted comment regression test')
-    await page.click('button:has-text("Comment")')
+    await page.getByRole('button', { name: 'Comment', exact: true }).click()
 
     // Comment appears immediately
     await expect(page.locator('text=Persisted comment regression test')).toBeVisible({ timeout: 5000 })

@@ -243,16 +243,16 @@ func (a *WorkflowAdapter) DeleteTransition(ctx context.Context, id uuid.UUID) er
 }
 
 // AssignDefaultWorkflowToSpace finds the default workflow for an org+spaceType
-// and assigns it to the given space. spaceType "wiki" is intentionally skipped.
+// and assigns it to the given space. spaceType "codex" is intentionally skipped.
 func (a *WorkflowAdapter) AssignDefaultWorkflowToSpace(ctx context.Context, orgID uuid.UUID, spaceType string, spaceID uuid.UUID) error {
 	var appliesTo string
 	switch spaceType {
-	case "service_desk":
+	case "beacon":
 		appliesTo = "tickets"
-	case "project":
+	case "vector":
 		appliesTo = "project_items"
 	default:
-		return nil // wiki spaces don't get a workflow
+		return nil // codex spaces don't get a workflow
 	}
 
 	wf, err := a.q.GetDefaultWorkflow(ctx, generated.GetDefaultWorkflowParams{

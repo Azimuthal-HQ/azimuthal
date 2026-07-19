@@ -24,6 +24,14 @@
   border-color: var(--color-border);
 }
 
+/* Module provenance chip (spec §8): the hue arrives per-instance via the
+   --chip-hue custom property; the foreground is always the neutral
+   --module-chip-fg, never the module hue. */
+.module-chip {
+  color: var(--module-chip-fg);
+  background-color: color-mix(in srgb, var(--chip-hue) calc(var(--module-chip-alpha) * 100%), transparent);
+}
+
 body {
   font-family: var(--font-sans);
   background-color: var(--color-bg);

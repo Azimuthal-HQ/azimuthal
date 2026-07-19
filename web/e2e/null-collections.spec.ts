@@ -19,34 +19,34 @@ test.describe('Null collection responses do not crash the UI', () => {
 
   test('ticket list renders when /tickets returns null', async ({ page }) => {
     await createUserAndLogin(page)
-    const spaceId = await createSpace(page, 'Null Tickets', 'service_desk')
+    const spaceId = await createSpace(page, 'Null Tickets', 'beacon')
 
     await page.route('**/api/v1/orgs/*/spaces/*/tickets', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }),
     )
-    await page.goto(`/spaces/${spaceId}/tickets`)
+    await page.goto(`/beacon/${spaceId}/tickets`)
     await expect(page.locator('text=Something went wrong')).not.toBeVisible()
   })
 
   test('wiki page renders when /wiki returns null', async ({ page }) => {
     await createUserAndLogin(page)
-    const spaceId = await createSpace(page, 'Null Wiki', 'wiki')
+    const spaceId = await createSpace(page, 'Null Wiki', 'codex')
 
     await page.route('**/api/v1/orgs/*/spaces/*/wiki', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }),
     )
-    await page.goto(`/spaces/${spaceId}/wiki`)
+    await page.goto(`/codex/${spaceId}`)
     await expect(page.locator('text=Something went wrong')).not.toBeVisible()
   })
 
   test('backlog renders when /projects/items returns null', async ({ page }) => {
     await createUserAndLogin(page)
-    const spaceId = await createSpace(page, 'Null Backlog', 'project')
+    const spaceId = await createSpace(page, 'Null Backlog', 'vector')
 
     await page.route('**/api/v1/orgs/*/spaces/*/projects/items', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: 'null' }),
     )
-    await page.goto(`/spaces/${spaceId}/backlog`)
+    await page.goto(`/vector/${spaceId}/backlog`)
     await expect(page.locator('text=Something went wrong')).not.toBeVisible()
   })
 })

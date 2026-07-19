@@ -23,6 +23,10 @@ import (
 var validKey = regexp.MustCompile(`^[A-Z0-9]{1,10}$`)
 var nonAlphanumeric = regexp.MustCompile(`[^A-Z0-9]`)
 
+// validSpaceTypes are the space type values accepted by the API, matching the
+// spaces_type_valid CHECK constraint (migration 021).
+var validSpaceTypes = map[string]bool{"beacon": true, "codex": true, "vector": true}
+
 // deriveKey generates a default key from a space name: uppercase, strip
 // non-alphanumeric chars, take the first word, cap at 8 characters.
 func deriveKey(name string) string {
@@ -245,7 +249,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // Create creates a new space.
 //
 // @Summary      Create space
-// @Description  Creates a new space in the organization. Type must be 'project', 'wiki', or 'service_desk'.
+// @Description  Creates a new space in the organization. Type must be 'beacon', 'codex', or 'vector'.
 // @Tags         spaces
 // @Accept       json
 // @Produce      json
@@ -279,6 +283,11 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 
 	if req.Name == "" || req.Slug == "" || req.Type == "" {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "name, slug, and type are required")
+		return
+	}
+
+	if !validSpaceTypes[req.Type] {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "type must be one of 'beacon', 'codex', or 'vector'")
 		return
 	}
 

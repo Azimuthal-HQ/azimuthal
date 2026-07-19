@@ -97,7 +97,7 @@ function SortableTicketCard({ ticket, spaceId, spaceKey }: { ticket: Ticket; spa
 }
 
 function TicketCard({ ticket, overlay, spaceId, spaceKey }: SortableTicketCardProps) {
-  const ticketPath = `/spaces/${spaceId}/tickets/${ticket.id}`;
+  const ticketPath = `/beacon/${spaceId}/tickets/${ticket.id}`;
   const priorityKey = String(ticket.priority ?? '').toLowerCase();
   return (
     <Card

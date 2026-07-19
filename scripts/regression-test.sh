@@ -124,17 +124,17 @@ check "/auth/me returns org_id and id" $([ -n "$ORG_ID" ] && [ -n "$USER_ID" ] &
 echo ""
 echo "=== Spaces ==="
 request POST "/api/v1/orgs/${ORG_ID}/spaces" \
-  "{\"name\":\"Desk ${RUN}\",\"type\":\"service_desk\",\"slug\":\"desk-${RUN}\"}"
-expect_code "create service_desk space returns 201" 201
+  "{\"name\":\"Desk ${RUN}\",\"type\":\"beacon\",\"slug\":\"desk-${RUN}\"}"
+expect_code "create beacon space returns 201" 201
 DESK_ID=$(jsonval id)
 
 request POST "/api/v1/orgs/${ORG_ID}/spaces" \
-  "{\"name\":\"Wiki ${RUN}\",\"type\":\"wiki\",\"slug\":\"wiki-${RUN}\"}"
+  "{\"name\":\"Wiki ${RUN}\",\"type\":\"codex\",\"slug\":\"wiki-${RUN}\"}"
 expect_code "create wiki space returns 201" 201
 WIKI_ID=$(jsonval id)
 
 request POST "/api/v1/orgs/${ORG_ID}/spaces" \
-  "{\"name\":\"Proj ${RUN}\",\"type\":\"project\",\"slug\":\"proj-${RUN}\"}"
+  "{\"name\":\"Proj ${RUN}\",\"type\":\"vector\",\"slug\":\"proj-${RUN}\"}"
 expect_code "create project space returns 201" 201
 PROJ_ID=$(jsonval id)
 
@@ -142,10 +142,10 @@ PROJ_ID=$(jsonval id)
 # The derived key must be de-duplicated (or the collision surfaced as 409 on a
 # truly explicit duplicate) — never a 500.
 request POST "/api/v1/orgs/${ORG_ID}/spaces" \
-  "{\"name\":\"Shared ${RUN} One\",\"type\":\"wiki\",\"slug\":\"shared-${RUN}-1\"}"
+  "{\"name\":\"Shared ${RUN} One\",\"type\":\"codex\",\"slug\":\"shared-${RUN}-1\"}"
 expect_code "create first 'Shared…' space returns 201" 201
 request POST "/api/v1/orgs/${ORG_ID}/spaces" \
-  "{\"name\":\"Shared ${RUN} Two\",\"type\":\"project\",\"slug\":\"shared-${RUN}-2\"}"
+  "{\"name\":\"Shared ${RUN} Two\",\"type\":\"vector\",\"slug\":\"shared-${RUN}-2\"}"
 expect_code "create second 'Shared…' space (same first word) returns 201 — derived key must not collide" 201
 
 # ── Beacon (tickets) ─────────────────────────────────────────

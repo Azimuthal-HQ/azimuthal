@@ -116,7 +116,7 @@ async function apiFetch<T>(
 // Domain types
 // ---------------------------------------------------------------------------
 
-export type SpaceType = 'service_desk' | 'wiki' | 'project';
+export type SpaceType = 'beacon' | 'codex' | 'vector';
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type SprintStatus = 'planned' | 'active' | 'completed';
 

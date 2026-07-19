@@ -217,7 +217,7 @@ export function TicketListPage() {
             </thead>
             <tbody>
               {filtered.map((ticket) => {
-                const ticketPath = `/spaces/${spaceId}/tickets/${ticket.id}`;
+                const ticketPath = `/beacon/${spaceId}/tickets/${ticket.id}`;
                 return (
                   <tr
                     key={ticket.id}

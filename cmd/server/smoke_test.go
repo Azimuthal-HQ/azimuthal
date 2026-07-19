@@ -187,7 +187,7 @@ func TestSmoke(t *testing.T) {
 			"slug":        slug,
 			"name":        "Smoke Test Space",
 			"description": "Created by smoke test",
-			"type":        "service_desk",
+			"type":        "beacon",
 			"key":         key,
 			"is_private":  false,
 		}

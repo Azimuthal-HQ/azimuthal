@@ -50,34 +50,12 @@ test.describe('Authentication', () => {
   })
 
   test('logout clears session and redirects to login', async ({ page }) => {
-    // Audit ref: testing-audit.md §3.3.
-    // App.tsx now wraps Shell in AppShell, which passes useAuth().logout
-    // as the onLogout prop so the TopNav menu button is wired.
+    // Sign-out lives in the top-bar avatar menu (ADR-0005: account and org
+    // concerns live behind the avatar).
     await createUserAndLogin(page)
 
-    // Open user menu — use aria-label from TopNav.tsx
-    const userMenuSelectors = [
-      'button[aria-label="User menu"]',
-      '[data-testid="user-menu"]',
-      'header button:last-child',
-      'nav button:last-child',
-    ]
-
-    let menuOpened = false
-    for (const selector of userMenuSelectors) {
-      try {
-        await page.click(selector, { timeout: 2000 })
-        menuOpened = true
-        break
-      } catch {
-        continue
-      }
-    }
-    if (!menuOpened) throw new Error('Could not find user menu button')
-
-    // Wait for dropdown then click logout
-    await page.waitForSelector('button:has-text("Logout")', { timeout: 3000 })
-    await page.click('button:has-text("Logout")')
+    await page.getByTestId('avatar-menu').click()
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
 
     // Wait for redirect to login or token to be cleared
     await expect(page).toHaveURL(/\/login/, { timeout: 10000 })
@@ -90,33 +68,11 @@ test.describe('Authentication', () => {
   })
 
   test('after logout, navigating to / redirects to login', async ({ page }) => {
-    // Audit ref: testing-audit.md §3.3.
-    // App.tsx now wraps Shell in AppShell, which passes useAuth().logout
-    // as the onLogout prop so the TopNav menu button is wired.
+    // Sign-out lives in the top-bar avatar menu (ADR-0005).
     await createUserAndLogin(page)
 
-    // Open user menu
-    const userMenuSelectors = [
-      'button[aria-label="User menu"]',
-      '[data-testid="user-menu"]',
-      'header button:last-child',
-      'nav button:last-child',
-    ]
-
-    let menuOpened = false
-    for (const selector of userMenuSelectors) {
-      try {
-        await page.click(selector, { timeout: 2000 })
-        menuOpened = true
-        break
-      } catch {
-        continue
-      }
-    }
-    if (!menuOpened) throw new Error('Could not find user menu button')
-
-    await page.waitForSelector('button:has-text("Logout")', { timeout: 3000 })
-    await page.click('button:has-text("Logout")')
+    await page.getByTestId('avatar-menu').click()
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
 
     // Wait for token to be cleared
     await expect(async () => {

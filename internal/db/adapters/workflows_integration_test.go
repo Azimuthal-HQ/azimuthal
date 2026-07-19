@@ -131,9 +131,9 @@ func TestWorkflowAdapter_AssignDefaultWorkflowToSpace(t *testing.T) {
 
 	queries := generated.New(db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, orgID)
-	space := testutil.CreateTestSpace(t, db.Pool, orgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, db.Pool, orgID, user.ID, "beacon")
 
-	err := adapter.AssignDefaultWorkflowToSpace(ctx, orgID, "service_desk", space.ID)
+	err := adapter.AssignDefaultWorkflowToSpace(ctx, orgID, "beacon", space.ID)
 	require.NoError(t, err)
 
 	// Verify the space now has a workflow assigned.
@@ -142,9 +142,9 @@ func TestWorkflowAdapter_AssignDefaultWorkflowToSpace(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, workflowID)
 
-	// Wiki spaces should be skipped.
-	wikiSpace := testutil.CreateTestSpace(t, db.Pool, orgID, user.ID, "wiki")
-	err = adapter.AssignDefaultWorkflowToSpace(ctx, orgID, "wiki", wikiSpace.ID)
+	// Codex spaces should be skipped.
+	codexSpace := testutil.CreateTestSpace(t, db.Pool, orgID, user.ID, "codex")
+	err = adapter.AssignDefaultWorkflowToSpace(ctx, orgID, "codex", codexSpace.ID)
 	require.NoError(t, err)
 
 	_ = queries // suppress unused import
