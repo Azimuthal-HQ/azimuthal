@@ -103,7 +103,7 @@ func newTestServer(t *testing.T) *testServer {
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
-		SpaceHandler:        spacesapi.NewHandler(queries),
+		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter),
 		CommentHandler:      commentsapi.NewHandler(queries),
 		NotificationHandler: notificationsapi.NewHandler(queries),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
