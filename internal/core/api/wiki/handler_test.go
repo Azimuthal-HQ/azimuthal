@@ -12,9 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
 type mockPageStore struct{}
@@ -79,9 +81,22 @@ func setupWikiHandler() *wikiapi.Handler {
 }
 
 func withParam(r *http.Request, key, val string) *http.Request {
-	rctx := chi.NewRouteContext()
+	rctx, ok := r.Context().Value(chi.RouteCtxKey).(*chi.Context)
+	if !ok {
+		rctx = chi.NewRouteContext()
+	}
 	rctx.URLParams.Add(key, val)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+// withSpaceAccess adds the spaceID URL param and stamps an org-admin access
+// resolution for that space onto the request — the unit-test stand-in for
+// the ResolveAccess middleware (in-handler capability checks fail closed
+// without a resolution).
+func withSpaceAccess(t *testing.T, r *http.Request, spaceID uuid.UUID) *http.Request {
+	t.Helper()
+	r = withParam(r, "spaceID", spaceID.String())
+	return r.WithContext(access.WithResolution(r.Context(), testutil.OrgAdminResolution(t, spaceID)))
 }
 
 func TestListPagesInvalidSpaceID(t *testing.T) {
@@ -289,12 +304,15 @@ func TestGetPageNotFound(t *testing.T) {
 
 func TestDeletePageNotFound(t *testing.T) {
 	h := setupWikiHandler()
-	// mock SoftDeletePage returns nil so this succeeds
+	// DeletePage fetches the page first (the edit_own/edit_any check needs
+	// the author), and the mock GetPageByID always reports not-found — so
+	// deleting a nonexistent page is 404.
 	req := withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "pageID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.DeletePage(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusNoContent)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusNotFound)
 	}
 }
 
@@ -312,6 +330,7 @@ func TestUpdatePageNoAuth(t *testing.T) {
 	h := setupWikiHandler()
 	body := `{"title":"test","content":"c","expected_version":1}`
 	req := withParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "pageID", uuid.New().String())
+	req = withParam(req, "spaceID", uuid.New().String())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.UpdatePage(rr, req)
@@ -323,6 +342,7 @@ func TestUpdatePageNoAuth(t *testing.T) {
 func TestUpdatePageInvalidBody(t *testing.T) {
 	h := setupWikiHandler()
 	req := withParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "pageID", uuid.New().String())
+	req = withParam(req, "spaceID", uuid.New().String())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.UpdatePage(rr, req)
@@ -335,6 +355,7 @@ func TestUpdatePageInvalidBody(t *testing.T) {
 func TestMovePageInvalidBody(t *testing.T) {
 	h := setupWikiHandler()
 	req := withParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "pageID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.MovePage(rr, req)

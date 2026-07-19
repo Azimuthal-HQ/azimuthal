@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
@@ -218,6 +219,11 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -228,6 +234,16 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 	var req updatePageRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+
+	existing, err := h.svc.GetPage(r.Context(), id)
+	if err != nil {
+		handleWikiError(w, r, err)
+		return
+	}
+	if !access.CanEditEntity(r.Context(), spaceID, existing.AuthorID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 
@@ -274,6 +290,21 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+
+	existing, err := h.svc.GetPage(r.Context(), id)
+	if err != nil {
+		handleWikiError(w, r, err)
+		return
+	}
+	if !access.CanEditEntity(r.Context(), spaceID, existing.AuthorID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
 
 	if err := h.svc.DeletePage(r.Context(), id); err != nil {
 		handleWikiError(w, r, err)
@@ -311,6 +342,15 @@ func (h *Handler) MovePage(w http.ResponseWriter, r *http.Request) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
+		return
+	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 

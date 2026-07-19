@@ -345,6 +345,19 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 	})
 	require.NoError(t, err)
 
+	// spaces.owner_team_id is NOT NULL and visibility is CHECK-constrained
+	// since migration 023 — the fixture org needs its default team first,
+	// exactly as every production org-creation path seeds one.
+	team, err := q.CreateTeam(ctx, generated.CreateTeamParams{
+		ID:        uuid.New(),
+		OrgID:     org.ID,
+		Slug:      "default",
+		Name:      "Default",
+		IsDefault: true,
+		Source:    "manual",
+	})
+	require.NoError(t, err)
+
 	spaceDesc := "Round-trip fixture space"
 	space, err := q.CreateSpace(ctx, generated.CreateSpaceParams{
 		ID:          uuid.New(),
@@ -356,6 +369,8 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 		IsPrivate:   false,
 		CreatedBy:   user.ID,
 		Key:         "RT",
+		OwnerTeamID: team.ID,
+		Visibility:  "discoverable",
 	})
 	require.NoError(t, err)
 

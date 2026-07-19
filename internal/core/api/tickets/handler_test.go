@@ -10,8 +10,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
 type mockTicketRepo struct {
@@ -76,9 +78,22 @@ func setupTicketHandler() *ticketsapi.Handler {
 }
 
 func withChiParam(r *http.Request, key, value string) *http.Request {
-	rctx := chi.NewRouteContext()
+	rctx, ok := r.Context().Value(chi.RouteCtxKey).(*chi.Context)
+	if !ok {
+		rctx = chi.NewRouteContext()
+	}
 	rctx.URLParams.Add(key, value)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+// withSpaceAccess adds the spaceID URL param and stamps an org-admin access
+// resolution for that space onto the request — the unit-test stand-in for
+// the ResolveAccess middleware (in-handler capability checks fail closed
+// without a resolution).
+func withSpaceAccess(t *testing.T, r *http.Request, spaceID uuid.UUID) *http.Request {
+	t.Helper()
+	r = withChiParam(r, "spaceID", spaceID.String())
+	return r.WithContext(access.WithResolution(r.Context(), testutil.OrgAdminResolution(t, spaceID)))
 }
 
 func TestListInvalidSpaceID(t *testing.T) {
@@ -252,13 +267,15 @@ func TestCreateInvalidBody(t *testing.T) {
 
 func TestDeleteNotFound(t *testing.T) {
 	h := setupTicketHandler()
-	// The mock repo Delete just deletes from map, so non-existent ID won't error
+	// Delete fetches the ticket first (the edit_own/edit_any check needs the
+	// creator), so deleting a nonexistent ticket is 404.
 	req := httptest.NewRequest(http.MethodDelete, "/", nil)
 	req = withChiParam(req, "ticketID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.Delete(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusNoContent)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
 	}
 }
 
@@ -267,6 +284,7 @@ func TestUpdateInvalidBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad"))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParam(req, "ticketID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.Update(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -280,6 +298,7 @@ func TestUpdateNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParam(req, "ticketID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.Update(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -292,6 +311,7 @@ func TestTransitionStatusInvalidBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParam(req, "ticketID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.TransitionStatus(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -305,6 +325,7 @@ func TestTransitionStatusNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParam(req, "ticketID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.TransitionStatus(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -317,6 +338,7 @@ func TestAssignInvalidBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParam(req, "ticketID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.Assign(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -328,6 +350,7 @@ func TestUnassignNotFound(t *testing.T) {
 	h := setupTicketHandler()
 	req := httptest.NewRequest(http.MethodDelete, "/", nil)
 	req = withChiParam(req, "ticketID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.Unassign(rr, req)
 	if rr.Code != http.StatusNotFound {

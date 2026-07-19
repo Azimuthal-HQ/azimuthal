@@ -10,8 +10,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
 // minimal mocks
@@ -95,9 +97,22 @@ func setupHandler() *projectsapi.Handler {
 }
 
 func withParam(r *http.Request, key, val string) *http.Request {
-	rctx := chi.NewRouteContext()
+	rctx, ok := r.Context().Value(chi.RouteCtxKey).(*chi.Context)
+	if !ok {
+		rctx = chi.NewRouteContext()
+	}
 	rctx.URLParams.Add(key, val)
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+// withSpaceAccess adds the spaceID URL param and stamps an org-admin access
+// resolution for that space onto the request — the unit-test stand-in for
+// the ResolveAccess middleware (in-handler capability checks fail closed
+// without a resolution).
+func withSpaceAccess(t *testing.T, r *http.Request, spaceID uuid.UUID) *http.Request {
+	t.Helper()
+	r = withParam(r, "spaceID", spaceID.String())
+	return r.WithContext(access.WithResolution(r.Context(), testutil.OrgAdminResolution(t, spaceID)))
 }
 
 func TestListItemsInvalidSpaceID(t *testing.T) {
@@ -380,13 +395,17 @@ func TestGetItemNotFound(t *testing.T) {
 	}
 }
 
-func TestDeleteItemSuccess(t *testing.T) {
+func TestDeleteItemNotFound(t *testing.T) {
 	h := setupHandler()
+	// DeleteItem fetches the item first (the edit_own/edit_any check needs
+	// the reporter), and the mock GetByID always reports not-found — so
+	// deleting a nonexistent item is 404.
 	req := withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "itemID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.DeleteItem(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusNoContent)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusNotFound)
 	}
 }
 
@@ -414,6 +433,7 @@ func TestUpdateItemNotFound(t *testing.T) {
 	h := setupHandler()
 	body := `{"title":"t","description":"d","priority":"high"}`
 	req := withParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "itemID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.UpdateItem(rr, req)
@@ -426,6 +446,7 @@ func TestUpdateItemNotFound(t *testing.T) {
 func TestUpdateItemInvalidBody(t *testing.T) {
 	h := setupHandler()
 	req := withParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad json")), "itemID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.UpdateItem(rr, req)
@@ -438,6 +459,7 @@ func TestUpdateItemStatusNotFound(t *testing.T) {
 	h := setupHandler()
 	body := `{"status":"closed"}`
 	req := withParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "itemID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.UpdateItemStatus(rr, req)
@@ -449,6 +471,7 @@ func TestUpdateItemStatusNotFound(t *testing.T) {
 func TestUpdateItemStatusInvalidBody(t *testing.T) {
 	h := setupHandler()
 	req := withParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "itemID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.UpdateItemStatus(rr, req)
@@ -472,6 +495,7 @@ func TestAssignToSprintNotFound(t *testing.T) {
 	h := setupHandler()
 	body := `{"sprint_id":null}`
 	req := withParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "itemID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.AssignToSprint(rr, req)
@@ -595,6 +619,7 @@ func TestGetSprintNotFound(t *testing.T) {
 func TestUpdateSprintInvalidBody(t *testing.T) {
 	h := setupHandler()
 	req := withParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "sprintID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.UpdateSprint(rr, req)
@@ -607,6 +632,7 @@ func TestUpdateSprintNotFound(t *testing.T) {
 	h := setupHandler()
 	body := `{"name":"Sprint 1","goal":"ship it"}`
 	req := withParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "sprintID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.UpdateSprint(rr, req)
@@ -618,6 +644,7 @@ func TestUpdateSprintNotFound(t *testing.T) {
 func TestStartSprintNotFound(t *testing.T) {
 	h := setupHandler()
 	req := withParam(httptest.NewRequest(http.MethodPost, "/", nil), "sprintID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.StartSprint(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -628,6 +655,7 @@ func TestStartSprintNotFound(t *testing.T) {
 func TestCompleteSprintNotFound(t *testing.T) {
 	h := setupHandler()
 	req := withParam(httptest.NewRequest(http.MethodPost, "/", nil), "sprintID", uuid.New().String())
+	req = withSpaceAccess(t, req, uuid.New())
 	rr := httptest.NewRecorder()
 	h.CompleteSprint(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -669,6 +697,7 @@ func TestGetBacklogSuccess(t *testing.T) {
 func TestMoveToSprintInvalidBody(t *testing.T) {
 	h := setupHandler()
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.MoveToSprint(rr, req)
@@ -681,6 +710,7 @@ func TestMoveToSprintServiceError(t *testing.T) {
 	h := setupHandler()
 	body := `{"item_id":"` + uuid.New().String() + `","sprint_id":"` + uuid.New().String() + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.MoveToSprint(rr, req)
@@ -694,6 +724,7 @@ func TestMoveToBacklogServiceError(t *testing.T) {
 	h := setupHandler()
 	body := `{"item_id":"` + uuid.New().String() + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.MoveToBacklog(rr, req)
@@ -706,6 +737,7 @@ func TestMoveToBacklogServiceError(t *testing.T) {
 func TestMoveToBacklogInvalidBody(t *testing.T) {
 	h := setupHandler()
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad"))
+	req = withSpaceAccess(t, req, uuid.New())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.MoveToBacklog(rr, req)

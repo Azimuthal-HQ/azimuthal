@@ -25,7 +25,7 @@ import (
 func TestUserAdapter_GetByID_Nonexistent_ReturnsErrNotFound(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
-	adapter := adapters.NewUserAdapter(generated.New(db.Pool), org.ID)
+	adapter := adapters.NewUserAdapter(db.Pool, org.ID)
 
 	_, err := adapter.GetByID(context.Background(), uuid.New())
 	require.ErrorIs(t, err, auth.ErrNotFound)
@@ -34,7 +34,7 @@ func TestUserAdapter_GetByID_Nonexistent_ReturnsErrNotFound(t *testing.T) {
 func TestUserAdapter_GetByEmail_Nonexistent_ReturnsErrNotFound(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
-	adapter := adapters.NewUserAdapter(generated.New(db.Pool), org.ID)
+	adapter := adapters.NewUserAdapter(db.Pool, org.ID)
 
 	_, err := adapter.GetByEmail(context.Background(), "nobody@azimuthal.dev")
 	require.ErrorIs(t, err, auth.ErrNotFound)

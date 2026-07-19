@@ -160,6 +160,62 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 
+# ── Step 6b — Teams, grants, effective-access (v0.3 P2) ─────
+echo ""
+echo "=== Step 6b — Teams, grants, effective-access ==="
+
+TEAM=$(curl -fsS -X POST \
+  "${BASE_URL}/api/v1/orgs/$ORG_ID/teams" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"Verify Team ${RUN}\",\"slug\":\"verify-team-${RUN}\"}")
+TEAM_ID=$(echo "$TEAM" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+if [ -n "$TEAM_ID" ]; then
+  echo "  Team created"
+else
+  echo "  Team create failed"
+  FAILURES=$((FAILURES + 1))
+fi
+
+if curl -fsS "${BASE_URL}/api/v1/orgs/$ORG_ID/teams" \
+  -H "Authorization: Bearer $TOKEN" | grep -q "$TEAM_ID"; then
+  echo "  Team listed"
+else
+  echo "  Team list failed"
+  FAILURES=$((FAILURES + 1))
+fi
+
+if curl -fsS -X POST \
+  "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/grants" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"subject_type\":\"team\",\"subject_id\":\"$TEAM_ID\",\"role\":\"viewer\"}" >/dev/null; then
+  echo "  Grant created"
+else
+  echo "  Grant create failed"
+  FAILURES=$((FAILURES + 1))
+fi
+
+# effective-access answers for the caller (an org admin: bypass, access true).
+EA=$(curl -fsS "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces/$SPACE_ID/effective-access" \
+  -H "Authorization: Bearer $TOKEN")
+if echo "$EA" | grep -q '"access":true'; then
+  echo "  Effective-access answers"
+else
+  echo "  Effective-access failed: $EA"
+  FAILURES=$((FAILURES + 1))
+fi
+
+# The directory carries the P2 row shape (readable flag + owning team).
+DIR=$(curl -fsS "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
+  -H "Authorization: Bearer $TOKEN")
+if echo "$DIR" | grep -q '"readable":true' && echo "$DIR" | grep -q '"owner_team_id"'; then
+  echo "  Directory rows carry readable + owner_team_id"
+else
+  echo "  Directory shape wrong"
+  FAILURES=$((FAILURES + 1))
+fi
+
 # ── Step 7 — Verify Content-Type headers ────────────────────
 echo ""
 echo "=== Step 7 — Verify API routes return correct Content-Type ==="

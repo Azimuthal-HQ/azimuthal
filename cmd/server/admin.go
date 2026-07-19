@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/config"
@@ -28,6 +29,7 @@ var (
 	createUserEmail    string
 	createUserName     string
 	createUserPassword string
+	createUserRole     string
 )
 
 var createUserCmd = &cobra.Command{
@@ -40,6 +42,8 @@ func init() {
 	createUserCmd.Flags().StringVar(&createUserEmail, "email", "", "user email address (required)")
 	createUserCmd.Flags().StringVar(&createUserName, "name", "", "display name (required)")
 	createUserCmd.Flags().StringVar(&createUserPassword, "password", "", "initial password (required)")
+	createUserCmd.Flags().StringVar(&createUserRole, "role", "owner",
+		"org membership role: owner, admin, or member (owner/admin are org admins under ADR-0007)")
 	_ = createUserCmd.MarkFlagRequired("email")
 	_ = createUserCmd.MarkFlagRequired("name")
 	_ = createUserCmd.MarkFlagRequired("password")
@@ -185,12 +189,18 @@ func runCreateUser(_ *cobra.Command, _ []string) error {
 
 	queries := generated.New(pool)
 
+	switch createUserRole {
+	case "owner", "admin", "member":
+	default:
+		return fmt.Errorf("invalid --role %q: must be owner, admin, or member", createUserRole)
+	}
+
 	orgID, orgSlug, err := ensureOrgForUser(ctx, queries, createUserName)
 	if err != nil {
 		return fmt.Errorf("setting up organization: %w", err)
 	}
 
-	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, orgID))
+	userSvc := auth.NewUserService(adapters.NewUserAdapter(pool, orgID))
 	u, err := userSvc.CreateUser(ctx, createUserEmail, createUserName, createUserPassword)
 	if err != nil {
 		return fmt.Errorf("creating user: %w", err)
@@ -200,22 +210,40 @@ func runCreateUser(_ *cobra.Command, _ []string) error {
 		ID:        uuid.New(),
 		OrgID:     orgID,
 		UserID:    u.ID,
-		Role:      "owner",
+		Role:      createUserRole,
 		InvitedBy: pgtype.UUID{},
 	})
 	if err != nil {
 		return fmt.Errorf("creating membership: %w", err)
 	}
 
-	printCreateUserSuccess(u, orgSlug)
+	if err := provisionDefaultTeam(ctx, pool, orgID, u.ID); err != nil {
+		return err
+	}
+
+	printCreateUserSuccess(u, orgSlug, createUserRole)
+	return nil
+}
+
+// provisionDefaultTeam mirrors the register endpoint's team provisioning:
+// the org has a default team and every member belongs to it (ADR-0006
+// point 4).
+func provisionDefaultTeam(ctx context.Context, pool *pgxpool.Pool, orgID, userID uuid.UUID) error {
+	teamAdapter := adapters.NewTeamAdapter(pool)
+	if err := teamAdapter.SeedDefaultTeam(ctx, orgID); err != nil {
+		return fmt.Errorf("seeding default team: %w", err)
+	}
+	if err := teamAdapter.EnsureDefaultMembership(ctx, orgID, userID); err != nil {
+		return fmt.Errorf("enrolling in default team: %w", err)
+	}
 	return nil
 }
 
 // printCreateUserSuccess prints the success output after creating a user and org.
-func printCreateUserSuccess(u *auth.User, orgSlug string) {
+func printCreateUserSuccess(u *auth.User, orgSlug, role string) {
 	fmt.Printf("\u2713 User created: %s (%s)\n", u.DisplayName, u.Email)
 	fmt.Printf("\u2713 Organization created: %s (slug: %s)\n", u.DisplayName, orgSlug)
-	fmt.Printf("\u2713 User added as owner\n")
+	fmt.Printf("\u2713 User added as %s\n", role)
 	fmt.Println()
 	fmt.Println("Login at: http://localhost:8080/login")
 	fmt.Printf("Email:    %s\n", u.Email)
@@ -256,9 +284,7 @@ func runResetPassword(_ *cobra.Command, _ []string) error {
 	}
 	defer pool.Close()
 
-	queries := generated.New(pool)
-
-	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, uuid.Nil))
+	userSvc := auth.NewUserService(adapters.NewUserAdapter(pool, uuid.Nil))
 	u, err := userSvc.GetUserByEmail(ctx, resetEmail)
 	if err != nil {
 		return fmt.Errorf("finding user: %w", err)

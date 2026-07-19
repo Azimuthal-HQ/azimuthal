@@ -22,7 +22,11 @@ export function ModuleLandingRedirect() {
 
   const target = useMemo(() => {
     if (!isModuleKey(module) || !spacesQuery.data) return null;
-    const moduleSpaces = spacesQuery.data.filter((s) => s.type === module);
+    // Locked directory rows (readable: false) are visible but not enterable —
+    // never redirect into one.
+    const moduleSpaces = spacesQuery.data.filter(
+      (s) => s.type === module && s.readable !== false,
+    );
     const recent = recents.map((id) => moduleSpaces.find((s) => s.id === id)).find(Boolean);
     const space = recent ?? moduleSpaces[0];
     return space ? spacePath(module, space.id, MODULES[module].defaultSubpath) : null;

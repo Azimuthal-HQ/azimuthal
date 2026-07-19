@@ -48,6 +48,26 @@ components:
           example: This looks good, let's merge it.
           type: string
       type: object
+    api.SwaggerCreateGrantRequest:
+      properties:
+        role:
+          enum:
+          - viewer
+          - contributor
+          - agent
+          - space_admin
+          example: viewer
+          type: string
+        subject_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+        subject_type:
+          enum:
+          - user
+          - team
+          example: team
+          type: string
+      type: object
     api.SwaggerCreateItemRequest:
       properties:
         assignee_id:
@@ -125,11 +145,21 @@ components:
         name:
           example: My Space
           type: string
+        owner_team_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
         slug:
           example: my-space
           type: string
         type:
           example: vector
+          type: string
+        visibility:
+          enum:
+          - hidden
+          - discoverable
+          - org
+          example: discoverable
           type: string
       type: object
     api.SwaggerCreateSprintRequest:
@@ -143,6 +173,21 @@ components:
           example: Sprint 1
           type: string
         starts_at:
+          type: string
+      type: object
+    api.SwaggerCreateTeamRequest:
+      properties:
+        description:
+          example: Platform engineering
+          type: string
+        name:
+          example: Platform
+          type: string
+        parent_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+        slug:
+          example: platform
           type: string
       type: object
     api.SwaggerCreateTicketRequest:
@@ -267,6 +312,30 @@ components:
           example: my-org
           type: string
       type: object
+    api.SwaggerPatchTeamRequest:
+      properties:
+        description:
+          example: Renamed
+          type: string
+        name:
+          example: Platform Core
+          type: string
+        parent_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+      type: object
+    api.SwaggerPutMemberRequest:
+      properties:
+        is_primary:
+          example: false
+          type: boolean
+        role:
+          enum:
+          - member
+          - lead
+          example: member
+          type: string
+      type: object
     api.SwaggerRefreshRequest:
       properties:
         refresh_token:
@@ -353,6 +422,17 @@ components:
           example: in_progress
           type: string
       type: object
+    api.SwaggerUpdateGrantRequest:
+      properties:
+        role:
+          enum:
+          - viewer
+          - contributor
+          - agent
+          - space_admin
+          example: contributor
+          type: string
+      type: object
     api.SwaggerUpdateItemRequest:
       properties:
         assignee_id:
@@ -408,6 +488,16 @@ components:
           type: boolean
         name:
           example: Updated Name
+          type: string
+        owner_team_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+        visibility:
+          enum:
+          - hidden
+          - discoverable
+          - org
+          example: org
           type: string
       type: object
     api.SwaggerUpdateSprintRequest:
@@ -1075,7 +1165,8 @@ paths:
       - notifications
   /orgs/{orgID}:
     get:
-      description: Returns an organization by its ID.
+      description: Returns an organization by its ID. 404 for non-members — existence
+        is never leaked.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1115,7 +1206,7 @@ paths:
       tags:
       - spaces
     patch:
-      description: Updates an organization's name and description.
+      description: Updates an organization's name and description. Org admin only.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1154,6 +1245,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org admin required
         "404":
           content:
             application/json:
@@ -1315,12 +1412,25 @@ paths:
       - labels
   /orgs/{orgID}/spaces:
     get:
-      description: Returns all spaces belonging to the specified organization.
+      description: 'Returns every space the caller can see: readable spaces in full
+        (with effective role), plus discoverable-but-unreadable spaces as locked rows.
+        Hidden spaces are absent for non-grantees. Filter with module= (beacon|codex|vector)
+        and team_id= (owning team).'
       parameters:
       - description: Organization ID (UUID)
         in: path
         name: orgID
         required: true
+        schema:
+          type: string
+      - description: Filter by module type
+        in: query
+        name: module
+        schema:
+          type: string
+      - description: Filter by owning team
+        in: query
+        name: team_id
         schema:
           type: string
       responses:
@@ -1332,7 +1442,7 @@ paths:
                   additionalProperties: {}
                   type: object
                 type: array
-          description: List of spaces
+          description: Directory rows
         "400":
           content:
             application/json:
@@ -1345,6 +1455,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an org member
         "500":
           content:
             application/json:
@@ -1353,12 +1469,13 @@ paths:
           description: Internal error
       security:
       - BearerAuth: []
-      summary: List spaces
+      summary: Space directory
       tags:
       - spaces
     post:
-      description: Creates a new space in the organization. Type must be 'beacon',
-        'codex', or 'vector'.
+      description: 'Creates a space in the organization. Type must be ''beacon'',
+        ''codex'', or ''vector''. The owning team defaults to the org default team.
+        Authority: org admin, or a lead of the owning team.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1397,6 +1514,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not org admin or lead of the owning team
         "409":
           content:
             application/json:
@@ -1416,7 +1539,7 @@ paths:
       - spaces
   /orgs/{orgID}/spaces/{spaceID}:
     delete:
-      description: Soft-deletes a space by ID.
+      description: Soft-deletes a space by ID. Requires manage_space.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1445,6 +1568,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_space required
         "500":
           content:
             application/json:
@@ -1457,7 +1586,8 @@ paths:
       tags:
       - spaces
     get:
-      description: Returns a single space by ID.
+      description: Returns a single space by ID. 404 unless the space is in the caller's
+        readable set.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1503,7 +1633,9 @@ paths:
       tags:
       - spaces
     put:
-      description: Updates a space's name, description, icon, and privacy setting.
+      description: Updates a space's name, description, icon, privacy, visibility,
+        and owning team. Requires manage_space. Changing owner_team_id or visibility
+        is audited.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1548,6 +1680,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_space required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
         "500":
           content:
             application/json:
@@ -1559,9 +1703,309 @@ paths:
       summary: Update space
       tags:
       - spaces
+  /orgs/{orgID}/spaces/{spaceID}/effective-access:
+    get:
+      description: Returns the grant chain producing a user's access to the space
+        — which grant, which team matched, at what depth — not merely the resulting
+        role. Callers may always ask about themselves; asking about another user requires
+        manage_grants.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Target user (defaults to the caller)
+        in: query
+        name: user_id
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Explanation
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid user_id
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_grants required for other users
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Space not found
+      security:
+      - BearerAuth: []
+      summary: Effective access
+      tags:
+      - grants
+  /orgs/{orgID}/spaces/{spaceID}/grants:
+    get:
+      description: Returns all grants on the space. Requires manage_grants.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Grants
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_grants required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Space not found
+      security:
+      - BearerAuth: []
+      summary: List space grants
+      tags:
+      - grants
+    post:
+      description: Grants a user or team a role on the space. A user subject must
+        be an org member; a team subject must be a live team in the org (400 otherwise).
+        Requires manage_grants.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateGrantRequest'
+                description: Grant
+                summary: body
+        description: Grant
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created grant
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Subject not an org member / invalid role
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_grants required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Space not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Duplicate grant
+      security:
+      - BearerAuth: []
+      summary: Create space grant
+      tags:
+      - grants
+  /orgs/{orgID}/spaces/{spaceID}/grants/{grantID}:
+    delete:
+      description: Deletes a grant. Access recomputes per request, so revocation is
+        immediate. Requires manage_grants.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Grant ID (UUID)
+        in: path
+        name: grantID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Revoked
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_grants required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Revoke space grant
+      tags:
+      - grants
+    patch:
+      description: Changes the role of an existing grant. Requires manage_grants.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Grant ID (UUID)
+        in: path
+        name: grantID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerUpdateGrantRequest'
+                description: New role
+                summary: body
+        description: New role
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Updated grant
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid role
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_grants required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Update space grant
+      tags:
+      - grants
   /orgs/{orgID}/spaces/{spaceID}/members:
     get:
-      description: Returns all members of the specified space.
+      description: Returns all members of the specified space (legacy space_members
+        metadata).
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1609,7 +2053,8 @@ paths:
       tags:
       - members
     post:
-      description: Adds a user as a member of the specified space.
+      description: Adds a user as a member of the specified space (legacy space_members
+        metadata). Requires manage_space.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1654,6 +2099,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_space required
         "500":
           content:
             application/json:
@@ -1667,7 +2118,8 @@ paths:
       - members
   /orgs/{orgID}/spaces/{spaceID}/members/{userID}:
     delete:
-      description: Removes a user from the specified space.
+      description: Removes a user from the specified space (legacy space_members metadata).
+        Requires manage_space.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -1702,6 +2154,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_space required
         "500":
           content:
             application/json:
@@ -5274,6 +5732,452 @@ paths:
       summary: Get space workflow states
       tags:
       - workflows
+  /orgs/{orgID}/teams:
+    get:
+      description: Returns all teams in the organization. Pass parent_id to filter
+        to one parent's children; flat=true is the default representation (a flat
+        list carrying parent_id and path for tree assembly).
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Filter to children of this team
+        in: query
+        name: parent_id
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: List of teams
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an org member
+      security:
+      - BearerAuth: []
+      summary: List teams
+      tags:
+      - teams
+    post:
+      description: Creates a team, optionally under a parent (org admin only). Depth
+        is capped at 5.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateTeamRequest'
+                description: Team details
+                summary: body
+        description: Team details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created team
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org admin required
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Slug already in use
+      security:
+      - BearerAuth: []
+      summary: Create team
+      tags:
+      - teams
+  /orgs/{orgID}/teams/{teamID}:
+    delete:
+      description: Soft-deletes a team (org admin only). Rejected while the team has
+        children or owns spaces. Members move to the org default team.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Team ID (UUID)
+        in: path
+        name: teamID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Default team
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org admin required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Has children or owns spaces
+      security:
+      - BearerAuth: []
+      summary: Delete team
+      tags:
+      - teams
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Team ID (UUID)
+        in: path
+        name: teamID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Team
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Get team
+      tags:
+      - teams
+    patch:
+      description: 'Renames a team and/or moves it in the tree. parent_id: absent
+        = unchanged, null = move to root, UUID = move under that parent. Org admin
+        only.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Team ID (UUID)
+        in: path
+        name: teamID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerPatchTeamRequest'
+                description: Fields to update
+                summary: body
+        description: Fields to update
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Updated team
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error (cycle, depth, default team)
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org admin required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Update team
+      tags:
+      - teams
+  /orgs/{orgID}/teams/{teamID}/members:
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Team ID (UUID)
+        in: path
+        name: teamID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Members
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: List team members
+      tags:
+      - teams
+  /orgs/{orgID}/teams/{teamID}/members/{userID}:
+    delete:
+      description: Removes the user from the team. A user removed from their last
+        team is re-added to the org default team — never teamless. Org admin only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Team ID (UUID)
+        in: path
+        name: teamID
+        required: true
+        schema:
+          type: string
+      - description: User ID (UUID)
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Removed
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org admin required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Remove team member
+      tags:
+      - teams
+    put:
+      description: Enrols an org member into the team, or updates their metadata role.
+        is_primary=true makes this the user's primary team. Org admin only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Team ID (UUID)
+        in: path
+        name: teamID
+        required: true
+        schema:
+          type: string
+      - description: User ID (UUID)
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerPutMemberRequest'
+                description: Membership
+                summary: body
+        description: Membership
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Membership
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an org member / bad role
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org admin required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Team not found
+      security:
+      - BearerAuth: []
+      summary: Add or update team member
+      tags:
+      - teams
   /orgs/{orgID}/workflows:
     get:
       description: Returns all workflows belonging to the organization.

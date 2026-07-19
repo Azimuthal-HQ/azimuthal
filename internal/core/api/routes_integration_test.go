@@ -14,19 +14,25 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
+	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
@@ -46,19 +52,41 @@ type httpResult struct {
 // testServer holds a fully-wired httptest.Server backed by a real database.
 type testServer struct {
 	Server          *httptest.Server
+	Handler         http.Handler
 	DB              *testutil.TestDB
 	OrgID           uuid.UUID
+	UserID          uuid.UUID
 	Token           string
 	WorkflowAdapter *adapters.WorkflowAdapter
+	JWT             *auth.JWTService
+	TeamService     *coreteams.Service
+	GrantService    *access.GrantService
+}
+
+// tokenFor issues an access token for an arbitrary user of the org —
+// multi-user permission tests mint one per persona.
+func (ts *testServer) tokenFor(t *testing.T, userID uuid.UUID, email string) string {
+	t.Helper()
+	pair, err := ts.JWT.IssueTokenPair(userID, email, ts.OrgID.String(), "member")
+	require.NoError(t, err)
+	return pair.AccessToken
 }
 
 // newTestServer creates a full API server backed by a real database.
 func newTestServer(t *testing.T) *testServer {
 	t.Helper()
 	db := testutil.NewTestDB(t)
+	return newTestServerOn(t, db, db.Pool)
+}
+
+// newTestServerOn wires the full production router over the given pool —
+// tests that need an instrumented pool (e.g. the query-count assertion of
+// matrix case 23) pass their own, connected to the same schema.
+func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *testServer {
+	t.Helper()
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	queries := generated.New(db.Pool)
+	queries := generated.New(pool)
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -71,7 +99,7 @@ func newTestServer(t *testing.T) *testServer {
 		Issuer:     "azimuthal-test",
 	})
 
-	userAdapter := adapters.NewUserAdapter(queries, org.ID)
+	userAdapter := adapters.NewUserAdapter(pool, org.ID)
 	userSvc := auth.NewUserService(userAdapter)
 	sessionAdapter := adapters.NewSessionAdapter(queries)
 	sessionSvc := auth.NewSessionService(sessionAdapter, auth.SessionConfig{TTL: 24 * time.Hour})
@@ -97,16 +125,29 @@ func newTestServer(t *testing.T) *testServer {
 	workflowAdapter := adapters.NewWorkflowAdapter(queries)
 	workflowEngine := workflow.NewDBEngine(workflowAdapter)
 
+	// v0.3 access control, wired exactly as production (cmd/server/main.go),
+	// including the DB-backed audit logger so audit rows are testable.
+	teamAdapter := adapters.NewTeamAdapter(pool)
+	teamSvc := coreteams.NewService(teamAdapter)
+	accessAdapter := adapters.NewAccessAdapter(pool)
+	accessResolver := access.NewResolver(accessAdapter)
+	grantSvc := access.NewGrantService(accessAdapter)
+	explainer := access.NewExplainer(accessAdapter, accessAdapter)
+	orgProvisioner.WithTeamSeeder(teamAdapter)
+	auditLog := audit.NewDBLogger(queries)
+
 	router := api.NewRouter(api.RouterConfig{
 		Authenticator:       authenticator,
 		AuthHandler:         authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
-		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter),
+		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries),
 		NotificationHandler: notificationsapi.NewHandler(queries),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
+		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
+		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
 		SPAHandler:          nil,
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
@@ -115,6 +156,7 @@ func newTestServer(t *testing.T) *testServer {
 			}
 			return s.OrgID, nil
 		},
+		AccessResolver: accessResolver,
 	})
 
 	srv := httptest.NewServer(router)
@@ -123,7 +165,11 @@ func newTestServer(t *testing.T) *testServer {
 	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, org.ID.String(), "member")
 	require.NoError(t, err)
 
-	return &testServer{Server: srv, DB: db, OrgID: org.ID, Token: pair.AccessToken, WorkflowAdapter: workflowAdapter}
+	return &testServer{
+		Server: srv, Handler: router, DB: db, OrgID: org.ID, UserID: user.ID,
+		Token: pair.AccessToken, WorkflowAdapter: workflowAdapter,
+		JWT: jwtSvc, TeamService: teamSvc, GrantService: grantSvc,
+	}
 }
 
 func (ts *testServer) url(path string) string { return ts.Server.URL + path }

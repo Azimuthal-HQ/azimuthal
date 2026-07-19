@@ -45,9 +45,9 @@ func (q *Queries) AddSpaceMember(ctx context.Context, arg AddSpaceMemberParams) 
 }
 
 const createSpace = `-- name: CreateSpace :one
-INSERT INTO spaces (id, org_id, slug, name, description, type, icon, is_private, created_by, key)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key
+INSERT INTO spaces (id, org_id, slug, name, description, type, icon, is_private, created_by, key, owner_team_id, visibility)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility
 `
 
 type CreateSpaceParams struct {
@@ -61,6 +61,8 @@ type CreateSpaceParams struct {
 	IsPrivate   bool      `json:"is_private"`
 	CreatedBy   uuid.UUID `json:"created_by"`
 	Key         string    `json:"key"`
+	OwnerTeamID uuid.UUID `json:"owner_team_id"`
+	Visibility  string    `json:"visibility"`
 }
 
 func (q *Queries) CreateSpace(ctx context.Context, arg CreateSpaceParams) (Space, error) {
@@ -75,6 +77,8 @@ func (q *Queries) CreateSpace(ctx context.Context, arg CreateSpaceParams) (Space
 		arg.IsPrivate,
 		arg.CreatedBy,
 		arg.Key,
+		arg.OwnerTeamID,
+		arg.Visibility,
 	)
 	var i Space
 	err := row.Scan(
@@ -92,12 +96,14 @@ func (q *Queries) CreateSpace(ctx context.Context, arg CreateSpaceParams) (Space
 		&i.DeletedAt,
 		&i.WorkflowID,
 		&i.Key,
+		&i.OwnerTeamID,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const getSpaceByID = `-- name: GetSpaceByID :one
-SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key FROM spaces WHERE id = $1 AND deleted_at IS NULL
+SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility FROM spaces WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetSpaceByID(ctx context.Context, id uuid.UUID) (Space, error) {
@@ -118,12 +124,14 @@ func (q *Queries) GetSpaceByID(ctx context.Context, id uuid.UUID) (Space, error)
 		&i.DeletedAt,
 		&i.WorkflowID,
 		&i.Key,
+		&i.OwnerTeamID,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const getSpaceBySlug = `-- name: GetSpaceBySlug :one
-SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key FROM spaces WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL
+SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility FROM spaces WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL
 `
 
 type GetSpaceBySlugParams struct {
@@ -149,6 +157,8 @@ func (q *Queries) GetSpaceBySlug(ctx context.Context, arg GetSpaceBySlugParams) 
 		&i.DeletedAt,
 		&i.WorkflowID,
 		&i.Key,
+		&i.OwnerTeamID,
+		&i.Visibility,
 	)
 	return i, err
 }
@@ -173,6 +183,30 @@ func (q *Queries) GetSpaceMember(ctx context.Context, arg GetSpaceMemberParams) 
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listSpaceIDsByOrg = `-- name: ListSpaceIDsByOrg :many
+SELECT id FROM spaces WHERE org_id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) ListSpaceIDsByOrg(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listSpaceIDsByOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listSpaceMembers = `-- name: ListSpaceMembers :many
@@ -225,7 +259,7 @@ func (q *Queries) ListSpaceMembers(ctx context.Context, spaceID uuid.UUID) ([]Li
 }
 
 const listSpacesByOrg = `-- name: ListSpacesByOrg :many
-SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key FROM spaces WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC
+SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility FROM spaces WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC
 `
 
 func (q *Queries) ListSpacesByOrg(ctx context.Context, orgID uuid.UUID) ([]Space, error) {
@@ -252,6 +286,8 @@ func (q *Queries) ListSpacesByOrg(ctx context.Context, orgID uuid.UUID) ([]Space
 			&i.DeletedAt,
 			&i.WorkflowID,
 			&i.Key,
+			&i.OwnerTeamID,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -264,7 +300,7 @@ func (q *Queries) ListSpacesByOrg(ctx context.Context, orgID uuid.UUID) ([]Space
 }
 
 const listSpacesByType = `-- name: ListSpacesByType :many
-SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key FROM spaces WHERE org_id = $1 AND type = $2 AND deleted_at IS NULL ORDER BY name ASC
+SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility FROM spaces WHERE org_id = $1 AND type = $2 AND deleted_at IS NULL ORDER BY name ASC
 `
 
 type ListSpacesByTypeParams struct {
@@ -296,6 +332,8 @@ func (q *Queries) ListSpacesByType(ctx context.Context, arg ListSpacesByTypePara
 			&i.DeletedAt,
 			&i.WorkflowID,
 			&i.Key,
+			&i.OwnerTeamID,
+			&i.Visibility,
 		); err != nil {
 			return nil, err
 		}
@@ -321,6 +359,76 @@ func (q *Queries) RemoveSpaceMember(ctx context.Context, arg RemoveSpaceMemberPa
 	return err
 }
 
+const setSpaceOwnerTeam = `-- name: SetSpaceOwnerTeam :one
+UPDATE spaces SET owner_team_id = $2, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility
+`
+
+type SetSpaceOwnerTeamParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerTeamID uuid.UUID `json:"owner_team_id"`
+}
+
+func (q *Queries) SetSpaceOwnerTeam(ctx context.Context, arg SetSpaceOwnerTeamParams) (Space, error) {
+	row := q.db.QueryRow(ctx, setSpaceOwnerTeam, arg.ID, arg.OwnerTeamID)
+	var i Space
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.Type,
+		&i.Icon,
+		&i.IsPrivate,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.WorkflowID,
+		&i.Key,
+		&i.OwnerTeamID,
+		&i.Visibility,
+	)
+	return i, err
+}
+
+const setSpaceVisibility = `-- name: SetSpaceVisibility :one
+UPDATE spaces SET visibility = $2, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility
+`
+
+type SetSpaceVisibilityParams struct {
+	ID         uuid.UUID `json:"id"`
+	Visibility string    `json:"visibility"`
+}
+
+func (q *Queries) SetSpaceVisibility(ctx context.Context, arg SetSpaceVisibilityParams) (Space, error) {
+	row := q.db.QueryRow(ctx, setSpaceVisibility, arg.ID, arg.Visibility)
+	var i Space
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.Type,
+		&i.Icon,
+		&i.IsPrivate,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.WorkflowID,
+		&i.Key,
+		&i.OwnerTeamID,
+		&i.Visibility,
+	)
+	return i, err
+}
+
 const softDeleteSpace = `-- name: SoftDeleteSpace :exec
 UPDATE spaces SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL
 `
@@ -334,7 +442,7 @@ const updateSpace = `-- name: UpdateSpace :one
 UPDATE spaces
 SET name = $2, description = $3, icon = $4, is_private = $5, key = $6
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key
+RETURNING id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility
 `
 
 type UpdateSpaceParams struct {
@@ -371,6 +479,8 @@ func (q *Queries) UpdateSpace(ctx context.Context, arg UpdateSpaceParams) (Space
 		&i.DeletedAt,
 		&i.WorkflowID,
 		&i.Key,
+		&i.OwnerTeamID,
+		&i.Visibility,
 	)
 	return i, err
 }

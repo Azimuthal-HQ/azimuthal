@@ -21,8 +21,7 @@ func newTestUserService(t *testing.T) (*auth.UserService, *testutil.TestDB, uuid
 	t.Helper()
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
-	queries := generated.New(db.Pool)
-	adapter := adapters.NewUserAdapter(queries, org.ID)
+	adapter := adapters.NewUserAdapter(db.Pool, org.ID)
 	svc := auth.NewUserService(adapter)
 	return svc, db, org.ID
 }
@@ -71,13 +70,12 @@ func TestLogin_NonexistentEmail(t *testing.T) {
 // TestLogin_UserInNonDefaultOrg — this was the exact bug that caused 401s.
 func TestLogin_UserInNonDefaultOrg(t *testing.T) {
 	db := testutil.NewTestDB(t)
-	queries := generated.New(db.Pool)
 
 	// Create a non-default org.
 	nonDefaultOrg := testutil.CreateTestOrg(t, db.Pool)
 
 	// Use an adapter with uuid.Nil as default — user is in nonDefaultOrg.
-	adapter := adapters.NewUserAdapter(queries, uuid.Nil)
+	adapter := adapters.NewUserAdapter(db.Pool, uuid.Nil)
 	svc := auth.NewUserService(adapter)
 
 	email := "non-default@azimuthal.dev"
@@ -246,7 +244,7 @@ func TestOrgProvisioner_CreateAndMembership(t *testing.T) {
 	require.Equal(t, "test-provisioned-org", slug)
 
 	// Create a user to add as member.
-	userAdapter := adapters.NewUserAdapter(queries, orgID)
+	userAdapter := adapters.NewUserAdapter(db.Pool, orgID)
 	userSvc := auth.NewUserService(userAdapter)
 	user, err := userSvc.CreateUserInOrg(context.Background(), "provisioned@test.dev", "Prov", "pass123", orgID)
 	require.NoError(t, err)

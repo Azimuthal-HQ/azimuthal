@@ -56,7 +56,12 @@ export function HomeOverviewPage() {
   const { user } = useAuth();
   const orgId = user?.orgId ?? '';
   const { data: rawSpaces, isLoading, error } = useSpaces(orgId);
-  const spaces = rawSpaces ? (Array.isArray(rawSpaces) ? rawSpaces : [rawSpaces]) : undefined;
+  // The endpoint is now the org directory (P2): locked rows (readable: false)
+  // are listed-but-unreadable and belong on /spaces, not on Home cards that
+  // link into the space.
+  const spaces = rawSpaces
+    ? (Array.isArray(rawSpaces) ? rawSpaces : [rawSpaces]).filter((s) => s.readable !== false)
+    : undefined;
 
   const [searchParams, setSearchParams] = useSearchParams();
   const [dialogOpen, setDialogOpen] = useState(false);

@@ -1,6 +1,6 @@
 -- name: CreateSpace :one
-INSERT INTO spaces (id, org_id, slug, name, description, type, icon, is_private, created_by, key)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO spaces (id, org_id, slug, name, description, type, icon, is_private, created_by, key, owner_team_id, visibility)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING *;
 
 -- name: GetSpaceByID :one
@@ -23,6 +23,19 @@ RETURNING *;
 
 -- name: SoftDeleteSpace :exec
 UPDATE spaces SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: SetSpaceVisibility :one
+UPDATE spaces SET visibility = $2, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
+-- name: SetSpaceOwnerTeam :one
+UPDATE spaces SET owner_team_id = $2, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ListSpaceIDsByOrg :many
+SELECT id FROM spaces WHERE org_id = $1 AND deleted_at IS NULL;
 
 -- name: AddSpaceMember :one
 INSERT INTO space_members (id, space_id, user_id, role)

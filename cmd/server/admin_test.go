@@ -56,7 +56,7 @@ func TestAdminCreateUser_CreatesUserOrgAndOwnerMembership(t *testing.T) {
 	require.NotEqual(t, uuid.Nil, orgID, "org must have an ID")
 	require.Equal(t, "admin-cli-user", orgSlug, "slug must come from display name")
 
-	userSvc := auth.NewUserService(adapters.NewUserAdapter(queries, orgID))
+	userSvc := auth.NewUserService(adapters.NewUserAdapter(tdb.Pool, orgID))
 	user, err := userSvc.CreateUser(ctx, email, displayName, password)
 	require.NoError(t, err, "CreateUser must succeed")
 	require.Equal(t, email, user.Email)

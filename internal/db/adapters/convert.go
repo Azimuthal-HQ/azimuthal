@@ -1,12 +1,24 @@
 package adapters
 
 import (
+	"errors"
 	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+// uniqueViolation reports whether err is a Postgres unique-constraint
+// violation, and if so on which constraint.
+func uniqueViolation(err error) (constraint string, ok bool) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return pgErr.ConstraintName, true
+	}
+	return "", false
+}
 
 // pgTimestamp converts a time.Time to a pgtype.Timestamptz.
 func pgTimestamp(t time.Time) pgtype.Timestamptz {
