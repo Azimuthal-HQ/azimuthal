@@ -218,7 +218,7 @@ export function SprintBoardPage() {
   }, [effectiveItems, columnDefs]);
 
   const handleItemClick = useCallback((id: string) => {
-    navigate(`/spaces/${spaceId}/backlog/${id}`);
+    navigate(`/vector/${spaceId}/backlog/${id}`);
   }, [navigate, spaceId]);
 
   const sensors = useSensors(

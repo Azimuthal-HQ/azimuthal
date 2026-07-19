@@ -57,7 +57,18 @@
 
   /* ── Sidebar ────────────────────────────────────── */
   --sidebar-width: 260px;
+  --sidebar-width-collapsed: 64px;
   --topnav-height: 56px;
+
+  /* ── Module identity (theme-invariant) ──────────────
+     Hue with matching text means state; hue with neutral
+     text means provenance. Chip text is always
+     --module-chip-fg, never the module hue. */
+  --module-beacon: #E0806A;
+  --module-codex: #A99BEE;
+  --module-vector: #4A90D9;
+  --module-chip-alpha: 0.30;
+  --module-chip-fg: #A6AEBC;
 }
 
 .dark {

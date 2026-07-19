@@ -1,67 +1,88 @@
-import { useNavigate } from 'react-router-dom';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { Shell } from './components/layout/Shell';
 import { RequireAuth } from './components/auth/RequireAuth';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { AppShell } from './shell/AppShell';
+import { HomeLayout } from './shell/HomeLayout';
+import { SpaceLayout } from './shell/SpaceLayout';
+import { ModuleLandingRedirect } from './shell/ModuleLandingRedirect';
+import { NotFoundPage } from './shell/NotFoundPage';
 import { LoginPage } from './pages/auth/LoginPage';
-import { DashboardPage } from './pages/dashboard/DashboardPage';
-import { TicketListPage } from './pages/servicedesk/TicketListPage';
-import { TicketDetailPage } from './pages/servicedesk/TicketDetailPage';
-import { KanbanPage } from './pages/servicedesk/KanbanPage';
-import { WikiPage } from './pages/wiki/WikiPage';
-import { BacklogPage } from './pages/projects/BacklogPage';
-import { ItemDetailPage } from './pages/projects/ItemDetailPage';
-import { SprintBoardPage } from './pages/projects/SprintBoardPage';
-import { SprintsPage } from './pages/projects/SprintsPage';
-import { RoadmapPage } from './pages/projects/RoadmapPage';
-import { LabelsPage } from './pages/projects/LabelsPage';
-import { ReportsPage } from './pages/servicedesk/ReportsPage';
+import { HomeOverviewPage } from './pages/home/HomeOverviewPage';
+import { HomeDashboardPage } from './pages/home/HomeDashboardPage';
+import { SearchPage } from './pages/home/SearchPage';
+import { TicketListPage } from './pages/beacon/TicketListPage';
+import { TicketDetailPage } from './pages/beacon/TicketDetailPage';
+import { ReportsPage } from './pages/beacon/ReportsPage';
+import { WikiPage } from './pages/codex/WikiPage';
+import { ItemDetailPage } from './pages/vector/ItemDetailPage';
+import {
+  ModuleBacklogRoute,
+  ModuleBoardRoute,
+  ModuleIndexRoute,
+  ModuleLabelsRoute,
+  ModuleRoadmapRoute,
+  ModuleSprintsRoute,
+} from './pages/space/ModuleRoutes';
+import { SpacePlaceholderPage } from './pages/space/SpacePlaceholderPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { WorkflowAdminPage } from './pages/settings/WorkflowAdminPage';
-import { NotFoundPage } from './shell/NotFoundPage';
-import { useAuth } from './lib/auth';
-
-// Shell wrapper that wires logout from useAuth so the TopNav button is functional.
-// Audit ref: testing-audit.md §3.3 — Shell was previously rendered without onLogout.
-function AppShell() {
-  const { logout, user } = useAuth();
-  const navigate = useNavigate();
-  const handleLogout = () => {
-    logout();
-    navigate('/login', { replace: true });
-  };
-  return <Shell onLogout={handleLogout} userName={user?.email?.split('@')[0]} />;
-}
 
 export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/" element={<RequireAuth><AppShell /></RequireAuth>}>
-        <Route index element={<DashboardPage />} />
+      <Route element={<RequireAuth><AppShell /></RequireAuth>}>
+        {/* Home: user- and org-scoped pages under the static "Your work" panel */}
+        <Route element={<HomeLayout />}>
+          <Route path="/" element={<HomeOverviewPage />} />
+          <Route path="home/:dashboardId" element={<HomeDashboardPage />} />
+          <Route path="search" element={<SearchPage />} />
+          <Route path="settings" element={<SettingsPage />} />
+          <Route path="settings/:section" element={<SettingsPage />} />
+          <Route path="admin/workflows" element={<WorkflowAdminPage />} />
+        </Route>
+
         <Route path="dashboard" element={<Navigate to="/" replace />} />
 
-        {/* Space-scoped routes (API-backed, with space ID) */}
-        <Route path="spaces/:spaceId/tickets" element={<ErrorBoundary><TicketListPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/tickets/:ticketId" element={<ErrorBoundary><TicketDetailPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/kanban" element={<ErrorBoundary><KanbanPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/reports" element={<ErrorBoundary><ReportsPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/wiki" element={<ErrorBoundary><WikiPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/wiki/:pageId" element={<ErrorBoundary><WikiPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/backlog" element={<ErrorBoundary><BacklogPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/backlog/:itemKey" element={<ErrorBoundary><ItemDetailPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/board" element={<ErrorBoundary><SprintBoardPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/sprints" element={<ErrorBoundary><SprintsPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/roadmap" element={<ErrorBoundary><RoadmapPage /></ErrorBoundary>} />
-        <Route path="spaces/:spaceId/labels" element={<ErrorBoundary><LabelsPage /></ErrorBoundary>} />
+        {/* A bare module URL (product tab) forwards to a space of that module */}
+        <Route path=":module" element={<ModuleLandingRedirect />} />
 
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="settings/:section" element={<SettingsPage />} />
-        <Route path="admin/workflows" element={<WorkflowAdminPage />} />
+        {/* Every space sub-route renders inside SpaceLayout: the sidebar is a
+            layout concern and must survive sub-route changes (ADR-0005). */}
+        <Route path=":module/:spaceId" element={<SpaceLayout />}>
+          <Route index element={<ModuleIndexRoute />} />
+          <Route path="tickets" element={<ErrorBoundary><TicketListPage /></ErrorBoundary>} />
+          <Route path="tickets/:ticketId" element={<ErrorBoundary><TicketDetailPage /></ErrorBoundary>} />
+          <Route path="board" element={<ErrorBoundary><ModuleBoardRoute /></ErrorBoundary>} />
+          <Route path="backlog" element={<ErrorBoundary><ModuleBacklogRoute /></ErrorBoundary>} />
+          <Route path="backlog/:itemKey" element={<ErrorBoundary><ItemDetailPage /></ErrorBoundary>} />
+          <Route path="sprints" element={<ErrorBoundary><ModuleSprintsRoute /></ErrorBoundary>} />
+          <Route path="roadmap" element={<ErrorBoundary><ModuleRoadmapRoute /></ErrorBoundary>} />
+          <Route path="labels" element={<ErrorBoundary><ModuleLabelsRoute /></ErrorBoundary>} />
+          <Route path="reports" element={<ErrorBoundary><ReportsPage /></ErrorBoundary>} />
+          <Route path="pages/:pageId" element={<ErrorBoundary><WikiPage /></ErrorBoundary>} />
+          <Route path="search" element={<SpacePlaceholderPage feature="search" />} />
+          <Route path="recent" element={<SpacePlaceholderPage feature="recent" />} />
+          <Route path="starred" element={<SpacePlaceholderPage feature="starred" />} />
+          <Route path="drafts" element={<SpacePlaceholderPage feature="drafts" />} />
+          <Route path="settings" element={<SpacePlaceholderPage feature="settings" />} />
+          {/* Unknown sub-routes keep the space chrome and render the branded
+              empty state, never a blank body. */}
+          <Route path="*" element={<SpacePlaceholderPage feature="unknown" />} />
+        </Route>
 
         {/* Catch-all: a URL that matches no route must render the branded
             not-found state, never a blank body. */}
-        <Route path="*" element={<NotFoundPage />} />
+        <Route
+          path="*"
+          element={
+            <main className="min-h-screen bg-[var(--color-bg)] pt-[var(--topnav-height)]">
+              <div className="mx-auto max-w-[1280px] px-[var(--space-4)] py-[var(--space-6)]">
+                <NotFoundPage />
+              </div>
+            </main>
+          }
+        />
       </Route>
     </Routes>
   );

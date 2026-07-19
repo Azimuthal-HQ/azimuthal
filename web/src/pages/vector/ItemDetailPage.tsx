@@ -82,7 +82,7 @@ export function ItemDetailPage() {
     (handleRelSearchChange as any)._t = setTimeout(() => setRelSearchDebounced(v), 300);
   }
 
-  const backlogPath = `/spaces/${spaceId}/backlog`;
+  const backlogPath = `/vector/${spaceId}/backlog`;
 
   async function handleStatusChange(newStatus: string) {
     await statusMutation.mutateAsync(newStatus);

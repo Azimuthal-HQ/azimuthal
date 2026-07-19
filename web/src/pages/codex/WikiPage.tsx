@@ -223,6 +223,12 @@ export function WikiPage() {
   const [activeId, setActiveId] = useState<string | null>(pageId ?? null);
   const [revisionsOpen, setRevisionsOpen] = useState(false);
 
+  // The Codex sidebar tree navigates to pages/:pageId; follow the URL when
+  // it changes so sidebar selection and page content stay in sync.
+  useEffect(() => {
+    if (pageId) setActiveId(pageId);
+  }, [pageId]);
+
   // Inline edit state
   const [editMode, setEditMode] = useState(false);
   const [editTitle, setEditTitle] = useState('');

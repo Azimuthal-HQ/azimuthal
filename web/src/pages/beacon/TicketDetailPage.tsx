@@ -116,7 +116,7 @@ export function TicketDetailPage() {
     );
   }
 
-  const ticketsPath = spaceId ? `/spaces/${spaceId}/tickets` : '/tickets';
+  const ticketsPath = spaceId ? `/beacon/${spaceId}/tickets` : '/beacon';
   const priorityKey = String(ticket.priority ?? '').toLowerCase();
   const reporter = (members ?? []).find((m) => m.user_id === ticket.reporter_id);
 

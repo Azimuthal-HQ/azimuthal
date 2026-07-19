@@ -1,8 +1,7 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Ticket, FileText, ListTodo, Plus, BarChart3, Headphones, Columns3, LayoutGrid, AlertCircle, Compass } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Plus, BarChart3, Columns3, LayoutGrid, AlertCircle, Compass, LifeBuoy } from 'lucide-react';
 import { Button } from '../../components/ui/button';
-import { Badge } from '../../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import {
@@ -17,33 +16,22 @@ import {
 import { cn } from '../../lib/utils';
 import { useSpaces, useCreateSpace, type Space, type SpaceType } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
+import { MODULE_KEYS, MODULES, spacePath } from '../../shell/modules';
+import { ModuleChip } from '../../shell/ModuleChip';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const SPACE_ICON_MAP: Record<SpaceType, typeof Ticket> = {
-  service_desk: Ticket,
-  wiki: FileText,
-  project: ListTodo,
-};
-
-const SPACE_BADGE_LABEL: Record<SpaceType, string> = {
-  service_desk: 'Service Desk',
-  wiki: 'Wiki',
-  project: 'Project',
-};
-
 function linkForSpace(space: Space): string {
-  switch (space.type) {
-    case 'service_desk':
-      return `/spaces/${space.id}/tickets`;
-    case 'wiki':
-      return `/spaces/${space.id}/wiki`;
-    case 'project':
-      return `/spaces/${space.id}/backlog`;
-  }
+  return spacePath(space.type, space.id, MODULES[space.type].defaultSubpath);
 }
+
+const MODULE_TAGLINE: Record<SpaceType, string> = {
+  beacon: 'track and resolve customer issues',
+  codex: "document your team's knowledge",
+  vector: 'plan and track work with sprints and backlogs',
+};
 
 function slugify(name: string): string {
   return name
@@ -62,33 +50,42 @@ function deriveKey(name: string): string {
 // Component
 // ---------------------------------------------------------------------------
 
-/** Main dashboard page showing spaces, quick stats, and navigation. */
-export function DashboardPage() {
+/** HomeOverviewPage is the post-login landing: spaces, quick stats, and creation. */
+export function HomeOverviewPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const orgId = user?.orgId ?? '';
   const { data: rawSpaces, isLoading, error } = useSpaces(orgId);
   const spaces = rawSpaces ? (Array.isArray(rawSpaces) ? rawSpaces : [rawSpaces]) : undefined;
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formName, setFormName] = useState('');
-  const [formType, setFormType] = useState<SpaceType>('service_desk');
+  const [formType, setFormType] = useState<SpaceType>('beacon');
   const [formDescription, setFormDescription] = useState('');
   const [formKey, setFormKey] = useState('');
   const createSpaceMutation = useCreateSpace(orgId);
 
+  // The top bar's Create button lands here as /?create=space.
+  useEffect(() => {
+    if (searchParams.get('create') === 'space') {
+      setDialogOpen(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   function resetForm() {
     setFormName('');
-    setFormType('service_desk');
+    setFormType('beacon');
     setFormDescription('');
     setFormKey('');
   }
 
-  const keyError = formType === 'service_desk' && formKey && !/^[A-Z0-9]{1,10}$/.test(formKey)
+  const keyError = formType === 'beacon' && formKey && !/^[A-Z0-9]{1,10}$/.test(formKey)
     ? 'Abbreviation must be 1–10 uppercase letters or digits'
     : null;
 
-  const keyMissing = formType === 'service_desk' && !formKey.trim();
+  const keyMissing = formType === 'beacon' && !formKey.trim();
 
   async function handleCreate() {
     const name = formName.trim();
@@ -96,7 +93,7 @@ export function DashboardPage() {
     if (keyError || keyMissing) return;
 
     const slug = slugify(name);
-    const key = formType === 'service_desk' ? formKey : deriveKey(name);
+    const key = formType === 'beacon' ? formKey : deriveKey(name);
 
     try {
       const created = await createSpaceMutation.mutateAsync({
@@ -174,18 +171,17 @@ export function DashboardPage() {
               Not sure where to start?
             </p>
             <ul className="space-y-2 text-[var(--text-sm)] text-[var(--color-text-muted)]">
-              <li className="flex items-start gap-2">
-                <Headphones className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
-                <span><strong className="text-[var(--color-text)]">Service Desk</strong> &mdash; track and resolve customer issues</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
-                <span><strong className="text-[var(--color-text)]">Wiki</strong> &mdash; document your team's knowledge</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <ListTodo className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
-                <span><strong className="text-[var(--color-text)]">Project</strong> &mdash; plan and track work with sprints and backlogs</span>
-              </li>
+              {MODULE_KEYS.map((key) => {
+                const def = MODULES[key];
+                return (
+                  <li key={key} className="flex items-start gap-2">
+                    <def.icon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
+                    <span>
+                      <strong className="text-[var(--color-text)]">{def.name}</strong> &mdash; {MODULE_TAGLINE[key]}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </div>
@@ -195,8 +191,8 @@ export function DashboardPage() {
       {spaces && spaces.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <StatCard icon={LayoutGrid} label="Spaces" value={spaces.length} />
-          <StatCard icon={Headphones} label="Service Desks" value={spaces.filter(s => s.type === 'service_desk').length} />
-          <StatCard icon={Columns3} label="Projects" value={spaces.filter(s => s.type === 'project').length} />
+          <StatCard icon={LifeBuoy} label="Beacon spaces" value={spaces.filter(s => s.type === 'beacon').length} />
+          <StatCard icon={Columns3} label="Vector spaces" value={spaces.filter(s => s.type === 'vector').length} />
         </div>
       )}
 
@@ -204,7 +200,7 @@ export function DashboardPage() {
       {spaces && spaces.length > 0 && (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {spaces.map((space) => {
-            const Icon = SPACE_ICON_MAP[space.type];
+            const Icon = MODULES[space.type].icon;
             return (
               <Link key={space.id} to={linkForSpace(space)} className="group">
                 <Card className="h-full transition-shadow group-hover:shadow-[var(--shadow-md)]">
@@ -216,9 +212,7 @@ export function DashboardPage() {
                       <div className="min-w-0 flex-1">
                         <CardTitle className="truncate">{space.name}</CardTitle>
                         <div className="mt-1 flex items-center gap-2">
-                          <Badge variant="secondary">
-                            {SPACE_BADGE_LABEL[space.type]}
-                          </Badge>
+                          <ModuleChip module={space.type} />
                         </div>
                       </div>
                     </div>
@@ -264,31 +258,30 @@ export function DashboardPage() {
                 Type
               </label>
               <div className="grid grid-cols-3 gap-2">
-                {([
-                  { value: 'service_desk' as const, label: 'Service Desk', icon: Ticket },
-                  { value: 'wiki' as const, label: 'Wiki', icon: FileText },
-                  { value: 'project' as const, label: 'Project', icon: ListTodo },
-                ]).map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setFormType(opt.value)}
-                    className={cn(
-                      'flex flex-col items-center gap-2 rounded-[var(--radius-lg)] border p-3 transition-colors',
-                      formType === opt.value
-                        ? 'border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
-                        : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                    )}
-                  >
-                    <opt.icon className="h-5 w-5" />
-                    <span className="text-[var(--text-xs)] font-medium">{opt.label}</span>
-                  </button>
-                ))}
+                {MODULE_KEYS.map((key) => {
+                  const def = MODULES[key];
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setFormType(key)}
+                      className={cn(
+                        'flex flex-col items-center gap-2 rounded-[var(--radius-lg)] border p-3 transition-colors',
+                        formType === key
+                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
+                          : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                      )}
+                    >
+                      <def.icon className="h-5 w-5" />
+                      <span className="text-[var(--text-xs)] font-medium">{def.name}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Key — required for service desks only */}
-            {formType === 'service_desk' && (
+            {/* Key — required for Beacon spaces only */}
+            {formType === 'beacon' && (
               <div className="space-y-2">
                 <label htmlFor="space-key" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
                   Ticket abbreviation <span className="text-[var(--color-danger)]">*</span>

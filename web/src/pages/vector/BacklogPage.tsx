@@ -199,7 +199,7 @@ export function BacklogPage() {
               </thead>
               <tbody>
                 {groupItems.map((item) => {
-                  const itemPath = `/spaces/${spaceId}/backlog/${item.id}`;
+                  const itemPath = `/vector/${spaceId}/backlog/${item.id}`;
                   const isOver = dragOverId === item.id;
                   return (
                     <tr
