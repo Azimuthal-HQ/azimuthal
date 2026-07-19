@@ -4,7 +4,7 @@ import { createUserAndLogin, createSpace } from './helpers/setup'
 test.describe('Notifications — P1', () => {
   test('bell badge increments after self-assignment and clears after mark-all-read', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Notification Test Desk', 'service_desk')
+    await createSpace(page, 'Notification Test Desk', 'beacon')
 
     // Create a ticket
     await page.click('button:has-text("New Ticket")')
@@ -60,7 +60,7 @@ test.describe('Notifications — P1', () => {
 
   test('notification bell starts at zero on fresh login', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Zero Bell Test', 'service_desk')
+    await createSpace(page, 'Zero Bell Test', 'beacon')
 
     // No assignments yet — badge must not be visible
     const badge = page.locator('header').locator('span').filter({ hasText: /^[1-9]/ }).first()
@@ -69,7 +69,7 @@ test.describe('Notifications — P1', () => {
 
   test('clicking bell opens and closes notification panel', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Bell Toggle Test', 'service_desk')
+    await createSpace(page, 'Bell Toggle Test', 'beacon')
 
     const bellBtn = page.locator('header button[aria-label="Notifications"]')
     await expect(bellBtn).toBeVisible()
@@ -78,8 +78,8 @@ test.describe('Notifications — P1', () => {
     await bellBtn.click()
     await expect(page.locator('text=Notifications').first()).toBeVisible({ timeout: 3000 })
 
-    // Close by clicking elsewhere
-    await page.locator('header').locator('text=Azimuthal').click()
+    // Close with Escape — the top bar dismisses its popovers on Escape
+    await page.keyboard.press('Escape')
     await expect(page.locator('button:has-text("Mark all read")')).not.toBeVisible({ timeout: 3000 })
   })
 

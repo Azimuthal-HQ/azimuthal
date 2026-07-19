@@ -75,6 +75,9 @@ test.describe('Dashboard', () => {
       document.documentElement.getAttribute('data-theme') === 'dark'
     )
     const before = await getTheme()
+    // The theme toggle lives in the avatar menu now (ADR-0005: org and
+    // account concerns live behind the avatar).
+    await page.getByTestId('avatar-menu').click()
     await page.click('[data-testid="theme-toggle"], button[aria-label*="theme"], button[aria-label*="mode"], .theme-toggle')
     const after = await getTheme()
     expect(after).toBe(!before)

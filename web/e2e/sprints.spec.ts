@@ -9,9 +9,9 @@ test.describe('Sprints', () => {
   // and could never be started from the UI.
   test('newly created sprint shows Start button — status literal matches backend "planned" (regression)', async ({ page }) => {
     await createUserAndLogin(page)
-    const spaceId = await createSpace(page, 'Sprint Start Regression', 'project')
+    const spaceId = await createSpace(page, 'Sprint Start Regression', 'vector')
 
-    await page.goto(`/spaces/${spaceId}/sprints`)
+    await page.goto(`/vector/${spaceId}/sprints`)
     await expect(page.locator('h1:has-text("Sprints")')).toBeVisible({ timeout: 10000 })
 
     // Create a sprint through the page's own dialog.

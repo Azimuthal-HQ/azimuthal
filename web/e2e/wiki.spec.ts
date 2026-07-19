@@ -4,21 +4,21 @@ import { createUserAndLogin, createSpace, assertNoErrors } from './helpers/setup
 test.describe('Wiki', () => {
   test('can create a wiki space and land on wiki view', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'E2E Wiki', 'wiki')
-    await expect(page).toHaveURL(/\/spaces\/.*\/wiki/)
+    await createSpace(page, 'E2E Wiki', 'codex')
+    await expect(page).toHaveURL(/\/codex\//)
     await assertNoErrors(page)
   })
 
   test('wiki loads empty without error', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Empty Wiki', 'wiki')
+    await createSpace(page, 'Empty Wiki', 'codex')
     await assertNoErrors(page)
     await expect(page.locator('text=Unknown')).not.toBeVisible()
   })
 
   test('can create a wiki page and it appears in the tree', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Page Create Wiki', 'wiki')
+    await createSpace(page, 'Page Create Wiki', 'codex')
 
     await page.getByRole('button', { name: 'New page' }).click()
     await expect(page.locator('#page-title')).toBeVisible()
@@ -29,16 +29,16 @@ test.describe('Wiki', () => {
     await expect(page.locator('text=E2E Test Page').first()).toBeVisible({ timeout: 5000 })
   })
 
-  test('back to dashboard link works', async ({ page }) => {
+  test('Home product tab returns to the overview from a wiki', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Nav Test Wiki', 'wiki')
-    await page.click('text=Back to Dashboard')
+    await createSpace(page, 'Nav Test Wiki', 'codex')
+    await page.getByTestId('product-tab-home').click()
     await expect(page).toHaveURL('/')
   })
 
   test('wiki edit button opens editor and edit persists', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Editor Wiki', 'wiki')
+    await createSpace(page, 'Editor Wiki', 'codex')
 
     await page.getByRole('button', { name: 'New page' }).click()
     await page.fill('#page-title', 'Editable Page')
@@ -65,7 +65,7 @@ test.describe('Wiki', () => {
 
   test('wiki page tree shows hierarchy', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Tree Wiki', 'wiki')
+    await createSpace(page, 'Tree Wiki', 'codex')
 
     // Create a top-level page…
     await page.getByRole('button', { name: 'New page' }).click()
@@ -90,7 +90,7 @@ test.describe('Wiki', () => {
 
   test('wiki page comments are visible and can be posted', async ({ page }) => {
     await createUserAndLogin(page)
-    await createSpace(page, 'Comments Wiki', 'wiki')
+    await createSpace(page, 'Comments Wiki', 'codex')
 
     await page.getByRole('button', { name: 'New page' }).click()
     await page.fill('#page-title', 'Commented Page')

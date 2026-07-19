@@ -61,7 +61,7 @@ export async function createUserAndLogin(page: Page): Promise<{
 export async function createSpace(
   page: Page,
   name: string,
-  type: 'service_desk' | 'wiki' | 'project'
+  type: 'beacon' | 'codex' | 'vector'
 ): Promise<string> {
   const token = await getAuthToken(page)
   const { orgId } = await getCurrentUser(page)
@@ -96,12 +96,12 @@ export async function createSpace(
   const space = await response.json() as { id: string }
 
   const spaceUrl =
-    type === 'service_desk' ? `/spaces/${space.id}/tickets` :
-    type === 'wiki'         ? `/spaces/${space.id}/wiki` :
-                              `/spaces/${space.id}/backlog`
+    type === 'beacon' ? `/beacon/${space.id}/tickets` :
+    type === 'codex'  ? `/codex/${space.id}` :
+                        `/vector/${space.id}/backlog`
 
   await page.goto(spaceUrl)
-  await expect(page).toHaveURL(/\/spaces\//, { timeout: 15000 })
+  await expect(page).toHaveURL(/\/(beacon|codex|vector)\//, { timeout: 15000 })
 
   return space.id
 }
