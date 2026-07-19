@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
@@ -73,9 +74,17 @@ func (ts *testServer) tokenFor(t *testing.T, userID uuid.UUID, email string) str
 func newTestServer(t *testing.T) *testServer {
 	t.Helper()
 	db := testutil.NewTestDB(t)
+	return newTestServerOn(t, db, db.Pool)
+}
+
+// newTestServerOn wires the full production router over the given pool —
+// tests that need an instrumented pool (e.g. the query-count assertion of
+// matrix case 23) pass their own, connected to the same schema.
+func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *testServer {
+	t.Helper()
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	queries := generated.New(db.Pool)
+	queries := generated.New(pool)
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -88,7 +97,7 @@ func newTestServer(t *testing.T) *testServer {
 		Issuer:     "azimuthal-test",
 	})
 
-	userAdapter := adapters.NewUserAdapter(db.Pool, org.ID)
+	userAdapter := adapters.NewUserAdapter(pool, org.ID)
 	userSvc := auth.NewUserService(userAdapter)
 	sessionAdapter := adapters.NewSessionAdapter(queries)
 	sessionSvc := auth.NewSessionService(sessionAdapter, auth.SessionConfig{TTL: 24 * time.Hour})
@@ -115,9 +124,9 @@ func newTestServer(t *testing.T) *testServer {
 	workflowEngine := workflow.NewDBEngine(workflowAdapter)
 
 	// v0.3 access control, wired exactly as production (cmd/server/main.go).
-	teamAdapter := adapters.NewTeamAdapter(db.Pool)
+	teamAdapter := adapters.NewTeamAdapter(pool)
 	teamSvc := coreteams.NewService(teamAdapter)
-	accessAdapter := adapters.NewAccessAdapter(db.Pool)
+	accessAdapter := adapters.NewAccessAdapter(pool)
 	accessResolver := access.NewResolver(accessAdapter)
 	grantSvc := access.NewGrantService(accessAdapter)
 	explainer := access.NewExplainer(accessAdapter, accessAdapter)

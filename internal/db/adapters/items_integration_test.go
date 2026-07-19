@@ -454,15 +454,17 @@ func TestCreateSpace_SlugUniqueness(t *testing.T) {
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
 
+	// owner_team_id is NOT NULL since migration 023 — the org default team
+	// (seeded by CreateTestOrg) satisfies it.
 	_, err := db.Pool.Exec(context.Background(),
-		`INSERT INTO spaces (id, org_id, slug, name, type, created_by, key)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		`INSERT INTO spaces (id, org_id, slug, name, type, created_by, key, owner_team_id)
+		 SELECT $1, $2, $3, $4, $5, $6, $7, t.id FROM teams t WHERE t.org_id = $2 AND t.is_default`,
 		uuid.New(), org.ID, "same-slug", "Space 1", "vector", user.ID, "SPACE1")
 	require.NoError(t, err)
 
 	_, err = db.Pool.Exec(context.Background(),
-		`INSERT INTO spaces (id, org_id, slug, name, type, created_by, key)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		`INSERT INTO spaces (id, org_id, slug, name, type, created_by, key, owner_team_id)
+		 SELECT $1, $2, $3, $4, $5, $6, $7, t.id FROM teams t WHERE t.org_id = $2 AND t.is_default`,
 		uuid.New(), org.ID, "same-slug", "Space 2", "vector", user.ID, "SPACE2")
 	require.Error(t, err, "duplicate slug in same org must fail")
 }

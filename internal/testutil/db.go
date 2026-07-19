@@ -53,19 +53,24 @@ func NewTestDB(t *testing.T) *TestDB {
 
 	schema := fmt.Sprintf("test_%s", sanitizeTestName(t.Name()))
 
-	pool, err := pgxpool.New(context.Background(), dsn)
+	// The bootstrap pool only creates the schema; it must be closed before
+	// the schema-scoped pool replaces it. Leaving it open leaked an
+	// uncapped pool per test, which exhausted the shared test database's
+	// max_connections late in large package runs.
+	bootstrap, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		t.Fatalf("testutil.NewTestDB: connect: %v", err)
 	}
 
-	if _, err = pool.Exec(context.Background(), fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %q", schema)); err != nil {
-		pool.Close()
+	if _, err = bootstrap.Exec(context.Background(), fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %q", schema)); err != nil {
+		bootstrap.Close()
 		t.Fatalf("testutil.NewTestDB: create schema: %v", err)
 	}
 
-	runMigrations(t, dsn, schema, pool)
+	runMigrations(t, dsn, schema, bootstrap)
+	bootstrap.Close()
 
-	pool, err = newPoolWithSchema(dsn, schema)
+	pool, err := newPoolWithSchema(dsn, schema)
 	if err != nil {
 		t.Fatalf("testutil.NewTestDB: reconnect with schema: %v", err)
 	}

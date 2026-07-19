@@ -124,53 +124,38 @@ func TestCreateNoAuth(t *testing.T) {
 	}
 }
 
-func TestUpdateInvalidBody(t *testing.T) {
+// The mutating handlers check the manage_space capability before reading the
+// body, and a request with no resolution on its context must fail closed
+// with 403 — if the permission check were deleted, these would reach the nil
+// queries and panic, so a green run proves the check runs first. The 400
+// validation paths behind the check are covered by the endpoint-matrix
+// integration tests with a real authorized user
+// (endpoint_matrix_integration_test.go).
+
+func TestUpdateNoResolutionFailsClosed(t *testing.T) {
 	h := setupHandler()
 	req := withParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "spaceID", uuid.New().String())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.Update(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusForbidden)
 	}
 }
 
-func TestUpdateEmptyName(t *testing.T) {
+func TestAddMemberNoResolutionFailsClosed(t *testing.T) {
 	h := setupHandler()
-	body := `{"name":"","description":null}`
-	req := withParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "spaceID", uuid.New().String())
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.Update(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
-	}
-}
-
-func TestAddMemberInvalidBody(t *testing.T) {
-	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "spaceID", uuid.New().String())
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.AddMember(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
-	}
-}
-
-func TestAddMemberEmptyRole(t *testing.T) {
-	h := setupHandler()
-	body := `{"user_id":"` + uuid.New().String() + `","role":""}`
+	body := `{"user_id":"` + uuid.New().String() + `","role":"member"}`
 	req := withParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "spaceID", uuid.New().String())
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.AddMember(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusForbidden)
 	}
 }
 
-func TestRemoveMemberInvalidUserID(t *testing.T) {
+func TestRemoveMemberNoResolutionFailsClosed(t *testing.T) {
 	h := setupHandler()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("spaceID", uuid.New().String())
@@ -179,8 +164,18 @@ func TestRemoveMemberInvalidUserID(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	rr := httptest.NewRecorder()
 	h.RemoveMember(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusForbidden)
+	}
+}
+
+func TestDeleteNoResolutionFailsClosed(t *testing.T) {
+	h := setupHandler()
+	req := withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "spaceID", uuid.New().String())
+	rr := httptest.NewRecorder()
+	h.Delete(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("got %d, want %d", rr.Code, http.StatusForbidden)
 	}
 }
 
