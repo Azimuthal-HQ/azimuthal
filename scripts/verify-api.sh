@@ -104,7 +104,7 @@ SPACE=$(curl -fsS -X POST \
   "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"Test Desk ${RUN}\",\"type\":\"service_desk\",\"slug\":\"test-desk-${RUN}\"}")
+  -d "{\"name\":\"Test Desk ${RUN}\",\"type\":\"beacon\",\"slug\":\"test-desk-${RUN}\"}")
 SPACE_ID=$(echo "$SPACE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 echo "Space ID: $SPACE_ID"
 
@@ -125,7 +125,7 @@ WIKI=$(curl -fsS -X POST \
   "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"Test Wiki ${RUN}\",\"type\":\"wiki\",\"slug\":\"test-wiki-${RUN}\"}")
+  -d "{\"name\":\"Test Wiki ${RUN}\",\"type\":\"codex\",\"slug\":\"test-wiki-${RUN}\"}")
 WIKI_ID=$(echo "$WIKI" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Page with minimum fields — org+space scoped route.
@@ -145,7 +145,7 @@ PROJ=$(curl -fsS -X POST \
   "${BASE_URL}/api/v1/orgs/$ORG_ID/spaces" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"Test Project ${RUN}\",\"type\":\"project\",\"slug\":\"test-project-${RUN}\"}")
+  -d "{\"name\":\"Test Project ${RUN}\",\"type\":\"vector\",\"slug\":\"test-project-${RUN}\"}")
 PROJ_ID=$(echo "$PROJ" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 # Item with minimum fields — org+space scoped route.
