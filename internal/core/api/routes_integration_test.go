@@ -29,6 +29,7 @@ import (
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
@@ -51,6 +52,7 @@ type httpResult struct {
 // testServer holds a fully-wired httptest.Server backed by a real database.
 type testServer struct {
 	Server          *httptest.Server
+	Handler         http.Handler
 	DB              *testutil.TestDB
 	OrgID           uuid.UUID
 	UserID          uuid.UUID
@@ -123,7 +125,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	workflowAdapter := adapters.NewWorkflowAdapter(queries)
 	workflowEngine := workflow.NewDBEngine(workflowAdapter)
 
-	// v0.3 access control, wired exactly as production (cmd/server/main.go).
+	// v0.3 access control, wired exactly as production (cmd/server/main.go),
+	// including the DB-backed audit logger so audit rows are testable.
 	teamAdapter := adapters.NewTeamAdapter(pool)
 	teamSvc := coreteams.NewService(teamAdapter)
 	accessAdapter := adapters.NewAccessAdapter(pool)
@@ -131,6 +134,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	grantSvc := access.NewGrantService(accessAdapter)
 	explainer := access.NewExplainer(accessAdapter, accessAdapter)
 	orgProvisioner.WithTeamSeeder(teamAdapter)
+	auditLog := audit.NewDBLogger(queries)
 
 	router := api.NewRouter(api.RouterConfig{
 		Authenticator:       authenticator,
@@ -138,12 +142,12 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
-		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc),
+		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries),
 		NotificationHandler: notificationsapi.NewHandler(queries),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
-		TeamHandler:         teamsapi.NewHandler(teamSvc),
-		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer),
+		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
+		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
 		SPAHandler:          nil,
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
@@ -162,7 +166,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	require.NoError(t, err)
 
 	return &testServer{
-		Server: srv, DB: db, OrgID: org.ID, UserID: user.ID,
+		Server: srv, Handler: router, DB: db, OrgID: org.ID, UserID: user.ID,
 		Token: pair.AccessToken, WorkflowAdapter: workflowAdapter,
 		JWT: jwtSvc, TeamService: teamSvc, GrantService: grantSvc,
 	}

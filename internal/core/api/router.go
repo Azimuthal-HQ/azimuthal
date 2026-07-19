@@ -130,11 +130,16 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 				spaceGuard = RequireSpaceInOrg(cfg.SpaceOrgResolver)
 			}
 			readableGuard := func(next http.Handler) http.Handler { return next }
+			writeFloor := func(next http.Handler) http.Handler { return next }
 			if cfg.AccessResolver != nil {
 				readableGuard = RequireSpaceReadable()
+				// Mutating a space resource needs at least create_items
+				// (contributor); viewers read only. Handlers refine above
+				// the floor (edit_own/edit_any, transitions, queue).
+				writeFloor = RequireWriteFloor(access.CapCreateItems)
 			}
 
-			mountSpaceResources(r, cfg, spaceGuard, readableGuard)
+			mountSpaceResources(r, cfg, spaceGuard, readableGuard, writeFloor)
 
 			// Labels (org-scoped metadata; any member).
 			r.Route("/labels", func(r chi.Router) {
@@ -171,11 +176,14 @@ func orgAdminGuard(cfg RouterConfig) func(http.Handler) http.Handler {
 
 // mountSpaceResources registers every space-scoped resource tree under the
 // single /orgs/{orgID}/spaces/{spaceID}/... convention (relative to the
-// /orgs/{orgID} group), with spaceGuard enforcing that the space belongs to
-// the org and readableGuard enforcing the caller's resolved readable set.
-// Comments hang off their resource's own path.
-func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGuard func(http.Handler) http.Handler) {
-	// Spaces (org-level list/create plus {spaceID} resources).
+// /orgs/{orgID} group). Guard order on every subtree: spaceGuard (the space
+// belongs to the org, 404), readableGuard (the space is in the caller's
+// resolved readable set, 404), writeFloor (mutating methods need at least
+// create_items, 403). Comments hang off their resource's own path.
+func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGuard, writeFloor func(http.Handler) http.Handler) {
+	// Spaces (org-level list/create plus {spaceID} resources). The space
+	// handler carries its own capability checks (manage_space) — the
+	// create_items floor does not apply to space governance.
 	r.Route("/spaces", func(r chi.Router) {
 		r.Mount("/", cfg.SpaceHandler.Routes(spaceGuard, readableGuard))
 	})
@@ -196,6 +204,7 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 	r.Route("/spaces/{spaceID}/tickets", func(r chi.Router) {
 		r.Use(spaceGuard)
 		r.Use(readableGuard)
+		r.Use(writeFloor)
 		r.Mount("/", cfg.TicketHandler.Routes())
 		if cfg.WorkflowHandler != nil {
 			r.Post("/{ticketID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToTicket)
@@ -210,6 +219,7 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 	r.Route("/spaces/{spaceID}/wiki", func(r chi.Router) {
 		r.Use(spaceGuard)
 		r.Use(readableGuard)
+		r.Use(writeFloor)
 		r.Mount("/", cfg.WikiHandler.Routes())
 		if cfg.CommentHandler != nil {
 			r.Get("/{pageID}/comments", cfg.CommentHandler.ListPageComments)
@@ -221,6 +231,7 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 	r.Route("/spaces/{spaceID}/projects", func(r chi.Router) {
 		r.Use(spaceGuard)
 		r.Use(readableGuard)
+		r.Use(writeFloor)
 		r.Mount("/", cfg.ProjectHandler.Routes())
 		if cfg.WorkflowHandler != nil {
 			r.Post("/items/{itemID}/workflow-state", cfg.WorkflowHandler.ApplyWorkflowTransitionToItem)
@@ -231,11 +242,12 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 		}
 	})
 
-	// Space workflow (read-only)
+	// Space workflow (read-only routes plus the transition POST above).
 	if cfg.WorkflowHandler != nil {
 		r.Route("/spaces/{spaceID}/workflow", func(r chi.Router) {
 			r.Use(spaceGuard)
 			r.Use(readableGuard)
+			r.Use(writeFloor)
 			r.Mount("/", cfg.WorkflowHandler.SpaceRoutes())
 		})
 	}

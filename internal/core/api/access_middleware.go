@@ -101,6 +101,32 @@ func RequireCapability(c access.Capability) func(http.Handler) http.Handler {
 	}
 }
 
+// RequireWriteFloor enforces the write floor on a space resource subtree:
+// reads pass (the readable guard already ran), every mutating method needs
+// at least the given capability. Handlers refine above the floor — the
+// edit_own/edit_any split and agent-tier checks live with the entity.
+func RequireWriteFloor(c access.Capability) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+				next.ServeHTTP(w, r)
+				return
+			}
+			spaceID, err := uuid.Parse(chi.URLParam(r, "spaceID"))
+			if err != nil {
+				respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+				return
+			}
+			if !access.Can(r.Context(), c, spaceID) {
+				respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireOrgAdmin rejects non-admin callers with 403. Used for org-level
 // administrative surfaces (team management, workflow admin).
 func RequireOrgAdmin() func(http.Handler) http.Handler {
