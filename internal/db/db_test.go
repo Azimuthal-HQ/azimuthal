@@ -74,7 +74,9 @@ func TestConnect_InvalidURL(t *testing.T) {
 	}
 }
 
-// setupOrg creates a test organisation and registers soft-delete on cleanup.
+// setupOrg creates a test organisation with its default team (production
+// org creation always seeds one; spaces.owner_team_id requires it) and
+// registers soft-delete on cleanup.
 func setupOrg(t *testing.T, q *generated.Queries, suffix string) generated.Organization {
 	t.Helper()
 	org, err := q.CreateOrganization(context.Background(), generated.CreateOrganizationParams{
@@ -84,6 +86,16 @@ func setupOrg(t *testing.T, q *generated.Queries, suffix string) generated.Organ
 	})
 	if err != nil {
 		t.Fatalf("setupOrg: %v", err)
+	}
+	if _, err := q.CreateTeam(context.Background(), generated.CreateTeamParams{
+		ID:        uuid.New(),
+		OrgID:     org.ID,
+		Slug:      "default",
+		Name:      "Default",
+		IsDefault: true,
+		Source:    "manual",
+	}); err != nil {
+		t.Fatalf("setupOrg default team: %v", err)
 	}
 	t.Cleanup(func() { _ = q.SoftDeleteOrganization(context.Background(), org.ID) })
 	return org
@@ -117,16 +129,22 @@ func spaceKey(kind string) string {
 
 func setupSpace(t *testing.T, q *generated.Queries, orgID, createdBy uuid.UUID, kind string) generated.Space {
 	t.Helper()
+	def, err := q.GetDefaultTeam(context.Background(), orgID)
+	if err != nil {
+		t.Fatalf("setupSpace: resolving default team: %v", err)
+	}
 	slug := kind + "-" + uuid.New().String()[:8]
 	space, err := q.CreateSpace(context.Background(), generated.CreateSpaceParams{
-		ID:        uuid.New(),
-		OrgID:     orgID,
-		Slug:      slug,
-		Name:      kind + " space",
-		Type:      kind,
-		IsPrivate: false,
-		CreatedBy: createdBy,
-		Key:       spaceKey(kind),
+		ID:          uuid.New(),
+		OrgID:       orgID,
+		Slug:        slug,
+		Name:        kind + " space",
+		Type:        kind,
+		IsPrivate:   false,
+		CreatedBy:   createdBy,
+		Key:         spaceKey(kind),
+		OwnerTeamID: def.ID,
+		Visibility:  "discoverable",
 	})
 	if err != nil {
 		t.Fatalf("setupSpace: %v", err)
