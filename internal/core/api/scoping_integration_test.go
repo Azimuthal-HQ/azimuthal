@@ -35,7 +35,7 @@ func createScopedSpace(t *testing.T, ts *testServer, name, slug, spaceType strin
 // TestScoping_TicketsUnderOrgAndSpace: the ticket tree is org+space scoped.
 func TestScoping_TicketsUnderOrgAndSpace(t *testing.T) {
 	ts := newTestServer(t)
-	spaceID := createScopedSpace(t, ts, "Scoped Desk", "scoped-desk", "service_desk")
+	spaceID := createScopedSpace(t, ts, "Scoped Desk", "scoped-desk", "beacon")
 
 	base := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, spaceID)
 
@@ -58,12 +58,12 @@ func TestScoping_TicketsUnderOrgAndSpace(t *testing.T) {
 func TestScoping_WikiAndProjectsAndWorkflowUnderOrgAndSpace(t *testing.T) {
 	ts := newTestServer(t)
 
-	wikiID := createScopedSpace(t, ts, "Scoped Wiki", "scoped-wiki", "wiki")
+	wikiID := createScopedSpace(t, ts, "Scoped Wiki", "scoped-wiki", "codex")
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, wikiID),
 		map[string]string{"title": "Scoped page", "content": "<p>hi</p>"}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "create wiki page via org+space URL: %s", r.Body)
 
-	projID := createScopedSpace(t, ts, "Scoped Proj", "scoped-proj", "project")
+	projID := createScopedSpace(t, ts, "Scoped Proj", "scoped-proj", "vector")
 	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, projID),
 		map[string]string{"title": "Scoped item", "kind": "task", "priority": "low"}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "create project item via org+space URL: %s", r.Body)
@@ -80,7 +80,7 @@ func TestScoping_WikiAndProjectsAndWorkflowUnderOrgAndSpace(t *testing.T) {
 // assert "not a JSON API hit" via status.)
 func TestScoping_SpaceOnlyRoutesRemoved(t *testing.T) {
 	ts := newTestServer(t)
-	spaceID := createScopedSpace(t, ts, "Legacy Desk", "legacy-desk", "service_desk")
+	spaceID := createScopedSpace(t, ts, "Legacy Desk", "legacy-desk", "beacon")
 
 	for _, path := range []string{
 		fmt.Sprintf("/api/v1/spaces/%s", spaceID),
@@ -99,7 +99,7 @@ func TestScoping_SpaceOnlyRoutesRemoved(t *testing.T) {
 // it must 404 — org+space scoping is an ownership check, not URL decoration.
 func TestScoping_WrongOrgIs404(t *testing.T) {
 	ts := newTestServer(t)
-	spaceID := createScopedSpace(t, ts, "Owned Desk", "owned-desk", "service_desk")
+	spaceID := createScopedSpace(t, ts, "Owned Desk", "owned-desk", "beacon")
 	otherOrg := testutil.CreateTestOrg(t, ts.DB.Pool)
 
 	for _, path := range []string{
@@ -120,7 +120,7 @@ func TestScoping_WrongOrgIs404(t *testing.T) {
 // same router level — this guards chi's static-vs-param backtracking.
 func TestScoping_TicketCommentsRouteSurvivesStaticSubtree(t *testing.T) {
 	ts := newTestServer(t)
-	spaceID := createScopedSpace(t, ts, "Comment Desk", "comment-desk", "service_desk")
+	spaceID := createScopedSpace(t, ts, "Comment Desk", "comment-desk", "beacon")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, spaceID),
 		map[string]string{"title": "Commented ticket", "priority": "medium"}, true)

@@ -311,7 +311,7 @@ func TestSpaceLifecycle(t *testing.T) {
 
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "creator@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "project")
+	space := setupSpace(t, q, org.ID, user.ID, "vector")
 
 	got, err := q.GetSpaceBySlug(ctx, generated.GetSpaceBySlugParams{
 		OrgID: org.ID,
@@ -349,7 +349,7 @@ func TestItemStatusUpdateAndSoftDelete(t *testing.T) {
 
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "reporter@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "project")
+	space := setupSpace(t, q, org.ID, user.ID, "vector")
 
 	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID:          uuid.New(),
@@ -396,7 +396,7 @@ func TestCreateItemWithoutLabels(t *testing.T) {
 
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "labels-test@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "project")
+	space := setupSpace(t, q, org.ID, user.ID, "vector")
 
 	// Create ticket with minimum fields — no labels provided (nil in Go → empty array).
 	item, err := q.CreateTicket(ctx, generated.CreateTicketParams{
@@ -463,8 +463,8 @@ func TestCreateItemAdaptersDefaultLabels(t *testing.T) {
 
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "adapter-labels@example.com")
-	ticketSpace := setupSpace(t, q, org.ID, user.ID, "service_desk")
-	projectSpace := setupSpace(t, q, org.ID, user.ID, "project")
+	ticketSpace := setupSpace(t, q, org.ID, user.ID, "beacon")
+	projectSpace := setupSpace(t, q, org.ID, user.ID, "vector")
 
 	// Test ticket adapter with nil labels.
 	ticketAdapter := adapters.NewTicketAdapter(q)
@@ -526,7 +526,7 @@ func TestPageOptimisticLocking(t *testing.T) {
 
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "author@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "wiki")
+	space := setupSpace(t, q, org.ID, user.ID, "codex")
 
 	page, err := q.CreatePage(ctx, generated.CreatePageParams{
 		ID:       uuid.New(),
@@ -576,7 +576,7 @@ func TestPageRevisions(t *testing.T) {
 
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "rev@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "wiki")
+	space := setupSpace(t, q, org.ID, user.ID, "codex")
 
 	page, err := q.CreatePage(ctx, generated.CreatePageParams{
 		ID:       uuid.New(),

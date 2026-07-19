@@ -23,7 +23,7 @@ func TestCreateItem_MinimumFields(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
@@ -47,7 +47,7 @@ func TestCreateItem_LabelsDefaultsToEmptyArray(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
@@ -75,7 +75,7 @@ func TestCreateItem_PriorityStoredAsLowercase(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
@@ -101,7 +101,7 @@ func TestCreateItem_StatusStoredAsLowercase(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
@@ -127,7 +127,7 @@ func TestCreateItem_AllFieldsRoundTrip(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
@@ -168,9 +168,9 @@ func TestCreateItem_AllThreeSpaceTypes(t *testing.T) {
 	ticketAdapter := adapters.NewTicketAdapter(queries)
 	itemAdapter := adapters.NewItemAdapter(queries)
 
-	for _, spaceType := range []string{"service_desk", "project"} {
+	for _, spaceType := range []string{"beacon", "vector"} {
 		space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, spaceType)
-		if spaceType == "service_desk" {
+		if spaceType == "beacon" {
 			ticket := &tickets.Ticket{
 				ID:         uuid.New(),
 				SpaceID:    space.ID,
@@ -202,7 +202,7 @@ func TestCreateTicket_TypeIsTicket(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
@@ -232,7 +232,7 @@ func TestCreateProjectItem_MinimumFields(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewItemAdapter(queries)
 
@@ -263,7 +263,7 @@ func TestCreateProjectItem_SoftDelete(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewItemAdapter(queries)
 
@@ -296,7 +296,7 @@ func TestTicketAdapter_ListBySpace(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
 	queries := generated.New(db.Pool)
 	ticketAdapter := adapters.NewTicketAdapter(queries)
 	itemAdapter := adapters.NewItemAdapter(queries)
@@ -338,7 +338,7 @@ func TestTicketAdapter_UpdateStatus(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
@@ -366,7 +366,7 @@ func TestCreatePage_MinimumFields(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "codex")
 
 	_, err := db.Pool.Exec(context.Background(),
 		`INSERT INTO pages (id, space_id, author_id, title, content, version)
@@ -380,7 +380,7 @@ func TestCreatePage_EmptyContentAccepted(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "codex")
 
 	pageID := uuid.New()
 	_, err := db.Pool.Exec(context.Background(),
@@ -402,7 +402,7 @@ func TestCreatePage_TitleRequired(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "codex")
 
 	// Attempt to insert with null title — should fail.
 	_, err := db.Pool.Exec(context.Background(),
@@ -417,7 +417,7 @@ func TestCreatePage_MultipleInSameSpace(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "codex")
 
 	for i := 0; i < 3; i++ {
 		_, err := db.Pool.Exec(context.Background(),
@@ -442,7 +442,7 @@ func TestCreateSpace_AllThreeTypes(t *testing.T) {
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
 
-	for _, spaceType := range []string{"service_desk", "wiki", "project"} {
+	for _, spaceType := range []string{"beacon", "codex", "vector"} {
 		space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, spaceType)
 		require.Equal(t, spaceType, space.Type)
 	}
@@ -457,13 +457,13 @@ func TestCreateSpace_SlugUniqueness(t *testing.T) {
 	_, err := db.Pool.Exec(context.Background(),
 		`INSERT INTO spaces (id, org_id, slug, name, type, created_by, key)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		uuid.New(), org.ID, "same-slug", "Space 1", "project", user.ID, "SPACE1")
+		uuid.New(), org.ID, "same-slug", "Space 1", "vector", user.ID, "SPACE1")
 	require.NoError(t, err)
 
 	_, err = db.Pool.Exec(context.Background(),
 		`INSERT INTO spaces (id, org_id, slug, name, type, created_by, key)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		uuid.New(), org.ID, "same-slug", "Space 2", "project", user.ID, "SPACE2")
+		uuid.New(), org.ID, "same-slug", "Space 2", "vector", user.ID, "SPACE2")
 	require.Error(t, err, "duplicate slug in same org must fail")
 }
 
@@ -474,7 +474,7 @@ func TestSprintAdapter_CreateAndRetrieve(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewSprintAdapter(queries)
 

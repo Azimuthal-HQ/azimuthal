@@ -58,11 +58,11 @@ func decodeErrorObject(t *testing.T, body []byte) map[string]any {
 	return errObj
 }
 
-// sprintCreatePath returns the sprint-creation URL for a fresh project space.
+// sprintCreatePath returns the sprint-creation URL for a fresh vector space.
 func sprintCreatePath(t *testing.T, ts *testServer) string {
 	t.Helper()
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 	return fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/sprints", ts.OrgID, space.ID)
 }
 

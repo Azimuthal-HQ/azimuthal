@@ -25,12 +25,12 @@ func requireJSONList(t *testing.T, body []byte, dst *[]map[string]any) {
 	require.NoError(t, json.Unmarshal(body, dst), "body: %s", body)
 }
 
-// createKanbanTicket creates a service-desk space plus one ticket and returns
+// createKanbanTicket creates a beacon space plus one ticket and returns
 // the ticket's URL base and ID.
 func createKanbanTicket(t *testing.T, ts *testServer) (spaceBase string, ticketID string) {
 	t.Helper()
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 	spaceBase = fmt.Sprintf("/api/v1/orgs/%s/spaces/%s", ts.OrgID, space.ID)
 
 	r := ts.post(t, spaceBase+"/tickets", map[string]any{

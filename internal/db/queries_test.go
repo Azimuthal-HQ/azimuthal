@@ -168,7 +168,7 @@ func TestSpaceUpdateAndMembers(t *testing.T) {
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	owner := setupUser(t, q, org.ID, "owner@example.com")
 	member := setupUser(t, q, org.ID, "smember@example.com")
-	space := setupSpace(t, q, org.ID, owner.ID, "wiki")
+	space := setupSpace(t, q, org.ID, owner.ID, "codex")
 	desc := "updated desc"
 	upd, err := q.UpdateSpace(ctx, generated.UpdateSpaceParams{
 		ID: space.ID, Name: "Updated Wiki", Description: &desc, IsPrivate: false, Key: space.Key,
@@ -210,13 +210,13 @@ func TestSpaceUpdateAndMembers(t *testing.T) {
 		t.Fatalf("RemoveSpaceMember: %v", err)
 	}
 	spaces, err := q.ListSpacesByType(ctx, generated.ListSpacesByTypeParams{
-		OrgID: org.ID, Type: "wiki",
+		OrgID: org.ID, Type: "codex",
 	})
 	if err != nil {
 		t.Fatalf("ListSpacesByType: %v", err)
 	}
 	if len(spaces) == 0 {
-		t.Error("expected at least one wiki space")
+		t.Error("expected at least one codex space")
 	}
 }
 
@@ -227,7 +227,7 @@ func TestItemListAndUpdate(t *testing.T) {
 	ctx := context.Background()
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "item2@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "project")
+	space := setupSpace(t, q, org.ID, user.ID, "vector")
 	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "bug",
 		Title: "Fix regression", Description: "",
@@ -295,7 +295,7 @@ func TestItemRelations(t *testing.T) {
 	ctx := context.Background()
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "relations@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "project")
+	space := setupSpace(t, q, org.ID, user.ID, "vector")
 	from, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "task", Title: "From",
 		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
@@ -364,7 +364,7 @@ func TestSprints(t *testing.T) {
 	ctx := context.Background()
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "sprint@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "project")
+	space := setupSpace(t, q, org.ID, user.ID, "vector")
 	now := time.Now()
 	goal := "ship v1"
 	sprint, err := q.CreateSprint(ctx, generated.CreateSprintParams{
@@ -446,7 +446,7 @@ func TestPageExtras(t *testing.T) {
 	ctx := context.Background()
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "pageext@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "wiki")
+	space := setupSpace(t, q, org.ID, user.ID, "codex")
 	root, err := q.CreatePage(ctx, generated.CreatePageParams{
 		ID: uuid.New(), SpaceID: space.ID, Title: "Root Page",
 		Content: "Root content", AuthorID: user.ID, Position: 0,
@@ -533,7 +533,7 @@ func TestComments(t *testing.T) {
 	ctx := context.Background()
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "commenter@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "project")
+	space := setupSpace(t, q, org.ID, user.ID, "vector")
 	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "task", Title: "Comment target",
 		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
@@ -589,9 +589,9 @@ func TestComments(t *testing.T) {
 	if len(replies) == 0 {
 		t.Error("expected at least one reply")
 	}
-	wikiSpace := setupSpace(t, q, org.ID, user.ID, "wiki")
+	codexSpace := setupSpace(t, q, org.ID, user.ID, "codex")
 	page, err := q.CreatePage(ctx, generated.CreatePageParams{
-		ID: uuid.New(), SpaceID: wikiSpace.ID, Title: "Page",
+		ID: uuid.New(), SpaceID: codexSpace.ID, Title: "Page",
 		Content: "Content", AuthorID: user.ID, Position: 0,
 	})
 	if err != nil {

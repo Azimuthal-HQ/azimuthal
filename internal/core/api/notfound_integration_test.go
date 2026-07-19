@@ -44,12 +44,12 @@ func requireNotFoundEnvelope(t *testing.T, r httpResult) {
 	require.NotEmpty(t, errObj["message"], "body: %s", r.Body)
 }
 
-// projectSpaceFor creates a fresh project space and returns its base
+// projectSpaceFor creates a fresh vector space and returns its base
 // projects path.
 func projectSpaceFor(t *testing.T, ts *testServer) string {
 	t.Helper()
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 	return fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects", ts.OrgID, space.ID)
 }
 
@@ -89,7 +89,7 @@ func TestIntegration_GetActiveSprint_NoneActive_Returns404(t *testing.T) {
 func TestIntegration_GetTicket_NonexistentID_Returns404(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s", ts.OrgID, space.ID, uuid.New()), true)
 	requireNotFoundEnvelope(t, r)

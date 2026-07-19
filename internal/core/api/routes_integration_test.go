@@ -338,7 +338,7 @@ func TestIntegration_CreateSpace_AndList(t *testing.T) {
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"name": "Test Space",
 		"slug": "test-space",
-		"type": "project",
+		"type": "vector",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "create: %s", r.Body)
 
@@ -359,14 +359,14 @@ func TestIntegration_CreateSpace_DerivedKeyCollision(t *testing.T) {
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"name": "Shared Desk",
 		"slug": "shared-desk",
-		"type": "service_desk",
+		"type": "beacon",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "first create: %s", r.Body)
 
 	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"name": "Shared Wiki",
 		"slug": "shared-wiki",
-		"type": "wiki",
+		"type": "codex",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode,
 		"second create with colliding derived key must succeed via de-dupe: %s", r.Body)
@@ -388,7 +388,7 @@ func TestIntegration_CreateSpace_ExplicitDuplicateKey(t *testing.T) {
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"name": "Keyed One",
 		"slug": "keyed-one",
-		"type": "project",
+		"type": "vector",
 		"key":  "DUPKEY",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "first create: %s", r.Body)
@@ -396,7 +396,7 @@ func TestIntegration_CreateSpace_ExplicitDuplicateKey(t *testing.T) {
 	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"name": "Keyed Two",
 		"slug": "keyed-two",
-		"type": "project",
+		"type": "vector",
 		"key":  "DUPKEY",
 	}, true)
 	require.Equal(t, http.StatusConflict, r.StatusCode,
@@ -411,14 +411,14 @@ func TestIntegration_CreateSpace_DuplicateSlug(t *testing.T) {
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"name": "Slugged Alpha",
 		"slug": "same-slug",
-		"type": "project",
+		"type": "vector",
 	}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "first create: %s", r.Body)
 
 	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"name": "Beta Slugged",
 		"slug": "same-slug",
-		"type": "project",
+		"type": "vector",
 	}, true)
 	require.Equal(t, http.StatusConflict, r.StatusCode,
 		"duplicate slug must be 409: %s", r.Body)
@@ -429,7 +429,7 @@ func TestIntegration_CreateSpace_MissingName(t *testing.T) {
 	ts := newTestServer(t)
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
 		"slug": "no-name",
-		"type": "project",
+		"type": "vector",
 	}, true)
 	require.Equal(t, http.StatusBadRequest, r.StatusCode, "response: %s", r.Body)
 }
@@ -440,7 +440,7 @@ func TestIntegration_CreateSpace_MissingName(t *testing.T) {
 func TestIntegration_CreateTicket_AndGet(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
 		"title":    "Test Ticket",
@@ -512,7 +512,7 @@ func TestIntegration_ErrorFormat_Consistent(t *testing.T) {
 func TestIntegration_CreateProjectItem_ViaAPI(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title":    "API Item",
@@ -532,7 +532,7 @@ func TestIntegration_CreateProjectItem_ViaAPI(t *testing.T) {
 func TestIntegration_CreateItem_MissingTitle_Returns400(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"kind":     "task",
@@ -545,7 +545,7 @@ func TestIntegration_CreateItem_MissingTitle_Returns400(t *testing.T) {
 func TestIntegration_CreateItem_MissingKind_Returns400(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title":    "No kind",
@@ -560,7 +560,7 @@ func TestIntegration_CreateItem_MissingKind_Returns400(t *testing.T) {
 func TestIntegration_CreateWikiPage_ViaAPI(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "codex")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title":   "Test Wiki Page",
@@ -640,7 +640,7 @@ func TestAuthMe_SameTokenWorksOnBothEndpoints(t *testing.T) {
 func TestComments_CorrectURLIncludesOrgId(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	// Create a ticket directly in the database
 	ticketID := uuid.New()
@@ -663,7 +663,7 @@ func TestComments_CorrectURLIncludesOrgId(t *testing.T) {
 func TestComments_PostAndRetrieve(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	// Create an item directly in the database
 	itemID := uuid.New()
@@ -706,7 +706,7 @@ func TestComments_PostAndRetrieve(t *testing.T) {
 func TestMembers_SpaceScopedURL_Returns200(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	// Add the user as a space member
 	_, err := ts.DB.Pool.Exec(context.Background(),
@@ -743,7 +743,7 @@ func TestMembers_OrgScopedURL_Returns404(t *testing.T) {
 func TestComments_WrongURL_NoOrgId_Returns404(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	itemID := uuid.New()
 	_, err := ts.DB.Pool.Exec(context.Background(),
@@ -761,7 +761,7 @@ func TestComments_WrongURL_NoOrgId_Returns404(t *testing.T) {
 func TestComments_PostAndRetrieve_FullURL(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	itemID := uuid.New()
 	_, err := ts.DB.Pool.Exec(context.Background(),
@@ -799,7 +799,7 @@ func TestComments_PostAndRetrieve_FullURL(t *testing.T) {
 func TestProjectItem_StatusUpdate_Returns200(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	// Create an item
 	createResult := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
@@ -833,7 +833,7 @@ func TestProjectItem_StatusUpdate_Returns200(t *testing.T) {
 func TestProjectItem_StatusUpdate_InvalidStatus_NotRejected(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	createResult := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title":    "Invalid Status Item",
@@ -860,7 +860,7 @@ func TestProjectItem_StatusUpdate_InvalidStatus_NotRejected(t *testing.T) {
 func TestReporter_ResolvedFromMembers(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	// Create item first to discover the JWT user's ID (reporter_id comes from JWT)
 	createResult := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
@@ -983,7 +983,7 @@ func TestOrg_GetRequiresAuth(t *testing.T) {
 func TestIntegration_Comments_ListAndCreate(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	// Create a ticket to comment on.
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
@@ -1022,7 +1022,7 @@ func TestIntegration_Comments_ListAndCreate(t *testing.T) {
 func TestIntegration_Comments_ProjectItemRoute(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	// Create a project item.
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
@@ -1053,7 +1053,7 @@ func TestIntegration_Comments_ProjectItemRoute(t *testing.T) {
 func TestIntegration_Comments_RequireAuth(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 	path := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/%s/comments", ts.OrgID, space.ID, uuid.New())
 
 	r := ts.get(t, path, false)
@@ -1066,7 +1066,7 @@ func TestIntegration_Comments_RequireAuth(t *testing.T) {
 func TestIntegration_Comments_InvalidEntityType(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 	path := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/invalid/%s/comments", ts.OrgID, space.ID, uuid.New())
 
 	r := ts.get(t, path, true)
@@ -1229,7 +1229,7 @@ func TestIntegration_Workflow_UpdateWorkflow(t *testing.T) {
 func TestIntegration_Workflow_SpaceWorkflow(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	// Space workflow — may return 404 if none assigned; either is fine.
 	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/workflow", ts.OrgID, space.ID), true)
@@ -1251,7 +1251,7 @@ func TestIntegration_Workflow_RequireAuth(t *testing.T) {
 func TestIntegration_Ticket_List(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	// Create a ticket.
 	ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
@@ -1267,7 +1267,7 @@ func TestIntegration_Ticket_List(t *testing.T) {
 func TestIntegration_Ticket_UpdateStatus(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
 		"title": "Status test", "priority": "low",
@@ -1287,7 +1287,7 @@ func TestIntegration_Ticket_UpdateStatus(t *testing.T) {
 func TestIntegration_Ticket_KanbanView(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets/kanban", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "kanban: %s", r.Body)
@@ -1299,7 +1299,7 @@ func TestIntegration_Ticket_KanbanView(t *testing.T) {
 func TestIntegration_ProjectItem_List(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title": "List item", "kind": "task", "priority": "medium",
@@ -1313,7 +1313,7 @@ func TestIntegration_ProjectItem_List(t *testing.T) {
 func TestIntegration_ProjectItem_Update(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title": "Update me", "kind": "task", "priority": "low",
@@ -1336,7 +1336,7 @@ func TestIntegration_ProjectItem_Update(t *testing.T) {
 func TestIntegration_ProjectItem_Backlog(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/backlog", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "backlog: %s", r.Body)
@@ -1346,7 +1346,7 @@ func TestIntegration_ProjectItem_Backlog(t *testing.T) {
 func TestIntegration_ProjectItem_Roadmap(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/roadmap?from=2026-01-01&to=2026-12-31", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "roadmap: %s", r.Body)
@@ -1356,7 +1356,7 @@ func TestIntegration_ProjectItem_Roadmap(t *testing.T) {
 func TestIntegration_Sprint_CreateAndList(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	// Create a sprint.
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/sprints", ts.OrgID, space.ID), map[string]any{
@@ -1378,7 +1378,7 @@ func TestIntegration_Sprint_CreateAndList(t *testing.T) {
 func TestIntegration_Sprint_Active(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	// No active sprint yet — endpoint returns 200, 404, or 500 depending on implementation.
 	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/sprints/active", ts.OrgID, space.ID), true)
@@ -1392,7 +1392,7 @@ func TestIntegration_Sprint_Active(t *testing.T) {
 func TestIntegration_Wiki_ListAndTree(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "codex")
 
 	// Create a page.
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
@@ -1413,7 +1413,7 @@ func TestIntegration_Wiki_ListAndTree(t *testing.T) {
 func TestIntegration_Wiki_GetPage(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "codex")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title": "Fetch Me", "content": "Some content",
@@ -1434,7 +1434,7 @@ func TestIntegration_Wiki_GetPage(t *testing.T) {
 func TestIntegration_Wiki_UpdatePage(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "codex")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title": "Before Update", "content": "old content",
@@ -1471,7 +1471,7 @@ func TestIntegration_Wiki_UpdatePage(t *testing.T) {
 func TestIntegration_Wiki_DeletePage(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "codex")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
 		"title": "Delete Me", "content": "",
@@ -1506,7 +1506,7 @@ func TestIntegration_Auth_UpdateMe(t *testing.T) {
 func TestIntegration_Space_GetByID(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s", ts.OrgID, space.ID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "get space: %s", r.Body)
@@ -1519,7 +1519,7 @@ func TestIntegration_Space_GetByID(t *testing.T) {
 func TestIntegration_Space_UpdateSpace(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	// Space update uses PUT.
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut,
@@ -1538,7 +1538,7 @@ func TestIntegration_Space_UpdateSpace(t *testing.T) {
 func TestIntegration_Ticket_AssignToUser(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
 		"title": "Assign test", "priority": "medium",
@@ -1579,13 +1579,13 @@ func TestIntegration_Labels_CreateAndList(t *testing.T) {
 func TestIntegration_Workflow_GetSpaceWorkflowStates(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	// Seed workflows and assign to space.
 	wfAdapter := ts.WorkflowAdapter
 	ctx := context.Background()
 	require.NoError(t, wfAdapter.SeedDefaultWorkflows(ctx, ts.OrgID))
-	require.NoError(t, wfAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "service_desk", space.ID))
+	require.NoError(t, wfAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "beacon", space.ID))
 
 	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/workflow/states", ts.OrgID, space.ID), true)
 	// May return 200 (states found) or 500 if no workflow; either way must be authenticated.
@@ -1596,12 +1596,12 @@ func TestIntegration_Workflow_GetSpaceWorkflowStates(t *testing.T) {
 func TestIntegration_Workflow_ApplyTransitionToTicket(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "service_desk")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "beacon")
 
 	ctx := context.Background()
 	wfAdapter := ts.WorkflowAdapter
 	require.NoError(t, wfAdapter.SeedDefaultWorkflows(ctx, ts.OrgID))
-	require.NoError(t, wfAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "service_desk", space.ID))
+	require.NoError(t, wfAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "beacon", space.ID))
 
 	// Create a ticket.
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
@@ -1633,12 +1633,12 @@ func TestIntegration_Workflow_ApplyTransitionToTicket(t *testing.T) {
 func TestIntegration_Workflow_ApplyTransitionToItem(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	ctx := context.Background()
 	wfAdapter := ts.WorkflowAdapter
 	require.NoError(t, wfAdapter.SeedDefaultWorkflows(ctx, ts.OrgID))
-	require.NoError(t, wfAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "project", space.ID))
+	require.NoError(t, wfAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "vector", space.ID))
 
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
 		"title": "Workflow item", "kind": "task", "priority": "medium",
@@ -1669,7 +1669,7 @@ func TestIntegration_Workflow_ApplyTransitionToItem(t *testing.T) {
 func TestIntegration_Wiki_Lock(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "wiki")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "codex")
 
 	// Create a page.
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
@@ -1706,7 +1706,7 @@ func TestIntegration_Wiki_Lock(t *testing.T) {
 func TestIntegration_Projects_RankItem(t *testing.T) {
 	ts := newTestServer(t)
 	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "project")
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "vector")
 
 	// Create two items.
 	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, space.ID), map[string]any{
