@@ -1,31 +1,17 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Circle, Workflow } from 'lucide-react';
+import { ChevronDown, ChevronRight, Circle, Workflow as WorkflowIcon } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { useAuth } from '../../lib/auth';
-import { useQuery } from '@tanstack/react-query';
-import { queryKeys, type WorkflowState } from '../../lib/api';
+import {
+  useOrgWorkflows,
+  useOrgWorkflowStates,
+  type Workflow,
+  type WorkflowState,
+} from '../../lib/api';
 
 // ---------------------------------------------------------------------------
-// Types & helpers
+// Helpers
 // ---------------------------------------------------------------------------
-
-interface Workflow {
-  id: string;
-  name: string;
-  description?: string;
-  is_default: boolean;
-  applies_to: string;
-}
-
-
-async function apiFetch<T>(url: string): Promise<T> {
-  const token = localStorage.getItem('azimuthal_token') ?? '';
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json() as Promise<T>;
-}
 
 const CATEGORY_COLOR: Record<string, string> = {
   todo: 'text-blue-500',
@@ -105,6 +91,12 @@ function WorkflowCard({ wf, states }: { wf: Workflow; states: WorkflowState[] })
   );
 }
 
+// Fetches one workflow's states through the shared api client and renders its card.
+function WorkflowWithStates({ wf, orgId }: { wf: Workflow; orgId: string }) {
+  const { data: states } = useOrgWorkflowStates(orgId, wf.id);
+  return <WorkflowCard wf={wf} states={states ?? []} />;
+}
+
 // ---------------------------------------------------------------------------
 // WorkflowAdminPage
 // ---------------------------------------------------------------------------
@@ -114,16 +106,8 @@ export function WorkflowAdminPage() {
   const { user } = useAuth();
   const orgId = user?.orgId ?? '';
 
-  const { data: workflows, isLoading, error } = useQuery<Workflow[]>({
-    queryKey: ['workflows', orgId],
-    queryFn: () => apiFetch<Workflow[]>(`/api/v1/orgs/${orgId}/workflows`),
-    enabled: !!orgId,
-  });
+  const { data: workflows, isLoading, error } = useOrgWorkflows(orgId);
 
-  const [statesCache, setStatesCache] = useState<Record<string, WorkflowState[]>>({});
-
-  // Fetch states for each workflow using individual queries (declaratively via
-  // a helper component to avoid hook-in-loop issues).
   if (isLoading) {
     return (
       <div className="flex h-48 items-center justify-center text-[var(--color-text-muted)]">
@@ -143,7 +127,7 @@ export function WorkflowAdminPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Workflow className="h-6 w-6 text-[var(--color-primary)]" />
+        <WorkflowIcon className="h-6 w-6 text-[var(--color-primary)]" />
         <div>
           <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
             Workflows
@@ -161,46 +145,10 @@ export function WorkflowAdminPage() {
       ) : (
         <div className="space-y-4">
           {(workflows ?? []).map((wf) => (
-            <WorkflowStatesLoader
-              key={wf.id}
-              wf={wf}
-              orgId={orgId}
-              onStatesLoaded={(id, states) =>
-                setStatesCache((prev) => ({ ...prev, [id]: states }))
-              }
-              states={statesCache[wf.id] ?? []}
-            />
+            <WorkflowWithStates key={wf.id} wf={wf} orgId={orgId} />
           ))}
         </div>
       )}
     </div>
   );
-}
-
-// Thin wrapper that fetches states for one workflow and calls onStatesLoaded.
-function WorkflowStatesLoader({
-  wf,
-  orgId,
-  states,
-  onStatesLoaded,
-}: {
-  wf: Workflow;
-  orgId: string;
-  states: WorkflowState[];
-  onStatesLoaded: (id: string, states: WorkflowState[]) => void;
-}) {
-  useQuery<WorkflowState[]>({
-    queryKey: queryKeys.workflowStates(wf.id),
-    queryFn: async () => {
-      const data = await apiFetch<WorkflowState[]>(
-        `/api/v1/orgs/${orgId}/workflows/${wf.id}/states`,
-      );
-      onStatesLoaded(wf.id, data);
-      return data;
-    },
-    enabled: !!orgId && !!wf.id,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  return <WorkflowCard wf={wf} states={states} />;
 }

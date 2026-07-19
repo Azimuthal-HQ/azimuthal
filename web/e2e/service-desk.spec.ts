@@ -23,7 +23,7 @@ test.describe('Service Desk', () => {
     await createUserAndLogin(page)
     await createSpace(page, 'Reports Desk', 'beacon')
 
-    await page.getByRole('link', { name: 'Reports' }).click()
+    await page.getByTestId('space-sidebar').getByRole('link', { name: 'Reports', exact: true }).click()
     await expect(page).toHaveURL(/\/beacon\/.*\/reports/, { timeout: 10000 })
 
     // The route must render non-empty content — a blank body is never acceptable.

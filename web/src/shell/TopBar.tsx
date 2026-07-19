@@ -161,6 +161,7 @@ export function TopBar() {
             <Bell className="h-[18px] w-[18px]" />
             {unreadCount > 0 && (
               <span
+                data-testid="notification-badge"
                 className={cn(
                   'absolute top-1 right-1 flex h-4 w-4 items-center justify-center',
                   'rounded-full bg-[var(--color-primary)] text-white',
@@ -174,6 +175,7 @@ export function TopBar() {
 
           {notifOpen && (
             <div
+              data-testid="notification-panel"
               className={cn(
                 'absolute top-full right-0 mt-[var(--space-1)]',
                 'w-80 rounded-[var(--radius-lg)]',

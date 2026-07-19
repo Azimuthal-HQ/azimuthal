@@ -38,14 +38,15 @@ test.describe('Notifications — P1', () => {
     await expect(page).not.toHaveURL(/\/login/)
 
     // Bell badge must show at least 1 unread notification
-    const badge = page.locator('header').locator('span').filter({ hasText: /^[1-9]/ }).first()
+    const badge = page.getByTestId('notification-badge')
     await expect(badge).toBeVisible({ timeout: 10000 })
 
     // Click the bell to open the panel
     await page.locator('header button[aria-label="Notifications"]').click()
 
-    // Notification panel must appear with at least one item
-    const panel = page.locator('header').getByText('Notifications').first().locator('..').locator('..')
+    // Notification panel must appear with the assignment notification — the
+    // text is server-generated, so it requires the real round trip.
+    await expect(page.getByTestId('notification-panel')).toBeVisible({ timeout: 3000 })
     await expect(page.locator('text=You have been assigned')).toBeVisible({ timeout: 5000 })
 
     // Click "Mark all read"
@@ -63,7 +64,7 @@ test.describe('Notifications — P1', () => {
     await createSpace(page, 'Zero Bell Test', 'beacon')
 
     // No assignments yet — badge must not be visible
-    const badge = page.locator('header').locator('span').filter({ hasText: /^[1-9]/ }).first()
+    const badge = page.getByTestId('notification-badge')
     await expect(badge).not.toBeVisible()
   })
 
@@ -74,13 +75,18 @@ test.describe('Notifications — P1', () => {
     const bellBtn = page.locator('header button[aria-label="Notifications"]')
     await expect(bellBtn).toBeVisible()
 
-    // Open panel
+    // Open panel — assert the panel itself, not header text ('Notifications'
+    // as a substring also matches the panel's 'No notifications' empty state)
     await bellBtn.click()
-    await expect(page.locator('text=Notifications').first()).toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('notification-panel')).toBeVisible({ timeout: 3000 })
 
-    // Close with Escape — the top bar dismisses its popovers on Escape
+    // Close with Escape — the top bar dismisses its popovers on Escape.
+    // Previously this asserted 'Mark all read' was not visible, but that
+    // button only renders when unreadCount > 0 and this test has zero unread:
+    // the assertion was vacuously green whether or not Escape worked. The
+    // panel testid makes the close assertion real.
     await page.keyboard.press('Escape')
-    await expect(page.locator('button:has-text("Mark all read")')).not.toBeVisible({ timeout: 3000 })
+    await expect(page.getByTestId('notification-panel')).not.toBeVisible({ timeout: 3000 })
   })
 
   test('GET /api/v1/notifications returns correct shape', async ({ page }) => {

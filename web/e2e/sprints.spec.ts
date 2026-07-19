@@ -32,7 +32,7 @@ test.describe('Sprints', () => {
 
     // And the transition works end-to-end: planned → active.
     await startButton.click()
-    await expect(page.getByRole('button', { name: 'Complete' })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('button', { name: 'Complete', exact: true })).toBeVisible({ timeout: 5000 })
     await assertNoErrors(page)
   })
 })
