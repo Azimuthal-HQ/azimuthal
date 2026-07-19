@@ -24,8 +24,10 @@ test.describe('Sprints', () => {
     await expect(page.locator('text=planned')).toBeVisible()
 
     // A planned sprint must offer Start. This is the defect: with the
-    // frontend expecting 'planning', the button never rendered.
-    const startButton = page.getByRole('button', { name: 'Start' })
+    // frontend expecting 'planning', the button never rendered. Exact name:
+    // the sidebar space picker's accessible name contains this space's own
+    // name ("Sprint Start Regression …"), which a substring match would hit.
+    const startButton = page.getByRole('button', { name: 'Start', exact: true })
     await expect(startButton).toBeVisible()
 
     // And the transition works end-to-end: planned → active.

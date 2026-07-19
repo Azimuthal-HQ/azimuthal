@@ -243,7 +243,7 @@ test.describe('Service Desk', () => {
 
     // Add a comment
     await page.fill('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]', 'This is a test comment')
-    await page.click('button:has-text("Comment")')
+    await page.getByRole('button', { name: 'Comment', exact: true }).click()
 
     // Comment must appear in the thread
     await expect(page.locator('text=This is a test comment')).toBeVisible({ timeout: 5000 })
@@ -262,8 +262,12 @@ test.describe('Service Desk', () => {
     await page.click('button:has-text("New Ticket")')
     await page.fill('#ticket-title', 'Assignee Test')
     await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
-    await expect(page.locator('text=Assignee Test')).toBeVisible({ timeout: 5000 })
-    await page.click('text=Assignee Test')
+    // Exact link-role locator: the space picker's accessible name ("Assignee
+    // Test Desk …") contains this ticket title, so a bare text= match hits
+    // the sidebar first.
+    const ticketLink = page.getByRole('link', { name: 'Assignee Test', exact: true })
+    await expect(ticketLink).toBeVisible({ timeout: 5000 })
+    await ticketLink.click()
     await expect(page).not.toHaveURL(/\/login/)
 
     // Assignee dropdown must be visible — verifies the members endpoint loaded
@@ -296,7 +300,7 @@ test.describe('Service Desk', () => {
     const commentBox = page.locator('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]')
     await expect(commentBox).toBeVisible({ timeout: 5000 })
     await commentBox.fill('This is a regression test comment')
-    await page.click('button:has-text("Comment")')
+    await page.getByRole('button', { name: 'Comment', exact: true }).click()
 
     // Comment must appear
     await expect(page.locator('text=This is a regression test comment')).toBeVisible({ timeout: 5000 })
@@ -408,7 +412,7 @@ test.describe('Service Desk', () => {
     const commentBox = page.locator('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]')
     await expect(commentBox).toBeVisible({ timeout: 5000 })
     await commentBox.fill('Persisted comment regression test')
-    await page.click('button:has-text("Comment")')
+    await page.getByRole('button', { name: 'Comment', exact: true }).click()
 
     // Comment appears immediately
     await expect(page.locator('text=Persisted comment regression test')).toBeVisible({ timeout: 5000 })

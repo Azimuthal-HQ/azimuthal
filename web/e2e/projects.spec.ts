@@ -148,11 +148,13 @@ test.describe('Projects', () => {
     await page.click('text=Editable Item')
     await expect(page).not.toHaveURL(/\/login/)
 
-    // Enter edit mode, change title and description, save.
-    await page.click('button:has-text("Edit")')
+    // Enter edit mode, change title and description, save. Exact-name role
+    // locators: the space picker's accessible name ("Edit Capability
+    // Project …") would collide with a substring "Edit" match.
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
     await page.fill('#edit-item-title', 'Editable Item Renamed')
     await page.fill('#edit-item-description', 'Updated via edit form')
-    await page.click('button:has-text("Save")')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page.locator('h1:has-text("Editable Item Renamed")')).toBeVisible({ timeout: 5000 })
 
     // Reload — the edit persisted to the database.
