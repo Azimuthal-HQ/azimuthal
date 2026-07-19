@@ -76,31 +76,6 @@ func RequireSpaceReadable() func(http.Handler) http.Handler {
 	}
 }
 
-// RequireCapability rejects requests lacking the capability on the
-// {spaceID} in the URL: 403 with readable spaces (right to know it exists,
-// wrong capability), and 404 when the space is not readable at all.
-func RequireCapability(c access.Capability) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			spaceID, err := uuid.Parse(chi.URLParam(r, "spaceID"))
-			if err != nil {
-				respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
-				return
-			}
-			res := access.FromContext(r.Context())
-			if res == nil || !res.CanReadSpace(spaceID) {
-				respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "space not found")
-				return
-			}
-			if !res.Can(c, spaceID) {
-				respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // RequireWriteFloor enforces the write floor on a space resource subtree:
 // reads pass (the readable guard already ran), every mutating method needs
 // at least the given capability. Handlers refine above the floor — the

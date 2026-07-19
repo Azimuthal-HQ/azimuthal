@@ -206,9 +206,3 @@ func (s *Service) GetMember(ctx context.Context, teamID, userID uuid.UUID) (Memb
 func (s *Service) SetPrimary(ctx context.Context, teamID, userID, orgID uuid.UUID) error {
 	return s.store.SetPrimary(ctx, teamID, userID, orgID)
 }
-
-// EnsureDefaultMembership enrols a (new) user into the org default team,
-// primary when they have no primary yet. Never-teamless invariant.
-func (s *Service) EnsureDefaultMembership(ctx context.Context, orgID, userID uuid.UUID) error {
-	return s.store.EnsureDefaultMembership(ctx, orgID, userID)
-}
