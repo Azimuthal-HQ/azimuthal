@@ -98,6 +98,8 @@ type SwaggerCreateSpaceRequest struct {
 	Type        string  `json:"type" example:"vector"`
 	Icon        *string `json:"icon,omitempty" example:"rocket"`
 	IsPrivate   bool    `json:"is_private" example:"false"`
+	OwnerTeamID *string `json:"owner_team_id,omitempty" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
+	Visibility  string  `json:"visibility,omitempty" example:"discoverable" enums:"hidden,discoverable,org"`
 }
 
 // SwaggerUpdateSpaceRequest matches updateSpaceRequest in spaces handler.
@@ -106,6 +108,46 @@ type SwaggerUpdateSpaceRequest struct {
 	Description *string `json:"description,omitempty" example:"Updated description"`
 	Icon        *string `json:"icon,omitempty" example:"star"`
 	IsPrivate   bool    `json:"is_private" example:"false"`
+	OwnerTeamID *string `json:"owner_team_id,omitempty" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
+	Visibility  string  `json:"visibility,omitempty" example:"org" enums:"hidden,discoverable,org"`
+}
+
+// --- Teams (v0.3 P2) ---
+
+// SwaggerCreateTeamRequest matches createTeamRequest in teams handler.
+type SwaggerCreateTeamRequest struct {
+	Slug        string  `json:"slug" example:"platform"`
+	Name        string  `json:"name" example:"Platform"`
+	Description string  `json:"description,omitempty" example:"Platform engineering"`
+	ParentID    *string `json:"parent_id,omitempty" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
+}
+
+// SwaggerPatchTeamRequest matches patchTeamRequest in teams handler.
+// parent_id: absent = unchanged, null = move to root, UUID = reparent.
+type SwaggerPatchTeamRequest struct {
+	Name        *string `json:"name,omitempty" example:"Platform Core"`
+	Description *string `json:"description,omitempty" example:"Renamed"`
+	ParentID    *string `json:"parent_id,omitempty" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
+}
+
+// SwaggerPutMemberRequest matches putMemberRequest in teams handler.
+type SwaggerPutMemberRequest struct {
+	Role      string `json:"role" example:"member" enums:"member,lead"`
+	IsPrimary bool   `json:"is_primary" example:"false"`
+}
+
+// --- Grants (v0.3 P2) ---
+
+// SwaggerCreateGrantRequest matches createGrantRequest in grants handler.
+type SwaggerCreateGrantRequest struct {
+	SubjectType string    `json:"subject_type" example:"team" enums:"user,team"`
+	SubjectID   uuid.UUID `json:"subject_id" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
+	Role        string    `json:"role" example:"viewer" enums:"viewer,contributor,agent,space_admin"`
+}
+
+// SwaggerUpdateGrantRequest matches updateGrantRequest in grants handler.
+type SwaggerUpdateGrantRequest struct {
+	Role string `json:"role" example:"contributor" enums:"viewer,contributor,agent,space_admin"`
 }
 
 // SwaggerUpdateOrgRequest matches updateOrgRequest in spaces handler.
