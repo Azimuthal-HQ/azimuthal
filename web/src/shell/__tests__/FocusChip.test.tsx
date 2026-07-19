@@ -18,6 +18,7 @@ describe('FocusChip', () => {
     const clearFocus = vi.fn();
     vi.spyOn(teamFocus, 'useTeamFocus').mockReturnValue({
       focus: { teamId: 't1', teamName: 'Platform' },
+      setFocus: vi.fn(),
       clearFocus,
     });
 

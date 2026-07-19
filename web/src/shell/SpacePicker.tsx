@@ -3,10 +3,11 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ChevronDown, Grid2x2, Search, Star } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../lib/auth';
-import { useSpaces, type Space } from '../lib/api';
+import { useSpaces, useTeams, type Space, type Team } from '../lib/api';
 import { MODULES, spacePath, type ModuleKey } from './modules';
 import { useRecentSpaces } from './hooks/useRecentSpaces';
 import { useStarredSpaces } from './hooks/useStarredSpaces';
+import { useTeamFocus } from './hooks/useTeamFocus';
 
 /** Sub-routes that survive a space switch; anything else falls back to the module default. */
 const PORTABLE_SUBPATHS = new Set(['board', 'backlog', 'sprints', 'roadmap', 'labels', 'settings']);
@@ -18,20 +19,43 @@ interface SpacePickerProps {
 }
 
 interface SpaceGroup {
+  /** owner_team_id, or 'other' for spaces without a resolvable team. */
+  key: string;
+  teamId: string | null;
   label: string;
   spaces: Space[];
 }
 
 /**
- * groupSpaces groups picker rows by owning team (ADR-0006 point 6). Teams
- * and spaces.owner_team_id arrive in P2 (migrations 007–008); until then
- * every space belongs to the single "All spaces" group. P2 replaces the
- * constant key with the space's owner_team_id and the label with the team
- * name — the rendering below already handles any number of groups.
+ * groupSpaces groups picker rows by owning team (ADR-0006 point 6): key =
+ * the space's owner_team_id, label = the team's name. Spaces whose owning
+ * team is unknown (missing id, or a team this client cannot resolve) fall
+ * into a trailing "Other spaces" group — never dropped.
  */
-function groupSpaces(spaces: Space[]): SpaceGroup[] {
+function groupSpaces(spaces: Space[], teams: Team[]): SpaceGroup[] {
   if (spaces.length === 0) return [];
-  return [{ label: 'All spaces', spaces }];
+  const teamById = new Map(teams.map((t) => [t.id, t]));
+  const byKey = new Map<string, SpaceGroup>();
+  for (const space of spaces) {
+    const team = space.owner_team_id ? teamById.get(space.owner_team_id) : undefined;
+    const key = team ? team.id : 'other';
+    let group = byKey.get(key);
+    if (!group) {
+      group = {
+        key,
+        teamId: team?.id ?? null,
+        label: team?.name ?? 'Other spaces',
+        spaces: [],
+      };
+      byKey.set(key, group);
+    }
+    group.spaces.push(space);
+  }
+  return [...byKey.values()].sort((a, b) => {
+    if (a.teamId === null) return 1;
+    if (b.teamId === null) return -1;
+    return a.label.localeCompare(b.label);
+  });
 }
 
 /**
@@ -51,11 +75,15 @@ export function SpacePicker({ module, currentSpace, collapsed }: SpacePickerProp
   const inputRef = useRef<HTMLInputElement>(null);
 
   const spacesQuery = useSpaces(user?.orgId ?? '');
+  const teamsQuery = useTeams(user?.orgId ?? '');
   const { recents } = useRecentSpaces(module);
   const { isStarred, toggleStar } = useStarredSpaces();
+  const { focus, clearFocus } = useTeamFocus();
 
+  // Locked directory rows (readable: false) never appear in the picker —
+  // it offers only spaces the user can actually enter.
   const moduleSpaces = useMemo(
-    () => (spacesQuery.data ?? []).filter((s) => s.type === module),
+    () => (spacesQuery.data ?? []).filter((s) => s.type === module && s.readable !== false),
     [spacesQuery.data, module],
   );
 
@@ -64,6 +92,19 @@ export function SpacePicker({ module, currentSpace, collapsed }: SpacePickerProp
     if (!q) return moduleSpaces;
     return moduleSpaces.filter((s) => s.name.toLowerCase().includes(q));
   }, [moduleSpaces, query]);
+
+  const groups = useMemo(
+    () => groupSpaces(filtered, teamsQuery.data ?? []),
+    [filtered, teamsQuery.data],
+  );
+
+  // Team focus narrows the groups, but never silently: the count of spaces
+  // it hides stays visible, and one click widens back to everything
+  // (union by default, narrow by choice — ADR-0006 point 7).
+  const visibleGroups = focus ? groups.filter((g) => g.teamId === focus.teamId) : groups;
+  const hiddenByFocus = focus
+    ? groups.reduce((n, g) => (g.teamId === focus.teamId ? n : n + g.spaces.length), 0)
+    : 0;
 
   const pinned = useMemo(() => {
     if (query.trim()) return [];
@@ -208,12 +249,28 @@ export function SpacePicker({ module, currentSpace, collapsed }: SpacePickerProp
                 {pinned.map(row)}
               </>
             )}
-            {groupSpaces(filtered).map((group) => (
-              <div key={group.label}>
+            {visibleGroups.map((group) => (
+              <div key={group.key}>
                 {groupHeading(group.label)}
                 {group.spaces.map(row)}
               </div>
             ))}
+            {focus && (
+              <button
+                type="button"
+                data-testid="space-picker-focus-hidden"
+                onClick={clearFocus}
+                className={cn(
+                  'mt-[var(--space-1)] flex w-full items-center rounded-[var(--radius-md)]',
+                  'px-[var(--space-2)] py-[var(--space-2)] text-left text-[var(--text-xs)]',
+                  'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]',
+                )}
+              >
+                {hiddenByFocus === 1
+                  ? '1 space hidden by focus'
+                  : `${hiddenByFocus} spaces hidden by focus`}
+              </button>
+            )}
             {filtered.length === 0 && (
               <p className="px-[var(--space-2)] py-[var(--space-4)] text-[var(--text-sm)] text-[var(--color-text-muted)]">
                 No spaces match that.
@@ -226,7 +283,7 @@ export function SpacePicker({ module, currentSpace, collapsed }: SpacePickerProp
               type="button"
               onClick={() => {
                 setOpen(false);
-                navigate('/');
+                navigate('/spaces');
               }}
               className={cn(
                 'flex w-full items-center gap-[var(--space-2)] rounded-[var(--radius-md)] px-[var(--space-2)] py-[var(--space-2)]',

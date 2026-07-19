@@ -20,6 +20,7 @@ vi.mock('../../lib/api', () => ({
     isLoading: false,
   })),
   useSpaces: vi.fn(() => ({ data: [], isLoading: false })),
+  useTeams: vi.fn(() => ({ data: [], isLoading: false })),
   useWikiPages: vi.fn(() => ({ data: [], isLoading: false })),
 }));
 
@@ -30,6 +31,7 @@ vi.mock('../../lib/auth', () => ({
     login: vi.fn(),
     logout: vi.fn(),
   })),
+  getCurrentOrgId: vi.fn(() => 'org-1'),
 }));
 
 const SUB_ROUTES = ['board', 'backlog', 'sprints', 'roadmap', 'labels', 'settings'] as const;

@@ -24,7 +24,10 @@ import {
   ModuleSprintsRoute,
 } from './pages/space/ModuleRoutes';
 import { SpacePlaceholderPage } from './pages/space/SpacePlaceholderPage';
+import { SpaceSettingsPage } from './pages/space/SpaceSettingsPage';
+import { SpaceDirectoryPage } from './pages/spaces/SpaceDirectoryPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
+import { TeamsAdminPage } from './pages/settings/TeamsAdminPage';
 import { WorkflowAdminPage } from './pages/settings/WorkflowAdminPage';
 
 export function App() {
@@ -37,9 +40,11 @@ export function App() {
           <Route path="/" element={<HomeOverviewPage />} />
           <Route path="home/:dashboardId" element={<HomeDashboardPage />} />
           <Route path="search" element={<SearchPage />} />
+          <Route path="spaces" element={<SpaceDirectoryPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="settings/:section" element={<SettingsPage />} />
           <Route path="admin/workflows" element={<WorkflowAdminPage />} />
+          <Route path="admin/teams" element={<TeamsAdminPage />} />
         </Route>
 
         <Route path="dashboard" element={<Navigate to="/" replace />} />
@@ -65,7 +70,7 @@ export function App() {
           <Route path="recent" element={<SpacePlaceholderPage feature="recent" />} />
           <Route path="starred" element={<SpacePlaceholderPage feature="starred" />} />
           <Route path="drafts" element={<SpacePlaceholderPage feature="drafts" />} />
-          <Route path="settings" element={<SpacePlaceholderPage feature="settings" />} />
+          <Route path="settings" element={<ErrorBoundary><SpaceSettingsPage /></ErrorBoundary>} />
           {/* Unknown sub-routes keep the space chrome and render the branded
               empty state, never a blank body. */}
           <Route path="*" element={<SpacePlaceholderPage feature="unknown" />} />

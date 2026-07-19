@@ -151,16 +151,111 @@ export interface Organization {
   updated_at: string;
 }
 
+export type SpaceVisibility = 'hidden' | 'discoverable' | 'org';
+
+/**
+ * Space is both the single-space record (GET /orgs/{o}/spaces/{s}) and a
+ * row of the org space directory (GET /orgs/{o}/spaces, P2). Directory
+ * rows carry the governance fields; discoverable-but-unreadable spaces
+ * arrive as LOCKED rows (readable: false) with identity fields only, so
+ * everything beyond the identity core is optional.
+ */
 export interface Space {
   id: string;
-  org_id: string;
+  org_id?: string;
   name: string;
   slug: string;
-  key: string;
+  key?: string;
   type: SpaceType;
+  description?: string | null;
+  icon?: string | null;
+  is_private?: boolean;
+  owner_team_id?: string;
+  visibility?: SpaceVisibility;
+  /** false marks a locked directory row: listed but not readable. */
+  readable?: boolean;
+  /** Caller's effective role on a readable directory row. */
+  effective_role?: string;
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Team types (P2, spec §6)
+// ---------------------------------------------------------------------------
+
+export type TeamRole = 'member' | 'lead';
+
+export interface Team {
+  id: string;
+  org_id: string;
+  /** Absent/null for root teams (wire omits it when null). */
+  parent_id?: string | null;
+  /** Materialised ancestor chain ending in the team's own id; length = depth. */
+  path: string[];
+  slug: string;
+  name: string;
   description: string;
+  is_default: boolean;
+  source: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface TeamMember {
+  team_id: string;
+  user_id: string;
+  org_id: string;
+  /** Metadata only — never a permission input. */
+  role: TeamRole;
+  is_primary: boolean;
+  created_at: string;
+  email?: string;
+  display_name?: string;
+  avatar_url?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Grant types (P2, spec §6)
+// ---------------------------------------------------------------------------
+
+export type GrantSubjectType = 'user' | 'team';
+export type GrantRole = 'viewer' | 'contributor' | 'agent' | 'space_admin';
+
+export interface SpaceGrant {
+  id: string;
+  space_id: string;
+  subject_type: GrantSubjectType;
+  subject_id: string;
+  subject_name?: string;
+  subject_missing?: boolean;
+  role: GrantRole;
+  created_at: string;
+  created_by?: string | null;
+}
+
+export interface EffectiveAccessGrant {
+  grant_id: string;
+  subject_type: GrantSubjectType;
+  subject_id: string;
+  role: GrantRole;
+  team_name?: string;
+  matched_team_id?: string;
+  matched_team_name?: string;
+  /** Tree distance from the matched direct team down to the granted team. */
+  depth: number;
+}
+
+export interface EffectiveAccess {
+  user_id: string;
+  space_id: string;
+  access: boolean;
+  /** Effective role wire form, '' when no access. */
+  role: string;
+  org_admin: boolean;
+  org_visibility: boolean;
+  grants: EffectiveAccessGrant[];
 }
 
 export interface User {
@@ -397,6 +492,161 @@ async function createSpace(orgId: string, req: CreateSpaceRequest): Promise<Spac
     method: 'POST',
     body: JSON.stringify(req),
   });
+}
+
+/**
+ * PUT semantics, not PATCH: the backend requires name and overwrites
+ * description, icon, and is_private wholesale (key is kept when omitted).
+ * Callers changing one governance field (visibility, owner_team_id) must
+ * echo the space's current values for the rest.
+ */
+interface UpdateSpaceRequest {
+  name: string;
+  key?: string;
+  description?: string | null;
+  icon?: string | null;
+  is_private?: boolean;
+  owner_team_id?: string;
+  visibility?: SpaceVisibility;
+}
+
+async function updateSpace(
+  orgId: string,
+  spaceId: string,
+  req: UpdateSpaceRequest,
+): Promise<Space> {
+  return apiFetch<Space>(`/orgs/${orgId}/spaces/${spaceId}`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Team API functions (P2)
+// ---------------------------------------------------------------------------
+
+async function fetchTeams(orgId: string): Promise<Team[]> {
+  // Audit ref: testing-audit.md §7.5 — null-instead-of-[] regression.
+  const data = await apiFetch<Team[] | null>(`/orgs/${orgId}/teams`);
+  return data ?? [];
+}
+
+async function fetchTeamMembers(orgId: string, teamId: string): Promise<TeamMember[]> {
+  const data = await apiFetch<TeamMember[] | null>(`/orgs/${orgId}/teams/${teamId}/members`);
+  return data ?? [];
+}
+
+interface CreateTeamRequest {
+  slug: string;
+  name: string;
+  description?: string;
+  parent_id?: string;
+}
+
+async function createTeam(orgId: string, req: CreateTeamRequest): Promise<Team> {
+  return apiFetch<Team>(`/orgs/${orgId}/teams`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+/**
+ * parent_id is tri-state on the wire: absent (undefined) leaves the parent
+ * untouched, null moves the team to the root, a uuid moves it under that
+ * parent. JSON.stringify drops undefined keys, which is exactly the
+ * "absent" encoding.
+ */
+interface UpdateTeamRequest {
+  name?: string;
+  description?: string;
+  parent_id?: string | null;
+}
+
+async function updateTeam(orgId: string, teamId: string, req: UpdateTeamRequest): Promise<Team> {
+  return apiFetch<Team>(`/orgs/${orgId}/teams/${teamId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+async function deleteTeam(orgId: string, teamId: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/teams/${teamId}`, { method: 'DELETE' });
+}
+
+interface PutTeamMemberRequest {
+  role: TeamRole;
+  is_primary?: boolean;
+}
+
+async function putTeamMember(
+  orgId: string,
+  teamId: string,
+  userId: string,
+  req: PutTeamMemberRequest,
+): Promise<TeamMember> {
+  return apiFetch<TeamMember>(`/orgs/${orgId}/teams/${teamId}/members/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+}
+
+async function removeTeamMember(orgId: string, teamId: string, userId: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/teams/${teamId}/members/${userId}`, {
+    method: 'DELETE',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Grant API functions (P2)
+// ---------------------------------------------------------------------------
+
+async function fetchSpaceGrants(orgId: string, spaceId: string): Promise<SpaceGrant[]> {
+  const data = await apiFetch<SpaceGrant[] | null>(`/orgs/${orgId}/spaces/${spaceId}/grants`);
+  return data ?? [];
+}
+
+interface CreateGrantRequest {
+  subject_type: GrantSubjectType;
+  subject_id: string;
+  role: GrantRole;
+}
+
+async function createGrant(
+  orgId: string,
+  spaceId: string,
+  req: CreateGrantRequest,
+): Promise<SpaceGrant> {
+  return apiFetch<SpaceGrant>(`/orgs/${orgId}/spaces/${spaceId}/grants`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function updateGrant(
+  orgId: string,
+  spaceId: string,
+  grantId: string,
+  role: GrantRole,
+): Promise<SpaceGrant> {
+  return apiFetch<SpaceGrant>(`/orgs/${orgId}/spaces/${spaceId}/grants/${grantId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+}
+
+async function revokeGrant(orgId: string, spaceId: string, grantId: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/spaces/${spaceId}/grants/${grantId}`, {
+    method: 'DELETE',
+  });
+}
+
+async function fetchEffectiveAccess(
+  orgId: string,
+  spaceId: string,
+  userId?: string,
+): Promise<EffectiveAccess> {
+  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : '';
+  return apiFetch<EffectiveAccess>(`/orgs/${orgId}/spaces/${spaceId}/effective-access${qs}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -883,6 +1133,13 @@ export const queryKeys = {
   orgWorkflows: (orgId: string) => ['orgWorkflows', orgId] as const,
   orgWorkflowStates: (orgId: string, workflowId: string) =>
     ['orgWorkflowStates', orgId, workflowId] as const,
+  // Team keys nest members under ['teams', orgId] so one prefix invalidation
+  // catches every membership side effect (default-team re-add, primary moves).
+  teams: (orgId: string) => ['teams', orgId] as const,
+  teamMembers: (orgId: string, teamId: string) => ['teams', orgId, teamId, 'members'] as const,
+  spaceGrants: (orgId: string, spaceId: string) => ['spaceGrants', orgId, spaceId] as const,
+  effectiveAccess: (spaceId: string, userId?: string) =>
+    ['effectiveAccess', spaceId, userId ?? 'me'] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -1512,6 +1769,156 @@ export function useOrgWorkflowStates(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Team hooks (P2)
+// ---------------------------------------------------------------------------
+
+export function useTeams(orgId: string, opts?: QueryOpts<Team[]>) {
+  return useQuery<Team[], APIError>({
+    queryKey: queryKeys.teams(orgId),
+    queryFn: () => fetchTeams(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function useTeamMembers(orgId: string, teamId: string, opts?: QueryOpts<TeamMember[]>) {
+  return useQuery<TeamMember[], APIError>({
+    queryKey: queryKeys.teamMembers(orgId, teamId),
+    queryFn: () => fetchTeamMembers(orgId, teamId),
+    enabled: !!orgId && !!teamId,
+    ...opts,
+  });
+}
+
+export function useCreateTeam(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Team, APIError, CreateTeamRequest>({
+    mutationFn: (req) => createTeam(orgId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
+    },
+  });
+}
+
+export function useUpdateTeam(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Team, APIError, { teamId: string } & UpdateTeamRequest>({
+    mutationFn: ({ teamId, ...req }) => updateTeam(orgId, teamId, req),
+    onSuccess: () => {
+      // Reparenting rewrites the paths of the whole subtree — refetch all.
+      queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
+    },
+  });
+}
+
+export function useDeleteTeam(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (teamId) => deleteTeam(orgId, teamId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
+    },
+  });
+}
+
+export function usePutTeamMember(orgId: string, teamId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<TeamMember, APIError, { userId: string } & PutTeamMemberRequest>({
+    mutationFn: ({ userId, ...req }) => putTeamMember(orgId, teamId, userId, req),
+    onSuccess: () => {
+      // is_primary: true clears the user's primary flag elsewhere — the
+      // ['teams', orgId] prefix reaches every team's member list.
+      queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
+    },
+  });
+}
+
+export function useRemoveTeamMember(orgId: string, teamId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (userId) => removeTeamMember(orgId, teamId, userId),
+    onSuccess: () => {
+      // A user removed from their last team is re-added to the org default
+      // team — another team's member list just changed too.
+      queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Grant hooks (P2)
+// ---------------------------------------------------------------------------
+
+export function useSpaceGrants(orgId: string, spaceId: string, opts?: QueryOpts<SpaceGrant[]>) {
+  return useQuery<SpaceGrant[], APIError>({
+    queryKey: queryKeys.spaceGrants(orgId, spaceId),
+    queryFn: () => fetchSpaceGrants(orgId, spaceId),
+    enabled: !!orgId && !!spaceId,
+    retry: (failureCount, error) => {
+      // 403 is a stable answer (manage_grants missing), not a flake.
+      if (error?.status === 403 || error?.status === 404) return false;
+      return failureCount < 2;
+    },
+    ...opts,
+  });
+}
+
+export function useCreateGrant(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<SpaceGrant, APIError, CreateGrantRequest>({
+    mutationFn: (req) => createGrant(orgId, spaceId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaceGrants(orgId, spaceId) });
+    },
+  });
+}
+
+export function useUpdateGrant(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<SpaceGrant, APIError, { grantId: string; role: GrantRole }>({
+    mutationFn: ({ grantId, role }) => updateGrant(orgId, spaceId, grantId, role),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaceGrants(orgId, spaceId) });
+    },
+  });
+}
+
+export function useRevokeGrant(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (grantId) => revokeGrant(orgId, spaceId, grantId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaceGrants(orgId, spaceId) });
+    },
+  });
+}
+
+export function useEffectiveAccess(
+  orgId: string,
+  spaceId: string,
+  userId?: string,
+  opts?: QueryOpts<EffectiveAccess>,
+) {
+  return useQuery<EffectiveAccess, APIError>({
+    queryKey: queryKeys.effectiveAccess(spaceId, userId),
+    queryFn: () => fetchEffectiveAccess(orgId, spaceId, userId),
+    enabled: !!orgId && !!spaceId,
+    ...opts,
+  });
+}
+
+export function useUpdateSpace(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Space, APIError, UpdateSpaceRequest>({
+    mutationFn: (req) => updateSpace(orgId, spaceId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.space(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaces(orgId) });
+    },
+  });
+}
+
 // Re-export create helpers for direct use
 export {
   createSpace,
@@ -1535,4 +1942,9 @@ export {
   type RegisterRequest,
   type AuthResponse,
   type CreateCommentRequest,
+  type UpdateSpaceRequest,
+  type CreateTeamRequest,
+  type UpdateTeamRequest,
+  type PutTeamMemberRequest,
+  type CreateGrantRequest,
 };
