@@ -131,6 +131,17 @@ export interface WorkflowState {
   created_at: string;
 }
 
+export interface Workflow {
+  id: string;
+  org_id: string;
+  name: string;
+  description?: string | null;
+  is_default: boolean;
+  applies_to: 'tickets' | 'project_items';
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Organization {
   id: string;
   name: string;
@@ -869,6 +880,9 @@ export const queryKeys = {
   roadmapSprints: (spaceId: string) => ['roadmapSprints', spaceId] as const,
   itemSearch: (spaceId: string, q: string) => ['itemSearch', spaceId, q] as const,
   workflowStates: (spaceId: string) => ['workflowStates', spaceId] as const,
+  orgWorkflows: (orgId: string) => ['orgWorkflows', orgId] as const,
+  orgWorkflowStates: (orgId: string, workflowId: string) =>
+    ['orgWorkflowStates', orgId, workflowId] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -1458,6 +1472,42 @@ export function useWorkflowStates(spaceId: string, opts?: QueryOpts<WorkflowStat
     queryFn: () => fetchWorkflowStates(spaceId),
     enabled: !!spaceId,
     staleTime: 5 * 60 * 1000, // workflow states rarely change
+    ...opts,
+  });
+}
+
+// Org-scoped workflow admin surface (/orgs/{orgId}/workflows/...) — distinct
+// from useWorkflowStates above, which reads the resolved workflow of one space.
+async function fetchOrgWorkflows(orgId: string): Promise<Workflow[]> {
+  return apiFetch<Workflow[]>(`/orgs/${orgId}/workflows`);
+}
+
+export function useOrgWorkflows(orgId: string, opts?: QueryOpts<Workflow[]>) {
+  return useQuery<Workflow[], APIError>({
+    queryKey: queryKeys.orgWorkflows(orgId),
+    queryFn: () => fetchOrgWorkflows(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+async function fetchOrgWorkflowStates(
+  orgId: string,
+  workflowId: string,
+): Promise<WorkflowState[]> {
+  return apiFetch<WorkflowState[]>(`/orgs/${orgId}/workflows/${workflowId}/states`);
+}
+
+export function useOrgWorkflowStates(
+  orgId: string,
+  workflowId: string,
+  opts?: QueryOpts<WorkflowState[]>,
+) {
+  return useQuery<WorkflowState[], APIError>({
+    queryKey: queryKeys.orgWorkflowStates(orgId, workflowId),
+    queryFn: () => fetchOrgWorkflowStates(orgId, workflowId),
+    enabled: !!orgId && !!workflowId,
+    staleTime: 5 * 60 * 1000, // workflow definitions rarely change
     ...opts,
   });
 }
