@@ -190,12 +190,15 @@ jobs:
           path: test-output.txt
           retention-days: 3
 
-      - name: Enforce minimum coverage (70%)
+      # 80 matches the spec's stated gate (v0.3 IA spec §2.8) — the pipeline
+      # enforced 70 while the spec said 80; P1.5 aligned them. Rises to 85 at
+      # the end of P5, per the same section.
+      - name: Enforce minimum coverage (80%)
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
-            echo "❌ Coverage ${COVERAGE}% is below the 70% floor"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below the 80% floor"
             exit 1
           fi
           echo "✅ Coverage ${COVERAGE}% meets minimum"
