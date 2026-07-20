@@ -49,27 +49,8 @@ func (a *InviteAdapter) inTx(ctx context.Context, fn func(q *generated.Queries) 
 // duplicate active invite, dead team). The partial unique index backstops
 // the duplicate check against races.
 func (a *InviteAdapter) Create(ctx context.Context, inv invites.Invite, tokenHash string) (invites.Invite, error) {
-	// The invited email may already hold an account (login-path semantics:
-	// the account GetUserByEmail resolves). If that account is already a
-	// member, the invite is pointless — reject with a specific error.
-	if u, err := a.q.GetUserByEmail(ctx, inv.Email); err == nil {
-		if _, mErr := a.q.GetMembership(ctx, generated.GetMembershipParams{OrgID: inv.OrgID, UserID: u.ID}); mErr == nil {
-			return invites.Invite{}, invites.ErrAlreadyMember
-		} else if !errors.Is(mErr, pgx.ErrNoRows) {
-			return invites.Invite{}, fmt.Errorf("invite adapter create: checking membership: %w", mErr)
-		}
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return invites.Invite{}, fmt.Errorf("invite adapter create: checking email: %w", err)
-	}
-
-	if inv.TeamID != nil {
-		team, err := a.q.GetTeamByID(ctx, *inv.TeamID)
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (team.OrgID != inv.OrgID || team.DeletedAt.Valid)) {
-			return invites.Invite{}, invites.ErrTeamNotFound
-		}
-		if err != nil {
-			return invites.Invite{}, fmt.Errorf("invite adapter create: checking team: %w", err)
-		}
+	if err := a.checkInviteCreatable(ctx, inv); err != nil {
+		return invites.Invite{}, err
 	}
 
 	row, err := a.q.CreateInvite(ctx, generated.CreateInviteParams{
@@ -89,6 +70,42 @@ func (a *InviteAdapter) Create(ctx context.Context, inv invites.Invite, tokenHas
 		return invites.Invite{}, fmt.Errorf("invite adapter create: %w", err)
 	}
 	return dbInviteToDomain(row), nil
+}
+
+// checkInviteCreatable rejects invites for existing members (the invited
+// email may already hold an account — login-path semantics: the account
+// GetUserByEmail resolves) and invites naming a team that is not a live
+// team of the org.
+func (a *InviteAdapter) checkInviteCreatable(ctx context.Context, inv invites.Invite) error {
+	if u, err := a.q.GetUserByEmail(ctx, inv.Email); err == nil {
+		if _, mErr := a.q.GetMembership(ctx, generated.GetMembershipParams{OrgID: inv.OrgID, UserID: u.ID}); mErr == nil {
+			return invites.ErrAlreadyMember
+		} else if !errors.Is(mErr, pgx.ErrNoRows) {
+			return fmt.Errorf("invite adapter create: checking membership: %w", mErr)
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("invite adapter create: checking email: %w", err)
+	}
+	return a.checkInviteTeam(ctx, inv)
+}
+
+// checkInviteTeam verifies the optional initial team is a live team of the
+// invite's org.
+func (a *InviteAdapter) checkInviteTeam(ctx context.Context, inv invites.Invite) error {
+	if inv.TeamID == nil {
+		return nil
+	}
+	team, err := a.q.GetTeamByID(ctx, *inv.TeamID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return invites.ErrTeamNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("invite adapter create: checking team: %w", err)
+	}
+	if team.OrgID != inv.OrgID || team.DeletedAt.Valid {
+		return invites.ErrTeamNotFound
+	}
+	return nil
 }
 
 // GetByID returns one invite scoped to the org.
@@ -189,104 +206,25 @@ func (a *InviteAdapter) InspectByTokenHash(ctx context.Context, tokenHash string
 func (a *InviteAdapter) Accept(ctx context.Context, tokenHash string, newUser *invites.NewUser) (invites.AcceptOutcome, error) {
 	var out invites.AcceptOutcome
 	err := a.inTx(ctx, func(q *generated.Queries) error {
-		row, err := q.GetInviteByTokenHash(ctx, tokenHash)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return invites.ErrNotFound
-		}
+		row, org, err := loadAcceptableInvite(ctx, q, tokenHash)
 		if err != nil {
-			return fmt.Errorf("loading invite: %w", err)
-		}
-		switch inviteState(row) {
-		case "revoked":
-			return invites.ErrRevoked
-		case "accepted":
-			return invites.ErrAlreadyAccepted
-		case "expired":
-			return invites.ErrExpired
-		}
-
-		org, err := q.GetOrganizationByID(ctx, row.OrgID)
-		if err != nil {
-			return fmt.Errorf("loading org: %w", err)
+			return err
 		}
 
 		// Resolve the account: the invited email's existing account, or a
 		// fresh user created inside this transaction. Never a second user
 		// for an email that already has one, never a second org.
-		var user generated.User
-		existingUser, err := q.GetUserByEmail(ctx, row.Email)
-		switch {
-		case err == nil:
-			if !existingUser.IsActive {
-				return invites.ErrAccountInactive
-			}
-			user = existingUser
-			out.ExistingAccount = true
-		case errors.Is(err, pgx.ErrNoRows):
-			if newUser == nil {
-				return invites.ErrDisplayNameAndPasswordRequired
-			}
-			hash, err := auth.HashPassword(newUser.Password)
-			if err != nil {
-				return fmt.Errorf("hashing password: %w", err)
-			}
-			user, err = q.CreateUser(ctx, generated.CreateUserParams{
-				ID:           uuid.New(),
-				OrgID:        row.OrgID,
-				Email:        row.Email,
-				DisplayName:  newUser.DisplayName,
-				PasswordHash: &hash,
-				Role:         "member",
-			})
-			if err != nil {
-				return fmt.Errorf("creating user: %w", err)
-			}
-		default:
-			return fmt.Errorf("checking email: %w", err)
-		}
-
-		// Membership: add unless it appeared since the invite was created
-		// (acceptance is then an idempotent join).
-		_, err = q.GetMembership(ctx, generated.GetMembershipParams{OrgID: row.OrgID, UserID: user.ID})
-		if errors.Is(err, pgx.ErrNoRows) {
-			invitedBy := row.InvitedBy
-			if _, err := q.CreateMembership(ctx, generated.CreateMembershipParams{
-				ID:        uuid.New(),
-				OrgID:     row.OrgID,
-				UserID:    user.ID,
-				Role:      row.OrgRole,
-				InvitedBy: pgUUID(&invitedBy),
-			}); err != nil {
-				return fmt.Errorf("creating membership: %w", err)
-			}
-		} else if err != nil {
-			return fmt.Errorf("checking membership: %w", err)
-		}
-
-		// Team enrolment: the invite's initial team when it is still a live
-		// team of the org, else the org default team (ADR-0006: never
-		// teamless). Primary only when the user holds no primary here yet.
-		teamID, err := resolveInviteTeam(ctx, q, row)
+		user, existing, err := resolveAcceptUser(ctx, q, row, newUser)
 		if err != nil {
 			return err
 		}
-		if _, err := q.AddTeamMember(ctx, generated.AddTeamMemberParams{
-			TeamID:    teamID,
-			UserID:    user.ID,
-			OrgID:     row.OrgID,
-			Role:      "member",
-			IsPrimary: false,
-			Source:    "manual",
-		}); err != nil {
-			return fmt.Errorf("enrolling in team: %w", err)
+		out.ExistingAccount = existing
+
+		if err := addAcceptMembership(ctx, q, row, user.ID); err != nil {
+			return err
 		}
-		_, err = q.GetPrimaryTeamMember(ctx, generated.GetPrimaryTeamMemberParams{UserID: user.ID, OrgID: row.OrgID})
-		if errors.Is(err, pgx.ErrNoRows) {
-			if err := q.SetPrimaryFlag(ctx, generated.SetPrimaryFlagParams{TeamID: teamID, UserID: user.ID}); err != nil {
-				return fmt.Errorf("marking primary: %w", err)
-			}
-		} else if err != nil {
-			return fmt.Errorf("checking primary: %w", err)
+		if err := enrolAcceptTeam(ctx, q, row, user.ID); err != nil {
+			return err
 		}
 
 		// Consume the invite last; the guarded UPDATE (0 rows when no
@@ -312,6 +250,121 @@ func (a *InviteAdapter) Accept(ctx context.Context, tokenHash string, newUser *i
 		return invites.AcceptOutcome{}, err
 	}
 	return out, nil
+}
+
+// loadAcceptableInvite loads the invite by token hash and rejects dead
+// states, returning the invite together with its organisation.
+func loadAcceptableInvite(ctx context.Context, q *generated.Queries, tokenHash string) (generated.Invite, generated.Organization, error) {
+	row, err := q.GetInviteByTokenHash(ctx, tokenHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return generated.Invite{}, generated.Organization{}, invites.ErrNotFound
+	}
+	if err != nil {
+		return generated.Invite{}, generated.Organization{}, fmt.Errorf("loading invite: %w", err)
+	}
+	switch inviteState(row) {
+	case "revoked":
+		return generated.Invite{}, generated.Organization{}, invites.ErrRevoked
+	case "accepted":
+		return generated.Invite{}, generated.Organization{}, invites.ErrAlreadyAccepted
+	case "expired":
+		return generated.Invite{}, generated.Organization{}, invites.ErrExpired
+	}
+	org, err := q.GetOrganizationByID(ctx, row.OrgID)
+	if err != nil {
+		return generated.Invite{}, generated.Organization{}, fmt.Errorf("loading org: %w", err)
+	}
+	return row, org, nil
+}
+
+// resolveAcceptUser returns the account the invite attaches to: the
+// existing account holding the invited email (existing=true), or a fresh
+// user created inside the transaction.
+func resolveAcceptUser(ctx context.Context, q *generated.Queries, row generated.Invite, newUser *invites.NewUser) (generated.User, bool, error) {
+	existingUser, err := q.GetUserByEmail(ctx, row.Email)
+	switch {
+	case err == nil:
+		if !existingUser.IsActive {
+			return generated.User{}, false, invites.ErrAccountInactive
+		}
+		return existingUser, true, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		if newUser == nil {
+			return generated.User{}, false, invites.ErrDisplayNameAndPasswordRequired
+		}
+		hash, err := auth.HashPassword(newUser.Password)
+		if err != nil {
+			return generated.User{}, false, fmt.Errorf("hashing password: %w", err)
+		}
+		user, err := q.CreateUser(ctx, generated.CreateUserParams{
+			ID:           uuid.New(),
+			OrgID:        row.OrgID,
+			Email:        row.Email,
+			DisplayName:  newUser.DisplayName,
+			PasswordHash: &hash,
+			Role:         "member",
+		})
+		if err != nil {
+			return generated.User{}, false, fmt.Errorf("creating user: %w", err)
+		}
+		return user, false, nil
+	default:
+		return generated.User{}, false, fmt.Errorf("checking email: %w", err)
+	}
+}
+
+// addAcceptMembership adds the org membership unless it appeared since the
+// invite was created (acceptance is then an idempotent join).
+func addAcceptMembership(ctx context.Context, q *generated.Queries, row generated.Invite, userID uuid.UUID) error {
+	_, err := q.GetMembership(ctx, generated.GetMembershipParams{OrgID: row.OrgID, UserID: userID})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("checking membership: %w", err)
+	}
+	invitedBy := row.InvitedBy
+	if _, err := q.CreateMembership(ctx, generated.CreateMembershipParams{
+		ID:        uuid.New(),
+		OrgID:     row.OrgID,
+		UserID:    userID,
+		Role:      row.OrgRole,
+		InvitedBy: pgUUID(&invitedBy),
+	}); err != nil {
+		return fmt.Errorf("creating membership: %w", err)
+	}
+	return nil
+}
+
+// enrolAcceptTeam enrols the user in the invite's initial team when it is
+// still a live team of the org, else the org default team (ADR-0006: never
+// teamless). Primary only when the user holds no primary here yet.
+func enrolAcceptTeam(ctx context.Context, q *generated.Queries, row generated.Invite, userID uuid.UUID) error {
+	teamID, err := resolveInviteTeam(ctx, q, row)
+	if err != nil {
+		return err
+	}
+	if _, err := q.AddTeamMember(ctx, generated.AddTeamMemberParams{
+		TeamID:    teamID,
+		UserID:    userID,
+		OrgID:     row.OrgID,
+		Role:      "member",
+		IsPrimary: false,
+		Source:    "manual",
+	}); err != nil {
+		return fmt.Errorf("enrolling in team: %w", err)
+	}
+	_, err = q.GetPrimaryTeamMember(ctx, generated.GetPrimaryTeamMemberParams{UserID: userID, OrgID: row.OrgID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err := q.SetPrimaryFlag(ctx, generated.SetPrimaryFlagParams{TeamID: teamID, UserID: userID}); err != nil {
+			return fmt.Errorf("marking primary: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("checking primary: %w", err)
+	}
+	return nil
 }
 
 // resolveInviteTeam picks the enrolment team: the invite's team when it is

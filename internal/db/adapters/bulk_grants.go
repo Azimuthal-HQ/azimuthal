@@ -106,35 +106,51 @@ type existingGrant struct {
 func computeBulkDiff(changes []access.BulkChange, current map[grantKey]existingGrant) access.BulkResult {
 	res := access.BulkResult{Actions: make([]access.BulkAction, 0, len(changes))}
 	for _, c := range changes {
-		key := grantKey{c.TeamID, c.SpaceID}
-		cur, exists := current[key]
-		action := access.BulkAction{TeamID: c.TeamID, SpaceID: c.SpaceID}
-		switch {
-		case c.Role == nil && !exists:
-			action.Action = "noop"
+		cur, exists := current[grantKey{c.TeamID, c.SpaceID}]
+		action := classifyChange(c, cur, exists)
+		switch action.Action {
+		case "noop":
 			res.Noops++
-		case c.Role == nil && exists:
-			action.Action = "revoke"
-			action.FromRole = cur.role
+		case "revoke":
 			res.Revokes++
-		case c.Role != nil && !exists:
-			action.Action = "create"
-			action.ToRole = c.Role.String()
+		case "create":
 			res.Creates++
-		case c.Role != nil && exists && cur.role == c.Role.String():
-			action.Action = "noop"
-			action.FromRole = cur.role
-			action.ToRole = cur.role
-			res.Noops++
-		default:
-			action.Action = "update"
-			action.FromRole = cur.role
-			action.ToRole = c.Role.String()
+		case "update":
 			res.Updates++
 		}
 		res.Actions = append(res.Actions, action)
 	}
 	return res
+}
+
+// classifyChange decides what one requested cell state does to the existing
+// grant there.
+func classifyChange(c access.BulkChange, cur existingGrant, exists bool) access.BulkAction {
+	action := access.BulkAction{TeamID: c.TeamID, SpaceID: c.SpaceID}
+	if c.Role == nil {
+		if !exists {
+			action.Action = "noop"
+			return action
+		}
+		action.Action = "revoke"
+		action.FromRole = cur.role
+		return action
+	}
+	if !exists {
+		action.Action = "create"
+		action.ToRole = c.Role.String()
+		return action
+	}
+	if cur.role == c.Role.String() {
+		action.Action = "noop"
+		action.FromRole = cur.role
+		action.ToRole = cur.role
+		return action
+	}
+	action.Action = "update"
+	action.FromRole = cur.role
+	action.ToRole = c.Role.String()
+	return action
 }
 
 // validateBulkTargets rejects changes naming teams or spaces that are not
@@ -227,74 +243,13 @@ func (a *BulkGrantAdapter) ApplyBulk(ctx context.Context, orgID, actorID uuid.UU
 	res = computeBulkDiff(changes, current)
 	res.BatchID = batchID
 
+	auditCtx := bulkAuditContext{orgID: orgID, actorID: actorID, batchID: batchID, ticketRef: ticketRef}
 	for _, action := range res.Actions {
-		var grantID uuid.UUID
-		var eventType audit.EventType
-		meta := map[string]string{
-			"space_id":     action.SpaceID.String(),
-			"subject_type": "team",
-			"subject_id":   action.TeamID.String(),
-		}
-		switch action.Action {
-		case "noop":
+		if action.Action == "noop" {
 			continue
-		case "create":
-			row, err := q.CreateSpaceGrant(ctx, generated.CreateSpaceGrantParams{
-				ID:          uuid.New(),
-				OrgID:       orgID,
-				SpaceID:     action.SpaceID,
-				SubjectType: "team",
-				SubjectID:   action.TeamID,
-				Role:        action.ToRole,
-				CreatedBy:   pgUUID(&actorID),
-			})
-			if err != nil {
-				return access.BulkResult{}, fmt.Errorf("bulk adapter apply: create %s/%s: %w", action.TeamID, action.SpaceID, err)
-			}
-			grantID = row.ID
-			eventType = audit.EventTypeGrantCreated
-			meta["role"] = action.ToRole
-		case "update":
-			cur := current[grantKey{action.TeamID, action.SpaceID}]
-			if _, err := q.UpdateSpaceGrantRole(ctx, generated.UpdateSpaceGrantRoleParams{ID: cur.id, Role: action.ToRole}); err != nil {
-				return access.BulkResult{}, fmt.Errorf("bulk adapter apply: update %s: %w", cur.id, err)
-			}
-			grantID = cur.id
-			eventType = audit.EventTypeGrantUpdated
-			meta["role"] = action.ToRole
-			meta["previous_role"] = action.FromRole
-		case "revoke":
-			cur := current[grantKey{action.TeamID, action.SpaceID}]
-			if err := q.DeleteSpaceGrant(ctx, cur.id); err != nil {
-				return access.BulkResult{}, fmt.Errorf("bulk adapter apply: revoke %s: %w", cur.id, err)
-			}
-			grantID = cur.id
-			eventType = audit.EventTypeGrantRevoked
-			meta["role"] = action.FromRole
 		}
-
-		payload, err := json.Marshal(meta)
-		if err != nil {
-			return access.BulkResult{}, fmt.Errorf("bulk adapter apply: marshalling audit payload: %w", err)
-		}
-		var tref *string
-		if ticketRef != "" {
-			tref = &ticketRef
-		}
-		if _, err := q.CreateAuditEvent(ctx, generated.CreateAuditEventParams{
-			ID:         uuid.New(),
-			OrgID:      orgID,
-			ActorID:    pgtype.UUID{Bytes: actorID, Valid: true},
-			Action:     string(eventType),
-			EntityKind: "grant",
-			EntityID:   grantID,
-			Payload:    payload,
-			BatchID:    pgtype.UUID{Bytes: batchID, Valid: true},
-			TicketRef:  tref,
-		}); err != nil {
-			// The audit trail is part of the batch's atomicity contract:
-			// failing to record it fails the batch.
-			return access.BulkResult{}, fmt.Errorf("bulk adapter apply: audit event: %w", err)
+		if err := executeBulkAction(ctx, q, orgID, actorID, action, current, auditCtx); err != nil {
+			return access.BulkResult{}, err
 		}
 	}
 
@@ -302,4 +257,88 @@ func (a *BulkGrantAdapter) ApplyBulk(ctx context.Context, orgID, actorID uuid.UU
 		return access.BulkResult{}, fmt.Errorf("bulk adapter apply: commit: %w", err)
 	}
 	return res, nil
+}
+
+// bulkAuditContext carries the batch identity every audit event shares.
+type bulkAuditContext struct {
+	orgID     uuid.UUID
+	actorID   uuid.UUID
+	batchID   uuid.UUID
+	ticketRef string
+}
+
+// executeBulkAction applies one diff line inside the transaction and writes
+// its audit event. Any failure fails the whole batch.
+func executeBulkAction(ctx context.Context, q *generated.Queries, orgID, actorID uuid.UUID, action access.BulkAction, current map[grantKey]existingGrant, auditCtx bulkAuditContext) error {
+	var grantID uuid.UUID
+	var eventType audit.EventType
+	meta := map[string]string{
+		"space_id":     action.SpaceID.String(),
+		"subject_type": "team",
+		"subject_id":   action.TeamID.String(),
+	}
+	switch action.Action {
+	case "create":
+		row, err := q.CreateSpaceGrant(ctx, generated.CreateSpaceGrantParams{
+			ID:          uuid.New(),
+			OrgID:       orgID,
+			SpaceID:     action.SpaceID,
+			SubjectType: "team",
+			SubjectID:   action.TeamID,
+			Role:        action.ToRole,
+			CreatedBy:   pgUUID(&actorID),
+		})
+		if err != nil {
+			return fmt.Errorf("bulk adapter apply: create %s/%s: %w", action.TeamID, action.SpaceID, err)
+		}
+		grantID = row.ID
+		eventType = audit.EventTypeGrantCreated
+		meta["role"] = action.ToRole
+	case "update":
+		cur := current[grantKey{action.TeamID, action.SpaceID}]
+		if _, err := q.UpdateSpaceGrantRole(ctx, generated.UpdateSpaceGrantRoleParams{ID: cur.id, Role: action.ToRole}); err != nil {
+			return fmt.Errorf("bulk adapter apply: update %s: %w", cur.id, err)
+		}
+		grantID = cur.id
+		eventType = audit.EventTypeGrantUpdated
+		meta["role"] = action.ToRole
+		meta["previous_role"] = action.FromRole
+	case "revoke":
+		cur := current[grantKey{action.TeamID, action.SpaceID}]
+		if err := q.DeleteSpaceGrant(ctx, cur.id); err != nil {
+			return fmt.Errorf("bulk adapter apply: revoke %s: %w", cur.id, err)
+		}
+		grantID = cur.id
+		eventType = audit.EventTypeGrantRevoked
+		meta["role"] = action.FromRole
+	}
+	return writeBulkAuditEvent(ctx, q, auditCtx, eventType, grantID, meta)
+}
+
+// writeBulkAuditEvent records one batch event through the transaction. The
+// audit trail is part of the batch's atomicity contract: failing to record
+// it fails the batch.
+func writeBulkAuditEvent(ctx context.Context, q *generated.Queries, auditCtx bulkAuditContext, eventType audit.EventType, grantID uuid.UUID, meta map[string]string) error {
+	payload, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("bulk adapter apply: marshalling audit payload: %w", err)
+	}
+	var tref *string
+	if auditCtx.ticketRef != "" {
+		tref = &auditCtx.ticketRef
+	}
+	if _, err := q.CreateAuditEvent(ctx, generated.CreateAuditEventParams{
+		ID:         uuid.New(),
+		OrgID:      auditCtx.orgID,
+		ActorID:    pgtype.UUID{Bytes: auditCtx.actorID, Valid: true},
+		Action:     string(eventType),
+		EntityKind: "grant",
+		EntityID:   grantID,
+		Payload:    payload,
+		BatchID:    pgtype.UUID{Bytes: auditCtx.batchID, Valid: true},
+		TicketRef:  tref,
+	}); err != nil {
+		return fmt.Errorf("bulk adapter apply: audit event: %w", err)
+	}
+	return nil
 }

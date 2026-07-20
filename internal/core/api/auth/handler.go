@@ -45,7 +45,7 @@ type Handler struct {
 	// states backs the refresh-path account check. nil (DB-less unit tests)
 	// skips it; every real construction site wires the same store the auth
 	// middleware uses.
-	states auth.AuthStateStore
+	states auth.StateStore
 	// allowRegistration gates POST /auth/register. Fail-closed: false unless
 	// a construction site opts in (production wires the config value, which
 	// also defaults to false — invites are the way in).
@@ -54,7 +54,7 @@ type Handler struct {
 
 // NewHandler creates an auth Handler. states may be nil only in DB-less
 // unit tests.
-func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner, states auth.AuthStateStore) *Handler {
+func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner, states auth.StateStore) *Handler {
 	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs, auditLog: audit.NewLogger(), states: states}
 }
 
@@ -161,9 +161,16 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the user's primary org from memberships.
-	// Falls back to the user's org_id if no memberships exist (e.g. registered
-	// via the API but not yet added to an org through admin create-user).
+	h.finishLogin(w, r, user)
+}
+
+// finishLogin resolves the primary org, mints the token pair with the
+// user's CURRENT generation (a login after a force logout or password
+// change must yield tokens that survive the check), stamps last sign-in,
+// and writes the response.
+func (h *Handler) finishLogin(w http.ResponseWriter, r *http.Request, user *auth.User) {
+	// Falls back to the user's org_id if no memberships exist (e.g.
+	// registered via the API but not yet added to an org).
 	orgID, orgSlug, orgName, err := h.memberships.PrimaryOrgForUser(r.Context(), user.ID)
 	if err != nil {
 		orgID = user.OrgID
@@ -171,8 +178,6 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		orgName = ""
 	}
 
-	// Tokens carry the user's CURRENT generation — a login after a force
-	// logout or password change must yield tokens that survive the check.
 	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, orgID.String(), user.Role, user.TokenGeneration)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
@@ -264,30 +269,9 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Provision a personal org before creating the user so the user row
-	// has a valid org_id foreign key.
-	orgID, orgSlug, err := h.provisionOrgForUser(r.Context(), req.DisplayName, req.Email, uuid.Nil)
-	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create organization")
+	user, orgID, orgSlug, ok := h.registerAccount(w, r, req)
+	if !ok {
 		return
-	}
-
-	user, err := h.users.CreateUserInOrg(r.Context(), req.Email, req.DisplayName, req.Password, orgID)
-	if err != nil {
-		if errors.Is(err, auth.ErrEmailTaken) {
-			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "email address already in use")
-			return
-		}
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create user")
-		return
-	}
-
-	// Create owner membership now that we have the user ID.
-	if h.orgs != nil {
-		if err := h.orgs.CreateMembership(r.Context(), orgID, user.ID); err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create membership")
-			return
-		}
 	}
 
 	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role, user.TokenGeneration)
@@ -314,6 +298,37 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 			Name: req.DisplayName,
 		},
 	})
+}
+
+// registerAccount provisions the personal org, creates the user, and adds
+// the owner membership, writing the error response itself on failure.
+func (h *Handler) registerAccount(w http.ResponseWriter, r *http.Request, req registerRequest) (*auth.User, uuid.UUID, string, bool) {
+	// Provision a personal org before creating the user so the user row
+	// has a valid org_id foreign key.
+	orgID, orgSlug, err := h.provisionOrgForUser(r.Context(), req.DisplayName, req.Email, uuid.Nil)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create organization")
+		return nil, uuid.Nil, "", false
+	}
+
+	user, err := h.users.CreateUserInOrg(r.Context(), req.Email, req.DisplayName, req.Password, orgID)
+	if err != nil {
+		if errors.Is(err, auth.ErrEmailTaken) {
+			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "email address already in use")
+			return nil, uuid.Nil, "", false
+		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create user")
+		return nil, uuid.Nil, "", false
+	}
+
+	// Create owner membership now that we have the user ID.
+	if h.orgs != nil {
+		if err := h.orgs.CreateMembership(r.Context(), orgID, user.ID); err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create membership")
+			return nil, uuid.Nil, "", false
+		}
+	}
+	return user, orgID, orgSlug, true
 }
 
 // Refresh exchanges a refresh token for a new token pair.

@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,10 +59,18 @@ func (r *Reader) List(ctx context.Context, orgID uuid.UUID, f ListFilter) ([]Ent
 	if f.Limit <= 0 || f.Limit > 100 {
 		f.Limit = 50
 	}
-	return r.store.ListEntries(ctx, orgID, f)
+	entries, err := r.store.ListEntries(ctx, orgID, f)
+	if err != nil {
+		return nil, fmt.Errorf("listing audit entries: %w", err)
+	}
+	return entries, nil
 }
 
 // BatchEvents expands one batch into its constituent events.
 func (r *Reader) BatchEvents(ctx context.Context, orgID, batchID uuid.UUID) ([]Entry, error) {
-	return r.store.ListBatchEvents(ctx, orgID, batchID)
+	entries, err := r.store.ListBatchEvents(ctx, orgID, batchID)
+	if err != nil {
+		return nil, fmt.Errorf("listing batch events: %w", err)
+	}
+	return entries, nil
 }

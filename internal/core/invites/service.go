@@ -180,7 +180,7 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, email, orgRole st
 		ExpiresAt: time.Now().UTC().Add(s.cfg.TTL),
 	}, hash)
 	if err != nil {
-		return Created{}, err
+		return Created{}, fmt.Errorf("creating invite: %w", err)
 	}
 
 	created := Created{Invite: inv, RawToken: raw, URL: s.inviteURL(raw)}
@@ -197,7 +197,7 @@ func (s *Service) Resend(ctx context.Context, orgID, id uuid.UUID) (Created, err
 	}
 	inv, err := s.store.RefreshToken(ctx, orgID, id, hash, time.Now().UTC().Add(s.cfg.TTL))
 	if err != nil {
-		return Created{}, err
+		return Created{}, fmt.Errorf("resending invite: %w", err)
 	}
 	created := Created{Invite: inv, RawToken: raw, URL: s.inviteURL(raw)}
 	created.Delivered = s.deliver(ctx, inv, created.URL)
@@ -206,17 +206,28 @@ func (s *Service) Resend(ctx context.Context, orgID, id uuid.UUID) (Created, err
 
 // List returns the org's pending invites.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Invite, error) {
-	return s.store.ListActive(ctx, orgID)
+	list, err := s.store.ListActive(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("listing invites: %w", err)
+	}
+	return list, nil
 }
 
 // Revoke marks an active invite revoked.
 func (s *Service) Revoke(ctx context.Context, orgID, id uuid.UUID) error {
-	return s.store.Revoke(ctx, orgID, id)
+	if err := s.store.Revoke(ctx, orgID, id); err != nil {
+		return fmt.Errorf("revoking invite: %w", err)
+	}
+	return nil
 }
 
 // GetByID returns one invite scoped to the org.
 func (s *Service) GetByID(ctx context.Context, orgID, id uuid.UUID) (Invite, error) {
-	return s.store.GetByID(ctx, orgID, id)
+	inv, err := s.store.GetByID(ctx, orgID, id)
+	if err != nil {
+		return Invite{}, fmt.Errorf("getting invite: %w", err)
+	}
+	return inv, nil
 }
 
 // Inspect answers the acceptance page's pre-submit lookup from a raw token.
@@ -224,7 +235,11 @@ func (s *Service) Inspect(ctx context.Context, rawToken string) (Inspection, err
 	if rawToken == "" {
 		return Inspection{}, ErrNotFound
 	}
-	return s.store.InspectByTokenHash(ctx, HashToken(rawToken))
+	insp, err := s.store.InspectByTokenHash(ctx, HashToken(rawToken))
+	if err != nil {
+		return Inspection{}, fmt.Errorf("inspecting invite: %w", err)
+	}
+	return insp, nil
 }
 
 // Accept consumes an invite. When the invited email has no account yet,
@@ -245,7 +260,11 @@ func (s *Service) Accept(ctx context.Context, rawToken string, newUser *NewUser)
 			return AcceptOutcome{}, ErrPasswordTooShort
 		}
 	}
-	return s.store.Accept(ctx, HashToken(rawToken), newUser)
+	outcome, err := s.store.Accept(ctx, HashToken(rawToken), newUser)
+	if err != nil {
+		return AcceptOutcome{}, fmt.Errorf("accepting invite: %w", err)
+	}
+	return outcome, nil
 }
 
 // deliver emails the invite when email delivery is configured. Send
@@ -284,7 +303,7 @@ func HashToken(raw string) string {
 func generateToken() (raw, hash string, err error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("reading random bytes: %w", err)
 	}
 	raw = base64.RawURLEncoding.EncodeToString(buf)
 	return raw, HashToken(raw), nil

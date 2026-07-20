@@ -20,21 +20,21 @@ const (
 	contextKeySession
 )
 
-// AuthState is the per-request account check: the live token_generation
+// State is the per-request account check: the live token_generation
 // column and active flag, read in a single primary-key query.
-type AuthState struct {
+type State struct {
 	TokenGeneration int
 	IsActive        bool
 }
 
-// AuthStateStore loads a user's live auth state. Implemented by
+// StateStore loads a user's live auth state. Implemented by
 // internal/db/adapters against the users table; the read must stay a single
 // constant-cost indexed lookup because it runs on every authenticated
 // request (TestMatrixAPI23 counts it).
-type AuthStateStore interface {
-	// AuthState returns the user's current auth state. Returns ErrNotFound
+type StateStore interface {
+	// State returns the user's current auth state. Returns ErrNotFound
 	// for unknown or soft-deleted users.
-	AuthState(ctx context.Context, userID uuid.UUID) (AuthState, error)
+	AuthState(ctx context.Context, userID uuid.UUID) (State, error)
 }
 
 // Authenticator provides HTTP middleware for the chi router.
@@ -46,13 +46,13 @@ type Authenticator struct {
 	// the check — permitted only for routing-only unit tests without a
 	// database, mirroring the RouterConfig.AccessResolver convention; every
 	// real construction site wires one.
-	states AuthStateStore
+	states StateStore
 }
 
 // NewAuthenticator creates an Authenticator using the provided services.
 // states may be nil ONLY in routing-only unit tests; production and the
 // integration harness always wire the DB-backed store.
-func NewAuthenticator(jwt *JWTService, session *SessionService, states AuthStateStore) *Authenticator {
+func NewAuthenticator(jwt *JWTService, session *SessionService, states StateStore) *Authenticator {
 	return &Authenticator{jwt: jwt, session: session, states: states}
 }
 

@@ -119,17 +119,17 @@ func (a *UserAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// AuthState implements auth.AuthStateStore: the single primary-key read the
+// AuthState implements auth.StateStore: the single primary-key read the
 // auth middleware performs on every request (token_generation + is_active).
-func (a *UserAdapter) AuthState(ctx context.Context, id uuid.UUID) (auth.AuthState, error) {
+func (a *UserAdapter) AuthState(ctx context.Context, id uuid.UUID) (auth.State, error) {
 	row, err := a.q.GetUserAuthState(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return auth.AuthState{}, auth.ErrNotFound
+		return auth.State{}, auth.ErrNotFound
 	}
 	if err != nil {
-		return auth.AuthState{}, fmt.Errorf("user adapter auth state: %w", err)
+		return auth.State{}, fmt.Errorf("user adapter auth state: %w", err)
 	}
-	return auth.AuthState{
+	return auth.State{
 		TokenGeneration: int(row.TokenGeneration),
 		IsActive:        row.IsActive,
 	}, nil

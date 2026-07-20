@@ -113,28 +113,37 @@ func Load() (*Config, error) {
 		LogLevel:          v.GetString("LOG_LEVEL"),
 	}
 
-	expiryStr := v.GetString("JWT_EXPIRY")
-	expiry, err := time.ParseDuration(expiryStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid JWT_EXPIRY %q: %w", expiryStr, err)
+	if err := cfg.parseDurations(v); err != nil {
+		return nil, err
 	}
-	cfg.JWTExpiry = expiry
-
-	inviteTTLStr := v.GetString("AZIMUTHAL_INVITE_TTL")
-	inviteTTL, err := time.ParseDuration(inviteTTLStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid AZIMUTHAL_INVITE_TTL %q: %w", inviteTTLStr, err)
-	}
-	if inviteTTL <= 0 {
-		return nil, fmt.Errorf("invalid AZIMUTHAL_INVITE_TTL %q: must be positive", inviteTTLStr)
-	}
-	cfg.InviteTTL = inviteTTL
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 
 	return cfg, nil
+}
+
+// parseDurations reads the duration-typed settings, failing loudly on
+// unparseable or nonsensical values.
+func (c *Config) parseDurations(v *viper.Viper) error {
+	expiryStr := v.GetString("JWT_EXPIRY")
+	expiry, err := time.ParseDuration(expiryStr)
+	if err != nil {
+		return fmt.Errorf("invalid JWT_EXPIRY %q: %w", expiryStr, err)
+	}
+	c.JWTExpiry = expiry
+
+	inviteTTLStr := v.GetString("AZIMUTHAL_INVITE_TTL")
+	inviteTTL, err := time.ParseDuration(inviteTTLStr)
+	if err != nil {
+		return fmt.Errorf("invalid AZIMUTHAL_INVITE_TTL %q: %w", inviteTTLStr, err)
+	}
+	if inviteTTL <= 0 {
+		return fmt.Errorf("invalid AZIMUTHAL_INVITE_TTL %q: must be positive", inviteTTLStr)
+	}
+	c.InviteTTL = inviteTTL
+	return nil
 }
 
 // IsTest reports whether the application is running in test mode.

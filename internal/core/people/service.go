@@ -15,6 +15,7 @@ package people
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -89,33 +90,53 @@ func NewService(store Store) *Service { return &Service{store: store} }
 
 // List returns every member of the org.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Person, error) {
-	return s.store.List(ctx, orgID)
+	people, err := s.store.List(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("listing people: %w", err)
+	}
+	return people, nil
 }
 
 // Search returns active members matching the query, for the picker.
 func (s *Service) Search(ctx context.Context, orgID uuid.UUID, query string) ([]PersonRef, error) {
-	return s.store.Search(ctx, orgID, query)
+	refs, err := s.store.Search(ctx, orgID, query)
+	if err != nil {
+		return nil, fmt.Errorf("searching members: %w", err)
+	}
+	return refs, nil
 }
 
 // Deactivate blocks sign-in and always terminates the user's sessions.
 func (s *Service) Deactivate(ctx context.Context, orgID, userID uuid.UUID) error {
-	return s.store.Deactivate(ctx, orgID, userID)
+	if err := s.store.Deactivate(ctx, orgID, userID); err != nil {
+		return fmt.Errorf("deactivating user: %w", err)
+	}
+	return nil
 }
 
 // Reactivate re-enables sign-in.
 func (s *Service) Reactivate(ctx context.Context, orgID, userID uuid.UUID) error {
-	return s.store.Reactivate(ctx, orgID, userID)
+	if err := s.store.Reactivate(ctx, orgID, userID); err != nil {
+		return fmt.Errorf("reactivating user: %w", err)
+	}
+	return nil
 }
 
 // ForceLogout signs the user out everywhere; they stay active.
 func (s *Service) ForceLogout(ctx context.Context, orgID, userID uuid.UUID) error {
-	return s.store.ForceLogout(ctx, orgID, userID)
+	if err := s.store.ForceLogout(ctx, orgID, userID); err != nil {
+		return fmt.Errorf("forcing logout: %w", err)
+	}
+	return nil
 }
 
 // RemoveFromOrg drops membership, team rows, and grants; the account and
 // authored content survive.
 func (s *Service) RemoveFromOrg(ctx context.Context, orgID, userID uuid.UUID) error {
-	return s.store.RemoveFromOrg(ctx, orgID, userID)
+	if err := s.store.RemoveFromOrg(ctx, orgID, userID); err != nil {
+		return fmt.Errorf("removing member: %w", err)
+	}
+	return nil
 }
 
 // ChangeOrgRole sets the membership role to member or admin. The owner role
@@ -124,10 +145,16 @@ func (s *Service) ChangeOrgRole(ctx context.Context, orgID, userID uuid.UUID, ro
 	if role != string(rbac.RoleMember) && role != string(rbac.RoleAdmin) {
 		return ErrInvalidOrgRole
 	}
-	return s.store.ChangeOrgRole(ctx, orgID, userID, role)
+	if err := s.store.ChangeOrgRole(ctx, orgID, userID, role); err != nil {
+		return fmt.Errorf("changing org role: %w", err)
+	}
+	return nil
 }
 
 // ChangePrimaryTeam enrols the user in the team if needed and marks it primary.
 func (s *Service) ChangePrimaryTeam(ctx context.Context, orgID, userID, teamID uuid.UUID) error {
-	return s.store.ChangePrimaryTeam(ctx, orgID, userID, teamID)
+	if err := s.store.ChangePrimaryTeam(ctx, orgID, userID, teamID); err != nil {
+		return fmt.Errorf("changing primary team: %w", err)
+	}
+	return nil
 }

@@ -3,8 +3,10 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -76,6 +78,20 @@ func parseAuditFilter(w http.ResponseWriter, r *http.Request) (audit.ListFilter,
 	if v := q.Get("action"); v != "" {
 		f.Action = &v
 	}
+	if v := q.Get("limit"); v != "" {
+		n, err := parsePositiveInt(v)
+		if err != nil {
+			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "limit must be a positive integer")
+			return f, false
+		}
+		f.Limit = n
+	}
+	return parseAuditWindow(w, r, f)
+}
+
+// parseAuditWindow parses the date-range and cursor parameters.
+func parseAuditWindow(w http.ResponseWriter, r *http.Request, f audit.ListFilter) (audit.ListFilter, bool) {
+	q := r.URL.Query()
 	if v := q.Get("from"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
@@ -100,14 +116,6 @@ func parseAuditFilter(w http.ResponseWriter, r *http.Request) (audit.ListFilter,
 		}
 		f.CursorCreatedAt = &createdAt
 		f.CursorID = &id
-	}
-	if v := q.Get("limit"); v != "" {
-		n, err := parsePositiveInt(v)
-		if err != nil {
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "limit must be a positive integer")
-			return f, false
-		}
-		f.Limit = n
 	}
 	return f, true
 }
@@ -205,23 +213,17 @@ func formatCursor(createdAt time.Time, id uuid.UUID) string {
 
 // parseCursor decodes a keyset cursor.
 func parseCursor(s string) (time.Time, uuid.UUID, error) {
-	comma := -1
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == ',' {
-			comma = i
-			break
-		}
-	}
+	comma := strings.LastIndexByte(s, ',')
 	if comma < 0 {
 		return time.Time{}, uuid.Nil, errInvalidCursor
 	}
 	t, err := time.Parse(time.RFC3339Nano, s[:comma])
 	if err != nil {
-		return time.Time{}, uuid.Nil, err
+		return time.Time{}, uuid.Nil, fmt.Errorf("cursor timestamp: %w", err)
 	}
 	id, err := uuid.Parse(s[comma+1:])
 	if err != nil {
-		return time.Time{}, uuid.Nil, err
+		return time.Time{}, uuid.Nil, fmt.Errorf("cursor id: %w", err)
 	}
 	return t, id, nil
 }
@@ -232,10 +234,12 @@ var errInvalidCursor = errors.New("invalid cursor")
 func parsePositiveInt(s string) (int, error) {
 	n, err := strconv.Atoi(s)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("parsing integer: %w", err)
 	}
 	if n <= 0 {
-		return 0, errors.New("must be positive")
+		return 0, errInvalidLimit
 	}
 	return n, nil
 }
+
+var errInvalidLimit = errors.New("must be positive")

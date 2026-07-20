@@ -104,6 +104,9 @@ access. You can then log in at `http://localhost:8080/login` with these credenti
 | `SMTP_PORT` | `25` | SMTP relay port |
 | `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `DATABASE_URL` | (auto) | PostgreSQL connection string. Auto-constructed in Docker Compose from `POSTGRES_PASSWORD` |
+| `AZIMUTHAL_ALLOW_REGISTRATION` | `false` | Open self-registration at `/auth/register`. Off by default since v0.3.2 — admins invite people from the Administration area instead. Instances relying on open registration must set this to `true` explicitly. |
+| `AZIMUTHAL_INVITE_DELIVERY` | `link` | How invite links reach people: `link` (the admin copies the one-time URL) or `email` (Azimuthal sends it — requires `SMTP_HOST` to be set explicitly; startup fails otherwise) |
+| `AZIMUTHAL_INVITE_TTL` | `168h` | Invite expiry window (Go duration format) |
 
 ## Running Migrations Manually
 

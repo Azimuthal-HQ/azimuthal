@@ -194,34 +194,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	results := make([]createInviteResult, 0, len(req.Emails))
 	created := 0
 	for _, email := range req.Emails {
-		res := createInviteResult{Email: invites.NormalizeEmail(email)}
-		c, err := h.invites.Create(r.Context(), orgID, email, req.OrgRole, req.TeamID, claims.UserID)
-		switch {
-		case err == nil:
-			res.Status = "created"
-			cr := createdInviteResponse{inviteResponse: toInviteResponse(c.Invite), InviteURL: c.URL, Delivered: c.Delivered}
-			res.Invite = &cr
+		res, fatal := h.createOneInvite(r, orgID, email, req)
+		if fatal != "" {
+			// Request-level validation problems (bad org_role, dead team)
+			// apply to the whole request, not one email.
+			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, fatal)
+			return
+		}
+		if res.Status == "created" {
 			created++
-			h.logInviteEvent(r, audit.EventTypeInviteCreated, c.Invite, map[string]string{"email": c.Invite.Email, "org_role": c.Invite.OrgRole})
-		case errors.Is(err, invites.ErrInvalidEmail):
-			res.Status = "invalid_email"
-			res.Error = "invalid email address"
-		case errors.Is(err, invites.ErrAlreadyMember):
-			res.Status = "already_member"
-			res.Error = "already a member of this organization"
-		case errors.Is(err, invites.ErrDuplicateInvite):
-			res.Status = "already_invited"
-			res.Error = "an active invite for this email already exists"
-		case errors.Is(err, invites.ErrInvalidOrgRole):
-			// Applies to the whole request, not one email.
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "org_role must be member or admin")
-			return
-		case errors.Is(err, invites.ErrTeamNotFound):
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "team not found in this organization")
-			return
-		default:
-			res.Status = "error"
-			res.Error = "failed to create invite"
 		}
 		results = append(results, res)
 	}
@@ -232,6 +213,39 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	respond.JSON(w, status, results)
+}
+
+// createOneInvite creates one invite and classifies the outcome. A non-empty
+// fatal return is a request-level validation message that fails the whole
+// call.
+func (h *Handler) createOneInvite(r *http.Request, orgID uuid.UUID, email string, req createInvitesRequest) (createInviteResult, string) {
+	claims := auth.ClaimsFromContext(r.Context())
+	res := createInviteResult{Email: invites.NormalizeEmail(email)}
+	c, err := h.invites.Create(r.Context(), orgID, email, req.OrgRole, req.TeamID, claims.UserID)
+	switch {
+	case err == nil:
+		res.Status = "created"
+		cr := createdInviteResponse{inviteResponse: toInviteResponse(c.Invite), InviteURL: c.URL, Delivered: c.Delivered}
+		res.Invite = &cr
+		h.logInviteEvent(r, audit.EventTypeInviteCreated, c.Invite, map[string]string{"email": c.Invite.Email, "org_role": c.Invite.OrgRole})
+	case errors.Is(err, invites.ErrInvalidEmail):
+		res.Status = "invalid_email"
+		res.Error = "invalid email address"
+	case errors.Is(err, invites.ErrAlreadyMember):
+		res.Status = "already_member"
+		res.Error = "already a member of this organization"
+	case errors.Is(err, invites.ErrDuplicateInvite):
+		res.Status = "already_invited"
+		res.Error = "an active invite for this email already exists"
+	case errors.Is(err, invites.ErrInvalidOrgRole):
+		return res, "org_role must be member or admin"
+	case errors.Is(err, invites.ErrTeamNotFound):
+		return res, "team not found in this organization"
+	default:
+		res.Status = "error"
+		res.Error = "failed to create invite"
+	}
+	return res, ""
 }
 
 // Revoke marks an active invite revoked; its link stops working.

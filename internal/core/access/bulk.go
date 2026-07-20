@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 )
@@ -103,7 +104,11 @@ func NewBulkService(store BulkStore) *BulkService { return &BulkService{store: s
 
 // Matrix loads the matrix data.
 func (s *BulkService) Matrix(ctx context.Context, orgID uuid.UUID) (MatrixData, error) {
-	return s.store.MatrixData(ctx, orgID)
+	data, err := s.store.MatrixData(ctx, orgID)
+	if err != nil {
+		return MatrixData{}, fmt.Errorf("loading matrix: %w", err)
+	}
+	return data, nil
 }
 
 // Preview computes the diff a bulk change would apply.
@@ -111,7 +116,11 @@ func (s *BulkService) Preview(ctx context.Context, orgID uuid.UUID, changes []Bu
 	if err := validateBulkSize(changes); err != nil {
 		return BulkResult{}, err
 	}
-	return s.store.PreviewBulk(ctx, orgID, changes)
+	res, err := s.store.PreviewBulk(ctx, orgID, changes)
+	if err != nil {
+		return BulkResult{}, fmt.Errorf("previewing bulk change: %w", err)
+	}
+	return res, nil
 }
 
 // Apply applies a bulk change as one transaction with one batch_id.
@@ -119,7 +128,11 @@ func (s *BulkService) Apply(ctx context.Context, orgID, actorID uuid.UUID, chang
 	if err := validateBulkSize(changes); err != nil {
 		return BulkResult{}, err
 	}
-	return s.store.ApplyBulk(ctx, orgID, actorID, changes, ticketRef)
+	res, err := s.store.ApplyBulk(ctx, orgID, actorID, changes, ticketRef)
+	if err != nil {
+		return BulkResult{}, fmt.Errorf("applying bulk change: %w", err)
+	}
+	return res, nil
 }
 
 // maxBulkChanges bounds one batch. Generous — a 50-team × 100-space matrix

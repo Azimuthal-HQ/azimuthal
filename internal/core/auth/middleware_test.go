@@ -22,18 +22,18 @@ func testAuthenticator(t *testing.T) (*Authenticator, *JWTService, *SessionServi
 	return auth, jwtSvc, sessSvc
 }
 
-// stubStateStore serves a fixed AuthState for every user id.
+// stubStateStore serves a fixed State for every user id.
 type stubStateStore struct {
-	state AuthState
+	state State
 	err   error
 }
 
-func (s *stubStateStore) AuthState(context.Context, uuid.UUID) (AuthState, error) {
+func (s *stubStateStore) AuthState(context.Context, uuid.UUID) (State, error) {
 	return s.state, s.err
 }
 
 // stubStateAuthenticator wires an Authenticator over a fixed auth state.
-func stubStateAuthenticator(t *testing.T, state AuthState, err error) (*Authenticator, *JWTService) {
+func stubStateAuthenticator(t *testing.T, state State, err error) (*Authenticator, *JWTService) {
 	t.Helper()
 	jwtSvc := NewJWTService(testTokenConfig(t))
 	sessSvc := NewSessionService(newStubSessionRepo(), SessionConfig{TTL: time.Hour})
@@ -43,7 +43,7 @@ func stubStateAuthenticator(t *testing.T, state AuthState, err error) (*Authenti
 func TestRequireAuth_StaleGenerationRejected(t *testing.T) {
 	// The live column moved past the claim (force logout / deactivation /
 	// password change) — the very next request must fail.
-	a, jwtSvc := stubStateAuthenticator(t, AuthState{TokenGeneration: 1, IsActive: true}, nil)
+	a, jwtSvc := stubStateAuthenticator(t, State{TokenGeneration: 1, IsActive: true}, nil)
 	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "stale@example.com", uuid.New().String(), "member", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestRequireAuth_StaleGenerationRejected(t *testing.T) {
 }
 
 func TestRequireAuth_MatchingGenerationAccepted(t *testing.T) {
-	a, jwtSvc := stubStateAuthenticator(t, AuthState{TokenGeneration: 4, IsActive: true}, nil)
+	a, jwtSvc := stubStateAuthenticator(t, State{TokenGeneration: 4, IsActive: true}, nil)
 	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "gen@example.com", uuid.New().String(), "member", 4)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestRequireAuth_MatchingGenerationAccepted(t *testing.T) {
 func TestRequireAuth_InactiveAccountRejected(t *testing.T) {
 	// Deactivated account, token minted before deactivation with a
 	// generation that would otherwise match: is_active alone must reject.
-	a, jwtSvc := stubStateAuthenticator(t, AuthState{TokenGeneration: 0, IsActive: false}, nil)
+	a, jwtSvc := stubStateAuthenticator(t, State{TokenGeneration: 0, IsActive: false}, nil)
 	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "inactive@example.com", uuid.New().String(), "member", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestRequireAuth_InactiveAccountRejected(t *testing.T) {
 }
 
 func TestRequireAuth_UnknownUserRejected(t *testing.T) {
-	a, jwtSvc := stubStateAuthenticator(t, AuthState{}, ErrNotFound)
+	a, jwtSvc := stubStateAuthenticator(t, State{}, ErrNotFound)
 	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "ghost@example.com", uuid.New().String(), "member", 0)
 	if err != nil {
 		t.Fatal(err)
