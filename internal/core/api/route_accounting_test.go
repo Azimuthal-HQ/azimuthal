@@ -18,6 +18,9 @@ import (
 //	user-scoped     RequireAuth; data is filtered by the caller's identity
 //	org-member      RequireAuth + ResolveAccess (404 for non-members)
 //	org-admin       org-member + RequireOrgAdmin on the mutation
+//	org-admin-404   org-member + RequireOrgAdmin404 — the P2.5 administration
+//	                surface: non-admins get 404, never 403, because the
+//	                surface's existence is itself privileged
 //	space-read      org-member + RequireSpaceInOrg + RequireSpaceReadable (404)
 //	space-write     space-read + the create_items write floor (403), with
 //	                handler-level refinement above the floor
@@ -34,9 +37,14 @@ var routeAccounting = map[string]string{
 	"GET /api/docs":              "public: API documentation UI",
 	"GET /api/docs/openapi.yaml": "public: committed OpenAPI spec",
 	"POST /api/v1/auth/login":    "public: credential exchange",
-	"POST /api/v1/auth/register": "public: account creation",
-	"POST /api/v1/auth/refresh":  "public: token refresh (validates refresh token)",
+	"POST /api/v1/auth/register": "public: account creation — 404 unless allow_registration (default off since P2.5)",
+	"POST /api/v1/auth/refresh":  "public: token refresh (validates refresh token + live account state)",
 	"POST /api/v1/auth/logout":   "public: session teardown (validates session)",
+
+	// Invite acceptance: possession of the raw crypto/rand token is the
+	// credential, exactly like a password-reset link.
+	"GET /api/v1/invites/{token}": "public: invite inspection, token-authenticated",
+	"POST /api/v1/invites/accept": "public: invite acceptance, token-authenticated",
 
 	// User-scoped: authenticated, filtered by caller identity, no org data
 	// beyond the caller's own memberships.
@@ -62,6 +70,28 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/teams/{teamID}/members":             "org-member",
 	"PUT /api/v1/orgs/{orgID}/teams/{teamID}/members/{userID}":    "org-admin",
 	"DELETE /api/v1/orgs/{orgID}/teams/{teamID}/members/{userID}": "org-admin",
+
+	// The P2.5 administration surface (people lifecycle, invites, access
+	// matrix, bulk grants, audit viewer): org-admin-404 throughout — the
+	// surface does not exist as far as non-admins can tell. The picker
+	// search is the one member-visible route (space admins operate the
+	// grants panel without being org admins).
+	"GET /api/v1/orgs/{orgID}/users/":                       "org-admin-404: People directory",
+	"PATCH /api/v1/orgs/{orgID}/users/{userID}":             "org-admin-404: org role / primary team; last-admin protected in the store",
+	"DELETE /api/v1/orgs/{orgID}/users/{userID}":            "org-admin-404: remove from org; last-admin protected in the store",
+	"POST /api/v1/orgs/{orgID}/users/{userID}/deactivate":   "org-admin-404: always terminates sessions; last-admin protected in the store",
+	"POST /api/v1/orgs/{orgID}/users/{userID}/reactivate":   "org-admin-404",
+	"POST /api/v1/orgs/{orgID}/users/{userID}/force-logout": "org-admin-404: bumps token_generation only; user stays active",
+	"GET /api/v1/orgs/{orgID}/invites/":                     "org-admin-404",
+	"POST /api/v1/orgs/{orgID}/invites/":                    "org-admin-404: raw token returned once, hashed at rest",
+	"DELETE /api/v1/orgs/{orgID}/invites/{inviteID}":        "org-admin-404: revoke",
+	"POST /api/v1/orgs/{orgID}/invites/{inviteID}/resend":   "org-admin-404: rotates the token",
+	"GET /api/v1/orgs/{orgID}/access-matrix":                "org-admin-404: teams × spaces grant matrix",
+	"POST /api/v1/orgs/{orgID}/grants/bulk-preview":         "org-admin-404: diff only, writes nothing",
+	"POST /api/v1/orgs/{orgID}/grants/bulk-apply":           "org-admin-404: one transaction, one batch_id, one audit batch",
+	"GET /api/v1/orgs/{orgID}/audit-log/":                   "org-admin-404: append-only viewer, batches collapsed",
+	"GET /api/v1/orgs/{orgID}/audit-log/batches/{batchID}":  "org-admin-404: batch expansion",
+	"GET /api/v1/orgs/{orgID}/members/search":               "org-member: person picker over active members",
 
 	// Workflows: members read, admins mutate.
 	"GET /api/v1/orgs/{orgID}/workflows/":                                           "org-member",

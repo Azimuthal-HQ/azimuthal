@@ -38,6 +38,13 @@ type Claims struct {
 	Role   string    `json:"role"`
 	// TokenType differentiates "access" from "refresh" tokens.
 	TokenType string `json:"typ"`
+	// TokenGeneration mirrors users.token_generation at issue time. The auth
+	// middleware compares it against the live column on every request and
+	// rejects any mismatch — incrementing the column instantly invalidates
+	// every outstanding token (deactivation, force logout, password change).
+	// Tokens minted before this claim existed decode as 0, matching the
+	// column default, so the upgrade disrupts no session.
+	TokenGeneration int `json:"tgen"`
 	jwt.RegisteredClaims
 }
 
@@ -51,13 +58,16 @@ func NewJWTService(cfg TokenConfig) *JWTService {
 	return &JWTService{cfg: cfg}
 }
 
-// IssueTokenPair generates a new access/refresh token pair for the given user.
-func (s *JWTService) IssueTokenPair(userID uuid.UUID, email, orgID, role string) (*TokenPair, error) {
-	access, err := s.signToken(userID, email, orgID, role, "access", s.cfg.AccessTTL)
+// IssueTokenPair generates a new access/refresh token pair for the given
+// user. generation must be the user's CURRENT token_generation — a token
+// minted with a stale generation is rejected by the auth middleware on its
+// first use.
+func (s *JWTService) IssueTokenPair(userID uuid.UUID, email, orgID, role string, generation int) (*TokenPair, error) {
+	access, err := s.signToken(userID, email, orgID, role, "access", generation, s.cfg.AccessTTL)
 	if err != nil {
 		return nil, fmt.Errorf("issuing access token: %w", err)
 	}
-	refresh, err := s.signToken(userID, email, orgID, role, "refresh", s.cfg.RefreshTTL)
+	refresh, err := s.signToken(userID, email, orgID, role, "refresh", generation, s.cfg.RefreshTTL)
 	if err != nil {
 		return nil, fmt.Errorf("issuing refresh token: %w", err)
 	}
@@ -77,9 +87,13 @@ func (s *JWTService) ValidateAccessToken(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
-// RefreshTokens validates a refresh token and, if valid, issues a new token pair.
-// Returns ErrInvalidToken if the token is invalid or not a refresh token.
-func (s *JWTService) RefreshTokens(refreshTokenString string) (*TokenPair, error) {
+// ValidateRefreshToken parses and verifies a refresh token, returning its
+// claims. Returns ErrInvalidToken if the token is malformed, expired, or not
+// a refresh token. The caller (the refresh handler) must check the claims'
+// TokenGeneration and the account's active status against the store before
+// issuing a new pair — a refresh token survives neither deactivation nor a
+// generation bump.
+func (s *JWTService) ValidateRefreshToken(refreshTokenString string) (*Claims, error) {
 	claims, err := s.parseToken(refreshTokenString)
 	if err != nil {
 		return nil, err
@@ -87,18 +101,19 @@ func (s *JWTService) RefreshTokens(refreshTokenString string) (*TokenPair, error
 	if claims.TokenType != "refresh" {
 		return nil, ErrInvalidToken
 	}
-	return s.IssueTokenPair(claims.UserID, claims.Email, claims.OrgID, claims.Role)
+	return claims, nil
 }
 
 // signToken creates a signed JWT with the given parameters.
-func (s *JWTService) signToken(userID uuid.UUID, email, orgID, role, tokenType string, ttl time.Duration) (string, error) {
+func (s *JWTService) signToken(userID uuid.UUID, email, orgID, role, tokenType string, generation int, ttl time.Duration) (string, error) {
 	now := time.Now().UTC()
 	claims := &Claims{
-		UserID:    userID,
-		Email:     email,
-		OrgID:     orgID,
-		Role:      role,
-		TokenType: tokenType,
+		UserID:          userID,
+		Email:           email,
+		OrgID:           orgID,
+		Role:            role,
+		TokenType:       tokenType,
+		TokenGeneration: generation,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    s.cfg.Issuer,
 			Subject:   userID.String(),

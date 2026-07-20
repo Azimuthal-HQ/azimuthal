@@ -10,13 +10,105 @@ import (
 	"github.com/google/uuid"
 )
 
-// testAuthenticator creates an Authenticator wired with in-memory stubs.
+// testAuthenticator creates an Authenticator wired with in-memory stubs and
+// no auth-state store (the nil routing-only-test convention: the
+// generation/active check is exercised by stubStateAuthenticator below and
+// by the integration suite against real PostgreSQL).
 func testAuthenticator(t *testing.T) (*Authenticator, *JWTService, *SessionService) {
 	t.Helper()
 	jwtSvc := NewJWTService(testTokenConfig(t))
 	sessSvc := NewSessionService(newStubSessionRepo(), SessionConfig{TTL: time.Hour})
-	auth := NewAuthenticator(jwtSvc, sessSvc)
+	auth := NewAuthenticator(jwtSvc, sessSvc, nil)
 	return auth, jwtSvc, sessSvc
+}
+
+// stubStateStore serves a fixed AuthState for every user id.
+type stubStateStore struct {
+	state AuthState
+	err   error
+}
+
+func (s *stubStateStore) AuthState(context.Context, uuid.UUID) (AuthState, error) {
+	return s.state, s.err
+}
+
+// stubStateAuthenticator wires an Authenticator over a fixed auth state.
+func stubStateAuthenticator(t *testing.T, state AuthState, err error) (*Authenticator, *JWTService) {
+	t.Helper()
+	jwtSvc := NewJWTService(testTokenConfig(t))
+	sessSvc := NewSessionService(newStubSessionRepo(), SessionConfig{TTL: time.Hour})
+	return NewAuthenticator(jwtSvc, sessSvc, &stubStateStore{state: state, err: err}), jwtSvc
+}
+
+func TestRequireAuth_StaleGenerationRejected(t *testing.T) {
+	// The live column moved past the claim (force logout / deactivation /
+	// password change) — the very next request must fail.
+	a, jwtSvc := stubStateAuthenticator(t, AuthState{TokenGeneration: 1, IsActive: true}, nil)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "stale@example.com", uuid.New().String(), "member", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &okHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	a.RequireAuth(inner).ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("stale generation: expected 401, got %d", rr.Code)
+	}
+	if inner.called {
+		t.Error("inner handler must not run for a stale-generation token")
+	}
+}
+
+func TestRequireAuth_MatchingGenerationAccepted(t *testing.T) {
+	a, jwtSvc := stubStateAuthenticator(t, AuthState{TokenGeneration: 4, IsActive: true}, nil)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "gen@example.com", uuid.New().String(), "member", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &okHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	a.RequireAuth(inner).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("matching generation: expected 200, got %d", rr.Code)
+	}
+}
+
+func TestRequireAuth_InactiveAccountRejected(t *testing.T) {
+	// Deactivated account, token minted before deactivation with a
+	// generation that would otherwise match: is_active alone must reject.
+	a, jwtSvc := stubStateAuthenticator(t, AuthState{TokenGeneration: 0, IsActive: false}, nil)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "inactive@example.com", uuid.New().String(), "member", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &okHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	a.RequireAuth(inner).ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("inactive account: expected 401, got %d", rr.Code)
+	}
+}
+
+func TestRequireAuth_UnknownUserRejected(t *testing.T) {
+	a, jwtSvc := stubStateAuthenticator(t, AuthState{}, ErrNotFound)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "ghost@example.com", uuid.New().String(), "member", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &okHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	a.RequireAuth(inner).ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("unknown user: expected 401, got %d", rr.Code)
+	}
 }
 
 // okHandler is a simple handler that records whether it was called.
@@ -31,7 +123,7 @@ func TestRequireAuth_BearerToken_Valid(t *testing.T) {
 	a, jwtSvc, _ := testAuthenticator(t)
 	userID := uuid.New()
 
-	pair, err := jwtSvc.IssueTokenPair(userID, "user@example.com", uuid.New().String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(userID, "user@example.com", uuid.New().String(), "member", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +217,7 @@ func TestOptionalAuth_WithToken(t *testing.T) {
 	a, jwtSvc, _ := testAuthenticator(t)
 	userID := uuid.New()
 
-	pair, err := jwtSvc.IssueTokenPair(userID, "opt@example.com", uuid.New().String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(userID, "opt@example.com", uuid.New().String(), "member", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

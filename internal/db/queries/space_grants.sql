@@ -35,6 +35,30 @@ ORDER BY g.created_at ASC;
 -- name: DeleteGrantsBySubjectUser :exec
 DELETE FROM space_grants WHERE subject_type = 'user' AND subject_id = $1;
 
+-- name: DeleteGrantsBySubjectUserInOrg :exec
+-- Removal from one org drops that org's grants only; the user's grants in
+-- other orgs are untouched.
+DELETE FROM space_grants WHERE subject_type = 'user' AND subject_id = $1 AND org_id = $2;
+
+-- name: ListTeamGrantsByOrg :many
+-- The access matrix (P2.5 W6): every team-subject grant in the org in one
+-- query. Cells are (team, space) pairs; user-subject grants are not matrix
+-- cells. Also the base state for bulk diff computation — loaded FOR UPDATE
+-- inside the bulk-apply transaction so the diff cannot shift under it.
+SELECT g.id, g.space_id, g.subject_id AS team_id, g.role, g.created_at, g.created_by
+FROM space_grants g
+JOIN spaces s ON s.id = g.space_id AND s.deleted_at IS NULL
+WHERE g.org_id = $1 AND g.subject_type = 'team'
+ORDER BY g.created_at ASC;
+
+-- name: ListTeamGrantsByOrgForUpdate :many
+SELECT g.id, g.space_id, g.subject_id AS team_id, g.role
+FROM space_grants g
+JOIN spaces s ON s.id = g.space_id AND s.deleted_at IS NULL
+WHERE g.org_id = $1 AND g.subject_type = 'team'
+ORDER BY g.id ASC
+FOR UPDATE OF g;
+
 -- name: DeleteGrantsBySubjectTeam :exec
 DELETE FROM space_grants WHERE subject_type = 'team' AND subject_id = $1;
 

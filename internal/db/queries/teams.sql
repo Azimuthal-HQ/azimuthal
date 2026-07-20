@@ -2,6 +2,13 @@
 -- path is always parent.path || id and is constructed inside CreateTeam /
 -- ReparentSubtree — callers never hand-assemble it.
 
+-- name: CountTeamMembersByOrg :many
+-- Member counts for the access matrix's team rows: one query for the org.
+SELECT team_id, count(*)::int AS member_count
+FROM team_members
+WHERE org_id = $1
+GROUP BY team_id;
+
 -- name: CreateTeam :one
 -- The service validates that parent_id (when set) is a live team in the same
 -- org before calling; the COALESCE fallback only serves the NULL-parent root

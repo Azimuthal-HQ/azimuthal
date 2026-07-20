@@ -59,9 +59,11 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
+	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
+	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -72,6 +74,8 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
@@ -156,7 +160,7 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 		slog.Warn("job queue disabled via AZIMUTHAL_QUEUE_ENABLED=false")
 	}
 
-	handler, err := buildRouter(cfg, pool, queries, notifEnqueuer, queueStatus)
+	handler, err := buildRouter(cfg, pool, queries, notifEnqueuer, sender, queueStatus)
 	if err != nil {
 		pool.Close()
 		return nil, deps, noop, err
@@ -175,7 +179,7 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 
 // buildRouter constructs all domain services with DB-backed adapters and
 // returns the fully wired API router.
-func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, queueStatus string) (http.Handler, error) { //nolint:funlen // router wiring naturally enumerates all dependencies, like newServer above
+func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, sender email.Sender, queueStatus string) (http.Handler, error) { //nolint:funlen // router wiring naturally enumerates all dependencies, like newServer above
 	// The signing key lives in the database so restarts never invalidate
 	// tokens. JWTPrivateKeyPath is only consulted as a one-time import for
 	// deployments upgrading from the legacy file-based key.
@@ -195,7 +199,10 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	userAdapter := adapters.NewUserAdapter(pool, uuid.Nil)
 	userSvc := auth.NewUserService(userAdapter)
 	sessionSvc := auth.NewSessionService(adapters.NewSessionAdapter(queries), auth.SessionConfig{TTL: cfg.JWTExpiry})
-	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc)
+	// The user adapter doubles as the per-request auth-state store: the
+	// token_generation + is_active check that makes deactivation and force
+	// logout effective on the very next request (P2.5 session control).
+	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc, userAdapter)
 	membershipResolver := adapters.NewMembershipAdapter(queries)
 	workflowAdapter := adapters.NewWorkflowAdapter(queries)
 	workflowEngine := workflow.NewDBEngine(workflowAdapter)
@@ -230,9 +237,27 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	explainer := access.NewExplainer(accessAdapter, accessAdapter)
 	orgProvisioner.WithTeamSeeder(teamAdapter)
 
+	// P2.5 administration: people lifecycle, invites, bulk grants, audit
+	// viewer. Invite delivery follows config — link mode returns the URL to
+	// the admin; email mode sends it (SMTP validated at startup).
+	peopleSvc := people.NewService(adapters.NewPeopleAdapter(pool))
+	var inviteSender invites.Sender
+	if cfg.InviteDelivery == config.InviteDeliveryEmail {
+		inviteSender = adapters.NewInviteEmailSender(sender, queries)
+	}
+	inviteSvc := invites.NewService(adapters.NewInviteAdapter(pool), inviteSender, invites.Config{
+		TTL:            cfg.InviteTTL,
+		DeliverByEmail: cfg.InviteDelivery == config.InviteDeliveryEmail,
+		BaseURL:        cfg.AppBaseURL,
+	})
+	bulkSvc := access.NewBulkService(adapters.NewBulkGrantAdapter(pool))
+	auditReader := audit.NewReader(adapters.NewAuditReaderAdapter(queries))
+
 	return api.NewRouter(api.RouterConfig{
-		Authenticator:       authenticator,
-		AuthHandler:         authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner).WithAuditLogger(auditLog),
+		Authenticator: authenticator,
+		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner, userAdapter).
+			WithAuditLogger(auditLog).
+			WithRegistrationPolicy(cfg.AllowRegistration),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithAuditLogger(auditLog),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog),
@@ -242,6 +267,8 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
+		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
+		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		QueueStatus:         queueStatus,

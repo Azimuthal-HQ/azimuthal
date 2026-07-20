@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -41,12 +42,32 @@ type Config struct {
 	SMTPPort int
 	SMTPFrom string
 
+	// Administration (P2.5). AllowRegistration gates POST /auth/register —
+	// false (the default) 404s it and makes invites the only way in.
+	// InviteDelivery is how invite links reach people: "link" (the admin
+	// copies the URL) or "email" (Azimuthal sends it; requires SMTP_HOST to
+	// be explicitly configured — validated at startup). InviteTTL is the
+	// invite expiry window.
+	AllowRegistration bool
+	InviteDelivery    string
+	InviteTTL         time.Duration
+
 	// App
 	AppEnv     string
 	AppPort    int
 	AppBaseURL string
 	LogLevel   string
 }
+
+// Invite delivery modes.
+const (
+	// InviteDeliveryLink returns the invite URL to the admin, who sends it
+	// however they like. No SMTP required. The default.
+	InviteDeliveryLink = "link"
+	// InviteDeliveryEmail makes Azimuthal send the invite itself. Requires
+	// SMTP configuration; startup fails loudly without it.
+	InviteDeliveryEmail = "email"
+)
 
 // Load reads configuration from environment variables and returns a validated Config.
 // It fails fast with clear error messages if required variables are missing.
@@ -67,6 +88,9 @@ func Load() (*Config, error) {
 	v.SetDefault("STORAGE_BUCKET", "azimuthal")
 	v.SetDefault("STORAGE_USE_SSL", false)
 	v.SetDefault("AZIMUTHAL_QUEUE_ENABLED", true)
+	v.SetDefault("AZIMUTHAL_ALLOW_REGISTRATION", false)
+	v.SetDefault("AZIMUTHAL_INVITE_DELIVERY", InviteDeliveryLink)
+	v.SetDefault("AZIMUTHAL_INVITE_TTL", "168h")
 
 	cfg := &Config{
 		DatabaseURL:       v.GetString("DATABASE_URL"),
@@ -77,6 +101,8 @@ func Load() (*Config, error) {
 		StorageUseSSL:     v.GetBool("STORAGE_USE_SSL"),
 		JWTPrivateKeyPath: v.GetString("JWT_PRIVATE_KEY_PATH"),
 		QueueEnabled:      v.GetBool("AZIMUTHAL_QUEUE_ENABLED"),
+		AllowRegistration: v.GetBool("AZIMUTHAL_ALLOW_REGISTRATION"),
+		InviteDelivery:    v.GetString("AZIMUTHAL_INVITE_DELIVERY"),
 		AllowedOrigins:    parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS"), v.GetString("APP_ENV")),
 		SMTPHost:          v.GetString("SMTP_HOST"),
 		SMTPPort:          v.GetInt("SMTP_PORT"),
@@ -93,6 +119,16 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid JWT_EXPIRY %q: %w", expiryStr, err)
 	}
 	cfg.JWTExpiry = expiry
+
+	inviteTTLStr := v.GetString("AZIMUTHAL_INVITE_TTL")
+	inviteTTL, err := time.ParseDuration(inviteTTLStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid AZIMUTHAL_INVITE_TTL %q: %w", inviteTTLStr, err)
+	}
+	if inviteTTL <= 0 {
+		return nil, fmt.Errorf("invalid AZIMUTHAL_INVITE_TTL %q: must be positive", inviteTTLStr)
+	}
+	cfg.InviteTTL = inviteTTL
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -144,6 +180,24 @@ func (c *Config) validate() error {
 
 	if c.DatabaseURL == "" {
 		errs = append(errs, "DATABASE_URL is required")
+	}
+
+	switch c.InviteDelivery {
+	case InviteDeliveryLink:
+		// No SMTP required — the admin copies the link.
+	case InviteDeliveryEmail:
+		// Fail loudly at startup rather than silently dropping invites at
+		// send time. SMTP_HOST carries a localhost default for dev relay,
+		// so "configured" means the operator set it explicitly.
+		if os.Getenv("SMTP_HOST") == "" {
+			errs = append(errs, "AZIMUTHAL_INVITE_DELIVERY=email requires SMTP_HOST to be set explicitly")
+		}
+		if c.SMTPFrom == "" {
+			errs = append(errs, "AZIMUTHAL_INVITE_DELIVERY=email requires SMTP_FROM")
+		}
+	default:
+		errs = append(errs, fmt.Sprintf("invalid AZIMUTHAL_INVITE_DELIVERY %q: must be %q or %q",
+			c.InviteDelivery, InviteDeliveryLink, InviteDeliveryEmail))
 	}
 
 	if len(errs) > 0 {

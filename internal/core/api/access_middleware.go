@@ -103,7 +103,9 @@ func RequireWriteFloor(c access.Capability) func(http.Handler) http.Handler {
 }
 
 // RequireOrgAdmin rejects non-admin callers with 403. Used for org-level
-// administrative surfaces (team management, workflow admin).
+// administrative mutations on member-visible resources (team management,
+// workflow admin), where the resource's existence is already known to
+// members.
 func RequireOrgAdmin() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +116,25 @@ func RequireOrgAdmin() func(http.Handler) http.Handler {
 			}
 			if !res.IsOrgAdmin {
 				respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "organization admin required")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireOrgAdmin404 rejects non-admin callers with 404 — never 403. The
+// P2.5 administration surface (people, invites, matrix, audit log) does not
+// exist as far as non-admins can tell, matching the §2.6 "no access → 404"
+// convention for surfaces whose existence itself is privileged.
+func RequireOrgAdmin404() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			res := access.FromContext(r.Context())
+			if res == nil || !res.IsOrgAdmin {
+				// Fail closed; identical body for "no resolution" and
+				// "not an admin" — nothing to distinguish.
+				respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "not found")
 				return
 			}
 			next.ServeHTTP(w, r)

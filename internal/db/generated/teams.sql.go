@@ -98,6 +98,43 @@ func (q *Queries) CountTeamChildren(ctx context.Context, parentID pgtype.UUID) (
 	return count, err
 }
 
+const countTeamMembersByOrg = `-- name: CountTeamMembersByOrg :many
+
+SELECT team_id, count(*)::int AS member_count
+FROM team_members
+WHERE org_id = $1
+GROUP BY team_id
+`
+
+type CountTeamMembersByOrgRow struct {
+	TeamID      uuid.UUID `json:"team_id"`
+	MemberCount int32     `json:"member_count"`
+}
+
+// Teams (v0.3 spec §4 migration 022, ADR-0006/0007).
+// path is always parent.path || id and is constructed inside CreateTeam /
+// ReparentSubtree — callers never hand-assemble it.
+// Member counts for the access matrix's team rows: one query for the org.
+func (q *Queries) CountTeamMembersByOrg(ctx context.Context, orgID uuid.UUID) ([]CountTeamMembersByOrgRow, error) {
+	rows, err := q.db.Query(ctx, countTeamMembersByOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountTeamMembersByOrgRow{}
+	for rows.Next() {
+		var i CountTeamMembersByOrgRow
+		if err := rows.Scan(&i.TeamID, &i.MemberCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countTeamOwnedSpaces = `-- name: CountTeamOwnedSpaces :one
 SELECT count(*) FROM spaces WHERE owner_team_id = $1 AND deleted_at IS NULL
 `
@@ -128,7 +165,6 @@ func (q *Queries) CountUserTeamsInOrg(ctx context.Context, arg CountUserTeamsInO
 }
 
 const createTeam = `-- name: CreateTeam :one
-
 INSERT INTO teams (id, org_id, parent_id, path, slug, name, description, is_default, source)
 SELECT $1, $2, $3,
        COALESCE((SELECT t.path FROM teams t
@@ -151,9 +187,6 @@ type CreateTeamParams struct {
 	Source      string      `json:"source"`
 }
 
-// Teams (v0.3 spec §4 migration 022, ADR-0006/0007).
-// path is always parent.path || id and is constructed inside CreateTeam /
-// ReparentSubtree — callers never hand-assemble it.
 // The service validates that parent_id (when set) is a live team in the same
 // org before calling; the COALESCE fallback only serves the NULL-parent root
 // case. The FK rejects nonexistent parents at the database level.

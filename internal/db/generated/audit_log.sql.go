@@ -14,9 +14,9 @@ import (
 )
 
 const createAuditEvent = `-- name: CreateAuditEvent :one
-INSERT INTO audit_log (id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent, created_at
+INSERT INTO audit_log (id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent, batch_id, ticket_ref)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent, created_at, batch_id, ticket_ref
 `
 
 type CreateAuditEventParams struct {
@@ -29,8 +29,14 @@ type CreateAuditEventParams struct {
 	Payload    []byte      `json:"payload"`
 	IpAddress  *netip.Addr `json:"ip_address"`
 	UserAgent  *string     `json:"user_agent"`
+	BatchID    pgtype.UUID `json:"batch_id"`
+	TicketRef  *string     `json:"ticket_ref"`
 }
 
+// batch_id and ticket_ref (migration 025) are nullable: NULL for ordinary
+// single events; a bulk grant change writes its events with one shared
+// batch_id (and optional operator ticket_ref) inside the same transaction
+// as the grants themselves.
 func (q *Queries) CreateAuditEvent(ctx context.Context, arg CreateAuditEventParams) (AuditLog, error) {
 	row := q.db.QueryRow(ctx, createAuditEvent,
 		arg.ID,
@@ -42,6 +48,8 @@ func (q *Queries) CreateAuditEvent(ctx context.Context, arg CreateAuditEventPara
 		arg.Payload,
 		arg.IpAddress,
 		arg.UserAgent,
+		arg.BatchID,
+		arg.TicketRef,
 	)
 	var i AuditLog
 	err := row.Scan(
@@ -55,12 +63,14 @@ func (q *Queries) CreateAuditEvent(ctx context.Context, arg CreateAuditEventPara
 		&i.IpAddress,
 		&i.UserAgent,
 		&i.CreatedAt,
+		&i.BatchID,
+		&i.TicketRef,
 	)
 	return i, err
 }
 
 const listAuditEventsByActor = `-- name: ListAuditEventsByActor :many
-SELECT id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent, created_at FROM audit_log WHERE actor_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
+SELECT id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent, created_at, batch_id, ticket_ref FROM audit_log WHERE actor_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
 type ListAuditEventsByActorParams struct {
@@ -89,6 +99,8 @@ func (q *Queries) ListAuditEventsByActor(ctx context.Context, arg ListAuditEvent
 			&i.IpAddress,
 			&i.UserAgent,
 			&i.CreatedAt,
+			&i.BatchID,
+			&i.TicketRef,
 		); err != nil {
 			return nil, err
 		}
@@ -101,7 +113,7 @@ func (q *Queries) ListAuditEventsByActor(ctx context.Context, arg ListAuditEvent
 }
 
 const listAuditEventsByEntity = `-- name: ListAuditEventsByEntity :many
-SELECT id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent, created_at FROM audit_log WHERE entity_kind = $1 AND entity_id = $2 ORDER BY created_at DESC
+SELECT id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent, created_at, batch_id, ticket_ref FROM audit_log WHERE entity_kind = $1 AND entity_id = $2 ORDER BY created_at DESC
 `
 
 type ListAuditEventsByEntityParams struct {
@@ -129,6 +141,8 @@ func (q *Queries) ListAuditEventsByEntity(ctx context.Context, arg ListAuditEven
 			&i.IpAddress,
 			&i.UserAgent,
 			&i.CreatedAt,
+			&i.BatchID,
+			&i.TicketRef,
 		); err != nil {
 			return nil, err
 		}
@@ -141,7 +155,7 @@ func (q *Queries) ListAuditEventsByEntity(ctx context.Context, arg ListAuditEven
 }
 
 const listAuditEventsByOrg = `-- name: ListAuditEventsByOrg :many
-SELECT id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent, created_at FROM audit_log WHERE org_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
+SELECT id, org_id, actor_id, action, entity_kind, entity_id, payload, ip_address, user_agent, created_at, batch_id, ticket_ref FROM audit_log WHERE org_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
 type ListAuditEventsByOrgParams struct {
@@ -170,6 +184,167 @@ func (q *Queries) ListAuditEventsByOrg(ctx context.Context, arg ListAuditEventsB
 			&i.IpAddress,
 			&i.UserAgent,
 			&i.CreatedAt,
+			&i.BatchID,
+			&i.TicketRef,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAuditLogBatchEvents = `-- name: ListAuditLogBatchEvents :many
+SELECT a.id, a.actor_id, a.action, a.entity_kind, a.entity_id, a.payload,
+       a.batch_id, a.ticket_ref, a.created_at,
+       COALESCE(u.display_name, '')::text AS actor_name
+FROM audit_log a
+LEFT JOIN users u ON u.id = a.actor_id
+WHERE a.org_id = $1 AND a.batch_id = $2
+ORDER BY a.created_at ASC, a.id ASC
+`
+
+type ListAuditLogBatchEventsParams struct {
+	OrgID   uuid.UUID   `json:"org_id"`
+	BatchID pgtype.UUID `json:"batch_id"`
+}
+
+type ListAuditLogBatchEventsRow struct {
+	ID         uuid.UUID          `json:"id"`
+	ActorID    pgtype.UUID        `json:"actor_id"`
+	Action     string             `json:"action"`
+	EntityKind string             `json:"entity_kind"`
+	EntityID   uuid.UUID          `json:"entity_id"`
+	Payload    []byte             `json:"payload"`
+	BatchID    pgtype.UUID        `json:"batch_id"`
+	TicketRef  *string            `json:"ticket_ref"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ActorName  string             `json:"actor_name"`
+}
+
+// Expanding one batch row into its constituent events.
+func (q *Queries) ListAuditLogBatchEvents(ctx context.Context, arg ListAuditLogBatchEventsParams) ([]ListAuditLogBatchEventsRow, error) {
+	rows, err := q.db.Query(ctx, listAuditLogBatchEvents, arg.OrgID, arg.BatchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAuditLogBatchEventsRow{}
+	for rows.Next() {
+		var i ListAuditLogBatchEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorID,
+			&i.Action,
+			&i.EntityKind,
+			&i.EntityID,
+			&i.Payload,
+			&i.BatchID,
+			&i.TicketRef,
+			&i.CreatedAt,
+			&i.ActorName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAuditLogEntries = `-- name: ListAuditLogEntries :many
+SELECT id, actor_id, actor_name, action, entity_kind, entity_id, payload,
+       batch_id, ticket_ref, created_at, batch_size
+FROM (
+    SELECT a.id, a.actor_id, a.action, a.entity_kind, a.entity_id,
+           a.payload, a.batch_id, a.ticket_ref, a.created_at,
+           COALESCE(u.display_name, '')::text AS actor_name,
+           (COUNT(*) OVER (PARTITION BY COALESCE(a.batch_id, a.id)))::int AS batch_size,
+           ROW_NUMBER() OVER (PARTITION BY COALESCE(a.batch_id, a.id)
+                              ORDER BY a.created_at DESC, a.id DESC) AS rn
+    FROM audit_log a
+    LEFT JOIN users u ON u.id = a.actor_id
+    WHERE a.org_id = $1
+      AND ($2::uuid IS NULL OR a.actor_id = $2)
+      AND ($3::text IS NULL OR a.entity_kind = $3)
+      AND ($4::text IS NULL OR a.action = $4)
+      AND ($5::timestamptz IS NULL OR a.created_at >= $5)
+      AND ($6::timestamptz IS NULL OR a.created_at <= $6)
+) grouped
+WHERE rn = 1
+  AND ($7::timestamptz IS NULL
+       OR (created_at, id) < ($7::timestamptz, $8::uuid))
+ORDER BY created_at DESC, id DESC
+LIMIT $9
+`
+
+type ListAuditLogEntriesParams struct {
+	OrgID           uuid.UUID          `json:"org_id"`
+	ActorID         pgtype.UUID        `json:"actor_id"`
+	EntityKind      *string            `json:"entity_kind"`
+	Action          *string            `json:"action"`
+	CreatedFrom     pgtype.Timestamptz `json:"created_from"`
+	CreatedTo       pgtype.Timestamptz `json:"created_to"`
+	CursorCreatedAt pgtype.Timestamptz `json:"cursor_created_at"`
+	CursorID        pgtype.UUID        `json:"cursor_id"`
+	PageLimit       int32              `json:"page_limit"`
+}
+
+type ListAuditLogEntriesRow struct {
+	ID         uuid.UUID          `json:"id"`
+	ActorID    pgtype.UUID        `json:"actor_id"`
+	ActorName  string             `json:"actor_name"`
+	Action     string             `json:"action"`
+	EntityKind string             `json:"entity_kind"`
+	EntityID   uuid.UUID          `json:"entity_id"`
+	Payload    []byte             `json:"payload"`
+	BatchID    pgtype.UUID        `json:"batch_id"`
+	TicketRef  *string            `json:"ticket_ref"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	BatchSize  int32              `json:"batch_size"`
+}
+
+// The admin audit viewer (P2.5 W7). One query, constant cost: events
+// sharing a batch_id collapse to a single representative row (the newest
+// event of the batch) carrying the batch size; singleton events pass
+// through with batch_size 1. Keyset cursor over (created_at, id) of the
+// representative rows. All filters are optional.
+func (q *Queries) ListAuditLogEntries(ctx context.Context, arg ListAuditLogEntriesParams) ([]ListAuditLogEntriesRow, error) {
+	rows, err := q.db.Query(ctx, listAuditLogEntries,
+		arg.OrgID,
+		arg.ActorID,
+		arg.EntityKind,
+		arg.Action,
+		arg.CreatedFrom,
+		arg.CreatedTo,
+		arg.CursorCreatedAt,
+		arg.CursorID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAuditLogEntriesRow{}
+	for rows.Next() {
+		var i ListAuditLogEntriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorID,
+			&i.ActorName,
+			&i.Action,
+			&i.EntityKind,
+			&i.EntityID,
+			&i.Payload,
+			&i.BatchID,
+			&i.TicketRef,
+			&i.CreatedAt,
+			&i.BatchSize,
 		); err != nil {
 			return nil, err
 		}

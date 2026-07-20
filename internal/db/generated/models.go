@@ -22,6 +22,8 @@ type AuditLog struct {
 	IpAddress  *netip.Addr        `json:"ip_address"`
 	UserAgent  *string            `json:"user_agent"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	BatchID    pgtype.UUID        `json:"batch_id"`
+	TicketRef  *string            `json:"ticket_ref"`
 }
 
 type AuthSigningKey struct {
@@ -54,6 +56,21 @@ type EntityRelation struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	FromType  string             `json:"from_type"`
 	ToType    string             `json:"to_type"`
+}
+
+type Invite struct {
+	ID             uuid.UUID          `json:"id"`
+	OrgID          uuid.UUID          `json:"org_id"`
+	Email          string             `json:"email"`
+	TokenHash      string             `json:"token_hash"`
+	OrgRole        string             `json:"org_role"`
+	TeamID         pgtype.UUID        `json:"team_id"`
+	InvitedBy      uuid.UUID          `json:"invited_by"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	AcceptedAt     pgtype.Timestamptz `json:"accepted_at"`
+	AcceptedUserID pgtype.UUID        `json:"accepted_user_id"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type ItemsArchive struct {
@@ -287,18 +304,19 @@ type Ticket struct {
 }
 
 type User struct {
-	ID           uuid.UUID          `json:"id"`
-	OrgID        uuid.UUID          `json:"org_id"`
-	Email        string             `json:"email"`
-	DisplayName  string             `json:"display_name"`
-	AvatarUrl    *string            `json:"avatar_url"`
-	PasswordHash *string            `json:"password_hash"`
-	Role         string             `json:"role"`
-	IsActive     bool               `json:"is_active"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	LastLoginAt  pgtype.Timestamptz `json:"last_login_at"`
+	ID              uuid.UUID          `json:"id"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	Email           string             `json:"email"`
+	DisplayName     string             `json:"display_name"`
+	AvatarUrl       *string            `json:"avatar_url"`
+	PasswordHash    *string            `json:"password_hash"`
+	Role            string             `json:"role"`
+	IsActive        bool               `json:"is_active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+	LastLoginAt     pgtype.Timestamptz `json:"last_login_at"`
+	TokenGeneration int32              `json:"token_generation"`
 }
 
 type Workflow struct {

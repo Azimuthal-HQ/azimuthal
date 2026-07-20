@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -41,16 +42,31 @@ type Handler struct {
 	memberships MembershipResolver
 	orgs        OrgProvisioner
 	auditLog    audit.Logger
+	// states backs the refresh-path account check. nil (DB-less unit tests)
+	// skips it; every real construction site wires the same store the auth
+	// middleware uses.
+	states auth.AuthStateStore
+	// allowRegistration gates POST /auth/register. Fail-closed: false unless
+	// a construction site opts in (production wires the config value, which
+	// also defaults to false — invites are the way in).
+	allowRegistration bool
 }
 
-// NewHandler creates an auth Handler.
-func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner) *Handler {
-	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs, auditLog: audit.NewLogger()}
+// NewHandler creates an auth Handler. states may be nil only in DB-less
+// unit tests.
+func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner, states auth.AuthStateStore) *Handler {
+	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs, auditLog: audit.NewLogger(), states: states}
 }
 
 // WithAuditLogger attaches an audit logger to the handler.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithRegistrationPolicy sets whether open registration is enabled.
+func (h *Handler) WithRegistrationPolicy(allow bool) *Handler {
+	h.allowRegistration = allow
 	return h
 }
 
@@ -155,10 +171,17 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		orgName = ""
 	}
 
-	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, orgID.String(), user.Role)
+	// Tokens carry the user's CURRENT generation — a login after a force
+	// logout or password change must yield tokens that survive the check.
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, orgID.String(), user.Role, user.TokenGeneration)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
+	}
+
+	// Best-effort: the last sign-in stamp must never block a login.
+	if err := h.users.TouchLastLogin(r.Context(), user.ID); err != nil {
+		slog.Warn("auth: failed to stamp last login", "user_id", user.ID, "error", err)
 	}
 
 	_ = h.auditLog.Log(r.Context(), audit.Event{
@@ -224,6 +247,13 @@ func (h *Handler) provisionOrgForUser(ctx context.Context, displayName, email st
 // @Failure      500   {object}  api.SwaggerErrorResponse          "Internal error"
 // @Router       /auth/register [post]
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	// allow_registration=false (the default): the route does not exist as
+	// far as callers can tell — invites are the only way in.
+	if !h.allowRegistration {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "not found")
+		return
+	}
+
 	var req registerRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
@@ -260,7 +290,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role)
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role, user.TokenGeneration)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
@@ -310,12 +340,31 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.jwt.RefreshTokens(req.RefreshToken)
+	claims, err := h.jwt.ValidateRefreshToken(req.RefreshToken)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidToken) {
 			respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "invalid or expired refresh token")
 			return
 		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to refresh tokens")
+		return
+	}
+
+	// A refresh token survives neither deactivation nor a generation bump:
+	// the same live-state check the auth middleware applies to access tokens
+	// runs here, so "deactivate" and "force logout" also revoke refresh.
+	generation := claims.TokenGeneration
+	if h.states != nil {
+		state, err := h.states.AuthState(r.Context(), claims.UserID)
+		if err != nil || !state.IsActive || state.TokenGeneration != claims.TokenGeneration {
+			respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "invalid or expired refresh token")
+			return
+		}
+		generation = state.TokenGeneration
+	}
+
+	pair, err := h.jwt.IssueTokenPair(claims.UserID, claims.Email, claims.OrgID, claims.Role, generation)
+	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to refresh tokens")
 		return
 	}

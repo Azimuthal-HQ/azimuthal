@@ -226,7 +226,21 @@ func (h *Handler) GetOrg(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "organization not found")
 		return
 	}
-	respond.JSON(w, http.StatusOK, org)
+
+	// Additive caller fields (P2.5): the avatar menu shows the Admin entry
+	// from caller_is_admin. Read from the request's resolution — zero extra
+	// queries. The JWT role claim cannot serve here: it carries the legacy
+	// users.role column, not the membership role.
+	out := struct {
+		generated.Organization
+		CallerOrgRole string `json:"caller_org_role,omitempty"`
+		CallerIsAdmin bool   `json:"caller_is_admin"`
+	}{Organization: org}
+	if res := access.FromContext(r.Context()); res != nil {
+		out.CallerOrgRole = res.OrgRoleName
+		out.CallerIsAdmin = res.IsOrgAdmin
+	}
+	respond.JSON(w, http.StatusOK, out)
 }
 
 type updateOrgRequest struct {

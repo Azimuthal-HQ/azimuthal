@@ -89,8 +89,12 @@ func CreateTestUser(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) User {
 // their primary team — never teamless (ADR-0006 point 4).
 func CreateTestUserWithRole(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, orgRole string) User {
 	t.Helper()
-	// bcrypt hash of "testpassword123"
-	testHash := "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/VK.s4VqK2"
+	// Real bcrypt hash of "testpassword123" (cost 4 — MinCost keeps login
+	// round-trips fast; CompareHashAndPassword honours the embedded cost).
+	// The previous placeholder hash matched NO password: nothing noticed
+	// because no test logged in through the API with a fixture user until
+	// the P2.5 session-control suite did.
+	testHash := "$2a$04$nftBORFTZkCjDiZh/OJlxOOcUkL8hSkADh2peBB.iQMLBISc.iDGy"
 	user := User{
 		ID:          uuid.New(),
 		Email:       fmt.Sprintf("test-%s@azimuthal.dev", uuid.New().String()[:8]),

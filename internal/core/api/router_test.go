@@ -90,6 +90,10 @@ func (m *mockUserRepo) Delete(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (m *mockUserRepo) TouchLastLogin(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+
 type mockSessionRepo struct {
 	sessions map[uuid.UUID]*auth.Session
 }
@@ -516,7 +520,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 
 	userSvc := auth.NewUserService(userRepo)
 	sessionSvc := auth.NewSessionService(sessionRepo, auth.SessionConfig{TTL: 24 * time.Hour})
-	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc)
+	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc, nil)
 
 	ticketSvc := tickets.NewTicketService(newMockTicketRepo())
 	wikiSvc := wiki.NewService(newMockPageStore())
@@ -530,7 +534,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	relationSvc := projects.NewRelationService(&mockRelationRepo{})
 	labelSvc := projects.NewLabelService(&mockLabelRepo{})
 
-	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil)
+	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
 	ticketHandler := ticketsapi.NewHandler(ticketSvc)
 	wikiHandler := wikiapi.NewHandler(wikiSvc, wiki.NewLockService(&mockLockStore{}))
 	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc)
@@ -568,7 +572,7 @@ var spacePathPattern = regexp.MustCompile(`/spaces/([0-9a-fA-F-]{36})`)
 
 func authHeader(t *testing.T, jwtSvc *auth.JWTService, userID uuid.UUID) string {
 	t.Helper()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member", 0)
 	if err != nil {
 		t.Fatalf("issuing token pair: %v", err)
 	}
@@ -719,7 +723,7 @@ func TestAuthRefresh(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 
 	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member", 0)
 	if err != nil {
 		t.Fatalf("issuing tokens: %v", err)
 	}
