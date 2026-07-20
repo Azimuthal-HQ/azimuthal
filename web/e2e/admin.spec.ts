@@ -41,7 +41,7 @@ async function createTeamViaAPI(page: import('@playwright/test').Page, name: str
   return team.id
 }
 
-async function createSpaceViaAPI(page: import('@playwright/test').Page, name: string, type: string): Promise<string> {
+async function createSpaceFullViaAPI(page: import('@playwright/test').Page, name: string, type: string): Promise<{ id: string; slug: string }> {
   const { orgId } = await getCurrentUser(page)
   const ts = Date.now()
   const uniqueName = `${name} ${ts}`
@@ -50,7 +50,12 @@ async function createSpaceViaAPI(page: import('@playwright/test').Page, name: st
   const res = await apiPost(page, `/api/v1/orgs/${orgId}/spaces`, { name: uniqueName, slug, key, type })
   if (res.status() !== 201) throw new Error(`create space: ${res.status()} ${await res.text()}`)
   const space = (await res.json()) as { id: string }
-  return space.id
+  return { id: space.id, slug }
+}
+
+async function createSpaceViaAPI(page: import('@playwright/test').Page, name: string, type: string): Promise<string> {
+  const { id } = await createSpaceFullViaAPI(page, name, type)
+  return id
 }
 
 test.describe('Administration area', () => {
@@ -181,15 +186,17 @@ test.describe('Administration area', () => {
     await createUserAndLogin(page)
     const run = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const teamId = await createTeamViaAPI(page, `Matrix Team ${run}`)
-    const spaceA = await createSpaceViaAPI(page, 'Matrix A', 'vector')
-    const spaceB = await createSpaceViaAPI(page, 'Matrix B', 'codex')
+    const spaceA = await createSpaceViaAPI(page, `Matrix ${run} A`, 'vector')
+    const spaceB = await createSpaceViaAPI(page, `Matrix ${run} B`, 'codex')
 
     await page.goto('/admin/access')
     await expect(page.getByTestId('admin-access-matrix')).toBeVisible({ timeout: 15000 })
 
-    // Scope the matrix to this run's team so the shared org stays out of
-    // the way, then stage the whole row.
+    // Scope BOTH axes to this run: row-staging targets every VISIBLE
+    // space, and the shared e2e org accumulates spaces from other tests.
     await page.getByTestId('matrix-filter-team').fill(`Matrix Team ${run}`)
+    await page.getByTestId('matrix-filter-space').fill(`Matrix ${run}`)
+    await expect(page.getByTestId(`matrix-cell-${teamId}-${spaceA}`)).toBeVisible({ timeout: 15000 })
     await page.getByTestId(`matrix-row-${teamId}`).click()
     await page.getByTestId('matrix-editor-role-contributor').click()
     await expect(page.getByTestId('matrix-staged-bar')).toBeVisible()
@@ -276,7 +283,10 @@ test.describe('Administration area', () => {
 
   test('spaces admin: delete confirmation names the space and counts its contents', async ({ page }) => {
     await createUserAndLogin(page)
-    const spaceId = await createSpaceViaAPI(page, 'Doomed Space', 'beacon')
+    // The run token rides in the name so the row is uniquely this test's —
+    // the shared e2e org accumulates spaces from parallel workers.
+    const run = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    const { id: spaceId, slug } = await createSpaceFullViaAPI(page, `Doomed ${run}`, 'beacon')
     const { orgId } = await getCurrentUser(page)
 
     // Give it one ticket so the count is non-trivial.
@@ -288,14 +298,12 @@ test.describe('Administration area', () => {
 
     await page.goto('/admin/spaces')
     await expect(page.getByTestId('admin-spaces')).toBeVisible({ timeout: 15000 })
-    const row = page.locator('[data-testid^="admin-space-row-doomed-space-"]').first()
-    await expect(row).toBeVisible()
-    const slug = (await row.getAttribute('data-testid'))!.replace('admin-space-row-', '')
+    await expect(page.getByTestId(`admin-space-row-${slug}`)).toBeVisible({ timeout: 15000 })
 
     await page.getByTestId(`admin-space-delete-${slug}`).click()
     const summary = page.getByTestId('admin-space-delete-summary')
     await expect(summary).toContainText('1 ticket', { timeout: 15000 })
     await page.getByTestId('admin-space-delete-confirm').click()
-    await expect(page.locator(`[data-testid="admin-space-row-${slug}"]`)).toHaveCount(0, { timeout: 15000 })
+    await expect(page.getByTestId(`admin-space-row-${slug}`)).toHaveCount(0, { timeout: 15000 })
   })
 })
