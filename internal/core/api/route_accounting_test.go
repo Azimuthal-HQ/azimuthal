@@ -115,6 +115,7 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/":                    "space-read",
 	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/":                    "space-cap: manage_space",
 	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/":                 "space-cap: manage_space",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/summary":             "space-cap: manage_space — delete-confirmation contents counts",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/members":             "space-read",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/members":            "space-cap: manage_space",
 	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/members/{userID}": "space-cap: manage_space",

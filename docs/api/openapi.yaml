@@ -1,5 +1,206 @@
 components:
   schemas:
+    admin.auditEntryResponse:
+      properties:
+        action:
+          type: string
+        actor_id:
+          type: string
+        actor_name:
+          type: string
+        batch_id:
+          type: string
+        batch_size:
+          type: integer
+        created_at:
+          type: string
+        entity_id:
+          type: string
+        entity_kind:
+          type: string
+        id:
+          type: string
+        payload:
+          items:
+            type: integer
+          type: array
+          uniqueItems: false
+        ticket_ref:
+          type: string
+      type: object
+    admin.auditListResponse:
+      properties:
+        entries:
+          items:
+            $ref: '#/components/schemas/admin.auditEntryResponse'
+          type: array
+          uniqueItems: false
+        next_cursor:
+          description: |-
+            NextCursor is "<rfc3339nano>,<uuid>" of the last row, empty when the
+            page was not full.
+          type: string
+      type: object
+    admin.bulkActionResponse:
+      properties:
+        action:
+          type: string
+        from_role:
+          type: string
+        space_id:
+          type: string
+        team_id:
+          type: string
+        to_role:
+          type: string
+      type: object
+    admin.bulkApplyRequest:
+      properties:
+        changes:
+          items:
+            $ref: '#/components/schemas/admin.bulkChangeRequest'
+          type: array
+          uniqueItems: false
+        ticket_ref:
+          description: |-
+            TicketRef is an optional operator reference recorded on every audit
+            event of the batch. Free text, no foreign key.
+          type: string
+      type: object
+    admin.bulkChangeRequest:
+      properties:
+        role:
+          type: string
+        space_id:
+          type: string
+        team_id:
+          type: string
+      type: object
+    admin.bulkPreviewRequest:
+      properties:
+        changes:
+          items:
+            $ref: '#/components/schemas/admin.bulkChangeRequest'
+          type: array
+          uniqueItems: false
+      type: object
+    admin.bulkResultResponse:
+      properties:
+        actions:
+          items:
+            $ref: '#/components/schemas/admin.bulkActionResponse'
+          type: array
+          uniqueItems: false
+        batch_id:
+          type: string
+        creates:
+          type: integer
+        noops:
+          type: integer
+        revokes:
+          type: integer
+        updates:
+          type: integer
+      type: object
+    admin.matrixGrantResponse:
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+        space_id:
+          type: string
+        team_id:
+          type: string
+      type: object
+    admin.matrixResponse:
+      properties:
+        grants:
+          items:
+            $ref: '#/components/schemas/admin.matrixGrantResponse'
+          type: array
+          uniqueItems: false
+        spaces:
+          items:
+            $ref: '#/components/schemas/admin.matrixSpaceResponse'
+          type: array
+          uniqueItems: false
+        teams:
+          items:
+            $ref: '#/components/schemas/admin.matrixTeamResponse'
+          type: array
+          uniqueItems: false
+      type: object
+    admin.matrixSpaceResponse:
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        visibility:
+          type: string
+      type: object
+    admin.matrixTeamResponse:
+      properties:
+        id:
+          type: string
+        is_default:
+          type: boolean
+        member_count:
+          type: integer
+        name:
+          type: string
+        parent_id:
+          type: string
+        path:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+      type: object
+    admin.personRefResponse:
+      properties:
+        avatar_url:
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+        id:
+          type: string
+      type: object
+    admin.personResponse:
+      properties:
+        avatar_url:
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+        joined_at:
+          type: string
+        last_login_at:
+          type: string
+        org_role:
+          type: string
+        primary_team_id:
+          type: string
+        primary_team_name:
+          type: string
+        status:
+          type: string
+        user_id:
+          type: string
+      type: object
+    admin.updatePersonRequest:
+      properties:
+        org_role:
+          type: string
+        primary_team_id:
+          type: string
+      type: object
     api.SwaggerAddMemberRequest:
       properties:
         role:
@@ -653,6 +854,124 @@ components:
         workflow_state_id:
           type: string
       type: object
+    invites.acceptRequest:
+      properties:
+        display_name:
+          type: string
+        password:
+          type: string
+        token:
+          type: string
+      type: object
+    invites.acceptResponse:
+      properties:
+        access_token:
+          type: string
+        existing_account:
+          type: boolean
+        org_id:
+          type: string
+        org_name:
+          type: string
+        org_slug:
+          type: string
+        refresh_token:
+          type: string
+        status:
+          type: string
+        user_id:
+          type: string
+      type: object
+    invites.createInviteResult:
+      properties:
+        email:
+          type: string
+        error:
+          type: string
+        invite:
+          $ref: '#/components/schemas/invites.createdInviteResponse'
+        status:
+          description: |-
+            Status is "created" or an error kind: "invalid_email",
+            "already_member", "already_invited", "error".
+          type: string
+      type: object
+    invites.createInvitesRequest:
+      properties:
+        emails:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        org_role:
+          type: string
+        team_id:
+          type: string
+      type: object
+    invites.createdInviteResponse:
+      properties:
+        created_at:
+          type: string
+        delivered:
+          type: boolean
+        email:
+          type: string
+        expired:
+          type: boolean
+        expires_at:
+          type: string
+        id:
+          type: string
+        invite_url:
+          description: |-
+            InviteURL embeds the raw token. Shown once; the token is never
+            persisted and cannot be retrieved again (resend rotates it).
+          type: string
+        invited_by:
+          type: string
+        invited_by_name:
+          type: string
+        org_role:
+          type: string
+        team_id:
+          type: string
+        team_name:
+          type: string
+      type: object
+    invites.inspectResponse:
+      properties:
+        email:
+          type: string
+        existing_account:
+          type: boolean
+        org_name:
+          type: string
+        state:
+          type: string
+      type: object
+    invites.inviteResponse:
+      properties:
+        created_at:
+          type: string
+        email:
+          type: string
+        expired:
+          type: boolean
+        expires_at:
+          type: string
+        id:
+          type: string
+        invited_by:
+          type: string
+        invited_by_name:
+          type: string
+        org_role:
+          type: string
+        team_id:
+          type: string
+        team_name:
+          type: string
+      type: object
     notifications.listNotificationsResponse:
       properties:
         notifications:
@@ -1082,6 +1401,77 @@ paths:
       summary: Liveness probe
       tags:
       - health
+  /invites/{token}:
+    get:
+      description: Returns whom the invite is for, the org, its state, and whether
+        the email already has an account. Token-authenticated.
+      parameters:
+      - description: Raw invite token
+        in: path
+        name: token
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/invites.inspectResponse'
+          description: Invite details
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unknown token
+      summary: Inspect invite (public)
+      tags:
+      - auth
+  /invites/accept:
+    post:
+      description: Consumes an invite transactionally. A new email gets an account
+        (display_name and password required) and a token pair; an email with an existing
+        account gets a membership added and signs in normally.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/invites.acceptRequest'
+                description: Token, plus display_name and password for new accounts
+                summary: body
+        description: Token, plus display_name and password for new accounts
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/invites.acceptResponse'
+          description: Joined
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unknown token
+        "410":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invite expired, revoked, or already used
+      summary: Accept invite (public)
+      tags:
+      - auth
   /notifications:
     get:
       description: Returns the authenticated user's notifications, unread first. Paginated
@@ -1163,6 +1553,673 @@ paths:
       summary: Mark all notifications read
       tags:
       - notifications
+  /orgs/{org_id}/access-matrix:
+    get:
+      description: Teams (tree, member counts), spaces, and every direct team grant,
+        in a constant number of queries. Inherited access is derived client-side from
+        team paths. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/admin.matrixResponse'
+          description: Matrix data
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Access matrix (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/audit-log:
+    get:
+      description: Append-only audit events with filters for actor, entity kind, action,
+        and date range. Events of one bulk batch collapse to a single row carrying
+        batch_size; expand via the batches endpoint. Keyset cursor pagination. Org
+        admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: Filter by actor
+        in: query
+        name: actor_id
+        schema:
+          type: string
+      - description: Filter by entity kind
+        in: query
+        name: entity_kind
+        schema:
+          type: string
+      - description: Filter by action
+        in: query
+        name: action
+        schema:
+          type: string
+      - description: RFC 3339 lower bound
+        in: query
+        name: from
+        schema:
+          type: string
+      - description: RFC 3339 upper bound
+        in: query
+        name: to
+        schema:
+          type: string
+      - description: Keyset cursor from next_cursor
+        in: query
+        name: cursor
+        schema:
+          type: string
+      - description: Page size (max 100, default 50)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/admin.auditListResponse'
+          description: One page
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid filter
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Audit log (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/audit-log/batches/{batch_id}:
+    get:
+      description: The constituent events of one bulk batch, oldest first. Org admins
+        only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: Batch ID
+        in: path
+        name: batch_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/admin.auditEntryResponse'
+                type: array
+          description: Events
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Audit log batch events (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/grants/bulk-apply:
+    post:
+      description: 'Applies the changes atomically: one transaction, one batch_id,
+        one audit batch. A failure anywhere rolls back everything. Org admins only.'
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/admin.bulkApplyRequest'
+                description: Changes and optional ticket_ref
+                summary: body
+        description: Changes and optional ticket_ref
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/admin.bulkResultResponse'
+          description: Applied diff with batch_id
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error — nothing applied
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Apply bulk grant changes (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/grants/bulk-preview:
+    post:
+      description: Computes the itemised diff (creates, role changes, revocations)
+        the given changes would apply, using the same computation apply uses. Nothing
+        is written. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/admin.bulkPreviewRequest'
+                description: Requested cell states
+                summary: body
+        description: Requested cell states
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/admin.bulkResultResponse'
+          description: The diff
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error — the whole batch is rejected
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Preview bulk grant changes (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/invites:
+    get:
+      description: Pending (not accepted, not revoked) invites, expired ones included
+        so they can be resent or revoked. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/invites.inviteResponse'
+                type: array
+          description: Pending invites
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: List pending invites (admin)
+      tags:
+      - admin
+    post:
+      description: Invites one or many emails with an org role and optional initial
+        team. Returns a per-email outcome; each created invite carries its one-time
+        invite_url — the raw token is never stored and cannot be retrieved again.
+        Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/invites.createInvitesRequest'
+                description: Emails, org role, optional team
+                summary: body
+        description: Emails, org role, optional team
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/invites.createInviteResult'
+                type: array
+          description: Per-email outcomes
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Create invites (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/invites/{invite_id}:
+    delete:
+      description: Revokes a pending invite. The invite link stops working immediately.
+        Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: Invite ID
+        in: path
+        name: invite_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Revoked
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or no longer active
+      security:
+      - BearerAuth: []
+      summary: Revoke invite (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/invites/{invite_id}/resend:
+    post:
+      description: Generates a fresh token and expiry for a pending invite. The previous
+        link stops working. Returns the new one-time invite_url. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: Invite ID
+        in: path
+        name: invite_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/invites.createdInviteResponse'
+          description: New invite URL
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or no longer active
+      security:
+      - BearerAuth: []
+      summary: Resend invite (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/members/search:
+    get:
+      description: Name-or-email search over active members, for person pickers. Bounded
+        result set. Any org member.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: Search text (empty returns the first page alphabetically)
+        in: query
+        name: q
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/admin.personRefResponse'
+                type: array
+          description: Matches
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org not found or caller not a member
+      security:
+      - BearerAuth: []
+      summary: Search org members
+      tags:
+      - admin
+  /orgs/{org_id}/users:
+    get:
+      description: Every member with org role, primary team, status, and last sign-in.
+        Org admins only; non-admins receive 404.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/admin.personResponse'
+                type: array
+          description: Members
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: List org members (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/users/{user_id}:
+    delete:
+      description: Drops the membership, team memberships, and grants in one transaction.
+        The user account and their authored content survive with attribution intact.
+        The last active admin cannot be removed. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Removed from org
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Last-admin protection
+      security:
+      - BearerAuth: []
+      summary: Remove member from org (admin)
+      tags:
+      - admin
+    patch:
+      description: Change a member's org role (member|admin) or primary team. The
+        last active admin cannot be demoted. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/admin.updatePersonRequest'
+                description: Fields to change
+                summary: body
+        description: Fields to change
+        required: true
+      responses:
+        "204":
+          description: Updated
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Last-admin protection
+      security:
+      - BearerAuth: []
+      summary: Update org member (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/users/{user_id}/deactivate:
+    post:
+      description: Blocks sign-in and invalidates every session and token the user
+        holds, immediately. The last active admin cannot be deactivated. Org admins
+        only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deactivated; all sessions terminated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Last-admin protection or already deactivated
+      security:
+      - BearerAuth: []
+      summary: Deactivate org member (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/users/{user_id}/force-logout:
+    post:
+      description: Invalidates every session and token the user holds. The account
+        stays active — they simply sign in again. For lost devices and suspected credential
+        leaks. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Signed out everywhere
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Force logout org member (admin)
+      tags:
+      - admin
+  /orgs/{org_id}/users/{user_id}/reactivate:
+    post:
+      description: Re-enables sign-in for a deactivated account. Tokens invalidated
+        at deactivation stay dead. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: org_id
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Reactivated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Already active
+      security:
+      - BearerAuth: []
+      summary: Reactivate org member (admin)
+      tags:
+      - admin
   /orgs/{orgID}:
     get:
       description: Returns an organization by its ID. 404 for non-members — existence
@@ -3896,6 +4953,49 @@ paths:
       summary: Get active sprint
       tags:
       - projects
+  /orgs/{orgID}/spaces/{spaceID}/summary:
+    get:
+      description: Counts of live tickets, pages, and project items in the space.
+        Requires manage_space.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: integer
+                type: object
+          description: Counts
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_space required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Space contents summary
+      tags:
+      - spaces
   /orgs/{orgID}/spaces/{spaceID}/tickets:
     get:
       description: Returns all tickets in the specified space.

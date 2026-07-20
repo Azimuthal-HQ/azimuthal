@@ -4,19 +4,18 @@ import { Settings, ShieldOff, Trash2, UserPlus } from 'lucide-react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { Input } from '../../components/ui/input';
+import { PersonTeamPicker, type PickedSubject } from '../../components/PersonTeamPicker';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
 import {
+  friendlyErrorMessage,
   useCreateGrant,
   useRevokeGrant,
   useSpace,
   useSpaceGrants,
-  useTeams,
   useUpdateGrant,
   useUpdateSpace,
   type GrantRole,
-  type GrantSubjectType,
   type Space,
   type SpaceVisibility,
 } from '../../lib/api';
@@ -57,30 +56,20 @@ const selectClass = cn(
 
 function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
   const grantsQuery = useSpaceGrants(orgId, spaceId);
-  const teamsQuery = useTeams(orgId);
   const createGrant = useCreateGrant(orgId, spaceId);
   const updateGrant = useUpdateGrant(orgId, spaceId);
   const revokeGrant = useRevokeGrant(orgId, spaceId);
 
-  const [subjectType, setSubjectType] = useState<GrantSubjectType>('user');
-  const [subjectUserId, setSubjectUserId] = useState('');
-  const [subjectTeamId, setSubjectTeamId] = useState('');
+  const [subject, setSubject] = useState<PickedSubject | null>(null);
   const [newRole, setNewRole] = useState<GrantRole>('viewer');
 
-  const teams = teamsQuery.data ?? [];
   const forbidden = grantsQuery.error?.status === 403;
 
   function handleAdd() {
-    const subjectId = subjectType === 'user' ? subjectUserId.trim() : subjectTeamId;
-    if (!subjectId) return;
+    if (!subject) return;
     createGrant.mutate(
-      { subject_type: subjectType, subject_id: subjectId, role: newRole },
-      {
-        onSuccess: () => {
-          setSubjectUserId('');
-          setSubjectTeamId('');
-        },
-      },
+      { subject_type: subject.kind, subject_id: subject.id, role: newRole },
+      { onSuccess: () => setSubject(null) },
     );
   }
 
@@ -111,7 +100,7 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
           <p className="py-2 text-[var(--text-sm)] text-[var(--color-text-muted)]">Loading grants…</p>
         ) : grantsQuery.error ? (
           <p className="py-2 text-[var(--text-sm)] text-[var(--color-danger)]">
-            Failed to load grants: {grantsQuery.error.message}
+            {friendlyErrorMessage(grantsQuery.error, 'The grants for this space could not be loaded.')}
           </p>
         ) : (
           <>
@@ -168,7 +157,9 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
             ))}
             {(updateGrant.error || revokeGrant.error) && (
               <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-                {updateGrant.error?.message ?? revokeGrant.error?.message}
+                {updateGrant.error
+                  ? friendlyErrorMessage(updateGrant.error, 'The role could not be changed.')
+                  : friendlyErrorMessage(revokeGrant.error, 'The grant could not be revoked.')}
               </p>
             )}
 
@@ -179,48 +170,13 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
                 Add a grant
               </p>
               <div className="flex flex-wrap items-center gap-2">
-                <div className="flex rounded-[var(--radius-md)] border border-[var(--color-border)] p-0.5">
-                  {(['user', 'team'] as const).map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      data-testid={`grant-subject-type-${t}`}
-                      onClick={() => setSubjectType(t)}
-                      className={cn(
-                        'rounded-[var(--radius-sm)] px-3 py-1 text-[var(--text-xs)] font-medium transition-colors',
-                        subjectType === t
-                          ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
-                          : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                      )}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-                {subjectType === 'user' ? (
-                  <Input
-                    data-testid="grant-subject-user-input"
-                    placeholder="User ID (UUID)"
-                    value={subjectUserId}
-                    onChange={(e) => setSubjectUserId(e.target.value)}
-                    className="h-8 w-64 font-mono text-[var(--text-xs)]"
-                  />
-                ) : (
-                  <select
-                    data-testid="grant-subject-team-select"
-                    value={subjectTeamId}
-                    onChange={(e) => setSubjectTeamId(e.target.value)}
-                    className={cn(selectClass, 'w-48')}
-                    aria-label="Team to grant"
-                  >
-                    <option value="">Select a team…</option>
-                    {teams.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                <PersonTeamPicker
+                  orgId={orgId}
+                  subjects="both"
+                  value={subject}
+                  onChange={setSubject}
+                  testId="grant-subject-picker"
+                />
                 <select
                   data-testid="grant-add-role-select"
                   value={newRole}
@@ -237,10 +193,7 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
                 <Button
                   size="sm"
                   data-testid="grant-add-button"
-                  disabled={
-                    createGrant.isPending ||
-                    (subjectType === 'user' ? !subjectUserId.trim() : !subjectTeamId)
-                  }
+                  disabled={createGrant.isPending || !subject}
                   onClick={handleAdd}
                 >
                   {createGrant.isPending ? 'Adding…' : 'Add grant'}
@@ -248,7 +201,7 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
               </div>
               {createGrant.error && (
                 <p className="mt-2 text-[var(--text-sm)] text-[var(--color-danger)]">
-                  {createGrant.error.message}
+                  {friendlyErrorMessage(createGrant.error, 'The grant could not be added.')}
                 </p>
               )}
             </div>
@@ -334,7 +287,7 @@ function VisibilitySection({
         </div>
         {updateSpace.error && (
           <p className="mt-3 text-[var(--text-sm)] text-[var(--color-danger)]">
-            {updateSpace.error.message}
+            {friendlyErrorMessage(updateSpace.error, 'The visibility change could not be saved.')}
           </p>
         )}
       </CardContent>

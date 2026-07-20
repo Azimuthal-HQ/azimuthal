@@ -148,11 +148,48 @@ func (h *Handler) Routes(spaceGuard, readableGuard func(http.Handler) http.Handl
 		r.Get("/", h.Get)
 		r.Put("/", h.Update)
 		r.Delete("/", h.Delete)
+		r.Get("/summary", h.ContentsSummary)
 		r.Get("/members", h.ListMembers)
 		r.Post("/members", h.AddMember)
 		r.Delete("/members/{userID}", h.RemoveMember)
 	})
 	return r
+}
+
+// ContentsSummary counts what a space contains, backing the delete
+// confirmation (P2.5 W8) — the dialog names the space and these counts.
+//
+// @Summary      Space contents summary
+// @Description  Counts of live tickets, pages, and project items in the space. Requires manage_space.
+// @Tags         spaces
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {object}  map[string]int            "Counts"
+// @Failure      403      {object}  api.SwaggerErrorResponse  "manage_space required"
+// @Failure      404      {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/summary [get]
+func (h *Handler) ContentsSummary(w http.ResponseWriter, r *http.Request) {
+	spaceID, err := uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	if !access.Can(r.Context(), access.CapManageSpace, spaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
+	counts, err := h.queries.CountSpaceContents(r.Context(), spaceID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to count space contents")
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]int{
+		"tickets": int(counts.Tickets),
+		"pages":   int(counts.Pages),
+		"items":   int(counts.Items),
+	})
 }
 
 type createSpaceRequest struct {
