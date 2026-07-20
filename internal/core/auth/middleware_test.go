@@ -292,3 +292,45 @@ func TestBearerToken_Extraction(t *testing.T) {
 		}
 	}
 }
+
+func TestRequireAuth_SessionCookie_InactiveAccountRejected(t *testing.T) {
+	// The cookie path carries no generation claim (DB sessions are
+	// revocable server-side), but a deactivated account must still be
+	// rejected by the live-state check.
+	jwtSvc := NewJWTService(testTokenConfig(t))
+	sessSvc := NewSessionService(newStubSessionRepo(), SessionConfig{TTL: time.Hour})
+	a := NewAuthenticator(jwtSvc, sessSvc, &stubStateStore{state: State{TokenGeneration: 0, IsActive: false}})
+
+	sess, err := sessSvc.CreateSession(context.Background(), uuid.New(), "UA", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &okHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: sess.Token})
+	rr := httptest.NewRecorder()
+	a.RequireAuth(inner).ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("inactive account via session cookie: expected 401, got %d", rr.Code)
+	}
+}
+
+func TestRequireAuth_SessionCookie_ActiveAccountAccepted(t *testing.T) {
+	jwtSvc := NewJWTService(testTokenConfig(t))
+	sessSvc := NewSessionService(newStubSessionRepo(), SessionConfig{TTL: time.Hour})
+	// Any generation: session credentials carry no claim to compare.
+	a := NewAuthenticator(jwtSvc, sessSvc, &stubStateStore{state: State{TokenGeneration: 7, IsActive: true}})
+
+	sess, err := sessSvc.CreateSession(context.Background(), uuid.New(), "UA", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &okHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: sess.Token})
+	rr := httptest.NewRecorder()
+	a.RequireAuth(inner).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("active account via session cookie: expected 200, got %d", rr.Code)
+	}
+}

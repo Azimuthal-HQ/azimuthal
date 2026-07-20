@@ -290,3 +290,135 @@ func TestInvites_AdminSurface404ForNonAdmins(t *testing.T) {
 		map[string]any{"emails": []string{"x@example.com"}})
 	require.Equal(t, http.StatusNotFound, r.StatusCode)
 }
+
+func TestInvites_TeamTargetedInvite_EnrolsThatTeamAsPrimary(t *testing.T) {
+	ts := newTestServer(t)
+	team, err := ts.TeamService.Create(t.Context(), ts.OrgID, nil, "landing-team", "Landing Team", "")
+	require.NoError(t, err)
+
+	out := createInvite(t, ts, "team-landed@example.com", map[string]any{"team_id": team.ID})
+	require.Equal(t, "created", out.Status)
+	raw := rawTokenFromURL(t, out.Invite.InviteURL)
+
+	r := ts.post(t, "/api/v1/invites/accept", map[string]string{
+		"token": raw, "display_name": "Team Lander", "password": "long-enough-pass",
+	}, false)
+	require.Equal(t, http.StatusOK, r.StatusCode, "accept: %s", r.Body)
+
+	// The invite's initial team is the primary — "assigned otherwise" in
+	// ADR-0006 terms, so not the default team.
+	var teamID uuid.UUID
+	var isPrimary bool
+	require.NoError(t, ts.DB.Pool.QueryRow(t.Context(),
+		`SELECT tm.team_id, tm.is_primary FROM team_members tm
+		 JOIN users u ON u.id = tm.user_id
+		 WHERE u.email = 'team-landed@example.com' AND tm.org_id = $1`, ts.OrgID).Scan(&teamID, &isPrimary))
+	require.Equal(t, team.ID, teamID)
+	require.True(t, isPrimary)
+}
+
+func TestInvites_ForeignTeamRejected_DeadTeamFallsBackToDefault(t *testing.T) {
+	ts := newTestServer(t)
+
+	// A team from another org fails the whole create with 400.
+	otherOrg := testutil.CreateTestOrg(t, ts.DB.Pool)
+	foreignTeam := testutil.DefaultTeamID(t, ts.DB.Pool, otherOrg.ID)
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/invites", ts.OrgID), map[string]any{
+		"emails": []string{"foreign-team@example.com"}, "team_id": foreignTeam,
+	}, true)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "foreign team must 400: %s", r.Body)
+
+	// A team deleted between create and accept: the invite survives (FK SET
+	// NULL) and acceptance falls back to the org default team.
+	doomed, err := ts.TeamService.Create(t.Context(), ts.OrgID, nil, "doomed-team", "Doomed Team", "")
+	require.NoError(t, err)
+	out := createInvite(t, ts, "fallback@example.com", map[string]any{"team_id": doomed.ID})
+	require.Equal(t, "created", out.Status)
+	raw := rawTokenFromURL(t, out.Invite.InviteURL)
+	require.NoError(t, ts.TeamService.Delete(t.Context(), ts.OrgID, doomed.ID))
+
+	r = ts.post(t, "/api/v1/invites/accept", map[string]string{
+		"token": raw, "display_name": "Fallback", "password": "long-enough-pass",
+	}, false)
+	require.Equal(t, http.StatusOK, r.StatusCode, "accept after team deletion: %s", r.Body)
+
+	defaultTeam := testutil.DefaultTeamID(t, ts.DB.Pool, ts.OrgID)
+	var teamID uuid.UUID
+	require.NoError(t, ts.DB.Pool.QueryRow(t.Context(),
+		`SELECT tm.team_id FROM team_members tm JOIN users u ON u.id = tm.user_id
+		 WHERE u.email = 'fallback@example.com' AND tm.org_id = $1 AND tm.is_primary`, ts.OrgID).Scan(&teamID))
+	require.Equal(t, defaultTeam, teamID, "a dead initial team falls back to the default — never teamless")
+}
+
+func TestInvites_AcceptValidation(t *testing.T) {
+	ts := newTestServer(t)
+	out := createInvite(t, ts, "needs-fields@example.com", nil)
+	raw := rawTokenFromURL(t, out.Invite.InviteURL)
+
+	// A fresh email needs display_name and password.
+	r := ts.post(t, "/api/v1/invites/accept", map[string]string{"token": raw}, false)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "missing fields: %s", r.Body)
+	// A short password is rejected before anything is written.
+	r = ts.post(t, "/api/v1/invites/accept", map[string]string{
+		"token": raw, "display_name": "X", "password": "short",
+	}, false)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "short password: %s", r.Body)
+	// Missing token entirely.
+	r = ts.post(t, "/api/v1/invites/accept", map[string]string{"display_name": "X", "password": "long-enough-pass"}, false)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode)
+	// The invite is still consumable after the failed attempts.
+	r = ts.post(t, "/api/v1/invites/accept", map[string]string{
+		"token": raw, "display_name": "Finally", "password": "long-enough-pass",
+	}, false)
+	require.Equal(t, http.StatusOK, r.StatusCode, "valid accept after failures: %s", r.Body)
+}
+
+func TestInvites_AcceptForDeactivatedAccountRefused(t *testing.T) {
+	ts := newTestServer(t)
+	otherOrg := testutil.CreateTestOrg(t, ts.DB.Pool)
+	existing := testutil.CreateTestUserWithRole(t, ts.DB.Pool, otherOrg.ID, "member")
+	// Deactivate the account globally (direct column write — the other org's
+	// admin did it, conceptually).
+	_, err := ts.DB.Pool.Exec(t.Context(), `UPDATE users SET is_active = false WHERE id = $1`, existing.ID)
+	require.NoError(t, err)
+
+	out := createInvite(t, ts, existing.Email, nil)
+	require.Equal(t, "created", out.Status)
+	raw := rawTokenFromURL(t, out.Invite.InviteURL)
+
+	r := ts.post(t, "/api/v1/invites/accept", map[string]string{"token": raw}, false)
+	require.Equal(t, http.StatusConflict, r.StatusCode,
+		"an invite for a deactivated account must be refused, not silently join: %s", r.Body)
+	// No membership was created.
+	var n int
+	require.NoError(t, ts.DB.Pool.QueryRow(t.Context(),
+		`SELECT count(*) FROM memberships WHERE org_id = $1 AND user_id = $2`, ts.OrgID, existing.ID).Scan(&n))
+	require.Zero(t, n)
+}
+
+func TestInvites_RevokeAndResendErrorPaths(t *testing.T) {
+	ts := newTestServer(t)
+
+	// Malformed ids are 400; unknown ids are 404.
+	r := ts.delete(t, fmt.Sprintf("/api/v1/orgs/%s/invites/not-a-uuid", ts.OrgID), true)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode)
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/invites/not-a-uuid/resend", ts.OrgID), nil, true)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode)
+	ghost := uuid.New()
+	r = ts.delete(t, fmt.Sprintf("/api/v1/orgs/%s/invites/%s", ts.OrgID, ghost), true)
+	require.Equal(t, http.StatusNotFound, r.StatusCode)
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/invites/%s/resend", ts.OrgID, ghost), nil, true)
+	require.Equal(t, http.StatusNotFound, r.StatusCode)
+
+	// A consumed invite can be neither revoked nor resent.
+	out := createInvite(t, ts, "consumed@example.com", nil)
+	raw := rawTokenFromURL(t, out.Invite.InviteURL)
+	ar := ts.post(t, "/api/v1/invites/accept", map[string]string{
+		"token": raw, "display_name": "C", "password": "long-enough-pass",
+	}, false)
+	require.Equal(t, http.StatusOK, ar.StatusCode)
+	r = ts.delete(t, fmt.Sprintf("/api/v1/orgs/%s/invites/%s", ts.OrgID, out.Invite.ID), true)
+	require.Equal(t, http.StatusNotFound, r.StatusCode, "revoking a consumed invite: %s", r.Body)
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/invites/%s/resend", ts.OrgID, out.Invite.ID), nil, true)
+	require.Equal(t, http.StatusNotFound, r.StatusCode, "resending a consumed invite: %s", r.Body)
+}

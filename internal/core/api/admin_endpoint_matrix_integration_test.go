@@ -221,3 +221,36 @@ func TestAdminLifecycle_WritesAuditEvents(t *testing.T) {
 		`SELECT count(*) FROM audit_log WHERE org_id = $1 AND action = 'invite.created'`, ts.OrgID).Scan(&n))
 	require.Equal(t, 1, n)
 }
+
+func TestAdminEndpointMatrix_AuditFilterEdges(t *testing.T) {
+	ts := newTestServer(t)
+
+	badFilters := []string{
+		"to=not-a-time",
+		"cursor=garbage",
+		"cursor=2026-01-01T00:00:00Z,not-a-uuid",
+		"limit=0",
+		"limit=-3",
+		"limit=abc",
+	}
+	for _, qs := range badFilters {
+		r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/audit-log?%s", ts.OrgID, qs), true)
+		require.Equal(t, http.StatusBadRequest, r.StatusCode, "filter %q must 400: %s", qs, r.Body)
+	}
+
+	// Valid time-bounded queries answer, and a window excluding everything
+	// answers empty rather than erroring.
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/audit-log?from=2000-01-01T00:00:00Z&to=2000-01-02T00:00:00Z", ts.OrgID), true)
+	require.Equal(t, http.StatusOK, r.StatusCode)
+	var page struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(r.Body, &page))
+	require.Empty(t, page.Entries)
+
+	// Batch expansion: malformed id 400, unknown id 404.
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/audit-log/batches/not-a-uuid", ts.OrgID), true)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode)
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/audit-log/batches/%s", ts.OrgID, uuid.New()), true)
+	require.Equal(t, http.StatusNotFound, r.StatusCode)
+}
