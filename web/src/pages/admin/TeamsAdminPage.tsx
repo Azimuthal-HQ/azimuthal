@@ -445,16 +445,12 @@ export function TeamsAdminPage() {
 
   return (
     <div className="space-y-6" data-testid="teams-admin-page">
+      {/* Section header only — the page renders inside AdminLayout, which
+          owns the Administration page header and tabs (P2.5 relocation). */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Users className="h-6 w-6 text-[var(--color-primary)]" />
-          <div>
-            <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">Teams</h1>
-            <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
-              The org team tree. Teams own spaces and receive grants; nesting is capped at 5 levels.
-            </p>
-          </div>
-        </div>
+        <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+          The org team tree. Teams own spaces and receive grants; nesting is capped at 5 levels.
+        </p>
         <Button data-testid="team-create-button" onClick={openCreate}>
           <Plus className="mr-2 h-4 w-4" />
           New team
