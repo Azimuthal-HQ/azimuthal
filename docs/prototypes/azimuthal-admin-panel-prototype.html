@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azimuthal — admin panel prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+ --bg:#0F1117;--top:#12151D;--content:#0C0E14;--card:#171B24;--pop:#1A1E28;
+ --line:rgba(255,255,255,.07);--line2:rgba(255,255,255,.11);
+ --text:#E6E9F0;--muted:#8A92A2;--faint:#5C6474;
+ --accent:#4A90D9;--accent-t:rgba(74,144,217,.15);--afg:#6FA9E3;--afg2:#CFE1F5;
+ --module-beacon:#E0806A;--module-codex:#A99BEE;--module-vector:#4A90D9;
+ --module-chip-fg:#A6AEBC;
+ --page:#090A0D;--mono:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--page);font-family:'Inter',system-ui,sans-serif;color:var(--text);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1140px;margin:0 auto;padding:26px 18px 46px}
+.eyebrow{display:flex;align-items:center;gap:8px;color:var(--faint);font-size:12px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:10px}
+.eyebrow .ic{width:15px;height:15px;color:var(--accent)}
+.hint{color:var(--muted);font-size:12.5px;margin:0 2px 18px;line-height:1.62}
+.hint b{color:var(--afg);font-weight:500}
+.ic{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;width:16px;height:16px;flex:none}
+
+.app{background:var(--bg);border:1px solid var(--line2);border-radius:13px;overflow:hidden;font-size:13px}
+.top{display:flex;align-items:center;gap:9px;height:50px;padding:0 13px;background:var(--top);border-bottom:1px solid var(--line)}
+.logo{width:20px;height:20px;color:var(--accent);margin-right:5px}
+.tt{font-size:13px;font-weight:500}
+.tsub{color:var(--faint);font-size:12px}
+.tright{margin-left:auto;display:flex;align-items:center;gap:10px}
+.av{width:25px;height:25px;border-radius:50%;background:rgba(74,144,217,.22);color:#8FBCE8;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500}
+
+.body{display:flex;min-height:520px}
+.side{width:186px;flex:none;border-right:1px solid var(--line);padding:12px 9px}
+.sl{padding:8px 9px 6px;color:var(--faint);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase}
+.ni{display:flex;align-items:center;gap:10px;padding:7px 9px;border-radius:7px;color:#9AA3B4;font-size:12.5px;cursor:pointer;transition:background .12s,color .12s}
+.ni .ic{width:16px;height:16px}
+.ni:hover{background:rgba(255,255,255,.04);color:#C2C9D6}
+.ni.on{background:var(--accent-t);color:var(--afg2)}
+.ni.on .ic{color:var(--afg)}
+.ni .cnt{margin-left:auto;font-size:11px;color:var(--faint);font-family:var(--mono)}
+
+.main{flex:1;min-width:0;background:var(--content);padding:16px 18px 22px;overflow:auto}
+.h1{font-size:16px;font-weight:500;margin-bottom:4px}
+.sub{color:var(--muted);font-size:12.5px;line-height:1.6;margin-bottom:16px;max-width:640px}
+.bar{display:flex;align-items:center;gap:9px;margin-bottom:14px;flex-wrap:wrap}
+.srch{display:flex;align-items:center;gap:8px;height:31px;padding:0 11px;background:#0E1016;border:1px solid var(--line);border-radius:8px;color:var(--faint);font-size:12.5px;min-width:210px}
+.srch .ic{width:14px;height:14px}
+.btn{display:flex;align-items:center;gap:6px;height:31px;padding:0 12px;background:var(--accent);color:#fff;border-radius:8px;font-size:12.5px;font-weight:500;cursor:pointer}
+.btn .ic{width:14px;height:14px;stroke-width:2}
+.btn.ghost{background:none;border:1px solid var(--line2);color:var(--muted)}
+.btn.ghost:hover{color:var(--text)}
+
+/* matrix */
+.mwrap{border:1px solid var(--line);border-radius:11px;overflow:auto;background:var(--card)}
+table.mx{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px}
+.mx th,.mx td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);padding:0}
+.mx th:last-child,.mx td:last-child{border-right:none}
+.mx tr:last-child td{border-bottom:none}
+.mx thead th{background:#13161E;position:sticky;top:0;z-index:2;text-align:left;font-weight:500;vertical-align:bottom}
+.corner{min-width:216px;padding:11px 13px!important;color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;position:sticky;left:0;z-index:3;background:#13161E!important}
+.colh{padding:10px 11px!important;min-width:118px}
+.colh .cn{color:#DDE1EA;font-size:12.5px;margin-bottom:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:104px}
+.chip{font-size:9.5px;font-weight:500;padding:2px 6px;border-radius:4px;color:var(--module-chip-fg);display:inline-block}
+.c-beacon{background:rgba(224,128,106,.30)}
+.c-codex{background:rgba(169,155,238,.30)}
+.c-vector{background:rgba(74,144,217,.30)}
+.vis{margin-left:5px;color:var(--faint);font-size:10px}
+
+.rowh{padding:9px 13px!important;position:sticky;left:0;background:var(--card);z-index:1}
+.rowh .rn{display:flex;align-items:center;gap:8px;color:#DDE1EA;white-space:nowrap}
+.rowh .rn .ic{width:14px;height:14px;color:var(--faint)}
+.rowh .meta{color:var(--faint);font-size:10.5px;margin-top:3px;margin-left:22px}
+.d1{padding-left:26px!important}
+.d2{padding-left:42px!important}
+.tw{color:var(--faint);font-family:var(--mono);font-size:10px;margin-right:2px}
+
+.cell{text-align:center;padding:8px 6px!important;cursor:pointer}
+.cell:hover{background:rgba(255,255,255,.028)}
+.rb{display:inline-block;font-size:10.5px;font-weight:500;padding:3px 9px;border-radius:5px;white-space:nowrap}
+.r-viewer{background:rgba(74,144,217,.14);color:#8FB8E0}
+.r-contributor{background:rgba(74,144,217,.26);color:#A8CCEE}
+.r-agent{background:rgba(74,144,217,.38);color:#C6DDF5}
+.r-admin{background:rgba(74,144,217,.52);color:#E4EFFB}
+.rb.inh{background:none;border:1px dashed rgba(255,255,255,.18);color:var(--faint)}
+.dash{color:rgba(255,255,255,.12);font-size:14px}
+
+.legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:13px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.lg{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted)}
+.note{margin-top:12px;padding:11px 13px;border:1px solid rgba(74,144,217,.25);background:rgba(74,144,217,.06);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.65}
+.note b{color:var(--afg);font-weight:500}
+
+/* people */
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.tbl th{text-align:left;color:var(--faint);font-weight:400;font-size:10.5px;padding:9px 12px;border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.04em}
+.tbl td{padding:11px 12px;border-bottom:1px solid var(--line);color:#CBD1DC}
+.tbl tbody tr:hover td{background:rgba(255,255,255,.02)}
+.who{display:flex;align-items:center;gap:9px}
+.who .av{width:26px;height:26px;font-size:10px}
+.who .nm{color:#DDE1EA}
+.who .em{color:var(--faint);font-size:11px}
+.st{font-size:10.5px;font-weight:500;padding:3px 8px;border-radius:5px}
+.st-active{background:rgba(93,202,165,.16);color:#63C6A0}
+.st-invited{background:rgba(232,150,58,.16);color:#E4A04A}
+.st-deact{background:rgba(140,150,168,.14);color:#9AA3B4}
+.rowbtn{color:var(--faint);cursor:pointer}
+.rowbtn:hover{color:var(--text)}
+
+/* picker */
+.pickwrap{margin-top:18px;border:1px solid var(--line);border-radius:11px;padding:14px 15px;background:var(--card);max-width:520px}
+.pkh{font-size:12.5px;font-weight:500;margin-bottom:4px}
+.pks{color:var(--faint);font-size:11.5px;margin-bottom:12px}
+.pickrow{display:flex;gap:8px;align-items:center}
+.seg{display:flex;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+.seg span{padding:7px 13px;font-size:12px;color:var(--muted);cursor:pointer;min-width:58px;text-align:center}
+.seg span.on{background:var(--accent-t);color:var(--afg2)}
+.pinput{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:33px;padding:0 11px;background:#0E1016;border:1px solid var(--accent);border-radius:8px;color:var(--text);font-size:12.5px}
+.pinput .ic{width:14px;height:14px;color:var(--faint)}
+.sel{display:flex;align-items:center;gap:7px;background:var(--accent-t);border-radius:20px;padding:3px 9px 3px 4px;font-size:11.5px;color:var(--afg2)}
+.sel .av{width:19px;height:19px;font-size:9px}
+.results{margin-top:8px;border:1px solid var(--line2);border-radius:9px;background:var(--pop);overflow:hidden}
+.res{display:flex;align-items:center;gap:9px;padding:8px 11px;cursor:pointer;border-bottom:1px solid var(--line)}
+.res:last-child{border-bottom:none}
+.res:hover{background:rgba(255,255,255,.04)}
+.res .av{width:24px;height:24px;font-size:10px}
+.res .tm{margin-left:auto;font-size:10.5px;color:var(--faint)}
+.bad{margin-top:12px;padding:10px 12px;border:1px solid rgba(224,80,80,.3);background:rgba(224,80,80,.06);border-radius:9px;font-size:12px;color:#E9736F}
+.bad code{font-family:var(--mono);font-size:11px;color:#F0908C}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0111 0"/><path d="M16 6.6a3 3 0 010 5.8M15.5 20a5.5 5.5 0 00-1.4-3.6"/></symbol>
+<symbol id="i-tree" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="5" rx="1.4"/><rect x="3" y="16" width="6" height="5" rx="1.4"/><rect x="15" y="16" width="6" height="5" rx="1.4"/><path d="M12 8v4M6 16v-2h12v2"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></symbol>
+<symbol id="i-scroll" viewBox="0 0 24 24"><path d="M6 4h12v14a2 2 0 002 2H8a2 2 0 01-2-2V4z"/><path d="M9 8h6M9 12h6"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-3.8-3.8"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-dots" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 018 0V10"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5a13 13 0 010 17M12 3.5a13 13 0 000 17"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+</svg>
+
+<div class="wrap">
+<div class="eyebrow"><svg class="ic"><use href="#i-compass"/></svg>Azimuthal · admin panel concept</div>
+<div class="hint">Click <b>Access</b> and <b>People</b> in the left nav. The matrix is <b>teams × spaces</b>, not users × spaces — every cell is one grant row. Ghosted badges are access inherited from a team below, which is the part nobody reads correctly from a list.</div>
+<div id="app"></div>
+</div>
+
+<script>
+const ic=id=>'<svg class="ic"><use href="#'+id+'"/></svg>';
+const state={view:'access'};
+
+const SPACES=[
+ {n:'DevOps',m:'beacon',v:'discoverable'},
+ {n:'ServiceDesk',m:'beacon',v:'org'},
+ {n:'Product roadmap',m:'vector',v:'discoverable'},
+ {n:'Design system',m:'vector',v:'hidden'},
+ {n:'Engineering wiki',m:'codex',v:'org'},
+ {n:'Brand',m:'codex',v:'hidden'}
+];
+// role per team per space; '' = none. Ghost is derived, not stored.
+const TEAMS=[
+ {n:'Engineering',d:0,members:14,g:['','','','','space_admin','']},
+ {n:'Platform',d:1,members:6,g:['contributor','','agent','','contributor','']},
+ {n:'Core services',d:2,members:3,g:['viewer','','contributor','','','']},
+ {n:'Design',d:1,members:4,g:['','','viewer','space_admin','','agent']},
+ {n:'Customer support',d:0,members:5,g:['agent','space_admin','','','viewer','']}
+];
+const LBL={viewer:'Viewer',contributor:'Contributor',agent:'Agent',space_admin:'Admin'};
+const CLS={viewer:'r-viewer',contributor:'r-contributor',agent:'r-agent',space_admin:'r-admin'};
+
+// descendants of row i, by depth walk
+function descendants(i){
+ const out=[],base=TEAMS[i].d;
+ for(let j=i+1;j<TEAMS.length;j++){ if(TEAMS[j].d<=base) break; out.push(j); }
+ return out;
+}
+function inherited(i,c){
+ // a member of team i enjoys grants made to any descendant team
+ const order=['viewer','contributor','agent','space_admin'];
+ let best='';
+ descendants(i).forEach(j=>{
+  const r=TEAMS[j].g[c];
+  if(r && order.indexOf(r)>order.indexOf(best)) best=r;
+ });
+ return best;
+}
+
+const VIS={hidden:['i-lock','Hidden'],discoverable:['i-eye','Discoverable'],org:['i-globe','Org']};
+
+function nav(){
+ const it=(id,label,icon,cnt)=>'<div class="ni'+(state.view===id?' on':'')+'" data-v="'+id+'">'+ic(icon)+label+
+   (cnt?'<span class="cnt">'+cnt+'</span>':'')+'</div>';
+ return '<div class="side"><div class="sl">Organisation</div>'+
+  it('people','People','i-users',23)+it('teams','Teams','i-tree',5)+
+  it('access','Access','i-grid')+it('spaces','Spaces','i-layers',6)+
+  '<div class="sl">Records</div>'+it('audit','Audit log','i-scroll')+'</div>';
+}
+
+function accessView(){
+ const head=SPACES.map(s=>{
+  const v=VIS[s.v];
+  return '<th class="colh"><div class="cn">'+s.n+'</div><span class="chip c-'+s.m+'">'+
+   s.m.charAt(0).toUpperCase()+s.m.slice(1)+'</span></th>';
+ }).join('');
+
+ const rows=TEAMS.map((t,i)=>{
+  const cells=SPACES.map((s,c)=>{
+   const direct=t.g[c];
+   if(direct) return '<td class="cell"><span class="rb '+CLS[direct]+'">'+LBL[direct]+'</span></td>';
+   const inh=inherited(i,c);
+   if(inh) return '<td class="cell"><span class="rb inh">'+LBL[inh]+'</span></td>';
+   return '<td class="cell"><span class="dash">—</span></td>';
+  }).join('');
+  const indent=t.d===1?' d1':(t.d===2?' d2':'');
+  const tw=t.d>0?'<span class="tw">└</span>':'';
+  return '<tr><td class="rowh'+indent+'"><div class="rn">'+tw+ic('i-users')+t.n+'</div>'+
+   '<div class="meta">'+t.members+' members</div></td>'+cells+'</tr>';
+ }).join('');
+
+ return '<div class="h1">Access</div>'+
+  '<div class="sub">Every cell is one grant. Rows are teams, columns are spaces — because grants are made to teams, not to people. To see what one person can reach, open them in People.</div>'+
+  '<div class="bar"><div class="srch">'+ic('i-search')+'Filter teams or spaces</div>'+
+  '<div class="btn ghost">'+ic('i-layers')+'All modules</div>'+
+  '<div class="btn">'+ic('i-plus')+'Add grant</div></div>'+
+  '<div class="mwrap"><table class="mx"><thead><tr><th class="corner">Team \\ Space</th>'+head+'</tr></thead>'+
+  '<tbody>'+rows+'</tbody></table></div>'+
+  '<div class="legend">'+
+   '<span class="lg"><span class="rb r-viewer">Viewer</span></span>'+
+   '<span class="lg"><span class="rb r-contributor">Contributor</span></span>'+
+   '<span class="lg"><span class="rb r-agent">Agent</span></span>'+
+   '<span class="lg"><span class="rb r-admin">Admin</span></span>'+
+   '<span class="lg"><span class="rb inh">Inherited</span> from a team below</span>'+
+   '<span class="lg"><span class="dash">—</span> no access</span>'+
+  '</div>'+
+  '<div class="note"><b>Reading the ghosted cells.</b> Engineering has no direct grant on Product roadmap, '+
+  'but its members still reach it — Platform holds Agent there, and a member of a parent team carries the '+
+  'authority of every team beneath it. Core services sits <i>below</i> Platform, so it does not inherit '+
+  'Platform&rsquo;s grants; it only has what was granted to Core services directly.</div>';
+}
+
+function peopleView(){
+ const P=[
+  ['JK','Josh Kitsune','josh@example.com','Owner','Engineering','st-active','Active'],
+  ['AM','Ana Mireles','ana@example.com','Admin','Platform','st-active','Active'],
+  ['RT','Ravi Thakur','ravi@example.com','Member','Core services','st-active','Active'],
+  ['SB','Sam Byrne','sam@example.com','Member','Design','st-invited','Invited'],
+  ['LO','Lena Ortiz','lena@example.com','Member','Customer support','st-active','Active'],
+  ['DW','Dan Whitfield','dan@example.com','Member','Platform','st-deact','Deactivated']
+ ];
+ const rows=P.map(p=>'<tr><td><div class="who"><span class="av">'+p[0]+'</span><span><div class="nm">'+p[1]+
+  '</div><div class="em">'+p[2]+'</div></span></div></td><td>'+p[3]+'</td><td>'+p[4]+
+  '</td><td><span class="st '+p[5]+'">'+p[6]+'</span></td>'+
+  '<td style="text-align:right"><span class="rowbtn">'+ic('i-dots')+'</span></td></tr>').join('');
+
+ return '<div class="h1">People</div>'+
+  '<div class="sub">Everyone in this organisation. Invite by link — the invitee sets their own password, so no one else ever handles it. Deactivating blocks sign-in and keeps their history intact and attributable.</div>'+
+  '<div class="bar"><div class="srch">'+ic('i-search')+'Search name or email</div>'+
+  '<div class="btn ghost">All statuses</div><div class="btn">'+ic('i-plus')+'Invite people</div></div>'+
+  '<div class="mwrap"><table class="tbl"><thead><tr><th>Person</th><th>Org role</th><th>Primary team</th><th>Status</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+  '<div class="pickwrap"><div class="pkh">Granting access — the picker that replaces the UUID field</div>'+
+  '<div class="pks">Search by name or email. Nobody knows a UUID.</div>'+
+  '<div class="pickrow"><div class="seg"><span class="on">User</span><span>Team</span></div>'+
+  '<div class="pinput">'+ic('i-search')+'<span class="sel"><span class="av">AM</span>Ana Mireles '+
+  '<svg class="ic" style="width:11px;height:11px"><use href="#i-x"/></svg></span></div></div>'+
+  '<div class="results">'+
+   '<div class="res"><span class="av">RT</span><span><div class="nm">Ravi Thakur</div>'+
+   '<div class="em">ravi@example.com</div></span><span class="tm">Core services</span></div>'+
+   '<div class="res"><span class="av">LO</span><span><div class="nm">Lena Ortiz</div>'+
+   '<div class="em">lena@example.com</div></span><span class="tm">Customer support</span></div>'+
+  '</div>'+
+  '<div class="bad">Currently on main: a free-text <code>User ID (UUID)</code> field, and a raw '+
+  '<code>invalid request body</code> string surfaced straight to the user.</div></div>';
+}
+
+function placeholder(t,d,icon){
+ return '<div class="h1">'+t+'</div><div class="sub">'+d+'</div>'+
+  '<div class="mwrap" style="padding:34px 18px;text-align:center;color:var(--faint);font-size:13px">'+
+  ic(icon)+'<div style="margin-top:9px">Existing surface, moved under Admin.</div></div>';
+}
+
+function view(){
+ if(state.view==='access') return accessView();
+ if(state.view==='people') return peopleView();
+ if(state.view==='teams') return placeholder('Teams','The team tree, membership, and primary-team assignment — built in P2, relocated here.','i-tree');
+ if(state.view==='spaces') return placeholder('Spaces','Every space, its owning team, visibility, and lifecycle. Rename, reassign, archive, delete.','i-layers');
+ return placeholder('Audit log','Append-only record of every team, grant, membership, and visibility change.','i-scroll');
+}
+
+function render(){
+ document.getElementById('app').innerHTML=
+  '<div class="app"><div class="top">'+ic('i-compass').replace('class="ic"','class="ic logo"')+
+  '<span class="tt">Administration</span><span class="tsub">Kitsune\'s workspace</span>'+
+  '<div class="tright"><div class="av">JK</div></div></div>'+
+  '<div class="body">'+nav()+'<div class="main">'+view()+'</div></div></div>';
+}
+document.getElementById('app').addEventListener('click',e=>{
+ const n=e.target.closest('[data-v]');
+ if(n){state.view=n.dataset.v;render();}
+});
+render();
+</script>
+</body>
+</html>
