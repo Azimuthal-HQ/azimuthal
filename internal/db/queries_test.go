@@ -501,10 +501,12 @@ func TestPageExtras(t *testing.T) {
 	if len(children) == 0 {
 		t.Error("expected at least one child page")
 	}
-	if err := q.UpdatePagePosition(ctx, generated.UpdatePagePositionParams{
-		ID: child.ID, Position: 1,
+	// MovePageToSpace supersedes UpdatePagePosition (P3): here an in-space
+	// reposition (SpaceID unchanged, root-level path).
+	if err := q.MovePageToSpace(ctx, generated.MovePageToSpaceParams{
+		ID: child.ID, SpaceID: space.ID, Position: 1, Path: child.ID.String(),
 	}); err != nil {
-		t.Fatalf("UpdatePagePosition: %v", err)
+		t.Fatalf("MovePageToSpace: %v", err)
 	}
 	_, err = q.CreatePageRevision(ctx, generated.CreatePageRevisionParams{
 		ID: uuid.New(), PageID: root.ID, Version: 1,

@@ -11,7 +11,7 @@ import (
 func TestRoadmapService_GetItemsDueInRange(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	roadmapSvc := NewRoadmapService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
@@ -53,7 +53,7 @@ func TestRoadmapService_GetItemsDueInRange(t *testing.T) {
 func TestRoadmapService_GetItemsDueInRange_OverdueFlag(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	roadmapSvc := NewRoadmapService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
@@ -83,7 +83,7 @@ func TestRoadmapService_GetItemsDueInRange_OverdueFlag(t *testing.T) {
 func TestRoadmapService_GetOverdueItems(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	roadmapSvc := NewRoadmapService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
@@ -121,7 +121,7 @@ func TestRoadmapService_GetOverdueItems(t *testing.T) {
 func TestRoadmapService_GetOverdueItems_ResolvedNotOverdue(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	roadmapSvc := NewRoadmapService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
@@ -147,7 +147,7 @@ func TestRoadmapService_GetSprintRoadmap(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
 	sprintSvc := NewSprintService(sprintRepo)
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	roadmapSvc := NewRoadmapService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
@@ -201,7 +201,7 @@ func TestRoadmapService_GetSprintRoadmap_SkipsUndatedSprints(t *testing.T) {
 func TestRoadmapService_GetItemsWithoutDueDate(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	roadmapSvc := NewRoadmapService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()

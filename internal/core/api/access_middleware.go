@@ -47,6 +47,31 @@ func ResolveAccess(resolver *access.Resolver) func(http.Handler) http.Handler {
 	}
 }
 
+// ResolveShares resolves the caller's entity-share coverage once and caches
+// it on the request context (spec §5 readable_entity_ids, ADR-0008). It is
+// mounted ONLY on the share-authorised read subtree — space-scoped routes
+// never pay for it, so the P2 per-request query budget on those routes is
+// unchanged. Runs after ResolveAccess, which has already 404'd non-members;
+// a resolution failure here fails closed with 500 rather than granting.
+func ResolveShares(resolver *access.Resolver) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			res := access.FromContext(r.Context())
+			if res == nil {
+				// No resolution means ResolveAccess did not run — fail closed.
+				respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "not found")
+				return
+			}
+			se, err := resolver.ResolveShares(r.Context(), res.OrgID, res.UserID)
+			if err != nil {
+				respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to resolve shares")
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(access.WithSharedEntities(r.Context(), se)))
+		})
+	}
+}
+
 // RequireSpaceReadable 404s any {spaceID}-scoped request whose space is not
 // in the caller's resolved readable set. Runs after RequireSpaceInOrg, so
 // the space is already known to belong to the org — this guard adds the

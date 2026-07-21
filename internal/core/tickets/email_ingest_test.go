@@ -73,7 +73,7 @@ func TestParseInboundEmail(t *testing.T) {
 }
 
 func TestCreateFromEmail(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 

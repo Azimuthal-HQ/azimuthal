@@ -83,11 +83,18 @@ func (m *mockLabelRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*projects.L
 }
 func (m *mockLabelRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
 
+// noopShareDeleter satisfies projects.ShareRevokingDeleter for handler tests.
+type noopShareDeleter struct{}
+
+func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+	return nil
+}
+
 func setupHandler() *projectsapi.Handler {
 	ir := &mockItemRepo{}
 	sr := &mockSprintRepo{}
 	return projectsapi.NewHandler(
-		projects.NewItemService(ir),
+		projects.NewItemService(ir, noopShareDeleter{}),
 		projects.NewSprintService(sr),
 		projects.NewBacklogService(ir, sr),
 		projects.NewRoadmapService(ir, sr),

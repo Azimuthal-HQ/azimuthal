@@ -26,6 +26,17 @@ import (
 //	                handler-level refinement above the floor
 //	space-cap       space-read + handler-enforced capability (manage_space,
 //	                manage_grants)
+//	share-manage    org-member; the handler resolves the shared entity to its
+//	                space and enforces manage_shares there, with a read check
+//	                first so an unreadable space 404s (no existence leak) and
+//	                a readable-but-uncapable space 403s. Org-scoped because a
+//	                share names an entity, not a {spaceID} in the URL.
+//	share-read      org-member + ResolveShares; authorised by an active,
+//	                unexpired, unrevoked share whose audience includes the
+//	                caller — NOT by space access. This is the one route family
+//	                that reaches content without space-readability, by design
+//	                (ADR-0008). 404 for both "no such entity" and "not shared
+//	                with you", so it leaks neither existence nor shared-ness.
 //
 // A route added without a row here fails this test — that is the point.
 var routeAccounting = map[string]string{
@@ -196,6 +207,32 @@ var routeAccounting = map[string]string{
 	// Space workflow reads.
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/":       "space-read",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/states": "space-read",
+
+	// Entity shares — management (P3, ADR-0008). Org-scoped; the handler
+	// resolves the shared entity's space and enforces manage_shares there.
+	"GET /api/v1/orgs/{orgID}/shares/":            "share-manage: list an entity's shares + cascade page count; manage_shares on the entity's space in-handler",
+	"POST /api/v1/orgs/{orgID}/shares/":           "share-manage: create a share; manage_shares on the entity's space in-handler",
+	"DELETE /api/v1/orgs/{orgID}/shares/{shareID}": "share-manage: revoke a share; manage_shares on the entity's space in-handler",
+
+	// Entity shares — the standalone read family (P3, ADR-0008). Authorised
+	// by share coverage alone, never by space access — the single most
+	// dangerous route in the application, guarded by ResolveShares +
+	// CoversForCaller.
+	"GET /api/v1/orgs/{orgID}/shared/{entityType}/{entityID}":                            "share-read: the container-stripped shared-entity read route",
+	"GET /api/v1/orgs/{orgID}/shared/{entityType}/{entityID}/attachments":                "share-read: list a shared entity's attachments",
+	"GET /api/v1/orgs/{orgID}/shared/{entityType}/{entityID}/attachments/{attachmentID}": "share-read: stream a shared entity's attachment (object key from the row, entity-bound)",
+
+	// Attachments — space-scoped (P3). Uploads/deletes gated by the write
+	// floor; reads by space-readability. Every route re-checks the
+	// attachment's entity lives in the URL space.
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/":                 "space-read: list an entity's attachments",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/":                "space-write: upload an attachment to an entity in the space",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/{attachmentID}":   "space-read: stream an attachment (entity re-verified to be in the space)",
+	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/{attachmentID}": "space-write: soft-delete an attachment",
+
+	// The move-confirmation warning count (ADR-0008 rule 9), served by the
+	// API so the UI never counts client-side.
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/share-impact": "space-read: active-share count a cross-space move would revoke",
 }
 
 // TestReadPathSweep_EveryRouteAccounted walks the fully wired router and

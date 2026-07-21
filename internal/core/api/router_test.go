@@ -254,15 +254,6 @@ func (m *mockPageStore) UpdatePageContent(_ context.Context, arg generated.Updat
 	return p, nil
 }
 
-func (m *mockPageStore) UpdatePagePosition(_ context.Context, _ generated.UpdatePagePositionParams) error {
-	return nil
-}
-
-func (m *mockPageStore) SoftDeletePage(_ context.Context, id uuid.UUID) error {
-	delete(m.pages, id)
-	return nil
-}
-
 func (m *mockPageStore) ListPagesBySpace(_ context.Context, spaceID uuid.UUID) ([]generated.ListPagesBySpaceRow, error) {
 	var result []generated.ListPagesBySpaceRow
 	for _, p := range m.pages {
@@ -323,7 +314,40 @@ func (m *mockPageStore) SearchPages(_ context.Context, _ generated.SearchPagesPa
 	return nil, nil
 }
 
-func (m *mockPageStore) UpdatePageDescendantPaths(_ context.Context, _ generated.UpdatePageDescendantPathsParams) error {
+// mockContentTx satisfies wiki.ContentTxStore for the router wiring tests,
+// operating on the mock page map so move/delete routes exercise end to end.
+type mockContentTx struct{ pages *mockPageStore }
+
+func (m *mockContentTx) MovePageTx(_ context.Context, in wiki.MovePageInput) (wiki.MovePageTxResult, error) {
+	p, ok := m.pages.pages[in.PageID]
+	if !ok {
+		return wiki.MovePageTxResult{}, wiki.ErrPageNotFound
+	}
+	crossSpace := p.SpaceID != in.TargetSpaceID
+	p.SpaceID = in.TargetSpaceID
+	if in.ParentID != nil {
+		p.ParentID = pgtype.UUID{Bytes: *in.ParentID, Valid: true}
+	} else {
+		p.ParentID = pgtype.UUID{}
+	}
+	p.Position = in.Position
+	m.pages.pages[in.PageID] = p
+	return wiki.MovePageTxResult{CrossSpace: crossSpace}, nil
+}
+
+func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, pageID, _ uuid.UUID) (int64, error) {
+	delete(m.pages.pages, pageID)
+	return 0, nil
+}
+
+// mockShareDeleter satisfies tickets.ShareRevokingDeleter and
+// projects.ShareRevokingDeleter with no-ops for the router wiring tests.
+type mockShareDeleter struct{}
+
+func (m *mockShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+	return nil
+}
+func (m *mockShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
 	return nil
 }
 
@@ -522,12 +546,14 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	sessionSvc := auth.NewSessionService(sessionRepo, auth.SessionConfig{TTL: 24 * time.Hour})
 	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc, nil)
 
-	ticketSvc := tickets.NewTicketService(newMockTicketRepo())
-	wikiSvc := wiki.NewService(newMockPageStore())
+	contentTx := &mockShareDeleter{}
+	ticketSvc := tickets.NewTicketService(newMockTicketRepo(), contentTx)
+	mockPages := newMockPageStore()
+	wikiSvc := wiki.NewService(mockPages, &mockContentTx{pages: mockPages})
 
 	itemRepo := newMockItemRepo()
 	sprintRepo := newMockSprintRepo()
-	itemSvc := projects.NewItemService(itemRepo)
+	itemSvc := projects.NewItemService(itemRepo, contentTx)
 	sprintSvc := projects.NewSprintService(sprintRepo)
 	backlogSvc := projects.NewBacklogService(itemRepo, sprintRepo)
 	roadmapSvc := projects.NewRoadmapService(itemRepo, sprintRepo)

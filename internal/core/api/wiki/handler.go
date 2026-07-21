@@ -2,6 +2,7 @@
 package wiki
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,11 +19,19 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 )
 
+// ShareImpactCounter counts the active shares a cross-space move of a page
+// (and its subtree) would revoke — the move-confirmation warning number
+// (ADR-0008 rule 9), served by the API so the UI never counts client-side.
+type ShareImpactCounter interface {
+	CountActiveSharesForPageSubtree(ctx context.Context, spaceID, pageID uuid.UUID, path string) (int64, error)
+}
+
 // Handler holds the dependencies for wiki HTTP handlers.
 type Handler struct {
-	svc      *wiki.Service
-	locks    *wiki.LockService
-	auditLog audit.Logger
+	svc         *wiki.Service
+	locks       *wiki.LockService
+	auditLog    audit.Logger
+	shareImpact ShareImpactCounter
 }
 
 // NewHandler creates a wiki Handler.
@@ -33,6 +42,13 @@ func NewHandler(svc *wiki.Service, locks *wiki.LockService) *Handler {
 // WithAuditLogger attaches an audit logger to the handler.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithShareImpact attaches the share-impact counter that backs the move
+// confirmation warning. nil leaves the /share-impact route reporting zero.
+func (h *Handler) WithShareImpact(c ShareImpactCounter) *Handler {
+	h.shareImpact = c
 	return h
 }
 
@@ -47,6 +63,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Put("/{pageID}", h.UpdatePage)
 	r.Delete("/{pageID}", h.DeletePage)
 	r.Post("/{pageID}/move", h.MovePage)
+	r.Get("/{pageID}/share-impact", h.ShareImpact)
 	r.Get("/{pageID}/revisions", h.ListRevisions)
 	r.Get("/{pageID}/revisions/{version}", h.GetRevision)
 	r.Get("/{pageID}/diff", h.DiffRevisions)
@@ -72,8 +89,13 @@ type updatePageRequest struct {
 }
 
 type movePageRequest struct {
-	ParentID *uuid.UUID `json:"parent_id"`
-	Position int32      `json:"position"`
+	// TargetSpaceID moves the page to another space when set and different
+	// from the current one — which revokes the moved subtree's shares
+	// (ADR-0008 rule 9). Omitted or equal to the current space = an in-space
+	// reparent/reposition.
+	TargetSpaceID *uuid.UUID `json:"target_space_id,omitempty"`
+	ParentID      *uuid.UUID `json:"parent_id"`
+	Position      int32      `json:"position"`
 }
 
 // ListPages returns all pages in a space.
@@ -306,11 +328,17 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.DeletePage(r.Context(), id); err != nil {
+	claims := auth.ClaimsFromContext(r.Context())
+	actorID := existing.AuthorID
+	if claims != nil {
+		actorID = claims.UserID
+	}
+	// Delete-and-revoke-shares run in one transaction (ADR-0008 rule 10);
+	// the share.revoked audit rows are written inside it, attributed here.
+	if err := h.svc.DeletePage(r.Context(), id, actorID); err != nil {
 		handleWikiError(w, r, err)
 		return
 	}
-	claims := auth.ClaimsFromContext(r.Context())
 	if claims != nil {
 		_ = h.auditLog.Log(r.Context(), audit.Event{
 			Type: audit.EventTypePageDeleted, ActorID: claims.UserID.String(),
@@ -332,7 +360,7 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 // @Param        spaceID  path      string                       true  "Space ID (UUID)"
 // @Param        pageID   path      string                       true  "Page ID (UUID)"
 // @Param        body     body      api.SwaggerMovePageRequest   true  "New position"
-// @Success      200      {object}  api.SwaggerMessageResponse   "Page moved"
+// @Success      200      {object}  map[string]interface{}       "Page moved (with revoked_shares count)"
 // @Failure      400      {object}  api.SwaggerErrorResponse     "Invalid request"
 // @Failure      401      {object}  api.SwaggerErrorResponse     "Not authenticated"
 // @Failure      404      {object}  api.SwaggerErrorResponse     "Not found"
@@ -349,6 +377,11 @@ func (h *Handler) MovePage(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
 		return
 	}
+	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
 	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
@@ -360,26 +393,93 @@ func (h *Handler) MovePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	input := wiki.MovePageInput{
-		PageID:   id,
-		Position: req.Position,
+	target := spaceID
+	if req.TargetSpaceID != nil {
+		target = *req.TargetSpaceID
 	}
-	if req.ParentID != nil {
-		input.ParentID = req.ParentID
+	// A cross-space move also needs write authority on the destination —
+	// otherwise a page could be pushed into a space the caller cannot write.
+	// The 404 (not 403) when the target is unreadable keeps the destination's
+	// existence from leaking.
+	if target != spaceID && !access.Can(r.Context(), access.CapEditAnyItem, target) {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "target space not found")
+		return
 	}
 
-	if err := h.svc.MovePage(r.Context(), input); err != nil {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return
+	}
+
+	res, err := h.svc.MovePage(r.Context(), wiki.MovePageInput{
+		OrgID:         orgID,
+		TargetSpaceID: target,
+		PageID:        id,
+		ParentID:      req.ParentID,
+		Position:      req.Position,
+		ActorID:       claims.UserID,
+	})
+	if err != nil {
 		handleWikiError(w, r, err)
 		return
 	}
-	claims := auth.ClaimsFromContext(r.Context())
-	if claims != nil {
-		_ = h.auditLog.Log(r.Context(), audit.Event{
-			Type: audit.EventTypePageMoved, ActorID: claims.UserID.String(),
-			OrgID: claims.OrgID, ResourceType: "page", ResourceID: id.String(),
-		})
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypePageMoved, ActorID: claims.UserID.String(),
+		OrgID: claims.OrgID, ResourceType: "page", ResourceID: id.String(),
+		Metadata: map[string]string{
+			"target_space_id": target.String(),
+			"cross_space":     fmt.Sprintf("%t", res.CrossSpace),
+			"revoked_shares":  fmt.Sprintf("%d", res.RevokedShares),
+		},
+	})
+	respond.JSON(w, http.StatusOK, map[string]interface{}{
+		"message":        "page moved",
+		"cross_space":    res.CrossSpace,
+		"revoked_shares": res.RevokedShares,
+	})
+}
+
+// ShareImpact reports how many active shares a cross-space move of the page
+// (and its subtree) would revoke — the move-confirmation warning number
+// (ADR-0008 rule 9). Served by the API so the UI never counts client-side.
+//
+// @Summary      Move share impact
+// @Description  Counts the active shares that a cross-space move of the page and its subtree would revoke.
+// @Tags         wiki
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        pageID   path      string  true  "Page ID (UUID)"
+// @Success      200      {object}  map[string]interface{}    "Active share count"
+// @Failure      404      {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/share-impact [get]
+func (h *Handler) ShareImpact(w http.ResponseWriter, r *http.Request) {
+	id, err := pageIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
+		return
 	}
-	respond.JSON(w, http.StatusOK, map[string]string{"message": "page moved"})
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	page, err := h.svc.GetPage(r.Context(), id)
+	if err != nil {
+		handleWikiError(w, r, err)
+		return
+	}
+	var count int64
+	if h.shareImpact != nil {
+		count, err = h.shareImpact.CountActiveSharesForPageSubtree(r.Context(), spaceID, id, page.Path)
+		if err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to count share impact")
+			return
+		}
+	}
+	respond.JSON(w, http.StatusOK, map[string]int64{"active_share_count": count})
 }
 
 // Tree returns the full page tree for a space.

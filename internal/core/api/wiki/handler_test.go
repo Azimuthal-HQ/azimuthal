@@ -30,10 +30,6 @@ func (m *mockPageStore) GetPageByID(_ context.Context, _ uuid.UUID) (generated.P
 func (m *mockPageStore) UpdatePageContent(_ context.Context, _ generated.UpdatePageContentParams) (generated.Page, error) {
 	return generated.Page{}, nil
 }
-func (m *mockPageStore) UpdatePagePosition(_ context.Context, _ generated.UpdatePagePositionParams) error {
-	return nil
-}
-func (m *mockPageStore) SoftDeletePage(_ context.Context, _ uuid.UUID) error { return nil }
 func (m *mockPageStore) ListPagesBySpace(_ context.Context, _ uuid.UUID) ([]generated.ListPagesBySpaceRow, error) {
 	return nil, nil
 }
@@ -56,8 +52,17 @@ func (m *mockPageStore) SearchPages(_ context.Context, _ generated.SearchPagesPa
 	return nil, nil
 }
 
-func (m *mockPageStore) UpdatePageDescendantPaths(_ context.Context, _ generated.UpdatePageDescendantPathsParams) error {
-	return nil
+// mockContentTx satisfies wiki.ContentTxStore with no-ops for the wiki
+// handler unit tests, which exercise routing and capability checks rather
+// than the transactional move/delete mechanics (covered by integration
+// tests against a real database).
+type mockContentTx struct{}
+
+func (m *mockContentTx) MovePageTx(_ context.Context, _ wiki.MovePageInput) (wiki.MovePageTxResult, error) {
+	return wiki.MovePageTxResult{}, nil
+}
+func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, _, _ uuid.UUID) (int64, error) {
+	return 0, nil
 }
 
 // mockLockStore satisfies wiki.LockStore with no-ops.
@@ -75,7 +80,7 @@ func (m *mockLockStore) DeletePageLock(_ context.Context, _ generated.DeletePage
 func (m *mockLockStore) DeleteExpiredPageLocks(_ context.Context) error { return nil }
 
 func setupWikiHandler() *wikiapi.Handler {
-	svc := wiki.NewService(&mockPageStore{})
+	svc := wiki.NewService(&mockPageStore{}, &mockContentTx{})
 	locks := wiki.NewLockService(&mockLockStore{})
 	return wikiapi.NewHandler(svc, locks)
 }

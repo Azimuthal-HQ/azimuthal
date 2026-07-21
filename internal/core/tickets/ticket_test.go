@@ -10,6 +10,25 @@ import (
 	"github.com/google/uuid"
 )
 
+// noopShareDeleter satisfies ShareRevokingDeleter for the unit tests, which
+// exercise ticket logic rather than the delete-and-revoke-shares
+// transaction (covered by integration tests against a real database).
+type noopShareDeleter struct{}
+
+func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+	return nil
+}
+
+// repoShareDeleter routes the delete-and-revoke seam back to the mock repo,
+// so a unit test can assert the ticket is actually gone after Delete. The
+// share revocation is a no-op here (no shares in the mock); the real
+// same-transaction revocation is covered by integration tests.
+type repoShareDeleter struct{ repo *mockRepo }
+
+func (d repoShareDeleter) DeleteTicketAndRevokeShares(ctx context.Context, id, _ uuid.UUID) error {
+	return d.repo.Delete(ctx, id)
+}
+
 // --- Mock repository ---
 
 type mockRepo struct {
@@ -162,7 +181,7 @@ func createTestTicket(t *testing.T, svc *TicketService, spaceID, reporterID uuid
 // --- Tests ---
 
 func TestCreateTicket(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 
@@ -236,7 +255,7 @@ func TestCreateTicket(t *testing.T) {
 }
 
 func TestGetTicket(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
@@ -260,7 +279,7 @@ func TestGetTicket(t *testing.T) {
 }
 
 func TestUpdateTicket(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
@@ -299,12 +318,13 @@ func TestUpdateTicket(t *testing.T) {
 }
 
 func TestDeleteTicket(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	repo := newMockRepo()
+	svc := NewTicketService(repo, repoShareDeleter{repo})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
 
-	err := svc.Delete(context.Background(), ticket.ID)
+	err := svc.Delete(context.Background(), ticket.ID, reporterID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

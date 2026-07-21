@@ -63,14 +63,25 @@ type CreateTicketParams struct {
 	DueAt       *time.Time
 }
 
+// ShareRevokingDeleter is the transactional seam for ticket deletion: the
+// soft delete and the revocation of the ticket's entity shares commit or
+// roll back together (ADR-0008 rule 10), with the share.revoked audit rows
+// in the same transaction.
+type ShareRevokingDeleter interface {
+	DeleteTicketAndRevokeShares(ctx context.Context, ticketID, actorID uuid.UUID) error
+}
+
 // TicketService handles service desk ticket lifecycle operations.
 type TicketService struct {
 	repo TicketRepository
+	tx   ShareRevokingDeleter
 }
 
 // NewTicketService creates a TicketService backed by the given repository.
-func NewTicketService(repo TicketRepository) *TicketService {
-	return &TicketService{repo: repo}
+// The ShareRevokingDeleter is required — deletion runs through it so the
+// share invariant cannot be skipped by a wiring mistake.
+func NewTicketService(repo TicketRepository, tx ShareRevokingDeleter) *TicketService {
+	return &TicketService{repo: repo, tx: tx}
 }
 
 // Create creates a new ticket with the given parameters.
@@ -135,9 +146,10 @@ func (s *TicketService) Update(ctx context.Context, t *Ticket) error {
 	return nil
 }
 
-// Delete soft-deletes a ticket.
-func (s *TicketService) Delete(ctx context.Context, id uuid.UUID) error {
-	if err := s.repo.Delete(ctx, id); err != nil {
+// Delete soft-deletes a ticket and revokes its entity shares in the same
+// transaction. actorID attributes the share.revoked audit rows.
+func (s *TicketService) Delete(ctx context.Context, id, actorID uuid.UUID) error {
+	if err := s.tx.DeleteTicketAndRevokeShares(ctx, id, actorID); err != nil {
 		return fmt.Errorf("deleting ticket: %w", err)
 	}
 	return nil

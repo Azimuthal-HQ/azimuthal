@@ -31,6 +31,22 @@ var (
 
 	// ErrInvalidAuthorID is returned when a nil author ID is provided.
 	ErrInvalidAuthorID = errors.New("author ID must not be empty")
+
+	// ErrTargetSpaceNotFound is returned when a move names a target space
+	// that does not exist live in the org.
+	ErrTargetSpaceNotFound = errors.New("target space not found")
+
+	// ErrParentPageNotFound is returned when a move names a parent page
+	// that does not exist live.
+	ErrParentPageNotFound = errors.New("parent page not found")
+
+	// ErrParentNotInTargetSpace is returned when a move's parent page lives
+	// in a different space than the move's target.
+	ErrParentNotInTargetSpace = errors.New("parent page is not in the target space")
+
+	// ErrPageMoveCycle is returned when a move would place a page beneath
+	// itself or one of its own descendants.
+	ErrPageMoveCycle = errors.New("cannot move a page beneath itself or its descendants")
 )
 
 // PageStore defines the database operations required by the wiki service.
@@ -38,9 +54,6 @@ type PageStore interface {
 	CreatePage(ctx context.Context, arg generated.CreatePageParams) (generated.Page, error)
 	GetPageByID(ctx context.Context, id uuid.UUID) (generated.Page, error)
 	UpdatePageContent(ctx context.Context, arg generated.UpdatePageContentParams) (generated.Page, error)
-	UpdatePagePosition(ctx context.Context, arg generated.UpdatePagePositionParams) error
-	UpdatePageDescendantPaths(ctx context.Context, arg generated.UpdatePageDescendantPathsParams) error
-	SoftDeletePage(ctx context.Context, id uuid.UUID) error
 	ListPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]generated.ListPagesBySpaceRow, error)
 	ListRootPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]generated.ListRootPagesBySpaceRow, error)
 	ListChildPages(ctx context.Context, parentID pgtype.UUID) ([]generated.ListChildPagesRow, error)
@@ -50,17 +63,42 @@ type PageStore interface {
 	SearchPages(ctx context.Context, arg generated.SearchPagesParams) ([]generated.SearchPagesRow, error)
 }
 
+// MovePageTxResult reports what a move did.
+type MovePageTxResult struct {
+	// CrossSpace is true when the page changed spaces.
+	CrossSpace bool
+	// RevokedShares is how many active shares the move revoked (always 0
+	// for in-space moves).
+	RevokedShares int64
+}
+
+// ContentTxStore is the transactional seam for the mutations that carry
+// share invariants (ADR-0008 rules 9 and 10): moving a page updates the
+// whole subtree and — across spaces — revokes the subtree's shares in the
+// SAME transaction; deleting a page revokes its shares in the SAME
+// transaction. The share.revoked audit rows ride in those transactions too,
+// following the P2.5 bulk-grant precedent: the trail is part of the
+// atomicity contract, not best-effort.
+type ContentTxStore interface {
+	MovePageTx(ctx context.Context, in MovePageInput) (MovePageTxResult, error)
+	DeletePageAndRevokeShares(ctx context.Context, pageID, actorID uuid.UUID) (int64, error)
+}
+
 // Service provides wiki operations: page CRUD, tree navigation, versioning,
 // search, and markdown rendering.
 type Service struct {
 	store    PageStore
+	tx       ContentTxStore
 	renderer *Renderer
 }
 
-// NewService creates a new wiki Service with the given store.
-func NewService(store PageStore) *Service {
+// NewService creates a new wiki Service. The ContentTxStore is required —
+// move and delete run through it so the ADR-0008 share invariants cannot be
+// skipped by forgetting a wiring step.
+func NewService(store PageStore, tx ContentTxStore) *Service {
 	return &Service{
 		store:    store,
+		tx:       tx,
 		renderer: NewRenderer(),
 	}
 }
@@ -189,65 +227,40 @@ func (s *Service) UpdatePage(ctx context.Context, input UpdatePageInput) (genera
 	return page, nil
 }
 
-// MovePageInput holds parameters for moving a page in the tree.
+// MovePageInput holds parameters for moving a page: within its space
+// (reparent/reposition) or — when TargetSpaceID differs from the page's
+// current space — across spaces, which revokes every active share on the
+// moved subtree in the same transaction (ADR-0008 rule 9).
 type MovePageInput struct {
-	SpaceID  uuid.UUID
-	PageID   uuid.UUID
-	ParentID *uuid.UUID
-	Position int32
+	// OrgID scopes every lookup: entities of other orgs do not exist.
+	OrgID uuid.UUID
+	// TargetSpaceID is where the page lands. Same as the page's current
+	// space for an in-space move.
+	TargetSpaceID uuid.UUID
+	PageID        uuid.UUID
+	ParentID      *uuid.UUID
+	Position      int32
+	// ActorID attributes the move's share.revoked audit rows.
+	ActorID uuid.UUID
 }
 
-// MovePage changes a page's parent and/or position in the tree.
-// Updates the materialized path for the moved page and all its descendants.
-func (s *Service) MovePage(ctx context.Context, input MovePageInput) error {
-	page, err := s.store.GetPageByID(ctx, input.PageID)
+// MovePage moves a page and its subtree, transactionally: root row,
+// descendant paths (and space membership, when crossing spaces), and the
+// cross-space share revocation all commit or roll back together.
+func (s *Service) MovePage(ctx context.Context, input MovePageInput) (MovePageTxResult, error) {
+	res, err := s.tx.MovePageTx(ctx, input)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrPageNotFound
-		}
-		return fmt.Errorf("fetching page to move: %w", err)
+		return MovePageTxResult{}, err
 	}
-
-	oldPath := page.Path
-
-	var parentID pgtype.UUID
-	var newPath string
-	if input.ParentID != nil {
-		parentID = pgtype.UUID{Bytes: *input.ParentID, Valid: true}
-		parent, err := s.store.GetPageByID(ctx, *input.ParentID)
-		if err != nil {
-			return fmt.Errorf("fetching new parent: %w", err)
-		}
-		newPath = parent.Path + "." + input.PageID.String()
-	} else {
-		newPath = input.PageID.String()
-	}
-
-	if err := s.store.UpdatePagePosition(ctx, generated.UpdatePagePositionParams{
-		ID:       input.PageID,
-		ParentID: parentID,
-		Position: input.Position,
-		Path:     newPath,
-	}); err != nil {
-		return fmt.Errorf("moving page: %w", err)
-	}
-
-	// Bulk-update all descendant paths: replace old prefix with new prefix.
-	if err := s.store.UpdatePageDescendantPaths(ctx, generated.UpdatePageDescendantPathsParams{
-		SpaceID:   input.SpaceID,
-		Replace:   oldPath,
-		Replace_2: newPath,
-	}); err != nil {
-		return fmt.Errorf("updating descendant paths: %w", err)
-	}
-
-	return nil
+	return res, nil
 }
 
-// DeletePage performs a soft delete on a page.
-func (s *Service) DeletePage(ctx context.Context, id uuid.UUID) error {
-	if err := s.store.SoftDeletePage(ctx, id); err != nil {
-		return fmt.Errorf("deleting page: %w", err)
+// DeletePage soft-deletes a page and revokes its shares in the same
+// transaction (ADR-0008 rule 10). actorID attributes the share.revoked
+// audit rows.
+func (s *Service) DeletePage(ctx context.Context, id, actorID uuid.UUID) error {
+	if _, err := s.tx.DeletePageAndRevokeShares(ctx, id, actorID); err != nil {
+		return err
 	}
 	return nil
 }

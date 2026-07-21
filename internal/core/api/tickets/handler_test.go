@@ -72,8 +72,15 @@ func (m *mockTicketRepo) Search(_ context.Context, _ uuid.UUID, _ string, _ int3
 	return nil, nil
 }
 
+// noopShareDeleter satisfies tickets.ShareRevokingDeleter for handler tests.
+type noopShareDeleter struct{}
+
+func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+	return nil
+}
+
 func setupTicketHandler() *ticketsapi.Handler {
-	svc := tickets.NewTicketService(newMockTicketRepo())
+	svc := tickets.NewTicketService(newMockTicketRepo(), noopShareDeleter{})
 	return ticketsapi.NewHandler(svc)
 }
 

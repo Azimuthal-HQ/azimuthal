@@ -73,14 +73,25 @@ type ItemRepository interface {
 	Search(ctx context.Context, spaceID uuid.UUID, query string, limit int) ([]*Item, error)
 }
 
+// ShareRevokingDeleter is the transactional seam for item deletion: the
+// soft delete and the revocation of the item's entity shares commit or
+// roll back together (ADR-0008 rule 10), with the share.revoked audit rows
+// in the same transaction.
+type ShareRevokingDeleter interface {
+	DeleteItemAndRevokeShares(ctx context.Context, itemID, actorID uuid.UUID) error
+}
+
 // ItemService handles project item management.
 type ItemService struct {
 	repo ItemRepository
+	tx   ShareRevokingDeleter
 }
 
 // NewItemService creates an ItemService backed by the given repository.
-func NewItemService(repo ItemRepository) *ItemService {
-	return &ItemService{repo: repo}
+// The ShareRevokingDeleter is required — deletion runs through it so the
+// share invariant cannot be skipped by a wiring mistake.
+func NewItemService(repo ItemRepository, tx ShareRevokingDeleter) *ItemService {
+	return &ItemService{repo: repo, tx: tx}
 }
 
 // CreateItem validates and persists a new project item.
@@ -144,9 +155,10 @@ func (s *ItemService) AssignToSprint(ctx context.Context, itemID uuid.UUID, spri
 	return nil
 }
 
-// DeleteItem soft-deletes a project item.
-func (s *ItemService) DeleteItem(ctx context.Context, id uuid.UUID) error {
-	if err := s.repo.SoftDelete(ctx, id); err != nil {
+// DeleteItem soft-deletes a project item and revokes its entity shares in
+// the same transaction. actorID attributes the share.revoked audit rows.
+func (s *ItemService) DeleteItem(ctx context.Context, id, actorID uuid.UUID) error {
+	if err := s.tx.DeleteItemAndRevokeShares(ctx, id, actorID); err != nil {
 		return fmt.Errorf("deleting item: %w", err)
 	}
 	return nil

@@ -20,6 +20,13 @@ func uniqueViolation(err error) (constraint string, ok bool) {
 	return "", false
 }
 
+// isForeignKeyViolation reports whether err is a Postgres foreign-key
+// violation.
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
 // pgTimestamp converts a time.Time to a pgtype.Timestamptz.
 func pgTimestamp(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}

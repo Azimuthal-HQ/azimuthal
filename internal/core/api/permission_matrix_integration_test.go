@@ -326,6 +326,82 @@ func TestMatrixAPI23_ConstantAuthQueries(t *testing.T) {
 		"directory: query count must not grow with space count (N=2: %d, N=12: %d)", dAt2, dAt12)
 }
 
+// Case 23 extended to share resolution (P3, leak failure mode 6). The
+// standalone shared read route resolves the caller's share coverage; that
+// resolution must be a CONSTANT number of queries regardless of how many
+// shares exist, and the whole request must stay within the tracer's
+// absolute budget. Proven by reading one shared page while the org holds
+// few shares, then many, and asserting the query count is identical.
+func TestMatrixAPI23_ShareResolutionConstantQueries(t *testing.T) {
+	db := testutil.NewTestDB(t)
+
+	counter := &queryCounter{}
+	cfg, err := pgxpool.ParseConfig(db.DSN)
+	require.NoError(t, err)
+	cfg.ConnConfig.RuntimeParams["search_path"] = fmt.Sprintf("%q, public", db.Schema)
+	cfg.ConnConfig.Tracer = counter
+	cfg.MaxConns = 3
+	countingPool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(countingPool.Close)
+
+	ts := newTestServerOn(t, db, countingPool)
+
+	// An outsider (org member, no space access) and a space with one shared
+	// page they will read.
+	outsider := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	outsiderTok := ts.tokenFor(t, outsider.ID, outsider.Email)
+	spaceID := createScopedSpace(t, ts, "Share Perf Space", "share-perf-space", "codex")
+
+	createPage := func(title string) string {
+		r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, spaceID),
+			map[string]interface{}{"title": title, "content": "x"}, true)
+		require.Equal(t, http.StatusCreated, r.StatusCode, "seed page: %s", r.Body)
+		var p struct {
+			ID string `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal(r.Body, &p))
+		return p.ID
+	}
+	shareOrg := func(pageID string) {
+		r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/shares", ts.OrgID),
+			map[string]interface{}{"entity_type": "page", "entity_id": pageID, "audience": "org"}, true)
+		require.Equal(t, http.StatusCreated, r.StatusCode, "share: %s", r.Body)
+	}
+
+	target := createPage("Target")
+	shareOrg(target)
+
+	sharedPath := fmt.Sprintf("/api/v1/orgs/%s/shared/page/%s", ts.OrgID, target)
+	countedSharedGet := func() int64 {
+		// Warm request first (connection/auth caches must not pollute).
+		r := ts.getAs(t, outsiderTok, sharedPath)
+		require.Equal(t, http.StatusOK, r.StatusCode, "warm shared read: %s", r.Body)
+		before := counter.n.Load()
+		authBefore := counter.authState.Load()
+		r = ts.getAs(t, outsiderTok, sharedPath)
+		require.Equal(t, http.StatusOK, r.StatusCode)
+		// The exactly-one auth-state read contract holds on this route too.
+		require.Equal(t, int64(1), counter.authState.Load()-authBefore,
+			"exactly one GetUserAuthState read per authenticated request")
+		return counter.n.Load() - before
+	}
+
+	qFew := countedSharedGet()
+
+	// Add many more org shares (on fresh pages). Share resolution must not
+	// grow with the number of shares.
+	for i := 0; i < 25; i++ {
+		shareOrg(createPage(fmt.Sprintf("Extra %d", i)))
+	}
+	qMany := countedSharedGet()
+
+	require.Equal(t, qFew, qMany,
+		"shared read query count must not grow with share count (few: %d, many: %d)", qFew, qMany)
+	require.LessOrEqual(t, qMany, int64(8),
+		"shared read per-request query budget blown: %d", qMany)
+}
+
 // The effective-access endpoint returns the chain that produced the access —
 // which grant, which direct team matched, at what depth — not merely the
 // resulting role (spec §6).

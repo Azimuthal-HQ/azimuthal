@@ -60,23 +60,27 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
+	attachmentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/attachments"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/attachments"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
@@ -208,15 +212,22 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	workflowEngine := workflow.NewDBEngine(workflowAdapter)
 	orgProvisioner := adapters.NewOrgProvisionerAdapterWithWorkflows(queries, workflowAdapter)
 
+	// The content-transaction adapter carries the ADR-0008 share invariants:
+	// deleting an entity, or moving a page across spaces, revokes the
+	// affected shares in the SAME transaction (with the share.revoked audit
+	// rows in that transaction). One instance satisfies the delete/move seam
+	// of all three module services.
+	contentTx := adapters.NewContentTxAdapter(pool)
+
 	ticketAdapter := adapters.NewTicketAdapter(queries)
-	ticketSvc := tickets.NewTicketService(ticketAdapter)
+	ticketSvc := tickets.NewTicketService(ticketAdapter, contentTx)
 
 	itemAdapter := adapters.NewItemAdapter(queries)
 	sprintAdapter := adapters.NewSprintAdapter(queries)
-	itemSvc := projects.NewItemService(itemAdapter)
+	itemSvc := projects.NewItemService(itemAdapter, contentTx)
 	sprintSvc := projects.NewSprintService(sprintAdapter)
 
-	wikiSvc := wiki.NewService(queries)
+	wikiSvc := wiki.NewService(queries, contentTx)
 	wikiLocks := wiki.NewLockService(queries)
 
 	spaHandler, err := newSPAHandler()
@@ -232,10 +243,32 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	teamAdapter := adapters.NewTeamAdapter(pool)
 	teamSvc := teams.NewService(teamAdapter)
 	accessAdapter := adapters.NewAccessAdapter(pool)
-	accessResolver := access.NewResolver(accessAdapter)
+	shareAdapter := adapters.NewShareAdapter(pool)
+	// The resolver gains the share store so ResolveShares can union entity
+	// shares into cross-space reads (P3). Space-scoped resolution is
+	// untouched — shares are resolved only on the /shared subtree.
+	accessResolver := access.NewResolver(accessAdapter).WithShareStore(shareAdapter)
 	grantSvc := access.NewGrantService(accessAdapter)
+	shareSvc := access.NewShareService(shareAdapter)
 	explainer := access.NewExplainer(accessAdapter, accessAdapter)
 	orgProvisioner.WithTeamSeeder(teamAdapter)
+
+	// Entity attachments (P3): the first production consumer of the object
+	// store (known-issues #16). A misconfigured or unreachable store leaves
+	// the attachment handler nil — the feature is absent, nothing else
+	// breaks — exactly the pre-P3 behaviour.
+	var attachmentHandler *attachmentsapi.Handler
+	if blobStore, err := newObjectStore(context.Background(), cfg); err != nil {
+		slog.Warn("attachments disabled: object store unavailable", "error", err)
+	} else {
+		attachmentSvc := attachments.NewService(adapters.NewAttachmentAdapter(pool), blobStore)
+		attachmentHandler = attachmentsapi.NewHandler(attachmentSvc, shareSvc)
+	}
+
+	// The shared-entity reader projects each module entity into a
+	// container-free view (no space, tree, siblings, or comments).
+	sharedReader := sharesapi.NewServiceReader(wikiSvc, ticketSvc, itemSvc)
+	shareHandler := sharesapi.NewHandler(shareSvc, sharedReader).WithAuditLogger(auditLog)
 
 	// P2.5 administration: people lifecycle, invites, bulk grants, audit
 	// viewer. Invite delivery follows config — link mode returns the URL to
@@ -267,6 +300,8 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
+		ShareHandler:        shareHandler,
+		AttachmentHandler:   attachmentHandler,
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
 		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
 		SPAHandler:          spaHandler,
@@ -275,6 +310,34 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		SpaceOrgResolver:    spaceOrgResolver(queries),
 		AccessResolver:      accessResolver,
 	}), nil
+}
+
+// newObjectStore constructs the attachment object store from config and
+// ensures its bucket exists. STORAGE_ENDPOINT may carry an http(s):// scheme
+// (as .env.test does); minio-go wants a bare host:port with Secure set
+// separately, so the scheme is stripped and used to seed useSSL (an explicit
+// STORAGE_USE_SSL still wins). A blank endpoint means "no object store".
+func newObjectStore(ctx context.Context, cfg *config.Config) (storage.ObjectStore, error) {
+	if cfg.StorageEndpoint == "" {
+		return nil, fmt.Errorf("STORAGE_ENDPOINT not set")
+	}
+	endpoint := cfg.StorageEndpoint
+	useSSL := cfg.StorageUseSSL
+	switch {
+	case strings.HasPrefix(endpoint, "https://"):
+		endpoint = strings.TrimPrefix(endpoint, "https://")
+		useSSL = true
+	case strings.HasPrefix(endpoint, "http://"):
+		endpoint = strings.TrimPrefix(endpoint, "http://")
+	}
+	store, err := storage.NewS3Store(endpoint, cfg.StorageAccessKey, cfg.StorageSecretKey, cfg.StorageBucket, useSSL)
+	if err != nil {
+		return nil, fmt.Errorf("creating object store: %w", err)
+	}
+	if err := store.EnsureBucket(ctx); err != nil {
+		return nil, fmt.Errorf("ensuring bucket: %w", err)
+	}
+	return store, nil
 }
 
 // spaceOrgResolver returns the org that owns a space, backing the router's

@@ -11,7 +11,7 @@ import (
 func TestBacklogService_GetBacklog(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
@@ -41,7 +41,7 @@ func TestBacklogService_GetBacklog(t *testing.T) {
 func TestBacklogService_GetSprintBacklog(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
@@ -69,7 +69,7 @@ func TestBacklogService_MoveToSprint(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
 	sprintSvc := NewSprintService(sprintRepo)
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
@@ -89,7 +89,7 @@ func TestBacklogService_MoveToSprint(t *testing.T) {
 func TestBacklogService_MoveToSprint_SprintNotFound(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 
 	item, _ := itemSvc.CreateItem(context.Background(), makeItem(uuid.New()))
@@ -104,7 +104,7 @@ func TestBacklogService_MoveToBacklog(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
 	sprintSvc := NewSprintService(sprintRepo)
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
@@ -127,7 +127,7 @@ func TestBacklogService_MoveToBacklog(t *testing.T) {
 func TestBacklogService_ReorderItem(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 
 	item, _ := itemSvc.CreateItem(context.Background(), makeItem(uuid.New()))
@@ -145,7 +145,7 @@ func TestBacklogService_ReorderItem(t *testing.T) {
 func TestBacklogService_GetBacklogByPriority(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 
 	spaceID := uuid.New()
