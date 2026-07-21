@@ -6,9 +6,11 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
+	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
+	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -32,7 +34,15 @@ type RouterConfig struct {
 	WorkflowHandler     *workflowsapi.Handler
 	TeamHandler         *teamsapi.Handler
 	GrantHandler        *grantsapi.Handler
-	SPAHandler          http.Handler // serves the embedded frontend; nil disables SPA serving
+	// AdminHandler serves the P2.5 administration surface (people, matrix,
+	// audit viewer) behind RequireOrgAdmin404, plus the member-visible
+	// picker search. nil leaves the surface unmounted.
+	AdminHandler *adminapi.Handler
+	// InviteHandler serves the invite lifecycle: admin routes behind
+	// RequireOrgAdmin404 and the public token-authenticated acceptance
+	// routes. nil leaves both unmounted.
+	InviteHandler *invitesapi.Handler
+	SPAHandler    http.Handler // serves the embedded frontend; nil disables SPA serving
 	// AllowedOrigins is the explicit CORS allow-list. nil falls back to the
 	// permissive wildcard for backwards compatibility with existing tests.
 	AllowedOrigins []string
@@ -86,6 +96,14 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 		})
 	})
 
+	// Invite acceptance (public): possession of the raw token is the
+	// credential, exactly like a password-reset link. No auth middleware.
+	if cfg.InviteHandler != nil {
+		r.Route("/api/v1/invites", func(r chi.Router) {
+			r.Mount("/", cfg.InviteHandler.PublicRoutes())
+		})
+	}
+
 	// Protected API endpoints
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(cfg.Authenticator.RequireAuth)
@@ -118,27 +136,14 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 				})
 			}
 
+			mountAdminSurface(r, cfg)
+
 			// The single scoping convention: every space resource lives
 			// under /orgs/{orgID}/spaces/{spaceID}/... — spaceGuard 404s
 			// any request whose space does not belong to the org in the
 			// URL, then readableGuard 404s spaces outside the caller's
-			// resolved readable set. nil resolvers (routing-only unit
-			// tests) disable the corresponding check; every real
-			// construction site wires both.
-			spaceGuard := func(next http.Handler) http.Handler { return next }
-			if cfg.SpaceOrgResolver != nil {
-				spaceGuard = RequireSpaceInOrg(cfg.SpaceOrgResolver)
-			}
-			readableGuard := func(next http.Handler) http.Handler { return next }
-			writeFloor := func(next http.Handler) http.Handler { return next }
-			if cfg.AccessResolver != nil {
-				readableGuard = RequireSpaceReadable()
-				// Mutating a space resource needs at least create_items
-				// (contributor); viewers read only. Handlers refine above
-				// the floor (edit_own/edit_any, transitions, queue).
-				writeFloor = RequireWriteFloor(access.CapCreateItems)
-			}
-
+			// resolved readable set.
+			spaceGuard, readableGuard, writeFloor := buildSpaceGuards(cfg)
 			mountSpaceResources(r, cfg, spaceGuard, readableGuard, writeFloor)
 
 			// Labels (org-scoped metadata; any member).
@@ -165,6 +170,63 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	return r
 }
 
+// buildSpaceGuards constructs the space-subtree middleware chain. nil
+// resolvers (routing-only unit tests) disable the corresponding check;
+// every real construction site wires both.
+func buildSpaceGuards(cfg RouterConfig) (spaceGuard, readableGuard, writeFloor func(http.Handler) http.Handler) {
+	spaceGuard = func(next http.Handler) http.Handler { return next }
+	if cfg.SpaceOrgResolver != nil {
+		spaceGuard = RequireSpaceInOrg(cfg.SpaceOrgResolver)
+	}
+	readableGuard = func(next http.Handler) http.Handler { return next }
+	writeFloor = func(next http.Handler) http.Handler { return next }
+	if cfg.AccessResolver != nil {
+		readableGuard = RequireSpaceReadable()
+		// Mutating a space resource needs at least create_items
+		// (contributor); viewers read only. Handlers refine above the
+		// floor (edit_own/edit_any, transitions, queue).
+		writeFloor = RequireWriteFloor(access.CapCreateItems)
+	}
+	return spaceGuard, readableGuard, writeFloor
+}
+
+// mountAdminSurface registers the P2.5 administration surface under the
+// org group: 404 for non-admins — the surface does not exist as far as
+// they can tell. The picker search is the one member-visible route (space
+// admins use it on the grants panel without being org admins).
+func mountAdminSurface(r chi.Router, cfg RouterConfig) {
+	if cfg.AdminHandler != nil {
+		admin404 := orgAdmin404Guard(cfg)
+		r.Route("/users", func(r chi.Router) {
+			r.Use(admin404)
+			r.Get("/", cfg.AdminHandler.ListPeople)
+			r.Patch("/{userID}", cfg.AdminHandler.UpdatePerson)
+			r.Delete("/{userID}", cfg.AdminHandler.RemovePerson)
+			r.Post("/{userID}/deactivate", cfg.AdminHandler.DeactivatePerson)
+			r.Post("/{userID}/reactivate", cfg.AdminHandler.ReactivatePerson)
+			r.Post("/{userID}/force-logout", cfg.AdminHandler.ForceLogoutPerson)
+		})
+		r.With(admin404).Get("/access-matrix", cfg.AdminHandler.AccessMatrix)
+		r.Route("/grants", func(r chi.Router) {
+			r.Use(admin404)
+			r.Post("/bulk-preview", cfg.AdminHandler.BulkPreview)
+			r.Post("/bulk-apply", cfg.AdminHandler.BulkApply)
+		})
+		r.Route("/audit-log", func(r chi.Router) {
+			r.Use(admin404)
+			r.Get("/", cfg.AdminHandler.ListAuditLog)
+			r.Get("/batches/{batchID}", cfg.AdminHandler.AuditLogBatch)
+		})
+		r.Get("/members/search", cfg.AdminHandler.SearchMembers)
+	}
+	if cfg.InviteHandler != nil {
+		r.Route("/invites", func(r chi.Router) {
+			r.Use(orgAdmin404Guard(cfg))
+			r.Mount("/", cfg.InviteHandler.AdminRoutes())
+		})
+	}
+}
+
 // orgAdminGuard returns the org-admin middleware, or a pass-through when no
 // AccessResolver is wired (routing-only unit tests).
 func orgAdminGuard(cfg RouterConfig) func(http.Handler) http.Handler {
@@ -172,6 +234,15 @@ func orgAdminGuard(cfg RouterConfig) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler { return next }
 	}
 	return RequireOrgAdmin()
+}
+
+// orgAdmin404Guard is the 404-variant guard for the administration surface,
+// with the same nil-resolver pass-through convention.
+func orgAdmin404Guard(cfg RouterConfig) func(http.Handler) http.Handler {
+	if cfg.AccessResolver == nil {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	return RequireOrgAdmin404()
 }
 
 // mountSpaceResources registers every space-scoped resource tree under the

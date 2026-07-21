@@ -119,19 +119,45 @@ func (a *UserAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// AuthState implements auth.StateStore: the single primary-key read the
+// auth middleware performs on every request (token_generation + is_active).
+func (a *UserAdapter) AuthState(ctx context.Context, id uuid.UUID) (auth.State, error) {
+	row, err := a.q.GetUserAuthState(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.State{}, auth.ErrNotFound
+	}
+	if err != nil {
+		return auth.State{}, fmt.Errorf("user adapter auth state: %w", err)
+	}
+	return auth.State{
+		TokenGeneration: int(row.TokenGeneration),
+		IsActive:        row.IsActive,
+	}, nil
+}
+
+// TouchLastLogin stamps users.last_login_at, surfaced as "last sign-in" on
+// the admin People page.
+func (a *UserAdapter) TouchLastLogin(ctx context.Context, id uuid.UUID) error {
+	if err := a.q.UpdateUserLastLogin(ctx, id); err != nil {
+		return fmt.Errorf("user adapter touch last login: %w", err)
+	}
+	return nil
+}
+
 // dbUserToDomain converts a generated.User to an auth.User.
 func dbUserToDomain(u generated.User) *auth.User {
 	return &auth.User{
-		ID:           u.ID,
-		OrgID:        u.OrgID,
-		Email:        u.Email,
-		DisplayName:  u.DisplayName,
-		PasswordHash: derefStr(u.PasswordHash),
-		Role:         u.Role,
-		IsActive:     u.IsActive,
-		CreatedAt:    goTime(u.CreatedAt),
-		UpdatedAt:    goTime(u.UpdatedAt),
-		DeletedAt:    goTimePtr(u.DeletedAt),
+		ID:              u.ID,
+		OrgID:           u.OrgID,
+		Email:           u.Email,
+		DisplayName:     u.DisplayName,
+		PasswordHash:    derefStr(u.PasswordHash),
+		Role:            u.Role,
+		IsActive:        u.IsActive,
+		TokenGeneration: int(u.TokenGeneration),
+		CreatedAt:       goTime(u.CreatedAt),
+		UpdatedAt:       goTime(u.UpdatedAt),
+		DeletedAt:       goTimePtr(u.DeletedAt),
 	}
 }
 

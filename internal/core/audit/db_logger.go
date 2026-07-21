@@ -51,6 +51,15 @@ func (l *dbLogger) Log(ctx context.Context, event Event) error {
 		payload = []byte(`{}`)
 	}
 
+	batchID := pgtype.UUID{}
+	if parsed, err := uuid.Parse(event.BatchID); err == nil {
+		batchID = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
+	var ticketRef *string
+	if event.TicketRef != "" {
+		ticketRef = &event.TicketRef
+	}
+
 	_, err = l.queries.CreateAuditEvent(ctx, generated.CreateAuditEventParams{
 		ID:         uuid.New(),
 		OrgID:      orgID,
@@ -59,6 +68,8 @@ func (l *dbLogger) Log(ctx context.Context, event Event) error {
 		EntityKind: event.ResourceType,
 		EntityID:   entityID,
 		Payload:    payload,
+		BatchID:    batchID,
+		TicketRef:  ticketRef,
 	})
 	if err != nil {
 		slog.Error("audit: failed to persist event", "type", event.Type, "error", fmt.Sprintf("%v", err))

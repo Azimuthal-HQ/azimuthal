@@ -196,3 +196,53 @@ func TestConfig_AllowedOrigins_ProductionEmpty(t *testing.T) {
 		t.Errorf("expected empty allowed origins in production, got %v", cfg.AllowedOrigins)
 	}
 }
+
+func TestConfig_AdministrationDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// P2.5 release-notes behaviour change: open registration defaults OFF —
+	// invites are the way in. Instances relying on it must opt in.
+	if cfg.AllowRegistration {
+		t.Error("AllowRegistration must default to false")
+	}
+	if cfg.InviteDelivery != config.InviteDeliveryLink {
+		t.Errorf("InviteDelivery must default to link, got %q", cfg.InviteDelivery)
+	}
+	if cfg.InviteTTL != 168*time.Hour {
+		t.Errorf("InviteTTL must default to seven days, got %v", cfg.InviteTTL)
+	}
+}
+
+func TestConfig_InviteDeliveryEmail_RequiresExplicitSMTP(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("AZIMUTHAL_INVITE_DELIVERY", "email")
+	t.Setenv("SMTP_HOST", "")
+
+	// Email delivery without explicitly configured SMTP must fail loudly at
+	// startup — not silently drop invites at send time.
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected a configuration error for invite_delivery=email without SMTP_HOST")
+	}
+
+	t.Setenv("SMTP_HOST", "smtp.example.com")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error with SMTP_HOST set: %v", err)
+	}
+	if cfg.InviteDelivery != config.InviteDeliveryEmail {
+		t.Errorf("expected email delivery, got %q", cfg.InviteDelivery)
+	}
+}
+
+func TestConfig_InvalidInviteDeliveryRejected(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("AZIMUTHAL_INVITE_DELIVERY", "carrier-pigeon")
+
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected a configuration error for an unknown invite delivery mode")
+	}
+}

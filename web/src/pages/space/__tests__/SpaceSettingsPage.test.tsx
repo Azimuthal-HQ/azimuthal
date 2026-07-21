@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SpaceSettingsPage } from '../SpaceSettingsPage';
+import * as api from '../../../lib/api';
 
 vi.mock('../../../lib/api', () => {
   const mutationStub = () => ({
@@ -37,6 +38,9 @@ vi.mock('../../../lib/api', () => {
       error: { status: 403, code: 'forbidden', message: 'manage_grants required' },
     })),
     useTeams: vi.fn(() => ({ data: [], isLoading: false })),
+    // PersonTeamPicker searches people through this; empty is fine here.
+    useMemberSearch: vi.fn(() => ({ data: [], isLoading: false })),
+    friendlyErrorMessage: vi.fn((_err: unknown, fallback: string) => fallback),
     useUpdateSpace: vi.fn(mutationStub),
     useCreateGrant: vi.fn(mutationStub),
     useUpdateGrant: vi.fn(mutationStub),
@@ -64,6 +68,16 @@ function renderPage() {
 }
 
 describe('SpaceSettingsPage grants section', () => {
+  // Default every test to the capability-guarded 403; tests that need the
+  // loaded state override the mock explicitly, so order never matters.
+  beforeEach(() => {
+    vi.mocked(api.useSpaceGrants).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: { status: 403, code: 'forbidden', message: 'manage_grants required' },
+    } as unknown as ReturnType<typeof api.useSpaceGrants>);
+  });
+
   it('renders the explicit forbidden state when the grants list 403s', () => {
     renderPage();
 
@@ -81,5 +95,21 @@ describe('SpaceSettingsPage grants section', () => {
     expect(screen.getByTestId('visibility-option-hidden')).toBeInTheDocument();
     expect(screen.getByTestId('visibility-option-discoverable')).toBeInTheDocument();
     expect(screen.getByTestId('visibility-option-org')).toBeInTheDocument();
+  });
+
+  it('offers the person/team picker instead of a raw UUID field once grants load', () => {
+    vi.mocked(api.useSpaceGrants).mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof api.useSpaceGrants>);
+
+    renderPage();
+
+    // The add-grant form leads with the combobox from PersonTeamPicker (P2.5 W5)…
+    expect(screen.getByTestId('grant-subject-picker-input')).toBeInTheDocument();
+    // …and the free-text UUID field and its old team-select sibling are gone.
+    expect(screen.queryByTestId('grant-subject-user-input')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('grant-subject-team-select')).not.toBeInTheDocument();
   });
 });

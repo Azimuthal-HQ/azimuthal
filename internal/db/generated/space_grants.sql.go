@@ -75,6 +75,22 @@ func (q *Queries) DeleteGrantsBySubjectUser(ctx context.Context, subjectID uuid.
 	return err
 }
 
+const deleteGrantsBySubjectUserInOrg = `-- name: DeleteGrantsBySubjectUserInOrg :exec
+DELETE FROM space_grants WHERE subject_type = 'user' AND subject_id = $1 AND org_id = $2
+`
+
+type DeleteGrantsBySubjectUserInOrgParams struct {
+	SubjectID uuid.UUID `json:"subject_id"`
+	OrgID     uuid.UUID `json:"org_id"`
+}
+
+// Removal from one org drops that org's grants only; the user's grants in
+// other orgs are untouched.
+func (q *Queries) DeleteGrantsBySubjectUserInOrg(ctx context.Context, arg DeleteGrantsBySubjectUserInOrgParams) error {
+	_, err := q.db.Exec(ctx, deleteGrantsBySubjectUserInOrg, arg.SubjectID, arg.OrgID)
+	return err
+}
+
 const deleteSpaceGrant = `-- name: DeleteSpaceGrant :exec
 DELETE FROM space_grants WHERE id = $1
 `
@@ -219,6 +235,95 @@ func (q *Queries) ListMatchingGrantsForSpace(ctx context.Context, arg ListMatchi
 			&i.CreatedBy,
 			&i.TeamName,
 			&i.TeamPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamGrantsByOrg = `-- name: ListTeamGrantsByOrg :many
+SELECT g.id, g.space_id, g.subject_id AS team_id, g.role, g.created_at, g.created_by
+FROM space_grants g
+JOIN spaces s ON s.id = g.space_id AND s.deleted_at IS NULL
+WHERE g.org_id = $1 AND g.subject_type = 'team'
+ORDER BY g.created_at ASC
+`
+
+type ListTeamGrantsByOrgRow struct {
+	ID        uuid.UUID          `json:"id"`
+	SpaceID   uuid.UUID          `json:"space_id"`
+	TeamID    uuid.UUID          `json:"team_id"`
+	Role      string             `json:"role"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	CreatedBy pgtype.UUID        `json:"created_by"`
+}
+
+// The access matrix (P2.5 W6): every team-subject grant in the org in one
+// query. Cells are (team, space) pairs; user-subject grants are not matrix
+// cells. Also the base state for bulk diff computation — loaded FOR UPDATE
+// inside the bulk-apply transaction so the diff cannot shift under it.
+func (q *Queries) ListTeamGrantsByOrg(ctx context.Context, orgID uuid.UUID) ([]ListTeamGrantsByOrgRow, error) {
+	rows, err := q.db.Query(ctx, listTeamGrantsByOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTeamGrantsByOrgRow{}
+	for rows.Next() {
+		var i ListTeamGrantsByOrgRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.TeamID,
+			&i.Role,
+			&i.CreatedAt,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamGrantsByOrgForUpdate = `-- name: ListTeamGrantsByOrgForUpdate :many
+SELECT g.id, g.space_id, g.subject_id AS team_id, g.role
+FROM space_grants g
+JOIN spaces s ON s.id = g.space_id AND s.deleted_at IS NULL
+WHERE g.org_id = $1 AND g.subject_type = 'team'
+ORDER BY g.id ASC
+FOR UPDATE OF g
+`
+
+type ListTeamGrantsByOrgForUpdateRow struct {
+	ID      uuid.UUID `json:"id"`
+	SpaceID uuid.UUID `json:"space_id"`
+	TeamID  uuid.UUID `json:"team_id"`
+	Role    string    `json:"role"`
+}
+
+func (q *Queries) ListTeamGrantsByOrgForUpdate(ctx context.Context, orgID uuid.UUID) ([]ListTeamGrantsByOrgForUpdateRow, error) {
+	rows, err := q.db.Query(ctx, listTeamGrantsByOrgForUpdate, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTeamGrantsByOrgForUpdateRow{}
+	for rows.Next() {
+		var i ListTeamGrantsByOrgForUpdateRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.TeamID,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}

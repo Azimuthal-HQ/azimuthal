@@ -19,9 +19,11 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
+	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
+	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -31,6 +33,8 @@ import (
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
@@ -67,7 +71,7 @@ type testServer struct {
 // multi-user permission tests mint one per persona.
 func (ts *testServer) tokenFor(t *testing.T, userID uuid.UUID, email string) string {
 	t.Helper()
-	pair, err := ts.JWT.IssueTokenPair(userID, email, ts.OrgID.String(), "member")
+	pair, err := ts.JWT.IssueTokenPair(userID, email, ts.OrgID.String(), "member", 0)
 	require.NoError(t, err)
 	return pair.AccessToken
 }
@@ -103,7 +107,9 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	userSvc := auth.NewUserService(userAdapter)
 	sessionAdapter := adapters.NewSessionAdapter(queries)
 	sessionSvc := auth.NewSessionService(sessionAdapter, auth.SessionConfig{TTL: 24 * time.Hour})
-	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc)
+	// The real DB-backed auth-state store, exactly as production wires it:
+	// every integration request exercises the generation + active check.
+	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc, userAdapter)
 	membershipAdapter := adapters.NewMembershipAdapter(queries)
 	orgProvisioner := adapters.NewOrgProvisionerAdapter(queries)
 
@@ -136,9 +142,22 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	orgProvisioner.WithTeamSeeder(teamAdapter)
 	auditLog := audit.NewDBLogger(queries)
 
+	// P2.5 administration surface, wired as production. Registration is
+	// enabled here because several suites exercise the register flow; the
+	// disabled-by-default behaviour has its own dedicated tests.
+	peopleSvc := people.NewService(adapters.NewPeopleAdapter(pool))
+	inviteSvc := invites.NewService(adapters.NewInviteAdapter(pool), nil, invites.Config{
+		TTL:     7 * 24 * time.Hour,
+		BaseURL: "http://localhost:8082",
+	})
+	bulkSvc := access.NewBulkService(adapters.NewBulkGrantAdapter(pool))
+	auditReader := audit.NewReader(adapters.NewAuditReaderAdapter(queries))
+
 	router := api.NewRouter(api.RouterConfig{
-		Authenticator:       authenticator,
-		AuthHandler:         authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner),
+		Authenticator: authenticator,
+		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner, userAdapter).
+			WithAuditLogger(auditLog).
+			WithRegistrationPolicy(true),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
@@ -148,6 +167,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
+		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
+		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
 		SPAHandler:          nil,
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
@@ -162,7 +183,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
-	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, org.ID.String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, org.ID.String(), "member", 0)
 	require.NoError(t, err)
 
 	return &testServer{

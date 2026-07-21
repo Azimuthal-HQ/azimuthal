@@ -75,11 +75,22 @@ func TestUserPasswordHashAndLastLogin(t *testing.T) {
 	ctx := context.Background()
 	org := setupOrg(t, q, uuid.New().String()[:8])
 	user := setupUser(t, q, org.ID, "pwupdate@example.com")
+	genBefore := user.TokenGeneration
 	newHash := "new-bcrypt-hash"
 	if err := q.UpdateUserPasswordHash(ctx, generated.UpdateUserPasswordHashParams{
 		ID: user.ID, PasswordHash: &newHash,
 	}); err != nil {
 		t.Fatalf("UpdateUserPasswordHash: %v", err)
+	}
+	// P2.5 session control: the generation bump rides in the password
+	// statement, so every password-change path signs out other sessions.
+	after, err := q.GetUserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID after password change: %v", err)
+	}
+	if after.TokenGeneration != genBefore+1 {
+		t.Errorf("password change must increment token_generation: before %d, after %d",
+			genBefore, after.TokenGeneration)
 	}
 	if err := q.UpdateUserLastLogin(ctx, user.ID); err != nil {
 		t.Fatalf("UpdateUserLastLogin: %v", err)

@@ -22,6 +22,14 @@ const (
 	RoleViewer Role = "viewer"
 )
 
+// AdminRoleNames returns the membership role names that carry org-admin
+// authority (the ADR-0007 middleware bypass). SQL that needs the admin
+// class — last-admin protection counts and locks — takes these as a
+// parameter so org role names are interpreted here and nowhere else.
+func AdminRoleNames() []string {
+	return []string{string(RoleOwner), string(RoleAdmin)}
+}
+
 // Action represents a permission that can be checked.
 type Action string
 

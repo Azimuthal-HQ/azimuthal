@@ -216,6 +216,75 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 
+# ── Step 6c — Administration surface (v0.3.2 P2.5) ──────────
+echo ""
+echo "=== Step 6c — People, invites, access matrix, audit log ==="
+
+# The People directory lists the org's members (the caller is one).
+PEOPLE=$(curl -fsS "${BASE_URL}/api/v1/orgs/$ORG_ID/users" \
+  -H "Authorization: Bearer $TOKEN")
+if echo "$PEOPLE" | grep -q '"org_role"' && echo "$PEOPLE" | grep -q '"status"'; then
+  echo "  People directory carries org_role + status"
+else
+  echo "  People directory shape wrong: $PEOPLE"
+  FAILURES=$((FAILURES + 1))
+fi
+
+# Creating an invite returns a one-time invite_url; the raw token is never
+# persisted (only its hash), so this URL cannot be retrieved again.
+INV=$(curl -fsS -X POST "${BASE_URL}/api/v1/orgs/$ORG_ID/invites" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"emails\":[\"verify-$RUN@example.com\"]}")
+if echo "$INV" | grep -q '"status":"created"' && echo "$INV" | grep -q '"invite_url"'; then
+  echo "  Invite created with a one-time link"
+else
+  echo "  Invite create failed: $INV"
+  FAILURES=$((FAILURES + 1))
+fi
+
+# The access matrix returns teams, spaces, and grants.
+MTX=$(curl -fsS "${BASE_URL}/api/v1/orgs/$ORG_ID/access-matrix" \
+  -H "Authorization: Bearer $TOKEN")
+if echo "$MTX" | grep -q '"teams"' && echo "$MTX" | grep -q '"spaces"' && echo "$MTX" | grep -q '"grants"'; then
+  echo "  Access matrix carries teams + spaces + grants"
+else
+  echo "  Access matrix shape wrong: $MTX"
+  FAILURES=$((FAILURES + 1))
+fi
+
+# A bulk apply lands as one batch that the audit log shows as one row. Step
+# 6b already granted TEAM_ID viewer on SPACE_ID, so this is a role change
+# (viewer → contributor) — a deterministic update regardless of run order.
+BULK=$(curl -fsS -X POST "${BASE_URL}/api/v1/orgs/$ORG_ID/grants/bulk-apply" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"changes\":[{\"team_id\":\"$TEAM_ID\",\"space_id\":\"$SPACE_ID\",\"role\":\"contributor\"}],\"ticket_ref\":\"VERIFY-$RUN\"}")
+if echo "$BULK" | grep -q '"batch_id"' && echo "$BULK" | grep -q '"updates":1'; then
+  echo "  Bulk apply returns a batch_id and applied count"
+else
+  echo "  Bulk apply failed: $BULK"
+  FAILURES=$((FAILURES + 1))
+fi
+
+AUDIT=$(curl -fsS "${BASE_URL}/api/v1/orgs/$ORG_ID/audit-log?action=grant.updated" \
+  -H "Authorization: Bearer $TOKEN")
+if echo "$AUDIT" | grep -q '"batch_size":1' && echo "$AUDIT" | grep -q "VERIFY-$RUN"; then
+  echo "  Audit log shows the batch with its ticket_ref"
+else
+  echo "  Audit log shape wrong: $AUDIT"
+  FAILURES=$((FAILURES + 1))
+fi
+
+# Registration is off by default: /auth/register is a 404, not a 403.
+REG_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/api/v1/auth/register" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"noreg@example.com","display_name":"No Reg","password":"password123"}')
+if [ "$REG_CODE" = "404" ]; then
+  echo "  /auth/register 404s with registration disabled"
+else
+  echo "  /auth/register expected 404, got $REG_CODE"
+  FAILURES=$((FAILURES + 1))
+fi
+
 # ── Step 7 — Verify Content-Type headers ────────────────────
 echo ""
 echo "=== Step 7 — Verify API routes return correct Content-Type ==="

@@ -34,6 +34,14 @@ UPDATE spaces SET owner_team_id = $2, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
+-- name: CountSpaceContents :one
+-- The delete-confirmation summary (P2.5 W8): what the space contains, in
+-- one query.
+SELECT
+    (SELECT count(*) FROM tickets t WHERE t.space_id = sqlc.arg(space_id) AND t.deleted_at IS NULL)::int AS tickets,
+    (SELECT count(*) FROM pages p WHERE p.space_id = sqlc.arg(space_id) AND p.deleted_at IS NULL)::int AS pages,
+    (SELECT count(*) FROM project_items i WHERE i.space_id = sqlc.arg(space_id) AND i.deleted_at IS NULL)::int AS items;
+
 -- name: ListSpaceIDsByOrg :many
 SELECT id FROM spaces WHERE org_id = $1 AND deleted_at IS NULL;
 

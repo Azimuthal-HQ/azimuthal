@@ -28,6 +28,9 @@ func TestSmoke(t *testing.T) {
 
 	t.Setenv("APP_ENV", "test")
 	t.Setenv("DATABASE_URL", dbURL)
+	// The smoke flow exercises open registration, which defaults OFF since
+	// P2.5 (invites are the way in) — opt in explicitly for this test.
+	t.Setenv("AZIMUTHAL_ALLOW_REGISTRATION", "true")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -46,6 +49,31 @@ func TestSmoke(t *testing.T) {
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	base := ts.URL
+
+	// 0. The production default: with AZIMUTHAL_ALLOW_REGISTRATION unset,
+	// /auth/register does not exist as far as callers can tell. Asserted
+	// against a second server built from the default config.
+	t.Run("register_404_when_disabled_by_default", func(t *testing.T) {
+		t.Setenv("AZIMUTHAL_ALLOW_REGISTRATION", "false")
+		dcfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("loading default config: %v", err)
+		}
+		if dcfg.AllowRegistration {
+			t.Fatal("AZIMUTHAL_ALLOW_REGISTRATION=false must disable registration")
+		}
+		dsrv, _, dcleanup, err := newServer(dcfg)
+		if err != nil {
+			t.Fatalf("creating default server: %v", err)
+		}
+		defer dcleanup()
+		dts := httptest.NewServer(dsrv.Handler)
+		defer dts.Close()
+		payload := map[string]string{
+			"email": "nope@test.local", "display_name": "Nope", "password": "test-password-123",
+		}
+		doPost(t, client, dts.URL+"/api/v1/auth/register", payload, "", http.StatusNotFound)
+	})
 
 	// 1. GET /health — expects 200
 	t.Run("health", func(t *testing.T) {

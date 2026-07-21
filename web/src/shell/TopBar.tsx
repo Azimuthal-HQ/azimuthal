@@ -10,6 +10,7 @@ import {
   Plus,
   Search,
   Settings,
+  Shield,
   User,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -288,6 +289,19 @@ export function TopBar() {
                 label="Workspace settings"
                 onClick={() => { setAvatarOpen(false); navigate('/settings/organization'); }}
               />
+              {/* Administration (P2.5): shown to org admins only. The role
+                  comes from the org response's caller_is_admin — resolved
+                  server-side per request; the JWT role claim is the legacy
+                  users.role column and cannot serve here. The server 404s
+                  non-admins regardless — this is presentation, not the gate. */}
+              {org.data?.caller_is_admin && (
+                <MenuLink
+                  icon={Shield}
+                  label="Administration"
+                  data-testid="avatar-menu-admin"
+                  onClick={() => { setAvatarOpen(false); navigate('/admin/people'); }}
+                />
+              )}
 
               <div className="flex items-center justify-between px-[var(--space-3)] py-[var(--space-1)]">
                 <span className="text-[var(--text-sm)] text-[var(--color-text)]">Theme</span>
@@ -316,15 +330,18 @@ function MenuLink({
   icon: Icon,
   label,
   onClick,
+  'data-testid': dataTestId,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   onClick: () => void;
+  'data-testid'?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      data-testid={dataTestId}
       className={cn(
         'flex w-full items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)]',
         'text-[var(--text-sm)] text-[var(--color-text)]',
