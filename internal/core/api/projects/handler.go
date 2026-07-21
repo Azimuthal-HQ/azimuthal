@@ -395,11 +395,17 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.items.DeleteItem(r.Context(), id); err != nil {
+	claims := auth.ClaimsFromContext(r.Context())
+	actorID := existing.ReporterID
+	if claims != nil {
+		actorID = claims.UserID
+	}
+	// Delete revokes the item's shares in the same transaction (ADR-0008
+	// rule 10); actorID attributes the share.revoked audit rows.
+	if err := h.items.DeleteItem(r.Context(), id, actorID); err != nil {
 		handleProjectError(w, r, err)
 		return
 	}
-	claims := auth.ClaimsFromContext(r.Context())
 	if claims != nil {
 		_ = h.auditLog.Log(r.Context(), audit.Event{
 			Type: audit.EventTypeItemDeleted, ActorID: claims.UserID.String(),

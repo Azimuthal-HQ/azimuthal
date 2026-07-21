@@ -6,6 +6,11 @@ RETURNING *;
 -- name: GetPageByID :one
 SELECT * FROM pages WHERE id = $1 AND deleted_at IS NULL;
 
+-- name: GetPageForUpdate :one
+-- Row-locked read for the move transaction: serialises concurrent moves of
+-- the same page so descendant path rewrites cannot interleave.
+SELECT * FROM pages WHERE id = $1 AND deleted_at IS NULL FOR UPDATE;
+
 -- name: ListPagesBySpace :many
 SELECT id, space_id, parent_id, title, version, author_id, position, path, created_at, updated_at
 FROM pages WHERE space_id = $1 AND deleted_at IS NULL ORDER BY path ASC;
@@ -36,14 +41,23 @@ SET title = $3, content = $4, version = version + 1
 WHERE id = $1 AND version = $2 AND deleted_at IS NULL
 RETURNING *;
 
--- name: UpdatePagePosition :exec
-UPDATE pages SET parent_id = $2, position = $3, path = $4 WHERE id = $1 AND deleted_at IS NULL;
+-- name: MovePageToSpace :exec
+-- Cross-space move, root row (P3, ADR-0008 rule 9). Runs inside the move
+-- transaction together with MovePageDescendantsToSpace and the share
+-- revocation for the subtree.
+UPDATE pages SET space_id = $2, parent_id = $3, position = $4, path = $5
+WHERE id = $1 AND deleted_at IS NULL;
 
--- name: UpdatePageDescendantPaths :exec
+-- name: MovePageDescendantsToSpace :exec
+-- Rewrites subtree membership and paths in one statement. Exact prefix
+-- surgery via substr — REPLACE would rewrite ANY occurrence of the old
+-- prefix, not just the leading one. path_pattern is the LIKE-escaped old
+-- path plus '.%', built by the caller with EscapeLike.
 UPDATE pages
-SET path = REPLACE(path, $2, $3)
-WHERE space_id = $1
-  AND path LIKE $2 || '.%'
+SET space_id = sqlc.arg(new_space_id),
+    path = sqlc.arg(new_prefix)::text || substr(path, length(sqlc.arg(old_prefix)::text) + 1)
+WHERE space_id = sqlc.arg(old_space_id)
+  AND path LIKE sqlc.arg(path_pattern)
   AND deleted_at IS NULL;
 
 -- name: SoftDeletePage :exec

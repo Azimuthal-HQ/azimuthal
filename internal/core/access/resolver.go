@@ -41,6 +41,10 @@ type OrgRole struct {
 // Resolver computes per-request access resolutions.
 type Resolver struct {
 	store Store
+	// shareStore backs ResolveShares (P3). Attached via WithShareStore;
+	// share resolution errors when it is missing rather than silently
+	// denying, so a wiring mistake cannot masquerade as "no shares".
+	shareStore ShareResolutionStore
 }
 
 // NewResolver creates a Resolver over the given store.

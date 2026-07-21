@@ -7,12 +7,14 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
+	attachmentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/attachments"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
@@ -34,6 +36,14 @@ type RouterConfig struct {
 	WorkflowHandler     *workflowsapi.Handler
 	TeamHandler         *teamsapi.Handler
 	GrantHandler        *grantsapi.Handler
+	// ShareHandler serves entity shares (P3): the /shares management family
+	// (manage_shares in-handler) and the /shared read family (share-
+	// authorised, not space-authorised). nil leaves both unmounted.
+	ShareHandler *sharesapi.Handler
+	// AttachmentHandler serves entity attachments (P3): the space-scoped
+	// upload/read family and the share-authorised read family. nil leaves
+	// both unmounted.
+	AttachmentHandler *attachmentsapi.Handler
 	// AdminHandler serves the P2.5 administration surface (people, matrix,
 	// audit viewer) behind RequireOrgAdmin404, plus the member-visible
 	// picker search. nil leaves the surface unmounted.
@@ -146,6 +156,14 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			spaceGuard, readableGuard, writeFloor := buildSpaceGuards(cfg)
 			mountSpaceResources(r, cfg, spaceGuard, readableGuard, writeFloor)
 
+			// Entity shares (P3, ADR-0008). Management is org-scoped and
+			// capability-checked in-handler (manage_shares on the entity's
+			// space). The read family bypasses the space guards by design —
+			// it is authorised by a share, not by space access — so it
+			// carries its own ResolveShares middleware and lives outside
+			// mountSpaceResources.
+			mountShareResources(r, cfg)
+
 			// Labels (org-scoped metadata; any member).
 			r.Route("/labels", func(r chi.Router) {
 				r.Get("/", cfg.ProjectHandler.ListLabels)
@@ -225,6 +243,39 @@ func mountAdminSurface(r chi.Router, cfg RouterConfig) {
 			r.Mount("/", cfg.InviteHandler.AdminRoutes())
 		})
 	}
+}
+
+// mountShareResources registers the P3 share families under the org group.
+//
+// The /shares management family is org-scoped: any member reaches it, and
+// the handler enforces manage_shares on the shared entity's space (with a
+// read check first, so an unreadable space 404s rather than 403-leaking the
+// entity). The /shared read family and the shared attachment path are
+// authorised by share coverage alone — they cannot use the space guards,
+// because the whole point is access without space access — so they carry
+// their own ResolveShares middleware, mounted here and nowhere else, which
+// keeps the P2 per-request query budget on space routes untouched.
+func mountShareResources(r chi.Router, cfg RouterConfig) {
+	if cfg.ShareHandler == nil {
+		return
+	}
+	r.Route("/shares", func(r chi.Router) {
+		r.Mount("/", cfg.ShareHandler.ManagementRoutes())
+	})
+	// The shared read family is registered explicitly (not mounted as a
+	// sub-router) so the standalone read route and the attachment routes can
+	// coexist under one /shared subtree that shares the ResolveShares
+	// middleware — chi forbids Mount("/") beside sibling routes.
+	r.Route("/shared", func(r chi.Router) {
+		if cfg.AccessResolver != nil {
+			r.Use(ResolveShares(cfg.AccessResolver))
+		}
+		r.Get("/{entityType}/{entityID}", cfg.ShareHandler.ReadShared)
+		if cfg.AttachmentHandler != nil {
+			r.Get("/{entityType}/{entityID}/attachments", cfg.AttachmentHandler.ListShared)
+			r.Get("/{entityType}/{entityID}/attachments/{attachmentID}", cfg.AttachmentHandler.DownloadShared)
+		}
+	})
 }
 
 // orgAdminGuard returns the org-admin middleware, or a pass-through when no
@@ -320,6 +371,18 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Use(readableGuard)
 			r.Use(writeFloor)
 			r.Mount("/", cfg.WorkflowHandler.SpaceRoutes())
+		})
+	}
+
+	// Attachments (P3): space members upload/read/delete; the write floor
+	// gates uploads and deletes, reads need only space-readability. The
+	// share-authorised read counterparts live under /shared.
+	if cfg.AttachmentHandler != nil {
+		r.Route("/spaces/{spaceID}/attachments", func(r chi.Router) {
+			r.Use(spaceGuard)
+			r.Use(readableGuard)
+			r.Use(writeFloor)
+			r.Mount("/", cfg.AttachmentHandler.SpaceRoutes())
 		})
 	}
 }

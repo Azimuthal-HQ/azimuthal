@@ -10,7 +10,7 @@ import (
 func TestBacklogService_RankItemRelative_Before(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	svc := NewItemService(itemRepo)
+	svc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 	ctx := context.Background()
 
@@ -38,7 +38,7 @@ func TestBacklogService_RankItemRelative_Before(t *testing.T) {
 func TestBacklogService_RankItemRelative_After(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	svc := NewItemService(itemRepo)
+	svc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 	ctx := context.Background()
 
@@ -65,7 +65,7 @@ func TestBacklogService_RankItemRelative_After(t *testing.T) {
 func TestBacklogService_RankItemRelative_EndOfList(t *testing.T) {
 	itemRepo := newStubItemRepo()
 	sprintRepo := newStubSprintRepo()
-	svc := NewItemService(itemRepo)
+	svc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 	ctx := context.Background()
 

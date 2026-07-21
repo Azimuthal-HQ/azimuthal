@@ -104,6 +104,11 @@ func TestDocsSpec_ContainsRequiredPaths(t *testing.T) {
 		"/orgs/{orgID}/spaces/{spaceID}/projects/sprints/active",
 		"/orgs/{orgID}/spaces/{spaceID}/projects/backlog",
 		"/orgs/{orgID}/spaces/{spaceID}/projects/roadmap",
+		// P3 entity shares and attachments.
+		"/orgs/{orgID}/shares",
+		"/orgs/{orgID}/shared/{entityType}/{entityID}",
+		"/orgs/{orgID}/spaces/{spaceID}/attachments",
+		"/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/share-impact",
 	}
 
 	var missing []string

@@ -8,7 +8,10 @@ import (
 
 type contextKey int
 
-const contextKeyResolution contextKey = iota
+const (
+	contextKeyResolution contextKey = iota
+	contextKeySharedEntities
+)
 
 // WithResolution stores a Resolution on the context. Called once per request
 // by the resolution middleware; the value lives for that request only.

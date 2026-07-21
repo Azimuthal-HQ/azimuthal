@@ -150,6 +150,16 @@ type SwaggerUpdateGrantRequest struct {
 	Role string `json:"role" example:"contributor" enums:"viewer,contributor,agent,space_admin"`
 }
 
+// SwaggerCreateShareRequest matches createShareRequest in shares handler.
+type SwaggerCreateShareRequest struct {
+	EntityType string    `json:"entity_type" example:"page" enums:"page,ticket,project_item"`
+	EntityID   uuid.UUID `json:"entity_id" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
+	Audience   string    `json:"audience" example:"org" enums:"org,team"`
+	AudienceID uuid.UUID `json:"audience_id,omitempty" example:"11111111-1111-1111-1111-111111111111"`
+	Cascade    bool      `json:"cascade" example:"false"`
+	ExpiresAt  string    `json:"expires_at,omitempty" example:"2026-12-31T23:59:59Z"`
+}
+
 // SwaggerUpdateOrgRequest matches updateOrgRequest in spaces handler.
 type SwaggerUpdateOrgRequest struct {
 	Name        string  `json:"name" example:"Updated Org"`

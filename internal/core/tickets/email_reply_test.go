@@ -9,7 +9,7 @@ import (
 )
 
 func TestSendReply(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 	ticket := createTestTicket(t, svc, spaceID, reporterID)

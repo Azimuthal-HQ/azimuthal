@@ -70,28 +70,36 @@ func (m *mockStore) UpdatePageContent(_ context.Context, arg generated.UpdatePag
 	return p, nil
 }
 
-func (m *mockStore) UpdatePagePosition(_ context.Context, arg generated.UpdatePagePositionParams) error {
+// MovePageTx implements the ContentTxStore seam in memory: reparent (and,
+// across spaces, re-home) the page. Shares are not modelled here — the
+// share invariants are covered by the real-database integration tests; this
+// mock exercises the move mechanics the service delegates.
+func (m *mockStore) MovePageTx(_ context.Context, in wiki.MovePageInput) (wiki.MovePageTxResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p, ok := m.pages[arg.ID]
+	p, ok := m.pages[in.PageID]
 	if !ok {
-		return pgx.ErrNoRows
+		return wiki.MovePageTxResult{}, wiki.ErrPageNotFound
 	}
-	p.ParentID = arg.ParentID
-	p.Position = arg.Position
+	crossSpace := p.SpaceID != in.TargetSpaceID
+	p.SpaceID = in.TargetSpaceID
+	if in.ParentID != nil {
+		p.ParentID = pgtype.UUID{Bytes: *in.ParentID, Valid: true}
+	} else {
+		p.ParentID = pgtype.UUID{}
+	}
+	p.Position = in.Position
 	m.pages[p.ID] = p
-	return nil
+	return wiki.MovePageTxResult{CrossSpace: crossSpace}, nil
 }
 
-func (m *mockStore) UpdatePageDescendantPaths(_ context.Context, _ generated.UpdatePageDescendantPathsParams) error {
-	return nil
-}
-
-func (m *mockStore) SoftDeletePage(_ context.Context, id uuid.UUID) error {
+// DeletePageAndRevokeShares implements the ContentTxStore delete seam in
+// memory.
+func (m *mockStore) DeletePageAndRevokeShares(_ context.Context, pageID, _ uuid.UUID) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.pages, id)
-	return nil
+	delete(m.pages, pageID)
+	return 0, nil
 }
 
 func (m *mockStore) ListPagesBySpace(_ context.Context, spaceID uuid.UUID) ([]generated.ListPagesBySpaceRow, error) {
@@ -243,7 +251,9 @@ func findSubstring(s, sub string) bool {
 
 func testService() (*wiki.Service, *mockStore) {
 	store := newMockStore()
-	svc := wiki.NewService(store)
+	// The mock store doubles as the ContentTxStore so move/delete delegation
+	// operates on the same in-memory page map.
+	svc := wiki.NewService(store, store)
 	return svc, store
 }
 
@@ -409,7 +419,7 @@ func TestDeletePage(t *testing.T) {
 
 	page := createTestPage(t, svc, spaceID, authorID, "To Delete", "gone", nil)
 
-	if err := svc.DeletePage(ctx, page.ID); err != nil {
+	if err := svc.DeletePage(ctx, page.ID, authorID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -429,10 +439,12 @@ func TestMovePage(t *testing.T) {
 	child := createTestPage(t, svc, spaceID, authorID, "Child", "c", nil)
 
 	parentID := parent.ID
-	if err := svc.MovePage(ctx, wiki.MovePageInput{
-		PageID:   child.ID,
-		ParentID: &parentID,
-		Position: 0,
+	if _, err := svc.MovePage(ctx, wiki.MovePageInput{
+		OrgID:         uuid.New(),
+		TargetSpaceID: spaceID,
+		PageID:        child.ID,
+		ParentID:      &parentID,
+		Position:      0,
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

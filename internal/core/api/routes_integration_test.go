@@ -20,22 +20,26 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
+	attachmentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/attachments"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/attachments"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
@@ -113,19 +117,23 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	membershipAdapter := adapters.NewMembershipAdapter(queries)
 	orgProvisioner := adapters.NewOrgProvisionerAdapter(queries)
 
+	// P3: one content-transaction adapter carries the share invariants for
+	// all three module services (delete/move revoke shares in the same tx).
+	contentTx := adapters.NewContentTxAdapter(pool)
+
 	ticketAdapter := adapters.NewTicketAdapter(queries)
-	ticketSvc := tickets.NewTicketService(ticketAdapter)
+	ticketSvc := tickets.NewTicketService(ticketAdapter, contentTx)
 
 	itemAdapter := adapters.NewItemAdapter(queries)
 	sprintAdapter := adapters.NewSprintAdapter(queries)
-	itemSvc := projects.NewItemService(itemAdapter)
+	itemSvc := projects.NewItemService(itemAdapter, contentTx)
 	sprintSvc := projects.NewSprintService(sprintAdapter)
 	backlogSvc := projects.NewBacklogService(itemAdapter, sprintAdapter)
 	roadmapSvc := projects.NewRoadmapService(itemAdapter, sprintAdapter)
 	relationSvc := projects.NewRelationService(adapters.NewRelationAdapter(queries))
 	labelSvc := projects.NewLabelService(adapters.NewLabelAdapter(queries))
 
-	wikiSvc := wiki.NewService(queries)
+	wikiSvc := wiki.NewService(queries, contentTx)
 	wikiLocks := wiki.NewLockService(queries)
 
 	workflowAdapter := adapters.NewWorkflowAdapter(queries)
@@ -136,11 +144,22 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	teamAdapter := adapters.NewTeamAdapter(pool)
 	teamSvc := coreteams.NewService(teamAdapter)
 	accessAdapter := adapters.NewAccessAdapter(pool)
-	accessResolver := access.NewResolver(accessAdapter)
+	shareAdapter := adapters.NewShareAdapter(pool)
+	accessResolver := access.NewResolver(accessAdapter).WithShareStore(shareAdapter)
 	grantSvc := access.NewGrantService(accessAdapter)
+	shareSvc := access.NewShareService(shareAdapter)
 	explainer := access.NewExplainer(accessAdapter, accessAdapter)
 	orgProvisioner.WithTeamSeeder(teamAdapter)
 	auditLog := audit.NewDBLogger(queries)
+
+	// P3 entity shares + attachments, wired as production. The attachment
+	// object store is an in-memory store here (real MinIO is exercised by
+	// the storage package's own tests); the shared reader projects each
+	// module entity into a container-free view.
+	sharedReader := sharesapi.NewServiceReader(wikiSvc, ticketSvc, itemSvc)
+	shareHandler := sharesapi.NewHandler(shareSvc, sharedReader).WithAuditLogger(auditLog)
+	attachmentSvc := attachments.NewService(adapters.NewAttachmentAdapter(pool), storage.NewMemoryStore())
+	attachmentHandler := attachmentsapi.NewHandler(attachmentSvc, shareSvc)
 
 	// P2.5 administration surface, wired as production. Registration is
 	// enabled here because several suites exercise the register flow; the
@@ -159,7 +178,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(true),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc),
-		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithShareQueries(shareAdapter),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries),
@@ -167,6 +186,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
+		ShareHandler:        shareHandler,
+		AttachmentHandler:   attachmentHandler,
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
 		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
 		SPAHandler:          nil,

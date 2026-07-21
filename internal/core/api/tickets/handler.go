@@ -304,11 +304,17 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	claims := auth.ClaimsFromContext(r.Context())
+	actorID := existing.ReporterID
+	if claims != nil {
+		actorID = claims.UserID
+	}
+	// Delete revokes the ticket's shares in the same transaction (ADR-0008
+	// rule 10); actorID attributes the share.revoked audit rows.
+	if err := h.svc.Delete(r.Context(), id, actorID); err != nil {
 		handleTicketError(w, r, err)
 		return
 	}
-	claims := auth.ClaimsFromContext(r.Context())
 	if claims != nil {
 		_ = h.auditLog.Log(r.Context(), audit.Event{
 			Type: audit.EventTypeTicketDeleted, ActorID: claims.UserID.String(),

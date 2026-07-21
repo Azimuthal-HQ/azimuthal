@@ -115,6 +115,14 @@ const (
 	EventTypeUserOrgRoleChanged EventType = "user.org_role_changed"
 	// EventTypeUserPrimaryTeamChanged records a primary team change.
 	EventTypeUserPrimaryTeamChanged EventType = "user.primary_team_changed"
+
+	// EventTypeShareCreated records an entity share being created (P3,
+	// ADR-0008).
+	EventTypeShareCreated EventType = "share.created"
+	// EventTypeShareRevoked records an entity share being revoked — by an
+	// administrator, or by the same-transaction revoke-on-delete /
+	// revoke-on-move invariants (the payload's "reason" says which).
+	EventTypeShareRevoked EventType = "share.revoked"
 )
 
 // Event is the structured record written to the audit log.

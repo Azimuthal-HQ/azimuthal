@@ -9,7 +9,7 @@ import (
 )
 
 func TestSearch(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	ctx := context.Background()
 	spaceID := uuid.New()
 	reporterID := uuid.New()

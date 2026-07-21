@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Attachment struct {
+	ID          uuid.UUID          `json:"id"`
+	OrgID       uuid.UUID          `json:"org_id"`
+	EntityType  string             `json:"entity_type"`
+	EntityID    uuid.UUID          `json:"entity_id"`
+	Filename    string             `json:"filename"`
+	ContentType string             `json:"content_type"`
+	SizeBytes   int64              `json:"size_bytes"`
+	ObjectKey   string             `json:"object_key"`
+	CreatedBy   uuid.UUID          `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
+}
+
 type AuditLog struct {
 	ID         uuid.UUID          `json:"id"`
 	OrgID      uuid.UUID          `json:"org_id"`
@@ -56,6 +70,21 @@ type EntityRelation struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	FromType  string             `json:"from_type"`
 	ToType    string             `json:"to_type"`
+}
+
+type EntityShare struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	SpaceID    uuid.UUID          `json:"space_id"`
+	EntityType string             `json:"entity_type"`
+	EntityID   uuid.UUID          `json:"entity_id"`
+	Audience   string             `json:"audience"`
+	AudienceID pgtype.UUID        `json:"audience_id"`
+	Cascade    bool               `json:"cascade"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	CreatedBy  uuid.UUID          `json:"created_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type Invite struct {

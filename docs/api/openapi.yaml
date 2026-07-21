@@ -332,6 +332,34 @@ components:
           example: project_item
           type: string
       type: object
+    api.SwaggerCreateShareRequest:
+      properties:
+        audience:
+          enum:
+          - org
+          - team
+          example: org
+          type: string
+        audience_id:
+          example: 11111111-1111-1111-1111-111111111111
+          type: string
+        cascade:
+          example: false
+          type: boolean
+        entity_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+        entity_type:
+          enum:
+          - page
+          - ticket
+          - project_item
+          example: page
+          type: string
+        expires_at:
+          example: "2026-12-31T23:59:59Z"
+          type: string
+      type: object
     api.SwaggerCreateSpaceRequest:
       properties:
         description:
@@ -2467,6 +2495,322 @@ paths:
       summary: Delete a label
       tags:
       - labels
+  /orgs/{orgID}/shared/{entityType}/{entityID}:
+    get:
+      description: Returns a shared entity with no container information — no space,
+        tree, siblings, or comments. Authorised by an active, unexpired share whose
+        audience includes the caller. Read-only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Entity type (page, ticket, project_item)
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      - description: Entity ID (UUID)
+        in: path
+        name: entityID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: The shared entity, container-stripped
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not shared with you / not found
+      security:
+      - BearerAuth: []
+      summary: Read a shared entity
+      tags:
+      - shares
+  /orgs/{orgID}/shared/{entityType}/{entityID}/attachments:
+    get:
+      description: Lists the attachments on a shared entity. Authorised by an active
+        share; needs no space access.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Entity type
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      - description: Entity ID (UUID)
+        in: path
+        name: entityID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Attachments
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not shared with you
+      security:
+      - BearerAuth: []
+      summary: List attachments (shared)
+      tags:
+      - attachments
+  /orgs/{orgID}/shared/{entityType}/{entityID}/attachments/{attachmentID}:
+    get:
+      description: Streams a shared entity's attachment. Authorised by an active share;
+        needs no space access. The attachment must belong to the shared entity, and
+        its object key comes from the stored row.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Entity type
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      - description: Entity ID (UUID)
+        in: path
+        name: entityID
+        required: true
+        schema:
+          type: string
+      - description: Attachment ID (UUID)
+        in: path
+        name: attachmentID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                type: file
+          description: Attachment bytes
+        "404":
+          content:
+            application/octet-stream:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found / not shared
+      security:
+      - BearerAuth: []
+      summary: Download an attachment (shared)
+      tags:
+      - attachments
+  /orgs/{orgID}/shares:
+    get:
+      description: Returns the unrevoked shares on an entity. Requires manage_shares
+        on the entity's space. For pages, includes cascade_page_count — the number
+        of pages a cascade share would cover.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Entity type (page, ticket, project_item)
+        in: query
+        name: entity_type
+        required: true
+        schema:
+          type: string
+      - description: Entity ID (UUID)
+        in: query
+        name: entity_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Shares and cascade page count
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid parameters
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_shares required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Entity not found
+      security:
+      - BearerAuth: []
+      summary: List entity shares
+      tags:
+      - shares
+    post:
+      description: Shares an entity with an audience (org or team). Requires manage_shares
+        on the entity's space. Cascade is available for pages only. Read-only — a
+        share never grants write, comment, or transition.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateShareRequest'
+                description: Share
+                summary: body
+        description: Share
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created share
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_shares required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Entity not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Duplicate share
+      security:
+      - BearerAuth: []
+      summary: Create entity share
+      tags:
+      - shares
+  /orgs/{orgID}/shares/{shareID}:
+    delete:
+      description: Revokes a share. Requires manage_shares on the entity's space.
+        Access recomputes per request, so revocation is immediate.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Share ID (UUID)
+        in: path
+        name: shareID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Revoked
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_shares required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "410":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Already revoked
+      security:
+      - BearerAuth: []
+      summary: Revoke entity share
+      tags:
+      - shares
   /orgs/{orgID}/spaces:
     get:
       description: 'Returns every space the caller can see: readable spaces in full
@@ -2760,6 +3104,184 @@ paths:
       summary: Update space
       tags:
       - spaces
+  /orgs/{orgID}/spaces/{spaceID}/attachments:
+    get:
+      description: Lists the attachments on an entity in the space. Requires space
+        read access.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Entity type
+        in: query
+        name: entity_type
+        required: true
+        schema:
+          type: string
+      - description: Entity ID (UUID)
+        in: query
+        name: entity_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Attachments
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Entity not in this space
+      security:
+      - BearerAuth: []
+      summary: List attachments (space)
+      tags:
+      - attachments
+    post:
+      description: Uploads a file attachment to an entity (page, ticket, project_item)
+        in the space. Multipart form with fields entity_type, entity_id, and file.
+        Requires the create_items write floor on the space.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created attachment metadata
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Entity not in this space
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Attachment too large
+      security:
+      - BearerAuth: []
+      summary: Upload an attachment
+      tags:
+      - attachments
+  /orgs/{orgID}/spaces/{spaceID}/attachments/{attachmentID}:
+    delete:
+      description: Soft-deletes an attachment. Requires the write floor on the space.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Attachment ID (UUID)
+        in: path
+        name: attachmentID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Delete an attachment (space)
+      tags:
+      - attachments
+    get:
+      description: Streams an attachment's bytes for a space member.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Attachment ID (UUID)
+        in: path
+        name: attachmentID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                type: file
+          description: Attachment bytes
+        "404":
+          content:
+            application/octet-stream:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Download an attachment (space)
+      tags:
+      - attachments
   /orgs/{orgID}/spaces/{spaceID}/effective-access:
     get:
       description: Returns the grant chain producing a user's access to the space
@@ -6413,8 +6935,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/api.SwaggerMessageResponse'
-          description: Page moved
+                additionalProperties: {}
+                type: object
+          description: Page moved (with revoked_shares count)
         "400":
           content:
             application/json:
@@ -6628,6 +7151,48 @@ paths:
       summary: Get page revision
       tags:
       - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/share-impact:
+    get:
+      description: Counts the active shares that a cross-space move of the page and
+        its subtree would revoke.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Active share count
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Move share impact
+      tags:
+      - wiki
   /orgs/{orgID}/spaces/{spaceID}/wiki/search:
     get:
       description: Full-text search on wiki pages in a space. Requires query parameter
@@ -6687,6 +7252,44 @@ paths:
       security:
       - BearerAuth: []
       summary: Search wiki pages
+      tags:
+      - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/shares:
+    get:
+      description: Active page shares in the space with their root paths, for annotating
+        the page tree with a shared indicator.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Active page shares
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Space not found
+      security:
+      - BearerAuth: []
+      summary: Space page share badges
       tags:
       - wiki
   /orgs/{orgID}/spaces/{spaceID}/wiki/tree:

@@ -202,6 +202,33 @@ func (q *Queries) GetPageDescendants(ctx context.Context, arg GetPageDescendants
 	return items, nil
 }
 
+const getPageForUpdate = `-- name: GetPageForUpdate :one
+SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path FROM pages WHERE id = $1 AND deleted_at IS NULL FOR UPDATE
+`
+
+// Row-locked read for the move transaction: serialises concurrent moves of
+// the same page so descendant path rewrites cannot interleave.
+func (q *Queries) GetPageForUpdate(ctx context.Context, id uuid.UUID) (Page, error) {
+	row := q.db.QueryRow(ctx, getPageForUpdate, id)
+	var i Page
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.ParentID,
+		&i.Title,
+		&i.Content,
+		&i.Version,
+		&i.AuthorID,
+		&i.Position,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SearchVector,
+		&i.Path,
+	)
+	return i, err
+}
+
 const getPageLock = `-- name: GetPageLock :one
 SELECT page_id, user_id, user_name, acquired_at, expires_at FROM page_locks WHERE page_id = $1 AND expires_at > now()
 `
@@ -480,6 +507,65 @@ func (q *Queries) ListRootPagesBySpace(ctx context.Context, spaceID uuid.UUID) (
 	return items, nil
 }
 
+const movePageDescendantsToSpace = `-- name: MovePageDescendantsToSpace :exec
+UPDATE pages
+SET space_id = $1,
+    path = $2::text || substr(path, length($3::text) + 1)
+WHERE space_id = $4
+  AND path LIKE $5
+  AND deleted_at IS NULL
+`
+
+type MovePageDescendantsToSpaceParams struct {
+	NewSpaceID  uuid.UUID `json:"new_space_id"`
+	NewPrefix   string    `json:"new_prefix"`
+	OldPrefix   string    `json:"old_prefix"`
+	OldSpaceID  uuid.UUID `json:"old_space_id"`
+	PathPattern string    `json:"path_pattern"`
+}
+
+// Rewrites subtree membership and paths in one statement. Exact prefix
+// surgery via substr — REPLACE would rewrite ANY occurrence of the old
+// prefix, not just the leading one. path_pattern is the LIKE-escaped old
+// path plus '.%', built by the caller with EscapeLike.
+func (q *Queries) MovePageDescendantsToSpace(ctx context.Context, arg MovePageDescendantsToSpaceParams) error {
+	_, err := q.db.Exec(ctx, movePageDescendantsToSpace,
+		arg.NewSpaceID,
+		arg.NewPrefix,
+		arg.OldPrefix,
+		arg.OldSpaceID,
+		arg.PathPattern,
+	)
+	return err
+}
+
+const movePageToSpace = `-- name: MovePageToSpace :exec
+UPDATE pages SET space_id = $2, parent_id = $3, position = $4, path = $5
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type MovePageToSpaceParams struct {
+	ID       uuid.UUID   `json:"id"`
+	SpaceID  uuid.UUID   `json:"space_id"`
+	ParentID pgtype.UUID `json:"parent_id"`
+	Position int32       `json:"position"`
+	Path     string      `json:"path"`
+}
+
+// Cross-space move, root row (P3, ADR-0008 rule 9). Runs inside the move
+// transaction together with MovePageDescendantsToSpace and the share
+// revocation for the subtree.
+func (q *Queries) MovePageToSpace(ctx context.Context, arg MovePageToSpaceParams) error {
+	_, err := q.db.Exec(ctx, movePageToSpace,
+		arg.ID,
+		arg.SpaceID,
+		arg.ParentID,
+		arg.Position,
+		arg.Path,
+	)
+	return err
+}
+
 const searchPages = `-- name: SearchPages :many
 SELECT id, space_id, parent_id, title, version, author_id, position, path, created_at, updated_at
 FROM pages
@@ -587,46 +673,6 @@ func (q *Queries) UpdatePageContent(ctx context.Context, arg UpdatePageContentPa
 		&i.Path,
 	)
 	return i, err
-}
-
-const updatePageDescendantPaths = `-- name: UpdatePageDescendantPaths :exec
-UPDATE pages
-SET path = REPLACE(path, $2, $3)
-WHERE space_id = $1
-  AND path LIKE $2 || '.%'
-  AND deleted_at IS NULL
-`
-
-type UpdatePageDescendantPathsParams struct {
-	SpaceID   uuid.UUID `json:"space_id"`
-	Replace   string    `json:"replace"`
-	Replace_2 string    `json:"replace_2"`
-}
-
-func (q *Queries) UpdatePageDescendantPaths(ctx context.Context, arg UpdatePageDescendantPathsParams) error {
-	_, err := q.db.Exec(ctx, updatePageDescendantPaths, arg.SpaceID, arg.Replace, arg.Replace_2)
-	return err
-}
-
-const updatePagePosition = `-- name: UpdatePagePosition :exec
-UPDATE pages SET parent_id = $2, position = $3, path = $4 WHERE id = $1 AND deleted_at IS NULL
-`
-
-type UpdatePagePositionParams struct {
-	ID       uuid.UUID   `json:"id"`
-	ParentID pgtype.UUID `json:"parent_id"`
-	Position int32       `json:"position"`
-	Path     string      `json:"path"`
-}
-
-func (q *Queries) UpdatePagePosition(ctx context.Context, arg UpdatePagePositionParams) error {
-	_, err := q.db.Exec(ctx, updatePagePosition,
-		arg.ID,
-		arg.ParentID,
-		arg.Position,
-		arg.Path,
-	)
-	return err
 }
 
 const upsertPageLock = `-- name: UpsertPageLock :one

@@ -108,7 +108,7 @@ func TestValidateTransition(t *testing.T) {
 
 func TestTransitionStatus(t *testing.T) {
 	repo := newMockRepo()
-	svc := NewTicketService(repo)
+	svc := NewTicketService(repo, noopShareDeleter{})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
@@ -169,7 +169,7 @@ func TestTransitionStatus(t *testing.T) {
 }
 
 func TestFullLifecycle(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	ctx := context.Background()
 	spaceID := uuid.New()
 	reporterID := uuid.New()

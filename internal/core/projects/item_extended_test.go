@@ -9,7 +9,7 @@ import (
 
 func TestItemService_ListItemsByAssignee(t *testing.T) {
 	repo := newStubItemRepo()
-	svc := NewItemService(repo)
+	svc := NewItemService(repo, noopShareDeleter{})
 	ctx := context.Background()
 
 	spaceID := uuid.New()
@@ -42,7 +42,7 @@ func TestItemService_ListItemsByAssignee(t *testing.T) {
 
 func TestItemService_ListItemsBySprint(t *testing.T) {
 	repo := newStubItemRepo()
-	svc := NewItemService(repo)
+	svc := NewItemService(repo, noopShareDeleter{})
 	ctx := context.Background()
 
 	spaceID := uuid.New()

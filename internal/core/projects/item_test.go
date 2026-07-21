@@ -8,6 +8,24 @@ import (
 	"github.com/google/uuid"
 )
 
+// noopShareDeleter satisfies ShareRevokingDeleter for the unit tests, which
+// exercise item logic rather than the delete-and-revoke-shares transaction
+// (covered by integration tests against a real database).
+type noopShareDeleter struct{}
+
+func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+	return nil
+}
+
+// repoShareDeleter routes the delete-and-revoke seam back to the stub repo,
+// so a unit test can assert the item is actually gone after DeleteItem. The
+// real same-transaction share revocation is covered by integration tests.
+type repoShareDeleter struct{ repo *stubItemRepo }
+
+func (d repoShareDeleter) DeleteItemAndRevokeShares(ctx context.Context, id, _ uuid.UUID) error {
+	return d.repo.SoftDelete(ctx, id)
+}
+
 // stubItemRepo is an in-memory ItemRepository for testing.
 type stubItemRepo struct {
 	items map[uuid.UUID]*Item
@@ -128,7 +146,7 @@ func makeItem(spaceID uuid.UUID) *Item {
 }
 
 func TestItemService_CreateItem(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	spaceID := uuid.New()
 
 	item, err := svc.CreateItem(context.Background(), makeItem(spaceID))
@@ -147,7 +165,7 @@ func TestItemService_CreateItem(t *testing.T) {
 }
 
 func TestItemService_CreateItem_TitleRequired(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	item := makeItem(uuid.New())
 	item.Title = ""
 
@@ -158,7 +176,7 @@ func TestItemService_CreateItem_TitleRequired(t *testing.T) {
 }
 
 func TestItemService_CreateItem_InvalidKind(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	item := makeItem(uuid.New())
 	item.Kind = "invalid"
 
@@ -169,7 +187,7 @@ func TestItemService_CreateItem_InvalidKind(t *testing.T) {
 }
 
 func TestItemService_CreateItem_InvalidPriority(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	item := makeItem(uuid.New())
 	item.Priority = "critical"
 
@@ -182,7 +200,7 @@ func TestItemService_CreateItem_InvalidPriority(t *testing.T) {
 func TestItemService_CreateItem_AllKinds(t *testing.T) {
 	for kind := range ValidKinds {
 		t.Run(kind, func(t *testing.T) {
-			svc := NewItemService(newStubItemRepo())
+			svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 			item := makeItem(uuid.New())
 			item.Kind = kind
 			if _, err := svc.CreateItem(context.Background(), item); err != nil {
@@ -195,7 +213,7 @@ func TestItemService_CreateItem_AllKinds(t *testing.T) {
 func TestItemService_CreateItem_AllPriorities(t *testing.T) {
 	for priority := range ValidPriorities {
 		t.Run(priority, func(t *testing.T) {
-			svc := NewItemService(newStubItemRepo())
+			svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 			item := makeItem(uuid.New())
 			item.Priority = priority
 			if _, err := svc.CreateItem(context.Background(), item); err != nil {
@@ -206,7 +224,7 @@ func TestItemService_CreateItem_AllPriorities(t *testing.T) {
 }
 
 func TestItemService_GetItem(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	created, _ := svc.CreateItem(context.Background(), makeItem(uuid.New()))
 
 	got, err := svc.GetItem(context.Background(), created.ID)
@@ -219,7 +237,7 @@ func TestItemService_GetItem(t *testing.T) {
 }
 
 func TestItemService_GetItem_NotFound(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	_, err := svc.GetItem(context.Background(), uuid.New())
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
@@ -227,7 +245,7 @@ func TestItemService_GetItem_NotFound(t *testing.T) {
 }
 
 func TestItemService_UpdateItem(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	created, _ := svc.CreateItem(context.Background(), makeItem(uuid.New()))
 
 	created.Title = "Updated title"
@@ -241,7 +259,7 @@ func TestItemService_UpdateItem(t *testing.T) {
 }
 
 func TestItemService_UpdateItemStatus(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	created, _ := svc.CreateItem(context.Background(), makeItem(uuid.New()))
 
 	updated, err := svc.UpdateItemStatus(context.Background(), created.ID, "in_progress")
@@ -254,10 +272,11 @@ func TestItemService_UpdateItemStatus(t *testing.T) {
 }
 
 func TestItemService_DeleteItem(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	repo := newStubItemRepo()
+	svc := NewItemService(repo, repoShareDeleter{repo})
 	created, _ := svc.CreateItem(context.Background(), makeItem(uuid.New()))
 
-	if err := svc.DeleteItem(context.Background(), created.ID); err != nil {
+	if err := svc.DeleteItem(context.Background(), created.ID, uuid.New()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	_, err := svc.GetItem(context.Background(), created.ID)
@@ -268,7 +287,7 @@ func TestItemService_DeleteItem(t *testing.T) {
 
 func TestItemService_ListItemsBySpace(t *testing.T) {
 	repo := newStubItemRepo()
-	svc := NewItemService(repo)
+	svc := NewItemService(repo, noopShareDeleter{})
 	spaceID := uuid.New()
 
 	for i := 0; i < 3; i++ {
@@ -292,7 +311,7 @@ func TestItemService_ListItemsBySpace(t *testing.T) {
 
 func TestItemService_ListItemsByStatus(t *testing.T) {
 	repo := newStubItemRepo()
-	svc := NewItemService(repo)
+	svc := NewItemService(repo, noopShareDeleter{})
 	spaceID := uuid.New()
 
 	created, _ := svc.CreateItem(context.Background(), makeItem(spaceID))
@@ -314,7 +333,7 @@ func TestItemService_ListItemsByStatus(t *testing.T) {
 
 func TestItemService_AssignToSprint(t *testing.T) {
 	repo := newStubItemRepo()
-	svc := NewItemService(repo)
+	svc := NewItemService(repo, noopShareDeleter{})
 	spaceID := uuid.New()
 	sprintID := uuid.New()
 
@@ -331,7 +350,7 @@ func TestItemService_AssignToSprint(t *testing.T) {
 
 func TestItemService_SearchItems(t *testing.T) {
 	repo := newStubItemRepo()
-	svc := NewItemService(repo)
+	svc := NewItemService(repo, noopShareDeleter{})
 	spaceID := uuid.New()
 
 	if _, err := svc.CreateItem(context.Background(), makeItem(spaceID)); err != nil {
@@ -348,7 +367,7 @@ func TestItemService_SearchItems(t *testing.T) {
 }
 
 func TestItemService_SearchItems_EmptyQuery(t *testing.T) {
-	svc := NewItemService(newStubItemRepo())
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	_, err := svc.SearchItems(context.Background(), uuid.New(), "", 10)
 	if err == nil {
 		t.Error("expected error for empty query")
@@ -357,7 +376,7 @@ func TestItemService_SearchItems_EmptyQuery(t *testing.T) {
 
 func TestItemService_SearchItems_DefaultLimit(t *testing.T) {
 	repo := newStubItemRepo()
-	svc := NewItemService(repo)
+	svc := NewItemService(repo, noopShareDeleter{})
 	spaceID := uuid.New()
 
 	if _, err := svc.CreateItem(context.Background(), makeItem(spaceID)); err != nil {

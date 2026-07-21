@@ -9,7 +9,7 @@ import (
 )
 
 func TestAssign(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 	assigneeID := uuid.New()
@@ -67,7 +67,7 @@ func TestAssign(t *testing.T) {
 }
 
 func TestUnassign(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 	assigneeID := uuid.New()

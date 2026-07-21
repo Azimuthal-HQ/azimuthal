@@ -9,7 +9,7 @@ import (
 
 func TestKanbanBoard(t *testing.T) {
 	repo := newMockRepo()
-	svc := NewTicketService(repo)
+	svc := NewTicketService(repo, noopShareDeleter{})
 	ctx := context.Background()
 	spaceID := uuid.New()
 	reporterID := uuid.New()
@@ -62,7 +62,7 @@ func TestKanbanBoard(t *testing.T) {
 }
 
 func TestListByAssignee(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	ctx := context.Background()
 	spaceID := uuid.New()
 	reporterID := uuid.New()
@@ -86,7 +86,7 @@ func TestListByAssignee(t *testing.T) {
 }
 
 func TestListBySpace(t *testing.T) {
-	svc := NewTicketService(newMockRepo())
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
 	ctx := context.Background()
 	spaceID := uuid.New()
 	otherSpace := uuid.New()
