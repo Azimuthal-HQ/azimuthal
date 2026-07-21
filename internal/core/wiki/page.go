@@ -250,7 +250,7 @@ type MovePageInput struct {
 func (s *Service) MovePage(ctx context.Context, input MovePageInput) (MovePageTxResult, error) {
 	res, err := s.tx.MovePageTx(ctx, input)
 	if err != nil {
-		return MovePageTxResult{}, err
+		return MovePageTxResult{}, fmt.Errorf("moving page: %w", err)
 	}
 	return res, nil
 }
@@ -260,7 +260,7 @@ func (s *Service) MovePage(ctx context.Context, input MovePageInput) (MovePageTx
 // audit rows.
 func (s *Service) DeletePage(ctx context.Context, id, actorID uuid.UUID) error {
 	if _, err := s.tx.DeletePageAndRevokeShares(ctx, id, actorID); err != nil {
-		return err
+		return fmt.Errorf("deleting page: %w", err)
 	}
 	return nil
 }

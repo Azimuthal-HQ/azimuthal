@@ -55,72 +55,42 @@ func (a *ContentTxAdapter) MovePageTx(ctx context.Context, in wiki.MovePageInput
 	if err != nil {
 		return wiki.MovePageTxResult{}, fmt.Errorf("move page: locking page: %w", err)
 	}
-
-	// Tenancy: the page's own space must belong to the caller's org, or the
-	// page does not exist as far as this org can tell.
-	sourceSpace, err := qtx.GetSpaceByID(ctx, page.SpaceID)
-	if err != nil || sourceSpace.OrgID != in.OrgID {
-		return wiki.MovePageTxResult{}, wiki.ErrPageNotFound
+	if err := validateMoveSpaces(ctx, qtx, in, page.SpaceID); err != nil {
+		return wiki.MovePageTxResult{}, err
 	}
 
-	targetSpace, err := qtx.GetSpaceByID(ctx, in.TargetSpaceID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return wiki.MovePageTxResult{}, wiki.ErrTargetSpaceNotFound
-	}
+	parentID, newPath, err := resolveMoveParent(ctx, qtx, in, page)
 	if err != nil {
-		return wiki.MovePageTxResult{}, fmt.Errorf("move page: loading target space: %w", err)
-	}
-	if targetSpace.OrgID != in.OrgID || targetSpace.DeletedAt.Valid {
-		return wiki.MovePageTxResult{}, wiki.ErrTargetSpaceNotFound
+		return wiki.MovePageTxResult{}, err
 	}
 
-	crossSpace := page.SpaceID != in.TargetSpaceID
-
-	var parentID pgtype.UUID
-	newPath := in.PageID.String()
-	if in.ParentID != nil {
-		parent, err := qtx.GetPageByID(ctx, *in.ParentID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return wiki.MovePageTxResult{}, wiki.ErrParentPageNotFound
-		}
-		if err != nil {
-			return wiki.MovePageTxResult{}, fmt.Errorf("move page: loading parent: %w", err)
-		}
-		if parent.SpaceID != in.TargetSpaceID {
-			return wiki.MovePageTxResult{}, wiki.ErrParentNotInTargetSpace
-		}
-		// A parent inside the moved subtree (the page itself included)
-		// would graft the subtree onto one of its own descendants.
-		if parent.SpaceID == page.SpaceID && access.PathWithinSubtree(parent.Path, page.Path) {
-			return wiki.MovePageTxResult{}, wiki.ErrPageMoveCycle
-		}
-		parentID = pgtype.UUID{Bytes: *in.ParentID, Valid: true}
-		newPath = parent.Path + "." + in.PageID.String()
-	}
-
-	res := wiki.MovePageTxResult{CrossSpace: crossSpace}
+	res := wiki.MovePageTxResult{CrossSpace: page.SpaceID != in.TargetSpaceID}
 	pathPattern := access.SubtreeLikePattern(page.Path)
 
 	// ADR-0008 rule 9, before any rewrite: a page shared org-wide must not
 	// be draggable into a sensitive space with its shares intact — and any
 	// DESCENDANT'S own share is just as dangerous after the move.
-	if crossSpace {
-		revoked, err := qtx.RevokeSharesByPageSubtree(ctx, generated.RevokeSharesByPageSubtreeParams{
-			SpaceID:     page.SpaceID,
-			PageID:      page.ID,
-			PathPattern: pathPattern,
-		})
+	if res.CrossSpace {
+		revoked, err := revokeSubtreeSharesTx(ctx, qtx, in.ActorID, page.SpaceID, page.ID, pathPattern)
 		if err != nil {
-			return wiki.MovePageTxResult{}, fmt.Errorf("move page: revoking subtree shares: %w", err)
+			return wiki.MovePageTxResult{}, err
 		}
-		for _, share := range revoked {
-			if err := writeShareRevokedTx(ctx, qtx, in.ActorID, share, "entity_moved"); err != nil {
-				return wiki.MovePageTxResult{}, fmt.Errorf("move page: %w", err)
-			}
-		}
-		res.RevokedShares = int64(len(revoked))
+		res.RevokedShares = revoked
 	}
 
+	if err := applyPageMove(ctx, qtx, in, page, parentID, newPath, pathPattern); err != nil {
+		return wiki.MovePageTxResult{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return wiki.MovePageTxResult{}, fmt.Errorf("move page: commit: %w", err)
+	}
+	return res, nil
+}
+
+// applyPageMove rewrites the root row and then every descendant's space and
+// path prefix — the two statements that together relocate the subtree.
+func applyPageMove(ctx context.Context, qtx *generated.Queries, in wiki.MovePageInput, page generated.Page, parentID pgtype.UUID, newPath, pathPattern string) error {
 	if err := qtx.MovePageToSpace(ctx, generated.MovePageToSpaceParams{
 		ID:       page.ID,
 		SpaceID:  in.TargetSpaceID,
@@ -128,9 +98,8 @@ func (a *ContentTxAdapter) MovePageTx(ctx context.Context, in wiki.MovePageInput
 		Position: in.Position,
 		Path:     newPath,
 	}); err != nil {
-		return wiki.MovePageTxResult{}, fmt.Errorf("move page: updating root: %w", err)
+		return fmt.Errorf("move page: updating root: %w", err)
 	}
-
 	if err := qtx.MovePageDescendantsToSpace(ctx, generated.MovePageDescendantsToSpaceParams{
 		NewSpaceID:  in.TargetSpaceID,
 		NewPrefix:   newPath,
@@ -138,13 +107,76 @@ func (a *ContentTxAdapter) MovePageTx(ctx context.Context, in wiki.MovePageInput
 		OldSpaceID:  page.SpaceID,
 		PathPattern: pathPattern,
 	}); err != nil {
-		return wiki.MovePageTxResult{}, fmt.Errorf("move page: updating descendants: %w", err)
+		return fmt.Errorf("move page: updating descendants: %w", err)
 	}
+	return nil
+}
 
-	if err := tx.Commit(ctx); err != nil {
-		return wiki.MovePageTxResult{}, fmt.Errorf("move page: commit: %w", err)
+// validateMoveSpaces enforces tenancy: the page's own space and the target
+// space must both belong to the caller's org (and the target must be live).
+// An out-of-org page reads as ErrPageNotFound; a bad target as
+// ErrTargetSpaceNotFound — neither leaks existence.
+func validateMoveSpaces(ctx context.Context, qtx *generated.Queries, in wiki.MovePageInput, sourceSpaceID uuid.UUID) error {
+	sourceSpace, err := qtx.GetSpaceByID(ctx, sourceSpaceID)
+	if err != nil || sourceSpace.OrgID != in.OrgID {
+		return wiki.ErrPageNotFound
 	}
-	return res, nil
+	targetSpace, err := qtx.GetSpaceByID(ctx, in.TargetSpaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return wiki.ErrTargetSpaceNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("move page: loading target space: %w", err)
+	}
+	if targetSpace.OrgID != in.OrgID || targetSpace.DeletedAt.Valid {
+		return wiki.ErrTargetSpaceNotFound
+	}
+	return nil
+}
+
+// resolveMoveParent validates the requested parent (if any) and computes the
+// moved page's new parent id and path. A parent in another space, or one
+// inside the moved subtree, is rejected.
+func resolveMoveParent(ctx context.Context, qtx *generated.Queries, in wiki.MovePageInput, page generated.Page) (pgtype.UUID, string, error) {
+	if in.ParentID == nil {
+		return pgtype.UUID{}, in.PageID.String(), nil
+	}
+	parent, err := qtx.GetPageByID(ctx, *in.ParentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.UUID{}, "", wiki.ErrParentPageNotFound
+	}
+	if err != nil {
+		return pgtype.UUID{}, "", fmt.Errorf("move page: loading parent: %w", err)
+	}
+	if parent.SpaceID != in.TargetSpaceID {
+		return pgtype.UUID{}, "", wiki.ErrParentNotInTargetSpace
+	}
+	// A parent inside the moved subtree (the page itself included) would
+	// graft the subtree onto one of its own descendants.
+	if parent.SpaceID == page.SpaceID && access.PathWithinSubtree(parent.Path, page.Path) {
+		return pgtype.UUID{}, "", wiki.ErrPageMoveCycle
+	}
+	return pgtype.UUID{Bytes: *in.ParentID, Valid: true}, parent.Path + "." + in.PageID.String(), nil
+}
+
+// revokeSubtreeSharesTx revokes every active share on the page and its
+// descendants and writes their share.revoked audit rows, all through the
+// move's transaction. Returns the number revoked.
+func revokeSubtreeSharesTx(ctx context.Context, qtx *generated.Queries, actorID, spaceID, pageID uuid.UUID, pathPattern string) (int64, error) {
+	revoked, err := qtx.RevokeSharesByPageSubtree(ctx, generated.RevokeSharesByPageSubtreeParams{
+		SpaceID:     spaceID,
+		PageID:      pageID,
+		PathPattern: pathPattern,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("move page: revoking subtree shares: %w", err)
+	}
+	for _, share := range revoked {
+		if err := writeShareRevokedTx(ctx, qtx, actorID, share, "entity_moved"); err != nil {
+			return 0, fmt.Errorf("move page: %w", err)
+		}
+	}
+	return int64(len(revoked)), nil
 }
 
 // DeletePageAndRevokeShares soft-deletes the page and revokes its shares in

@@ -3,6 +3,7 @@ package attachments
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -100,7 +101,7 @@ func TestUpload_RejectsOversize(t *testing.T) {
 		Filename: "big.bin", ContentType: "application/octet-stream", CreatedBy: uuid.New(),
 		Content: bytes.NewReader(big), Size: 1, // lies about size
 	})
-	if err != ErrTooLarge {
+	if !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("err = %v, want ErrTooLarge", err)
 	}
 	if blobs.Len() != 0 {
@@ -127,11 +128,11 @@ func TestGetForEntity_BindsToEntity(t *testing.T) {
 		t.Errorf("GetForEntity(correct entity) = %v, want nil", err)
 	}
 	// A valid attachment id under the WRONG entity → mismatch, not a read.
-	if _, err := svc.GetForEntity(context.Background(), access.ShareEntityPage, pageB, att.ID); err != ErrEntityMismatch {
+	if _, err := svc.GetForEntity(context.Background(), access.ShareEntityPage, pageB, att.ID); !errors.Is(err, ErrEntityMismatch) {
 		t.Errorf("GetForEntity(wrong entity) = %v, want ErrEntityMismatch", err)
 	}
 	// A missing attachment id → not found.
-	if _, err := svc.GetForEntity(context.Background(), access.ShareEntityPage, pageA, uuid.New()); err != ErrNotFound {
+	if _, err := svc.GetForEntity(context.Background(), access.ShareEntityPage, pageA, uuid.New()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetForEntity(missing) = %v, want ErrNotFound", err)
 	}
 }

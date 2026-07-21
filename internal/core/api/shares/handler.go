@@ -318,24 +318,7 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid share_id")
 		return
 	}
-	share, err := h.shares.Get(r.Context(), orgID, shareID)
-	if errors.Is(err, access.ErrShareNotFound) {
-		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "share not found")
-		return
-	}
-	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to load share")
-		return
-	}
-	// Same read-then-manage split as management: an unreadable space 404s
-	// (no existence leak); a readable space without the capability 403s.
-	res := access.FromContext(r.Context())
-	if res == nil || !res.CanReadSpace(share.SpaceID) {
-		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "share not found")
-		return
-	}
-	if !access.Can(r.Context(), access.CapManageShares, share.SpaceID) {
-		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "manage_shares required")
+	if !h.authorizeShareManagement(w, r, orgID, shareID) {
 		return
 	}
 	revoked, err := h.shares.Revoke(r.Context(), shareID)
@@ -353,6 +336,32 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logShareEvent(r, audit.EventTypeShareRevoked, revoked)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// authorizeShareManagement loads the share (scoped to the org) and enforces
+// the read-then-manage split on its space: a missing share or unreadable
+// space 404s (no existence leak), a readable space without manage_shares
+// 403s. It writes its own error response and returns false on any failure.
+func (h *Handler) authorizeShareManagement(w http.ResponseWriter, r *http.Request, orgID, shareID uuid.UUID) bool {
+	share, err := h.shares.Get(r.Context(), orgID, shareID)
+	if errors.Is(err, access.ErrShareNotFound) {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "share not found")
+		return false
+	}
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to load share")
+		return false
+	}
+	res := access.FromContext(r.Context())
+	if res == nil || !res.CanReadSpace(share.SpaceID) {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "share not found")
+		return false
+	}
+	if !access.Can(r.Context(), access.CapManageShares, share.SpaceID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "manage_shares required")
+		return false
+	}
+	return true
 }
 
 // ReadShared is the standalone shared-entity read route (spec §6). It is

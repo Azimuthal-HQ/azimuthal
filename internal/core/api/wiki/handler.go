@@ -370,77 +370,84 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 // @Failure      500      {object}  api.SwaggerErrorResponse     "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/move [post]
 func (h *Handler) MovePage(w http.ResponseWriter, r *http.Request) {
+	input, ok := h.moveInputFromRequest(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.svc.MovePage(r.Context(), input)
+	if err != nil {
+		handleWikiError(w, r, err)
+		return
+	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims != nil {
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypePageMoved, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "page", ResourceID: input.PageID.String(),
+			Metadata: map[string]string{
+				"target_space_id": input.TargetSpaceID.String(),
+				"cross_space":     fmt.Sprintf("%t", res.CrossSpace),
+				"revoked_shares":  fmt.Sprintf("%d", res.RevokedShares),
+			},
+		})
+	}
+	respond.JSON(w, http.StatusOK, map[string]interface{}{
+		"message":        "page moved",
+		"cross_space":    res.CrossSpace,
+		"revoked_shares": res.RevokedShares,
+	})
+}
+
+// moveInputFromRequest parses the move request, enforces edit_any on the
+// source (and, for a cross-space move, on the destination — 404 there keeps
+// the destination's existence from leaking), and returns the assembled
+// input. It writes its own error response and returns ok=false on failure.
+func (h *Handler) moveInputFromRequest(w http.ResponseWriter, r *http.Request) (wiki.MovePageInput, bool) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
-		return
+		return wiki.MovePageInput{}, false
 	}
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
-		return
+		return wiki.MovePageInput{}, false
 	}
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
-		return
+		return wiki.MovePageInput{}, false
 	}
 	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
-		return
+		return wiki.MovePageInput{}, false
 	}
-
 	var req movePageRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
-		return
+		return wiki.MovePageInput{}, false
 	}
-
 	target := spaceID
 	if req.TargetSpaceID != nil {
 		target = *req.TargetSpaceID
 	}
-	// A cross-space move also needs write authority on the destination —
-	// otherwise a page could be pushed into a space the caller cannot write.
-	// The 404 (not 403) when the target is unreadable keeps the destination's
-	// existence from leaking.
 	if target != spaceID && !access.Can(r.Context(), access.CapEditAnyItem, target) {
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "target space not found")
-		return
+		return wiki.MovePageInput{}, false
 	}
-
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
-		return
+		return wiki.MovePageInput{}, false
 	}
-
-	res, err := h.svc.MovePage(r.Context(), wiki.MovePageInput{
+	return wiki.MovePageInput{
 		OrgID:         orgID,
 		TargetSpaceID: target,
 		PageID:        id,
 		ParentID:      req.ParentID,
 		Position:      req.Position,
 		ActorID:       claims.UserID,
-	})
-	if err != nil {
-		handleWikiError(w, r, err)
-		return
-	}
-	_ = h.auditLog.Log(r.Context(), audit.Event{
-		Type: audit.EventTypePageMoved, ActorID: claims.UserID.String(),
-		OrgID: claims.OrgID, ResourceType: "page", ResourceID: id.String(),
-		Metadata: map[string]string{
-			"target_space_id": target.String(),
-			"cross_space":     fmt.Sprintf("%t", res.CrossSpace),
-			"revoked_shares":  fmt.Sprintf("%d", res.RevokedShares),
-		},
-	})
-	respond.JSON(w, http.StatusOK, map[string]interface{}{
-		"message":        "page moved",
-		"cross_space":    res.CrossSpace,
-		"revoked_shares": res.RevokedShares,
-	})
+	}, true
 }
 
 // ShareImpact reports how many active shares a cross-space move of the page

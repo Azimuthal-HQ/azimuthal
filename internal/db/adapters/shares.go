@@ -50,39 +50,35 @@ func (a *ShareAdapter) ResolveShareRows(ctx context.Context, orgID, userID uuid.
 }
 
 // LookupSharedEntity resolves a shareable entity to its org and space (and,
-// for pages, its materialized path).
+// for pages, its materialized path). Each per-type branch defers its
+// row→ref mapping and error normalisation to lookupRef.
 func (a *ShareAdapter) LookupSharedEntity(ctx context.Context, entityType string, id uuid.UUID) (access.SharedEntityRef, error) {
 	switch entityType {
 	case access.ShareEntityPage:
 		row, err := a.q.LookupSharedPage(ctx, id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return access.SharedEntityRef{}, access.ErrSharedEntityNotFound
-		}
-		if err != nil {
-			return access.SharedEntityRef{}, fmt.Errorf("looking up shared page: %w", err)
-		}
-		return access.SharedEntityRef{OrgID: row.OrgID, SpaceID: row.SpaceID, PagePath: row.Path}, nil
+		return lookupRef(access.SharedEntityRef{OrgID: row.OrgID, SpaceID: row.SpaceID, PagePath: row.Path}, "page", err)
 	case access.ShareEntityTicket:
 		row, err := a.q.LookupSharedTicket(ctx, id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return access.SharedEntityRef{}, access.ErrSharedEntityNotFound
-		}
-		if err != nil {
-			return access.SharedEntityRef{}, fmt.Errorf("looking up shared ticket: %w", err)
-		}
-		return access.SharedEntityRef{OrgID: row.OrgID, SpaceID: row.SpaceID}, nil
+		return lookupRef(access.SharedEntityRef{OrgID: row.OrgID, SpaceID: row.SpaceID}, "ticket", err)
 	case access.ShareEntityProjectItem:
 		row, err := a.q.LookupSharedProjectItem(ctx, id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return access.SharedEntityRef{}, access.ErrSharedEntityNotFound
-		}
-		if err != nil {
-			return access.SharedEntityRef{}, fmt.Errorf("looking up shared project item: %w", err)
-		}
-		return access.SharedEntityRef{OrgID: row.OrgID, SpaceID: row.SpaceID}, nil
+		return lookupRef(access.SharedEntityRef{OrgID: row.OrgID, SpaceID: row.SpaceID}, "project item", err)
 	default:
 		return access.SharedEntityRef{}, access.ErrInvalidShareEntityType
 	}
+}
+
+// lookupRef normalises a per-type lookup: a no-rows error becomes the
+// existence-preserving ErrSharedEntityNotFound; any other error is wrapped;
+// success returns the already-built ref.
+func lookupRef(ref access.SharedEntityRef, kind string, err error) (access.SharedEntityRef, error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return access.SharedEntityRef{}, access.ErrSharedEntityNotFound
+	}
+	if err != nil {
+		return access.SharedEntityRef{}, fmt.Errorf("looking up shared %s: %w", kind, err)
+	}
+	return ref, nil
 }
 
 // TeamExistsInOrg reports whether a live team with this id exists in the

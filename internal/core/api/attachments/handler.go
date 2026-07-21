@@ -35,6 +35,11 @@ import (
 // temp files. The hard size ceiling lives in the service.
 const maxUploadMemory = 8 << 20 // 8 MiB
 
+// maxRequestBytes caps the whole multipart request body so a client cannot
+// exhaust memory before the per-object ceiling is reached — the object
+// ceiling plus 1 MiB of multipart framing headroom.
+const maxRequestBytes = attachments.MaxSizeBytes + (1 << 20)
+
 // Handler holds the dependencies for attachment HTTP handlers.
 type Handler struct {
 	svc    *attachments.Service
@@ -109,24 +114,8 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
 		return
 	}
-	if err := r.ParseMultipartForm(maxUploadMemory); err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid multipart form")
-		return
-	}
-	entityType := r.FormValue("entity_type")
-	entityID, err := uuid.Parse(r.FormValue("entity_id"))
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "entity_id is required")
-		return
-	}
-	if !access.ValidShareEntityType(entityType) {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "entity_type must be one of page, ticket, project_item")
-		return
-	}
-	// The entity must live in the URL space, or it does not exist here.
-	ref, err := h.shares.LookupEntity(r.Context(), orgID, entityType, entityID)
-	if err != nil || ref.SpaceID != spaceID {
-		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "entity not found")
+	entityType, entityID, ok := h.uploadTarget(w, r, orgID, spaceID)
+	if !ok {
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -155,6 +144,36 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.JSON(w, http.StatusCreated, toAttachmentResponse(att))
+}
+
+// uploadTarget bounds the request body, parses the multipart form, and
+// resolves the named entity to the URL space. It writes its own error
+// response and returns ok=false on any failure.
+func (h *Handler) uploadTarget(w http.ResponseWriter, r *http.Request, orgID, spaceID uuid.UUID) (string, uuid.UUID, bool) {
+	// Bound the whole body before touching the multipart parser so a client
+	// cannot exhaust memory (gosec G120).
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+	if err := r.ParseMultipartForm(maxUploadMemory); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid multipart form")
+		return "", uuid.Nil, false
+	}
+	entityType := r.FormValue("entity_type")
+	entityID, err := uuid.Parse(r.FormValue("entity_id"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "entity_id is required")
+		return "", uuid.Nil, false
+	}
+	if !access.ValidShareEntityType(entityType) {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "entity_type must be one of page, ticket, project_item")
+		return "", uuid.Nil, false
+	}
+	// The entity must live in the URL space, or it does not exist here.
+	ref, err := h.shares.LookupEntity(r.Context(), orgID, entityType, entityID)
+	if err != nil || ref.SpaceID != spaceID {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "entity not found")
+		return "", uuid.Nil, false
+	}
+	return entityType, entityID, true
 }
 
 // ListInSpace lists an entity's attachments for a space member.

@@ -215,5 +215,7 @@ type countingReader struct {
 func (c *countingReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
 	c.n += int64(n)
-	return n, err
+	// The error (incl. io.EOF) must pass through unwrapped so io.Copy's
+	// `err == io.EOF` end-of-stream check still fires.
+	return n, err //nolint:wrapcheck // io.Reader.Read must return io.EOF unwrapped
 }

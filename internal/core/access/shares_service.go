@@ -109,7 +109,7 @@ func (s *ShareService) LookupEntity(ctx context.Context, orgID uuid.UUID, entity
 	}
 	ref, err := s.store.LookupSharedEntity(ctx, entityType, entityID)
 	if err != nil {
-		return SharedEntityRef{}, err
+		return SharedEntityRef{}, fmt.Errorf("looking up shared entity: %w", err)
 	}
 	if ref.OrgID != orgID {
 		// An entity from another org does not exist as far as this org's
@@ -123,26 +123,9 @@ func (s *ShareService) LookupEntity(ctx context.Context, orgID uuid.UUID, entity
 // handler has already resolved the entity (LookupEntity) and checked
 // manage_shares on its space.
 func (s *ShareService) Create(ctx context.Context, ref SharedEntityRef, in CreateShareInput) (Share, error) {
-	switch in.Audience {
-	case AudienceOrg:
-		if in.AudienceID != nil {
-			return Share{}, ErrShareAudienceIDForbidden
-		}
-	case AudienceTeam:
-		if in.AudienceID == nil {
-			return Share{}, ErrShareAudienceIDRequired
-		}
-		exists, err := s.store.TeamExistsInOrg(ctx, in.OrgID, *in.AudienceID)
-		if err != nil {
-			return Share{}, fmt.Errorf("checking share audience team: %w", err)
-		}
-		if !exists {
-			return Share{}, ErrShareAudienceTeamNotFound
-		}
-	default:
-		return Share{}, ErrInvalidShareAudience
+	if err := s.validateAudience(ctx, in); err != nil {
+		return Share{}, err
 	}
-
 	if in.Cascade && in.EntityType != ShareEntityPage {
 		return Share{}, ErrShareCascadeNotPage
 	}
@@ -163,9 +146,36 @@ func (s *ShareService) Create(ctx context.Context, ref SharedEntityRef, in Creat
 		CreatedBy:  in.CreatedBy,
 	})
 	if err != nil {
-		return Share{}, err
+		return Share{}, fmt.Errorf("creating share: %w", err)
 	}
 	return share, nil
+}
+
+// validateAudience enforces the org/team audience rules (mirroring the
+// entity_shares_audience_id_present CHECK): org carries no team; team must
+// name a live team of the org.
+func (s *ShareService) validateAudience(ctx context.Context, in CreateShareInput) error {
+	switch in.Audience {
+	case AudienceOrg:
+		if in.AudienceID != nil {
+			return ErrShareAudienceIDForbidden
+		}
+		return nil
+	case AudienceTeam:
+		if in.AudienceID == nil {
+			return ErrShareAudienceIDRequired
+		}
+		exists, err := s.store.TeamExistsInOrg(ctx, in.OrgID, *in.AudienceID)
+		if err != nil {
+			return fmt.Errorf("checking share audience team: %w", err)
+		}
+		if !exists {
+			return ErrShareAudienceTeamNotFound
+		}
+		return nil
+	default:
+		return ErrInvalidShareAudience
+	}
 }
 
 // Get returns one share scoped to the org: a share of another org does not
@@ -173,7 +183,7 @@ func (s *ShareService) Create(ctx context.Context, ref SharedEntityRef, in Creat
 func (s *ShareService) Get(ctx context.Context, orgID, id uuid.UUID) (Share, error) {
 	share, err := s.store.GetShare(ctx, id)
 	if err != nil {
-		return Share{}, err
+		return Share{}, fmt.Errorf("getting share: %w", err)
 	}
 	if share.OrgID != orgID {
 		return Share{}, ErrShareNotFound
@@ -185,7 +195,11 @@ func (s *ShareService) Get(ctx context.Context, orgID, id uuid.UUID) (Share, err
 // and checked manage_shares on its space. Readable sets are computed per
 // request, so revocation denies on the very next request (ADR-0008 rule 11).
 func (s *ShareService) Revoke(ctx context.Context, id uuid.UUID) (Share, error) {
-	return s.store.RevokeShare(ctx, id)
+	share, err := s.store.RevokeShare(ctx, id)
+	if err != nil {
+		return Share{}, fmt.Errorf("revoking share: %w", err)
+	}
+	return share, nil
 }
 
 // ListByEntity returns the entity's unrevoked shares.

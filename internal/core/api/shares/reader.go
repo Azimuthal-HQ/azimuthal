@@ -3,6 +3,7 @@ package shares
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -71,7 +72,7 @@ func (s *serviceReader) readPage(ctx context.Context, id uuid.UUID) (SharedEntit
 		return SharedEntityView{}, access.ErrSharedEntityNotFound
 	}
 	if err != nil {
-		return SharedEntityView{}, err
+		return SharedEntityView{}, fmt.Errorf("reading shared entity: %w", err)
 	}
 	view := SharedEntityView{
 		ID:         page.ID,
@@ -97,7 +98,7 @@ func (s *serviceReader) readTicket(ctx context.Context, id uuid.UUID) (SharedEnt
 		return SharedEntityView{}, access.ErrSharedEntityNotFound
 	}
 	if err != nil {
-		return SharedEntityView{}, err
+		return SharedEntityView{}, fmt.Errorf("reading shared entity: %w", err)
 	}
 	return SharedEntityView{
 		ID:         t.ID,
@@ -116,7 +117,7 @@ func (s *serviceReader) readItem(ctx context.Context, id uuid.UUID) (SharedEntit
 		return SharedEntityView{}, access.ErrSharedEntityNotFound
 	}
 	if err != nil {
-		return SharedEntityView{}, err
+		return SharedEntityView{}, fmt.Errorf("reading shared entity: %w", err)
 	}
 	return SharedEntityView{
 		ID:         item.ID,

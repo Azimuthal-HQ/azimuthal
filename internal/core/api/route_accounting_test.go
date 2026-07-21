@@ -211,8 +211,8 @@ var routeAccounting = map[string]string{
 
 	// Entity shares — management (P3, ADR-0008). Org-scoped; the handler
 	// resolves the shared entity's space and enforces manage_shares there.
-	"GET /api/v1/orgs/{orgID}/shares/":            "share-manage: list an entity's shares + cascade page count; manage_shares on the entity's space in-handler",
-	"POST /api/v1/orgs/{orgID}/shares/":           "share-manage: create a share; manage_shares on the entity's space in-handler",
+	"GET /api/v1/orgs/{orgID}/shares/":             "share-manage: list an entity's shares + cascade page count; manage_shares on the entity's space in-handler",
+	"POST /api/v1/orgs/{orgID}/shares/":            "share-manage: create a share; manage_shares on the entity's space in-handler",
 	"DELETE /api/v1/orgs/{orgID}/shares/{shareID}": "share-manage: revoke a share; manage_shares on the entity's space in-handler",
 
 	// Entity shares — the standalone read family (P3, ADR-0008). Authorised
@@ -226,9 +226,9 @@ var routeAccounting = map[string]string{
 	// Attachments — space-scoped (P3). Uploads/deletes gated by the write
 	// floor; reads by space-readability. Every route re-checks the
 	// attachment's entity lives in the URL space.
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/":                 "space-read: list an entity's attachments",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/":                "space-write: upload an attachment to an entity in the space",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/{attachmentID}":   "space-read: stream an attachment (entity re-verified to be in the space)",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/":                  "space-read: list an entity's attachments",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/":                 "space-write: upload an attachment to an entity in the space",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/{attachmentID}":    "space-read: stream an attachment (entity re-verified to be in the space)",
 	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/attachments/{attachmentID}": "space-write: soft-delete an attachment",
 
 	// The move-confirmation warning count (ADR-0008 rule 9), served by the
