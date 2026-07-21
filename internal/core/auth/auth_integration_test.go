@@ -138,7 +138,7 @@ func TestJWT_ContainsRequiredClaims(t *testing.T) {
 		Issuer:     "azimuthal-test",
 	})
 
-	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, orgID.String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, orgID.String(), "member", 0)
 	require.NoError(t, err)
 	require.NotEmpty(t, pair.AccessToken)
 	require.NotEmpty(t, pair.RefreshToken)
@@ -163,7 +163,7 @@ func TestJWT_ExpiredTokenRejected(t *testing.T) {
 		Issuer:     "azimuthal-test",
 	})
 
-	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "test@test.com", uuid.New().String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "test@test.com", uuid.New().String(), "member", 0)
 	require.NoError(t, err)
 
 	_, err = jwtSvc.ValidateAccessToken(pair.AccessToken)

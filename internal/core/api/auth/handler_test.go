@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +73,10 @@ func (m *mockUserRepo) UpdateProfile(_ context.Context, id uuid.UUID, displayNam
 
 func (m *mockUserRepo) Delete(_ context.Context, id uuid.UUID) error {
 	delete(m.users, id)
+	return nil
+}
+
+func (m *mockUserRepo) TouchLastLogin(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
@@ -142,7 +147,7 @@ func setupHandler(t *testing.T) (*authapi.Handler, *auth.JWTService) {
 	})
 	userSvc := auth.NewUserService(newMockUserRepo())
 	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
-	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil)
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
 	return h, jwtSvc
 }
 
@@ -182,13 +187,13 @@ func TestRefreshNilBody(t *testing.T) {
 func TestLogoutWithClaims(t *testing.T) {
 	h, jwtSvc := setupHandler(t)
 	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create a chi router to properly wire RequireAuth
-	authenticator := auth.NewAuthenticator(jwtSvc, auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: time.Hour}))
+	authenticator := auth.NewAuthenticator(jwtSvc, auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: time.Hour}), nil)
 	r := chi.NewRouter()
 	r.Use(authenticator.RequireAuth)
 	r.Post("/logout", h.Logout)
@@ -403,13 +408,13 @@ func TestMeWithAuth(t *testing.T) {
 	actualID, _ := uuid.Parse(userMap["id"].(string))
 
 	// Issue a token with the actual user ID
-	pair, err := jwtSvc.IssueTokenPair(actualID, "me@test.com", orgID.String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(actualID, "me@test.com", orgID.String(), "member", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create chi router with auth middleware
-	authenticator := auth.NewAuthenticator(jwtSvc, auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: time.Hour}))
+	authenticator := auth.NewAuthenticator(jwtSvc, auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: time.Hour}), nil)
 	r := chi.NewRouter()
 	r.Use(authenticator.RequireAuth)
 	r.Get("/me", h.Me)
@@ -428,7 +433,7 @@ func TestMeWithAuth(t *testing.T) {
 func TestRefreshWithValidToken(t *testing.T) {
 	h, jwtSvc := setupHandler(t)
 	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member")
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +463,7 @@ func TestLoginMembershipResolutionFailure(t *testing.T) {
 	})
 	userSvc := auth.NewUserService(newMockUserRepo())
 	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
-	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &failingMembershipResolver{}, nil)
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &failingMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
 
 	// Register a user first
 	regBody, _ := json.Marshal(map[string]string{
@@ -482,5 +487,34 @@ func TestLoginMembershipResolutionFailure(t *testing.T) {
 	h.Login(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+}
+
+func TestRegister_DisabledByDefault_404s_Regression(t *testing.T) {
+	// P2.5: allow_registration defaults false everywhere — the fluent
+	// setter is the ONLY way to open registration, so a handler built
+	// without it must answer 404 before touching the body. Verified to
+	// fail against the pre-P2.5 handler (which had no gate) and pass now.
+	pk, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwtSvc := auth.NewJWTService(auth.TokenConfig{
+		PrivateKey: pk, PublicKey: &pk.PublicKey,
+		AccessTTL: time.Hour, RefreshTTL: 24 * time.Hour, Issuer: "test",
+	})
+	userSvc := auth.NewUserService(newMockUserRepo())
+	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil)
+
+	body := bytes.NewBufferString(`{"email":"a@b.com","display_name":"A","password":"long-enough"}`)
+	req := httptest.NewRequest(http.MethodPost, "/register", body)
+	rr := httptest.NewRecorder()
+	h.Register(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("register with registration disabled: status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(rr.Body.String(), "NOT_FOUND") {
+		t.Errorf("expected the standard NOT_FOUND error shape, got %s", rr.Body.String())
 	}
 }

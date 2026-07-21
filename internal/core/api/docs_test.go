@@ -134,6 +134,11 @@ func TestDocsSpec_AllProtectedEndpointsHaveSecurity(t *testing.T) {
 		"/auth/refresh":  {"post": true},
 		"/health":        {"get": true},
 		"/ready":         {"get": true},
+		// Invite acceptance (P2.5): the raw crypto/rand token in the URL is
+		// the credential, exactly like the password-reset pattern — these
+		// are public by design (see route_accounting_test's public rows).
+		"/invites/{token}": {"get": true},
+		"/invites/accept":  {"post": true},
 	}
 
 	var unsecured []string

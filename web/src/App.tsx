@@ -27,13 +27,22 @@ import { SpacePlaceholderPage } from './pages/space/SpacePlaceholderPage';
 import { SpaceSettingsPage } from './pages/space/SpaceSettingsPage';
 import { SpaceDirectoryPage } from './pages/spaces/SpaceDirectoryPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
-import { TeamsAdminPage } from './pages/settings/TeamsAdminPage';
 import { WorkflowAdminPage } from './pages/settings/WorkflowAdminPage';
+import { InviteAcceptPage } from './pages/auth/InviteAcceptPage';
+import { AdminLayout } from './pages/admin/AdminLayout';
+import { PeoplePage } from './pages/admin/PeoplePage';
+import { TeamsAdminPage } from './pages/admin/TeamsAdminPage';
+import { AccessMatrixPage } from './pages/admin/AccessMatrixPage';
+import { SpacesAdminPage } from './pages/admin/SpacesAdminPage';
+import { AuditLogPage } from './pages/admin/AuditLogPage';
 
 export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Invite acceptance is public: the token in the URL is the credential
+          (P2.5 W2). It must stay outside the auth wall. */}
+      <Route path="/invite/:token" element={<InviteAcceptPage />} />
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
         {/* Home: user- and org-scoped pages under the static "Your work" panel */}
         <Route element={<HomeLayout />}>
@@ -44,7 +53,19 @@ export function App() {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="settings/:section" element={<SettingsPage />} />
           <Route path="admin/workflows" element={<WorkflowAdminPage />} />
-          <Route path="admin/teams" element={<TeamsAdminPage />} />
+
+          {/* The administration area (P2.5 W3): People, Teams, Access,
+              Spaces, Audit log — org admins only; everyone else gets the
+              branded 404, matching the API's RequireOrgAdmin404. P2's teams
+              admin relocated here (same functionality, new home). */}
+          <Route path="admin" element={<AdminLayout />}>
+            <Route index element={<Navigate to="/admin/people" replace />} />
+            <Route path="people" element={<PeoplePage />} />
+            <Route path="teams" element={<TeamsAdminPage />} />
+            <Route path="access" element={<AccessMatrixPage />} />
+            <Route path="spaces" element={<SpacesAdminPage />} />
+            <Route path="audit-log" element={<AuditLogPage />} />
+          </Route>
         </Route>
 
         <Route path="dashboard" element={<Navigate to="/" replace />} />

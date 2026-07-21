@@ -106,13 +106,12 @@ test.describe('Grants on space settings', () => {
     await expect(page.getByTestId('space-settings-page')).toBeVisible()
 
     // Add a grant to the org default team (name is deterministic: the seed
-    // names it "Default", and an org has exactly one). The form starts in
-    // user mode; flip the subject toggle to team first.
-    await page
-      .getByTestId('space-settings-page')
-      .getByRole('button', { name: 'team', exact: true })
-      .click()
-    await page.getByTestId('grant-subject-team-select').selectOption({ label: 'Default' })
+    // names it "Default" with slug "default", and an org has exactly one).
+    // The picker replaced the old user/team toggle + UUID field (P2.5 W5):
+    // type the team name, pick the option by its slug-derived testid.
+    await page.getByTestId('grant-subject-picker-input').fill('Default')
+    await page.getByTestId('grant-subject-picker-option-team-default').click()
+    await expect(page.getByTestId('grant-subject-picker-selected')).toContainText('Default')
     await page.getByTestId('grant-add-role-select').selectOption('viewer')
     await page.getByTestId('grant-add-button').click()
     const row = page.getByTestId('grant-row')

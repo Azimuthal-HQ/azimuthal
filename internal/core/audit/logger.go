@@ -93,6 +93,28 @@ const (
 	EventTypeSpaceVisibilityChanged EventType = "space.visibility_changed"
 	// EventTypeSpaceOwnerTeamChanged records a space owner-team change.
 	EventTypeSpaceOwnerTeamChanged EventType = "space.owner_team_changed"
+
+	// EventTypeInviteCreated records an org invite being created (P2.5).
+	EventTypeInviteCreated EventType = "invite.created"
+	// EventTypeInviteRevoked records an invite being revoked.
+	EventTypeInviteRevoked EventType = "invite.revoked"
+	// EventTypeInviteResent records an invite's token being rotated.
+	EventTypeInviteResent EventType = "invite.resent"
+	// EventTypeInviteAccepted records an invite being accepted.
+	EventTypeInviteAccepted EventType = "invite.accepted"
+	// EventTypeUserDeactivated records an account being deactivated (which
+	// always terminates its sessions).
+	EventTypeUserDeactivated EventType = "user.deactivated"
+	// EventTypeUserReactivated records an account being reactivated.
+	EventTypeUserReactivated EventType = "user.reactivated"
+	// EventTypeUserForceLogout records an administrative sign-out-everywhere.
+	EventTypeUserForceLogout EventType = "user.force_logout"
+	// EventTypeUserRemovedFromOrg records a membership removal.
+	EventTypeUserRemovedFromOrg EventType = "user.removed_from_org"
+	// EventTypeUserOrgRoleChanged records an org role change.
+	EventTypeUserOrgRoleChanged EventType = "user.org_role_changed"
+	// EventTypeUserPrimaryTeamChanged records a primary team change.
+	EventTypeUserPrimaryTeamChanged EventType = "user.primary_team_changed"
 )
 
 // Event is the structured record written to the audit log.
@@ -111,6 +133,13 @@ type Event struct {
 	Metadata map[string]string
 	// OccurredAt is when the event happened.
 	OccurredAt time.Time
+	// BatchID groups the events of one atomic bulk change (migration 025).
+	// Empty for ordinary single events.
+	BatchID string
+	// TicketRef is an operator-supplied free-text reference recorded with
+	// the event. Stored without a foreign key — the audit log is
+	// self-contained and survives deletion of whatever it references.
+	TicketRef string
 }
 
 // Logger writes structured, append-only audit events.

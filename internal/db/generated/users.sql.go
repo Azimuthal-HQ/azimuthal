@@ -13,6 +13,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bumpTokenGeneration = `-- name: BumpTokenGeneration :execrows
+UPDATE users SET token_generation = token_generation + 1
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+// Force logout: instantly invalidates every token the user holds. The user
+// stays active and simply signs in again.
+func (q *Queries) BumpTokenGeneration(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, bumpTokenGeneration, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const countOtherActiveOrgAdmins = `-- name: CountOtherActiveOrgAdmins :one
+SELECT count(*) FROM memberships m
+JOIN users u ON u.id = m.user_id AND u.deleted_at IS NULL AND u.is_active
+WHERE m.org_id = $1 AND m.user_id <> $2
+  AND m.role = ANY($3::text[])
+`
+
+type CountOtherActiveOrgAdminsParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	UserID     uuid.UUID `json:"user_id"`
+	AdminRoles []string  `json:"admin_roles"`
+}
+
+// Last-admin protection: how many OTHER members of the org hold an
+// admin-class role on an active, non-deleted account. The admin-class role
+// names are passed in from the one Go site that interprets org role names
+// (rbac) — this query never hardcodes them.
+func (q *Queries) CountOtherActiveOrgAdmins(ctx context.Context, arg CountOtherActiveOrgAdminsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countOtherActiveOrgAdmins, arg.OrgID, arg.UserID, arg.AdminRoles)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createMembership = `-- name: CreateMembership :one
 INSERT INTO memberships (id, org_id, user_id, role, invited_by)
 VALUES ($1, $2, $3, $4, $5)
@@ -89,7 +128,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, org_id, email, display_name, avatar_url, password_hash, role)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at
+RETURNING id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at, token_generation
 `
 
 type CreateUserParams struct {
@@ -126,8 +165,24 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LastLoginAt,
+		&i.TokenGeneration,
 	)
 	return i, err
+}
+
+const deactivateUserAccount = `-- name: DeactivateUserAccount :execrows
+UPDATE users SET is_active = false, token_generation = token_generation + 1
+WHERE id = $1 AND deleted_at IS NULL AND is_active
+`
+
+// Deactivation always terminates sessions: the generation bump rides in the
+// same statement so there is no code path that deactivates without it.
+func (q *Queries) DeactivateUserAccount(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deactivateUserAccount, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
@@ -150,6 +205,21 @@ type DeleteMembershipParams struct {
 
 func (q *Queries) DeleteMembership(ctx context.Context, arg DeleteMembershipParams) error {
 	_, err := q.db.Exec(ctx, deleteMembership, arg.OrgID, arg.UserID)
+	return err
+}
+
+const deleteTeamMembershipsInOrg = `-- name: DeleteTeamMembershipsInOrg :exec
+DELETE FROM team_members WHERE user_id = $1 AND org_id = $2
+`
+
+type DeleteTeamMembershipsInOrgParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	OrgID  uuid.UUID `json:"org_id"`
+}
+
+// Removal from an org drops the user's team rows in that org only.
+func (q *Queries) DeleteTeamMembershipsInOrg(ctx context.Context, arg DeleteTeamMembershipsInOrgParams) error {
+	_, err := q.db.Exec(ctx, deleteTeamMembershipsInOrg, arg.UserID, arg.OrgID)
 	return err
 }
 
@@ -204,8 +274,29 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash string) (
 	return i, err
 }
 
+const getUserAuthState = `-- name: GetUserAuthState :one
+SELECT token_generation, is_active FROM users WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetUserAuthStateRow struct {
+	TokenGeneration int32 `json:"token_generation"`
+	IsActive        bool  `json:"is_active"`
+}
+
+// The per-request auth check (P2.5 session control): one primary-key read
+// comparing the JWT's token_generation claim against the live column and
+// rejecting deactivated accounts. Constant cost — TestMatrixAPI23 asserts
+// this statement runs exactly once per authenticated request, so it cannot
+// be silently optimised away.
+func (q *Queries) GetUserAuthState(ctx context.Context, id uuid.UUID) (GetUserAuthStateRow, error) {
+	row := q.db.QueryRow(ctx, getUserAuthState, id)
+	var i GetUserAuthStateRow
+	err := row.Scan(&i.TokenGeneration, &i.IsActive)
+	return i, err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at FROM users WHERE email = $1 AND deleted_at IS NULL
+SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at, token_generation FROM users WHERE email = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -224,12 +315,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LastLoginAt,
+		&i.TokenGeneration,
 	)
 	return i, err
 }
 
 const getUserByEmailAndOrg = `-- name: GetUserByEmailAndOrg :one
-SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at FROM users WHERE org_id = $1 AND email = $2 AND deleted_at IS NULL
+SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at, token_generation FROM users WHERE org_id = $1 AND email = $2 AND deleted_at IS NULL
 `
 
 type GetUserByEmailAndOrgParams struct {
@@ -253,12 +345,13 @@ func (q *Queries) GetUserByEmailAndOrg(ctx context.Context, arg GetUserByEmailAn
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LastLoginAt,
+		&i.TokenGeneration,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at FROM users WHERE id = $1 AND deleted_at IS NULL
+SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at, token_generation FROM users WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -277,6 +370,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LastLoginAt,
+		&i.TokenGeneration,
 	)
 	return i, err
 }
@@ -385,8 +479,108 @@ func (q *Queries) ListMembershipsByUser(ctx context.Context, userID uuid.UUID) (
 	return items, nil
 }
 
+const listOrgPeople = `-- name: ListOrgPeople :many
+SELECT m.user_id, m.role AS org_role, m.created_at AS joined_at,
+       u.email, u.display_name, u.avatar_url, u.is_active, u.last_login_at,
+       pt.team_id AS primary_team_id, ptt.name AS primary_team_name
+FROM memberships m
+JOIN users u ON u.id = m.user_id AND u.deleted_at IS NULL
+LEFT JOIN team_members pt ON pt.user_id = m.user_id AND pt.org_id = m.org_id AND pt.is_primary
+LEFT JOIN teams ptt ON ptt.id = pt.team_id AND ptt.deleted_at IS NULL
+WHERE m.org_id = $1
+ORDER BY u.display_name ASC, u.id ASC
+`
+
+type ListOrgPeopleRow struct {
+	UserID          uuid.UUID          `json:"user_id"`
+	OrgRole         string             `json:"org_role"`
+	JoinedAt        pgtype.Timestamptz `json:"joined_at"`
+	Email           string             `json:"email"`
+	DisplayName     string             `json:"display_name"`
+	AvatarUrl       *string            `json:"avatar_url"`
+	IsActive        bool               `json:"is_active"`
+	LastLoginAt     pgtype.Timestamptz `json:"last_login_at"`
+	PrimaryTeamID   pgtype.UUID        `json:"primary_team_id"`
+	PrimaryTeamName *string            `json:"primary_team_name"`
+}
+
+// The admin People page: every member with org role, primary team, status,
+// and last sign-in, in one query (matrix case 23 — constant cost regardless
+// of member count). Search and status filtering happen client-side over
+// this single fetch.
+func (q *Queries) ListOrgPeople(ctx context.Context, orgID uuid.UUID) ([]ListOrgPeopleRow, error) {
+	rows, err := q.db.Query(ctx, listOrgPeople, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOrgPeopleRow{}
+	for rows.Next() {
+		var i ListOrgPeopleRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.OrgRole,
+			&i.JoinedAt,
+			&i.Email,
+			&i.DisplayName,
+			&i.AvatarUrl,
+			&i.IsActive,
+			&i.LastLoginAt,
+			&i.PrimaryTeamID,
+			&i.PrimaryTeamName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrgsWhereUserIsLastAdmin = `-- name: ListOrgsWhereUserIsLastAdmin :many
+SELECT m.org_id FROM memberships m
+WHERE m.user_id = $1 AND m.role = ANY($2::text[])
+  AND NOT EXISTS (
+    SELECT 1 FROM memberships m2
+    JOIN users u2 ON u2.id = m2.user_id AND u2.deleted_at IS NULL AND u2.is_active
+    WHERE m2.org_id = m.org_id AND m2.user_id <> m.user_id
+      AND m2.role = ANY($2::text[])
+  )
+`
+
+type ListOrgsWhereUserIsLastAdminParams struct {
+	UserID     uuid.UUID `json:"user_id"`
+	AdminRoles []string  `json:"admin_roles"`
+}
+
+// Global deactivation guard: is_active is a user-level column, so
+// deactivating someone must be blocked if it would leave ANY org they
+// administer with zero active admins — not just the org the action was
+// taken from.
+func (q *Queries) ListOrgsWhereUserIsLastAdmin(ctx context.Context, arg ListOrgsWhereUserIsLastAdminParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listOrgsWhereUserIsLastAdmin, arg.UserID, arg.AdminRoles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var org_id uuid.UUID
+		if err := rows.Scan(&org_id); err != nil {
+			return nil, err
+		}
+		items = append(items, org_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsersByOrg = `-- name: ListUsersByOrg :many
-SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at FROM users WHERE org_id = $1 AND deleted_at IS NULL ORDER BY display_name ASC
+SELECT id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at, token_generation FROM users WHERE org_id = $1 AND deleted_at IS NULL ORDER BY display_name ASC
 `
 
 func (q *Queries) ListUsersByOrg(ctx context.Context, orgID uuid.UUID) ([]User, error) {
@@ -411,6 +605,7 @@ func (q *Queries) ListUsersByOrg(ctx context.Context, orgID uuid.UUID) ([]User, 
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.LastLoginAt,
+			&i.TokenGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -420,6 +615,100 @@ func (q *Queries) ListUsersByOrg(ctx context.Context, orgID uuid.UUID) ([]User, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAdminMembershipsForUserOrgs = `-- name: LockAdminMembershipsForUserOrgs :many
+SELECT m.org_id, m.user_id FROM memberships m
+WHERE m.org_id IN (
+        SELECT m2.org_id FROM memberships m2
+        WHERE m2.user_id = $1
+          AND m2.role = ANY($2::text[])
+      )
+  AND m.role = ANY($2::text[])
+ORDER BY m.org_id, m.user_id
+FOR UPDATE
+`
+
+type LockAdminMembershipsForUserOrgsParams struct {
+	TargetUserID uuid.UUID `json:"target_user_id"`
+	AdminRoles   []string  `json:"admin_roles"`
+}
+
+type LockAdminMembershipsForUserOrgsRow struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// The deactivation variant: locks the admin-class membership rows of every
+// org the target user administers, since deactivation is global.
+func (q *Queries) LockAdminMembershipsForUserOrgs(ctx context.Context, arg LockAdminMembershipsForUserOrgsParams) ([]LockAdminMembershipsForUserOrgsRow, error) {
+	rows, err := q.db.Query(ctx, lockAdminMembershipsForUserOrgs, arg.TargetUserID, arg.AdminRoles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockAdminMembershipsForUserOrgsRow{}
+	for rows.Next() {
+		var i LockAdminMembershipsForUserOrgsRow
+		if err := rows.Scan(&i.OrgID, &i.UserID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAdminMembershipsInOrg = `-- name: LockAdminMembershipsInOrg :many
+SELECT m.user_id FROM memberships m
+WHERE m.org_id = $1 AND m.role = ANY($2::text[])
+ORDER BY m.user_id
+FOR UPDATE
+`
+
+type LockAdminMembershipsInOrgParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	AdminRoles []string  `json:"admin_roles"`
+}
+
+// Serialises concurrent admin-lifecycle operations in one org so two
+// simultaneous demotions of the two last admins cannot both pass the
+// last-admin check. Deterministic ORDER BY prevents deadlock.
+func (q *Queries) LockAdminMembershipsInOrg(ctx context.Context, arg LockAdminMembershipsInOrgParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, lockAdminMembershipsInOrg, arg.OrgID, arg.AdminRoles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reactivateUserAccount = `-- name: ReactivateUserAccount :execrows
+UPDATE users SET is_active = true
+WHERE id = $1 AND deleted_at IS NULL AND NOT is_active
+`
+
+// No generation bump: the old tokens died at deactivation; the user signs
+// in fresh.
+func (q *Queries) ReactivateUserAccount(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, reactivateUserAccount, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeAllUserSessions = `-- name: RevokeAllUserSessions :exec
@@ -438,6 +727,56 @@ UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL
 func (q *Queries) RevokeSession(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, revokeSession, id)
 	return err
+}
+
+const searchOrgMembers = `-- name: SearchOrgMembers :many
+SELECT u.id, u.email, u.display_name, u.avatar_url
+FROM memberships m
+JOIN users u ON u.id = m.user_id AND u.deleted_at IS NULL
+WHERE m.org_id = $1 AND u.is_active
+  AND (u.display_name ILIKE '%' || $2::text || '%'
+       OR u.email ILIKE '%' || $2::text || '%')
+ORDER BY u.display_name ASC, u.id ASC
+LIMIT 20
+`
+
+type SearchOrgMembersParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	Query string    `json:"query"`
+}
+
+type SearchOrgMembersRow struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+	AvatarUrl   *string   `json:"avatar_url"`
+}
+
+// The person picker: name-or-email search over active org members. Bounded
+// result set; one query.
+func (q *Queries) SearchOrgMembers(ctx context.Context, arg SearchOrgMembersParams) ([]SearchOrgMembersRow, error) {
+	rows, err := q.db.Query(ctx, searchOrgMembers, arg.OrgID, arg.Query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchOrgMembersRow{}
+	for rows.Next() {
+		var i SearchOrgMembersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.AvatarUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const softDeleteUser = `-- name: SoftDeleteUser :exec
@@ -468,7 +807,7 @@ const updateUser = `-- name: UpdateUser :one
 UPDATE users
 SET display_name = $2, avatar_url = $3, role = $4, is_active = $5
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at
+RETURNING id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at, token_generation
 `
 
 type UpdateUserParams struct {
@@ -501,6 +840,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LastLoginAt,
+		&i.TokenGeneration,
 	)
 	return i, err
 }
@@ -515,7 +855,8 @@ func (q *Queries) UpdateUserLastLogin(ctx context.Context, id uuid.UUID) error {
 }
 
 const updateUserPasswordHash = `-- name: UpdateUserPasswordHash :exec
-UPDATE users SET password_hash = $2 WHERE id = $1 AND deleted_at IS NULL
+UPDATE users SET password_hash = $2, token_generation = token_generation + 1
+WHERE id = $1 AND deleted_at IS NULL
 `
 
 type UpdateUserPasswordHashParams struct {
@@ -523,6 +864,9 @@ type UpdateUserPasswordHashParams struct {
 	PasswordHash *string   `json:"password_hash"`
 }
 
+// The token_generation bump is built into the statement so no password
+// change path can forget it: changing a password signs out every other
+// session (P2.5 session control).
 func (q *Queries) UpdateUserPasswordHash(ctx context.Context, arg UpdateUserPasswordHashParams) error {
 	_, err := q.db.Exec(ctx, updateUserPasswordHash, arg.ID, arg.PasswordHash)
 	return err
@@ -532,7 +876,7 @@ const updateUserProfile = `-- name: UpdateUserProfile :one
 UPDATE users
 SET display_name = $2, email = $3
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at
+RETURNING id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at, token_generation
 `
 
 type UpdateUserProfileParams struct {
@@ -557,6 +901,7 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LastLoginAt,
+		&i.TokenGeneration,
 	)
 	return i, err
 }

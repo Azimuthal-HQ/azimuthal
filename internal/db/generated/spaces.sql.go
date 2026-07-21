@@ -44,6 +44,28 @@ func (q *Queries) AddSpaceMember(ctx context.Context, arg AddSpaceMemberParams) 
 	return i, err
 }
 
+const countSpaceContents = `-- name: CountSpaceContents :one
+SELECT
+    (SELECT count(*) FROM tickets t WHERE t.space_id = $1 AND t.deleted_at IS NULL)::int AS tickets,
+    (SELECT count(*) FROM pages p WHERE p.space_id = $1 AND p.deleted_at IS NULL)::int AS pages,
+    (SELECT count(*) FROM project_items i WHERE i.space_id = $1 AND i.deleted_at IS NULL)::int AS items
+`
+
+type CountSpaceContentsRow struct {
+	Tickets int32 `json:"tickets"`
+	Pages   int32 `json:"pages"`
+	Items   int32 `json:"items"`
+}
+
+// The delete-confirmation summary (P2.5 W8): what the space contains, in
+// one query.
+func (q *Queries) CountSpaceContents(ctx context.Context, spaceID uuid.UUID) (CountSpaceContentsRow, error) {
+	row := q.db.QueryRow(ctx, countSpaceContents, spaceID)
+	var i CountSpaceContentsRow
+	err := row.Scan(&i.Tickets, &i.Pages, &i.Items)
+	return i, err
+}
+
 const createSpace = `-- name: CreateSpace :one
 INSERT INTO spaces (id, org_id, slug, name, description, type, icon, is_private, created_by, key, owner_team_id, visibility)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)

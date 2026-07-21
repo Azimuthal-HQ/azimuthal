@@ -22,9 +22,11 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
+import { PersonTeamPicker, type PickedSubject } from '../../components/PersonTeamPicker';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
 import {
+  friendlyErrorMessage,
   useCreateTeam,
   useDeleteTeam,
   usePutTeamMember,
@@ -125,18 +127,21 @@ function TeamMemberPanel({ orgId, team }: { orgId: string; team: Team }) {
   const putMember = usePutTeamMember(orgId, team.id);
   const removeMember = useRemoveTeamMember(orgId, team.id);
 
-  const [newUserId, setNewUserId] = useState('');
+  const [newMember, setNewMember] = useState<PickedSubject | null>(null);
   const [newRole, setNewRole] = useState<TeamRole>('member');
 
   const members = membersQuery.data ?? [];
-  const mutationError = putMember.error?.message ?? removeMember.error?.message ?? null;
+  const mutationError = putMember.error
+    ? friendlyErrorMessage(putMember.error, 'The member could not be added.')
+    : removeMember.error
+      ? friendlyErrorMessage(removeMember.error, 'The member could not be removed.')
+      : null;
 
   function handleAdd() {
-    const userId = newUserId.trim();
-    if (!userId) return;
+    if (!newMember) return;
     putMember.mutate(
-      { userId, role: newRole },
-      { onSuccess: () => setNewUserId('') },
+      { userId: newMember.id, role: newRole },
+      { onSuccess: () => setNewMember(null) },
     );
   }
 
@@ -147,7 +152,7 @@ function TeamMemberPanel({ orgId, team }: { orgId: string; team: Team }) {
       )}
       {membersQuery.error && (
         <p className="py-2 text-[var(--text-sm)] text-[var(--color-danger)]">
-          Failed to load members: {membersQuery.error.message}
+          {friendlyErrorMessage(membersQuery.error, 'The member list could not be loaded.')}
         </p>
       )}
 
@@ -213,12 +218,12 @@ function TeamMemberPanel({ orgId, team }: { orgId: string; team: Team }) {
       ))}
 
       <div className="mt-[var(--space-2)] flex items-center gap-2 border-t border-[var(--color-border)] pt-[var(--space-2)]">
-        <Input
-          data-testid="team-member-add-input"
-          placeholder="User ID (UUID)"
-          value={newUserId}
-          onChange={(e) => setNewUserId(e.target.value)}
-          className="h-8 flex-1 font-mono text-[var(--text-xs)]"
+        <PersonTeamPicker
+          orgId={orgId}
+          subjects="user"
+          value={newMember}
+          onChange={setNewMember}
+          testId="team-member-picker"
         />
         <select
           value={newRole}
@@ -232,7 +237,7 @@ function TeamMemberPanel({ orgId, team }: { orgId: string; team: Team }) {
         <Button
           size="sm"
           data-testid="team-member-add-button"
-          disabled={putMember.isPending || !newUserId.trim()}
+          disabled={putMember.isPending || !newMember}
           onClick={handleAdd}
         >
           Add
@@ -433,23 +438,19 @@ export function TeamsAdminPage() {
   if (teamsQuery.error) {
     return (
       <div className="rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4 text-[var(--text-sm)] text-[var(--color-danger)]">
-        Failed to load teams: {teamsQuery.error.message}
+        {friendlyErrorMessage(teamsQuery.error, 'Teams could not be loaded.')}
       </div>
     );
   }
 
   return (
     <div className="space-y-6" data-testid="teams-admin-page">
+      {/* Section header only — the page renders inside AdminLayout, which
+          owns the Administration page header and tabs (P2.5 relocation). */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Users className="h-6 w-6 text-[var(--color-primary)]" />
-          <div>
-            <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">Teams</h1>
-            <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
-              The org team tree. Teams own spaces and receive grants; nesting is capped at 5 levels.
-            </p>
-          </div>
-        </div>
+        <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+          The org team tree. Teams own spaces and receive grants; nesting is capped at 5 levels.
+        </p>
         <Button data-testid="team-create-button" onClick={openCreate}>
           <Plus className="mr-2 h-4 w-4" />
           New team
@@ -461,7 +462,7 @@ export function TeamsAdminPage() {
           data-testid="team-error-banner"
           className="rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-3 text-[var(--text-sm)] text-[var(--color-danger)]"
         >
-          {deleteTeam.error.message}
+          {friendlyErrorMessage(deleteTeam.error, 'The team could not be deleted.')}
         </div>
       )}
 
@@ -544,7 +545,7 @@ export function TeamsAdminPage() {
             </div>
             {createTeam.error && (
               <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-                {createTeam.error.message}
+                {friendlyErrorMessage(createTeam.error, 'The team could not be created.')}
               </p>
             )}
           </div>
@@ -610,7 +611,7 @@ export function TeamsAdminPage() {
               </div>
               {updateTeam.error && (
                 <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-                  {updateTeam.error.message}
+                  {friendlyErrorMessage(updateTeam.error, 'The change could not be saved.')}
                 </p>
               )}
             </div>

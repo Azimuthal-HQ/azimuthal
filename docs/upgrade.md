@@ -98,3 +98,20 @@ docker compose up -d
 ## Upgrade Notifications
 
 Check the [releases page](https://github.com/Azimuthal-HQ/azimuthal/releases) for new versions and changelogs.
+
+## Version Notes
+
+### v0.3.2 (P2.5 — administration)
+
+**Behaviour change: open registration is now off by default.** `POST
+/auth/register` returns 404 unless `AZIMUTHAL_ALLOW_REGISTRATION=true` is
+set. Admins add people from the Administration area (avatar menu →
+Administration → People → Invite people); each invite is a single-use link.
+Instances that relied on open self-registration must set the variable
+explicitly before upgrading.
+
+Deactivating a person now signs them out everywhere immediately (all
+outstanding tokens are invalidated, not just future sign-ins), and the same
+applies to the new "Sign out everywhere" action and to password changes on
+other devices. No operator action is needed; existing sessions are not
+disturbed by the upgrade itself.

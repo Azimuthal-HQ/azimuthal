@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -41,16 +42,31 @@ type Handler struct {
 	memberships MembershipResolver
 	orgs        OrgProvisioner
 	auditLog    audit.Logger
+	// states backs the refresh-path account check. nil (DB-less unit tests)
+	// skips it; every real construction site wires the same store the auth
+	// middleware uses.
+	states auth.StateStore
+	// allowRegistration gates POST /auth/register. Fail-closed: false unless
+	// a construction site opts in (production wires the config value, which
+	// also defaults to false — invites are the way in).
+	allowRegistration bool
 }
 
-// NewHandler creates an auth Handler.
-func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner) *Handler {
-	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs, auditLog: audit.NewLogger()}
+// NewHandler creates an auth Handler. states may be nil only in DB-less
+// unit tests.
+func NewHandler(users *auth.UserService, jwt *auth.JWTService, sessions *auth.SessionService, memberships MembershipResolver, orgs OrgProvisioner, states auth.StateStore) *Handler {
+	return &Handler{users: users, jwt: jwt, sessions: sessions, memberships: memberships, orgs: orgs, auditLog: audit.NewLogger(), states: states}
 }
 
 // WithAuditLogger attaches an audit logger to the handler.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithRegistrationPolicy sets whether open registration is enabled.
+func (h *Handler) WithRegistrationPolicy(allow bool) *Handler {
+	h.allowRegistration = allow
 	return h
 }
 
@@ -145,9 +161,16 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the user's primary org from memberships.
-	// Falls back to the user's org_id if no memberships exist (e.g. registered
-	// via the API but not yet added to an org through admin create-user).
+	h.finishLogin(w, r, user)
+}
+
+// finishLogin resolves the primary org, mints the token pair with the
+// user's CURRENT generation (a login after a force logout or password
+// change must yield tokens that survive the check), stamps last sign-in,
+// and writes the response.
+func (h *Handler) finishLogin(w http.ResponseWriter, r *http.Request, user *auth.User) {
+	// Falls back to the user's org_id if no memberships exist (e.g.
+	// registered via the API but not yet added to an org).
 	orgID, orgSlug, orgName, err := h.memberships.PrimaryOrgForUser(r.Context(), user.ID)
 	if err != nil {
 		orgID = user.OrgID
@@ -155,10 +178,15 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		orgName = ""
 	}
 
-	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, orgID.String(), user.Role)
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, orgID.String(), user.Role, user.TokenGeneration)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
+	}
+
+	// Best-effort: the last sign-in stamp must never block a login.
+	if err := h.users.TouchLastLogin(r.Context(), user.ID); err != nil {
+		slog.Warn("auth: failed to stamp last login", "user_id", user.ID, "error", err)
 	}
 
 	_ = h.auditLog.Log(r.Context(), audit.Event{
@@ -224,6 +252,13 @@ func (h *Handler) provisionOrgForUser(ctx context.Context, displayName, email st
 // @Failure      500   {object}  api.SwaggerErrorResponse          "Internal error"
 // @Router       /auth/register [post]
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	// allow_registration=false (the default): the route does not exist as
+	// far as callers can tell — invites are the only way in.
+	if !h.allowRegistration {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "not found")
+		return
+	}
+
 	var req registerRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
@@ -234,33 +269,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Provision a personal org before creating the user so the user row
-	// has a valid org_id foreign key.
-	orgID, orgSlug, err := h.provisionOrgForUser(r.Context(), req.DisplayName, req.Email, uuid.Nil)
-	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create organization")
+	user, orgID, orgSlug, ok := h.registerAccount(w, r, req)
+	if !ok {
 		return
 	}
 
-	user, err := h.users.CreateUserInOrg(r.Context(), req.Email, req.DisplayName, req.Password, orgID)
-	if err != nil {
-		if errors.Is(err, auth.ErrEmailTaken) {
-			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "email address already in use")
-			return
-		}
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create user")
-		return
-	}
-
-	// Create owner membership now that we have the user ID.
-	if h.orgs != nil {
-		if err := h.orgs.CreateMembership(r.Context(), orgID, user.ID); err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create membership")
-			return
-		}
-	}
-
-	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role)
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role, user.TokenGeneration)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
@@ -284,6 +298,37 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 			Name: req.DisplayName,
 		},
 	})
+}
+
+// registerAccount provisions the personal org, creates the user, and adds
+// the owner membership, writing the error response itself on failure.
+func (h *Handler) registerAccount(w http.ResponseWriter, r *http.Request, req registerRequest) (*auth.User, uuid.UUID, string, bool) {
+	// Provision a personal org before creating the user so the user row
+	// has a valid org_id foreign key.
+	orgID, orgSlug, err := h.provisionOrgForUser(r.Context(), req.DisplayName, req.Email, uuid.Nil)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create organization")
+		return nil, uuid.Nil, "", false
+	}
+
+	user, err := h.users.CreateUserInOrg(r.Context(), req.Email, req.DisplayName, req.Password, orgID)
+	if err != nil {
+		if errors.Is(err, auth.ErrEmailTaken) {
+			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "email address already in use")
+			return nil, uuid.Nil, "", false
+		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create user")
+		return nil, uuid.Nil, "", false
+	}
+
+	// Create owner membership now that we have the user ID.
+	if h.orgs != nil {
+		if err := h.orgs.CreateMembership(r.Context(), orgID, user.ID); err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create membership")
+			return nil, uuid.Nil, "", false
+		}
+	}
+	return user, orgID, orgSlug, true
 }
 
 // Refresh exchanges a refresh token for a new token pair.
@@ -310,12 +355,31 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.jwt.RefreshTokens(req.RefreshToken)
+	claims, err := h.jwt.ValidateRefreshToken(req.RefreshToken)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidToken) {
 			respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "invalid or expired refresh token")
 			return
 		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to refresh tokens")
+		return
+	}
+
+	// A refresh token survives neither deactivation nor a generation bump:
+	// the same live-state check the auth middleware applies to access tokens
+	// runs here, so "deactivate" and "force logout" also revoke refresh.
+	generation := claims.TokenGeneration
+	if h.states != nil {
+		state, err := h.states.AuthState(r.Context(), claims.UserID)
+		if err != nil || !state.IsActive || state.TokenGeneration != claims.TokenGeneration {
+			respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "invalid or expired refresh token")
+			return
+		}
+		generation = state.TokenGeneration
+	}
+
+	pair, err := h.jwt.IssueTokenPair(claims.UserID, claims.Email, claims.OrgID, claims.Role, generation)
+	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to refresh tokens")
 		return
 	}

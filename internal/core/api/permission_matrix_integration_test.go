@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -228,13 +229,19 @@ func TestMatrixAPI21_GrantToNonMember400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, r.StatusCode, "grant to foreign team must 400: %s", r.Body)
 }
 
-// queryCounter counts every SQL statement the server issues.
+// queryCounter counts every SQL statement the server issues, and separately
+// the P2.5 auth-state lookups (sqlc embeds the query name in the SQL it
+// sends, so the statement is identifiable).
 type queryCounter struct {
-	n atomic.Int64
+	n         atomic.Int64
+	authState atomic.Int64
 }
 
-func (c *queryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+func (c *queryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	c.n.Add(1)
+	if strings.Contains(data.SQL, "GetUserAuthState") {
+		c.authState.Add(1)
+	}
 	return ctx
 }
 
@@ -274,11 +281,20 @@ func TestMatrixAPI23_ConstantAuthQueries(t *testing.T) {
 		r := ts.get(t, path, true)
 		require.Equal(t, http.StatusOK, r.StatusCode, "warm: %s", r.Body)
 		before := counter.n.Load()
+		authBefore := counter.authState.Load()
 		r = ts.get(t, path, true)
 		require.Equal(t, http.StatusOK, r.StatusCode)
 		var rows []json.RawMessage
 		require.NoError(t, json.Unmarshal(r.Body, &rows))
 		require.Len(t, rows, wantRows, "result-count premise for the assertion")
+		// P2.5 session control: the auth middleware performs EXACTLY ONE
+		// auth-state read (token_generation + is_active) per authenticated
+		// request. Zero would mean the revocation check was optimised away
+		// — stateless tokens would then outlive deactivation, which is the
+		// defect this line exists to keep dead. More than one would mean
+		// the single-constant-cost-lookup contract broke.
+		require.Equal(t, int64(1), counter.authState.Load()-authBefore,
+			"exactly one GetUserAuthState read per authenticated request")
 		return counter.n.Load() - before
 	}
 

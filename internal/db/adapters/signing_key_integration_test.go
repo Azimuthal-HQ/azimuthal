@@ -56,7 +56,7 @@ func TestSigningKey_TokenSurvivesRestart(t *testing.T) {
 		Issuer:     "azimuthal",
 	})
 	userID := uuid.New()
-	pair, err := jwt1.IssueTokenPair(userID, "restart@azimuthal.dev", uuid.New().String(), "member")
+	pair, err := jwt1.IssueTokenPair(userID, "restart@azimuthal.dev", uuid.New().String(), "member", 0)
 	require.NoError(t, err)
 
 	// Simulated restart: fresh key load from the same DB, fresh JWT service.

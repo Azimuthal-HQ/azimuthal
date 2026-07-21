@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // contextKey is the unexported type used for storing values in request contexts.
@@ -18,16 +20,40 @@ const (
 	contextKeySession
 )
 
+// State is the per-request account check: the live token_generation
+// column and active flag, read in a single primary-key query.
+type State struct {
+	TokenGeneration int
+	IsActive        bool
+}
+
+// StateStore loads a user's live auth state. Implemented by
+// internal/db/adapters against the users table; the read must stay a single
+// constant-cost indexed lookup because it runs on every authenticated
+// request (TestMatrixAPI23 counts it).
+type StateStore interface {
+	// State returns the user's current auth state. Returns ErrNotFound
+	// for unknown or soft-deleted users.
+	AuthState(ctx context.Context, userID uuid.UUID) (State, error)
+}
+
 // Authenticator provides HTTP middleware for the chi router.
 // It supports both Bearer-token (JWT) and session-cookie auth.
 type Authenticator struct {
 	jwt     *JWTService
 	session *SessionService
+	// states backs the per-request generation and active check. nil disables
+	// the check — permitted only for routing-only unit tests without a
+	// database, mirroring the RouterConfig.AccessResolver convention; every
+	// real construction site wires one.
+	states StateStore
 }
 
 // NewAuthenticator creates an Authenticator using the provided services.
-func NewAuthenticator(jwt *JWTService, session *SessionService) *Authenticator {
-	return &Authenticator{jwt: jwt, session: session}
+// states may be nil ONLY in routing-only unit tests; production and the
+// integration harness always wire the DB-backed store.
+func NewAuthenticator(jwt *JWTService, session *SessionService, states StateStore) *Authenticator {
+	return &Authenticator{jwt: jwt, session: session, states: states}
 }
 
 // RequireAuth is chi middleware that rejects unauthenticated requests with
@@ -79,11 +105,23 @@ func ClaimsFromContext(ctx context.Context) *Claims {
 //  1. Authorization: Bearer <token> header (JWT)
 //  2. "session" cookie (opaque session token)
 //
+// A signature-valid credential is then checked against the live account
+// state (checkAuthState) — RS256 tokens are stateless, so this single
+// indexed read is what makes deactivation and force logout take effect on
+// the very next request instead of at token expiry.
+//
 // Returns ErrInvalidToken if neither credential is present or valid.
 func (a *Authenticator) extractClaims(r *http.Request) (*Claims, error) {
 	// 1. Try Bearer token.
 	if bearer := bearerToken(r); bearer != "" {
-		return a.jwt.ValidateAccessToken(bearer)
+		claims, err := a.jwt.ValidateAccessToken(bearer)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.checkAuthState(r.Context(), claims); err != nil {
+			return nil, err
+		}
+		return claims, nil
 	}
 
 	// 2. Try session cookie.
@@ -102,7 +140,37 @@ func (a *Authenticator) extractClaims(r *http.Request) (*Claims, error) {
 		UserID:    sess.UserID,
 		TokenType: "session",
 	}
+	if err := a.checkAuthState(r.Context(), claims); err != nil {
+		return nil, err
+	}
 	return claims, nil
+}
+
+// checkAuthState rejects credentials whose account is deactivated or whose
+// token_generation claim is stale. One primary-key read per request —
+// constant cost, asserted by TestMatrixAPI23 so it cannot be silently
+// optimised away later.
+//
+// DB sessions (the cookie path) are revocable server-side and carry no
+// generation claim, so they are checked for active status only.
+func (a *Authenticator) checkAuthState(ctx context.Context, claims *Claims) error {
+	if a.states == nil {
+		// Routing-only unit tests without a database. Every real
+		// construction site wires a store; the integration suite and
+		// TestMatrixAPI23 run against the wired path.
+		return nil
+	}
+	state, err := a.states.AuthState(ctx, claims.UserID)
+	if err != nil {
+		return ErrInvalidToken
+	}
+	if !state.IsActive {
+		return ErrInvalidToken
+	}
+	if claims.TokenType != "session" && claims.TokenGeneration != state.TokenGeneration {
+		return ErrInvalidToken
+	}
+	return nil
 }
 
 // bearerToken extracts the token value from an "Authorization: Bearer <token>"

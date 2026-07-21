@@ -78,6 +78,15 @@ func (r *stubUserRepo) Delete(_ context.Context, id uuid.UUID) error {
 	return ErrNotFound
 }
 
+func (r *stubUserRepo) TouchLastLogin(_ context.Context, id uuid.UUID) error {
+	for _, u := range r.users {
+		if u.ID == id {
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
 func TestUserService_CreateUser(t *testing.T) {
 	svc := NewUserService(newStubUserRepo())
 

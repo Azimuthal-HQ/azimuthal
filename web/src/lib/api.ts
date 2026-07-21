@@ -39,6 +39,24 @@ export class APIError extends Error {
   }
 }
 
+/**
+ * friendlyErrorMessage translates an API failure into text fit for a person
+ * (P2.5 W5): raw backend strings like "invalid request body" never reach
+ * the UI. Messages behind VALIDATION_ERROR / CONFLICT / GONE are written
+ * for humans server-side and pass through; everything else — malformed-
+ * request internals, server errors, network failures — collapses to the
+ * caller's fallback, which should say what failed in the user's terms.
+ */
+export function friendlyErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof APIError && err.message) {
+    const humanCodes = ['VALIDATION_ERROR', 'CONFLICT', 'GONE'];
+    if (humanCodes.includes(err.code)) {
+      return err.message;
+    }
+  }
+  return fallback;
+}
+
 
 // spaceBase builds the org+space scoped URL prefix for a space resource —
 // the single scoping convention: /orgs/{orgId}/spaces/{spaceId}/...
@@ -149,6 +167,10 @@ export interface Organization {
   description: string | null;
   created_at: string;
   updated_at: string;
+  /** P2.5: the caller's membership role, resolved server-side per request. */
+  caller_org_role?: string;
+  /** P2.5: true for org admins — drives the avatar menu's Admin entry. */
+  caller_is_admin?: boolean;
 }
 
 export type SpaceVisibility = 'hidden' | 'discoverable' | 'org';
@@ -650,6 +672,288 @@ async function fetchEffectiveAccess(
 }
 
 // ---------------------------------------------------------------------------
+// Administration types and API functions (P2.5)
+// ---------------------------------------------------------------------------
+
+export type PersonStatus = 'active' | 'invited' | 'deactivated';
+
+/** One row of the admin People directory (GET /orgs/{o}/users). */
+export interface Person {
+  user_id: string;
+  email: string;
+  display_name: string;
+  avatar_url?: string | null;
+  org_role: string;
+  status: 'active' | 'deactivated';
+  last_login_at?: string | null;
+  joined_at: string;
+  primary_team_id?: string | null;
+  primary_team_name?: string | null;
+}
+
+/** A picker search result (GET /orgs/{o}/members/search). */
+export interface PersonRef {
+  id: string;
+  email: string;
+  display_name: string;
+  avatar_url?: string | null;
+}
+
+export interface Invite {
+  id: string;
+  email: string;
+  org_role: string;
+  team_id?: string | null;
+  team_name?: string;
+  invited_by: string;
+  invited_by_name?: string;
+  expires_at: string;
+  created_at: string;
+  expired: boolean;
+}
+
+/** A freshly created or resent invite — invite_url is shown exactly once. */
+export interface CreatedInvite extends Invite {
+  invite_url: string;
+  delivered: boolean;
+}
+
+export interface InviteOutcome {
+  email: string;
+  status: 'created' | 'invalid_email' | 'already_member' | 'already_invited' | 'error';
+  error?: string;
+  invite?: CreatedInvite;
+}
+
+export interface MatrixTeam {
+  id: string;
+  parent_id?: string | null;
+  path: string[];
+  name: string;
+  is_default: boolean;
+  member_count: number;
+}
+
+export interface MatrixSpace {
+  id: string;
+  name: string;
+  type: SpaceType;
+  visibility: SpaceVisibility;
+}
+
+export interface MatrixGrant {
+  id: string;
+  team_id: string;
+  space_id: string;
+  role: GrantRole;
+}
+
+export interface AccessMatrix {
+  teams: MatrixTeam[];
+  spaces: MatrixSpace[];
+  grants: MatrixGrant[];
+}
+
+/** One requested cell state; role null revokes. */
+export interface BulkChange {
+  team_id: string;
+  space_id: string;
+  role: GrantRole | null;
+}
+
+export interface BulkAction {
+  team_id: string;
+  space_id: string;
+  action: 'create' | 'update' | 'revoke' | 'noop';
+  from_role?: GrantRole;
+  to_role?: GrantRole;
+}
+
+export interface BulkResult {
+  batch_id?: string;
+  creates: number;
+  updates: number;
+  revokes: number;
+  noops: number;
+  actions: BulkAction[];
+}
+
+export interface AuditEntry {
+  id: string;
+  actor_id?: string | null;
+  actor_name?: string;
+  action: string;
+  entity_kind: string;
+  entity_id: string;
+  payload: Record<string, string>;
+  batch_id?: string | null;
+  ticket_ref?: string | null;
+  created_at: string;
+  batch_size: number;
+}
+
+export interface AuditPage {
+  entries: AuditEntry[];
+  next_cursor?: string;
+}
+
+export interface AuditFilter {
+  actor_id?: string;
+  entity_kind?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+async function fetchOrgPeople(orgId: string): Promise<Person[]> {
+  const data = await apiFetch<Person[] | null>(`/orgs/${orgId}/users`);
+  return data ?? [];
+}
+
+async function searchOrgMembers(orgId: string, q: string): Promise<PersonRef[]> {
+  const data = await apiFetch<PersonRef[] | null>(
+    `/orgs/${orgId}/members/search?q=${encodeURIComponent(q)}`,
+  );
+  return data ?? [];
+}
+
+async function fetchInvites(orgId: string): Promise<Invite[]> {
+  const data = await apiFetch<Invite[] | null>(`/orgs/${orgId}/invites`);
+  return data ?? [];
+}
+
+interface CreateInvitesRequest {
+  emails: string[];
+  org_role?: string;
+  team_id?: string | null;
+}
+
+async function createInvites(orgId: string, req: CreateInvitesRequest): Promise<InviteOutcome[]> {
+  const data = await apiFetch<InviteOutcome[] | null>(`/orgs/${orgId}/invites`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+  return data ?? [];
+}
+
+async function revokeInvite(orgId: string, inviteId: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/invites/${inviteId}`, { method: 'DELETE' });
+}
+
+async function resendInvite(orgId: string, inviteId: string): Promise<CreatedInvite> {
+  return apiFetch<CreatedInvite>(`/orgs/${orgId}/invites/${inviteId}/resend`, { method: 'POST' });
+}
+
+interface UpdatePersonRequest {
+  org_role?: string;
+  primary_team_id?: string;
+}
+
+async function updatePerson(orgId: string, userId: string, req: UpdatePersonRequest): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+async function personLifecycle(orgId: string, userId: string, action: 'deactivate' | 'reactivate' | 'force-logout'): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/users/${userId}/${action}`, { method: 'POST' });
+}
+
+async function removePersonFromOrg(orgId: string, userId: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/users/${userId}`, { method: 'DELETE' });
+}
+
+async function fetchAccessMatrix(orgId: string): Promise<AccessMatrix> {
+  return apiFetch<AccessMatrix>(`/orgs/${orgId}/access-matrix`);
+}
+
+async function bulkPreviewGrants(orgId: string, changes: BulkChange[]): Promise<BulkResult> {
+  return apiFetch<BulkResult>(`/orgs/${orgId}/grants/bulk-preview`, {
+    method: 'POST',
+    body: JSON.stringify({ changes }),
+  });
+}
+
+async function bulkApplyGrants(orgId: string, changes: BulkChange[], ticketRef?: string): Promise<BulkResult> {
+  return apiFetch<BulkResult>(`/orgs/${orgId}/grants/bulk-apply`, {
+    method: 'POST',
+    body: JSON.stringify({ changes, ticket_ref: ticketRef ?? '' }),
+  });
+}
+
+async function fetchAuditLog(orgId: string, filter: AuditFilter): Promise<AuditPage> {
+  const params = new URLSearchParams();
+  if (filter.actor_id) params.set('actor_id', filter.actor_id);
+  if (filter.entity_kind) params.set('entity_kind', filter.entity_kind);
+  if (filter.action) params.set('action', filter.action);
+  if (filter.from) params.set('from', filter.from);
+  if (filter.to) params.set('to', filter.to);
+  if (filter.cursor) params.set('cursor', filter.cursor);
+  if (filter.limit) params.set('limit', String(filter.limit));
+  const qs = params.toString();
+  return apiFetch<AuditPage>(`/orgs/${orgId}/audit-log${qs ? `?${qs}` : ''}`);
+}
+
+async function fetchAuditBatch(orgId: string, batchId: string): Promise<AuditEntry[]> {
+  const data = await apiFetch<AuditEntry[] | null>(`/orgs/${orgId}/audit-log/batches/${batchId}`);
+  return data ?? [];
+}
+
+/** What a space contains — the delete confirmation names these counts. */
+export interface SpaceContentsSummary {
+  tickets: number;
+  pages: number;
+  items: number;
+}
+
+async function fetchSpaceContentsSummary(orgId: string, spaceId: string): Promise<SpaceContentsSummary> {
+  return apiFetch<SpaceContentsSummary>(`/orgs/${orgId}/spaces/${spaceId}/summary`);
+}
+
+async function deleteSpace(orgId: string, spaceId: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/spaces/${spaceId}`, { method: 'DELETE' });
+}
+
+/** The acceptance page's pre-submit view of an invite (public endpoint). */
+export interface InviteInspection {
+  email: string;
+  org_name: string;
+  state: 'active' | 'expired' | 'revoked' | 'accepted';
+  existing_account: boolean;
+}
+
+export interface AcceptInviteResult {
+  status: string;
+  existing_account: boolean;
+  org_id: string;
+  org_slug: string;
+  org_name: string;
+  access_token?: string;
+  refresh_token?: string;
+  user_id?: string;
+}
+
+async function inspectInvite(token: string): Promise<InviteInspection> {
+  return apiFetch<InviteInspection>(`/invites/${encodeURIComponent(token)}`);
+}
+
+interface AcceptInviteRequest {
+  token: string;
+  display_name?: string;
+  password?: string;
+}
+
+async function acceptInvite(req: AcceptInviteRequest): Promise<AcceptInviteResult> {
+  return apiFetch<AcceptInviteResult>('/invites/accept', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Ticket API functions
 // ---------------------------------------------------------------------------
 
@@ -1140,6 +1444,13 @@ export const queryKeys = {
   spaceGrants: (orgId: string, spaceId: string) => ['spaceGrants', orgId, spaceId] as const,
   effectiveAccess: (spaceId: string, userId?: string) =>
     ['effectiveAccess', spaceId, userId ?? 'me'] as const,
+  // P2.5 administration.
+  orgPeople: (orgId: string) => ['orgPeople', orgId] as const,
+  memberSearch: (orgId: string, q: string) => ['memberSearch', orgId, q] as const,
+  invites: (orgId: string) => ['invites', orgId] as const,
+  accessMatrix: (orgId: string) => ['accessMatrix', orgId] as const,
+  auditLog: (orgId: string, filter: AuditFilter) => ['auditLog', orgId, filter] as const,
+  auditBatch: (orgId: string, batchId: string) => ['auditLog', orgId, 'batch', batchId] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -1919,6 +2230,191 @@ export function useUpdateSpace(orgId: string, spaceId: string) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Administration hooks (P2.5)
+// ---------------------------------------------------------------------------
+
+export function useOrgPeople(orgId: string, opts?: QueryOpts<Person[]>) {
+  return useQuery<Person[], APIError>({
+    queryKey: queryKeys.orgPeople(orgId),
+    queryFn: () => fetchOrgPeople(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+/** Person picker search; disabled until the query has content. */
+export function useMemberSearch(orgId: string, q: string, opts?: QueryOpts<PersonRef[]>) {
+  return useQuery<PersonRef[], APIError>({
+    queryKey: queryKeys.memberSearch(orgId, q),
+    queryFn: () => searchOrgMembers(orgId, q),
+    enabled: !!orgId && q.trim().length > 0,
+    ...opts,
+  });
+}
+
+export function useInvites(orgId: string, opts?: QueryOpts<Invite[]>) {
+  return useQuery<Invite[], APIError>({
+    queryKey: queryKeys.invites(orgId),
+    queryFn: () => fetchInvites(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function useCreateInvites(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<InviteOutcome[], APIError, CreateInvitesRequest>({
+    mutationFn: (req) => createInvites(orgId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.invites(orgId) });
+    },
+  });
+}
+
+export function useRevokeInvite(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (inviteId) => revokeInvite(orgId, inviteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.invites(orgId) });
+    },
+  });
+}
+
+export function useResendInvite(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<CreatedInvite, APIError, string>({
+    mutationFn: (inviteId) => resendInvite(orgId, inviteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.invites(orgId) });
+    },
+  });
+}
+
+export function useUpdatePerson(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, { userId: string } & UpdatePersonRequest>({
+    mutationFn: ({ userId, ...req }) => updatePerson(orgId, userId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
+    },
+  });
+}
+
+export function usePersonLifecycle(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, { userId: string; action: 'deactivate' | 'reactivate' | 'force-logout' }>({
+    mutationFn: ({ userId, action }) => personLifecycle(orgId, userId, action),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) });
+    },
+  });
+}
+
+export function useRemovePerson(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (userId) => removePersonFromOrg(orgId, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.accessMatrix(orgId) });
+    },
+  });
+}
+
+export function useAccessMatrix(orgId: string, opts?: QueryOpts<AccessMatrix>) {
+  return useQuery<AccessMatrix, APIError>({
+    queryKey: queryKeys.accessMatrix(orgId),
+    queryFn: () => fetchAccessMatrix(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function useBulkPreviewGrants(orgId: string) {
+  return useMutation<BulkResult, APIError, BulkChange[]>({
+    mutationFn: (changes) => bulkPreviewGrants(orgId, changes),
+  });
+}
+
+export function useBulkApplyGrants(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<BulkResult, APIError, { changes: BulkChange[]; ticketRef?: string }>({
+    mutationFn: ({ changes, ticketRef }) => bulkApplyGrants(orgId, changes, ticketRef),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.accessMatrix(orgId) });
+      queryClient.invalidateQueries({ queryKey: ['auditLog', orgId] });
+    },
+  });
+}
+
+export function useAuditLog(orgId: string, filter: AuditFilter, opts?: QueryOpts<AuditPage>) {
+  return useQuery<AuditPage, APIError>({
+    queryKey: queryKeys.auditLog(orgId, filter),
+    queryFn: () => fetchAuditLog(orgId, filter),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function useAuditBatch(orgId: string, batchId: string, opts?: QueryOpts<AuditEntry[]>) {
+  return useQuery<AuditEntry[], APIError>({
+    queryKey: queryKeys.auditBatch(orgId, batchId),
+    queryFn: () => fetchAuditBatch(orgId, batchId),
+    enabled: !!orgId && !!batchId,
+    ...opts,
+  });
+}
+
+export function useSpaceContentsSummary(orgId: string, spaceId: string, opts?: QueryOpts<SpaceContentsSummary>) {
+  return useQuery<SpaceContentsSummary, APIError>({
+    queryKey: ['spaceSummary', orgId, spaceId] as const,
+    queryFn: () => fetchSpaceContentsSummary(orgId, spaceId),
+    enabled: !!orgId && !!spaceId,
+    ...opts,
+  });
+}
+
+export function useDeleteSpace(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (spaceId) => deleteSpace(orgId, spaceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaces(orgId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.accessMatrix(orgId) });
+    },
+  });
+}
+
+/** Public: the acceptance page's invite lookup — the token is the credential. */
+export function useInviteInspection(token: string, opts?: QueryOpts<InviteInspection>) {
+  return useQuery<InviteInspection, APIError>({
+    queryKey: ['inviteInspection', token] as const,
+    queryFn: () => inspectInvite(token),
+    enabled: !!token,
+    retry: false,
+    ...opts,
+  });
+}
+
+export function useAcceptInvite() {
+  return useMutation<AcceptInviteResult, APIError, AcceptInviteRequest>({
+    mutationFn: acceptInvite,
+    onSuccess: (res) => {
+      // A freshly created account is signed in on the spot.
+      if (res.access_token) {
+        setToken(res.access_token);
+      }
+      if (res.refresh_token) {
+        setRefreshToken(res.refresh_token);
+      }
+    },
+  });
+}
+
 // Re-export create helpers for direct use
 export {
   createSpace,
@@ -1947,4 +2443,6 @@ export {
   type UpdateTeamRequest,
   type PutTeamMemberRequest,
   type CreateGrantRequest,
+  type CreateInvitesRequest,
+  type UpdatePersonRequest,
 };

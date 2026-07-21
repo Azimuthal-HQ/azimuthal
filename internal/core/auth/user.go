@@ -10,16 +10,19 @@ import (
 
 // User represents an authenticated user in the system.
 type User struct {
-	ID           uuid.UUID  `json:"id"`
-	OrgID        uuid.UUID  `json:"org_id"`
-	Email        string     `json:"email"`
-	DisplayName  string     `json:"display_name"`
-	PasswordHash string     `json:"-"`
-	Role         string     `json:"role"`
-	IsActive     bool       `json:"is_active"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+	ID           uuid.UUID `json:"id"`
+	OrgID        uuid.UUID `json:"org_id"`
+	Email        string    `json:"email"`
+	DisplayName  string    `json:"display_name"`
+	PasswordHash string    `json:"-"`
+	Role         string    `json:"role"`
+	IsActive     bool      `json:"is_active"`
+	// TokenGeneration mirrors users.token_generation: tokens are minted with
+	// the current value and rejected when the column moves past it.
+	TokenGeneration int        `json:"-"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	DeletedAt       *time.Time `json:"deleted_at,omitempty"`
 }
 
 // UserRepository defines the data access contract for users.
@@ -37,6 +40,8 @@ type UserRepository interface {
 	UpdateProfile(ctx context.Context, id uuid.UUID, displayName, email string) (*User, error)
 	// Delete soft-deletes a user by setting deleted_at.
 	Delete(ctx context.Context, id uuid.UUID) error
+	// TouchLastLogin stamps last_login_at for the admin People page.
+	TouchLastLogin(ctx context.Context, id uuid.UUID) error
 }
 
 // UserService handles user account management.
@@ -129,6 +134,15 @@ func (s *UserService) UpdateProfile(ctx context.Context, id uuid.UUID, displayNa
 func (s *UserService) DeactivateUser(ctx context.Context, id uuid.UUID) error {
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("deactivating user: %w", err)
+	}
+	return nil
+}
+
+// TouchLastLogin stamps the user's last sign-in time. Failures are the
+// caller's to swallow — recording the timestamp must never block a login.
+func (s *UserService) TouchLastLogin(ctx context.Context, id uuid.UUID) error {
+	if err := s.repo.TouchLastLogin(ctx, id); err != nil {
+		return fmt.Errorf("touching last login: %w", err)
 	}
 	return nil
 }
