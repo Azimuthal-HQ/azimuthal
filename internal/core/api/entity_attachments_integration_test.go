@@ -144,6 +144,37 @@ func TestAttachment_SpaceScopedRequiresSpaceAccess(t *testing.T) {
 	requireAPINotFound(t, f.ts.getAs(t, f.outsiderTok, spacePath))
 }
 
+// TestAttachment_SpaceListAndDelete: the space-scoped list and delete routes
+// for a space member.
+func TestAttachment_SpaceListAndDelete(t *testing.T) {
+	f := newShareFixture(t)
+	pageID, _ := f.createPage(t, "Doc", "doc", nil)
+	attID := f.uploadAttachment(t, "page", pageID, "notes.txt", "content")
+
+	// List (space-scoped) returns the attachment metadata, no object key.
+	lr := f.ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/attachments?entity_type=page&entity_id=%s",
+		f.ts.OrgID, f.spaceID, pageID), true)
+	require.Equal(t, http.StatusOK, lr.StatusCode, "space list: %s", lr.Body)
+	var list []map[string]interface{}
+	require.NoError(t, json.Unmarshal(lr.Body, &list))
+	require.Len(t, list, 1)
+	require.NotContains(t, list[0], "object_key", "the object key never leaves the process")
+
+	// Delete (space-scoped), then it is gone from the list.
+	dr := f.ts.delete(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/attachments/%s", f.ts.OrgID, f.spaceID, attID), true)
+	require.Equal(t, http.StatusNoContent, dr.StatusCode, "delete: %s", dr.Body)
+
+	lr = f.ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/attachments?entity_type=page&entity_id=%s",
+		f.ts.OrgID, f.spaceID, pageID), true)
+	require.Equal(t, http.StatusOK, lr.StatusCode)
+	require.NoError(t, json.Unmarshal(lr.Body, &list))
+	require.Empty(t, list, "the deleted attachment is gone")
+
+	// The outsider (no space access) cannot list either.
+	requireAPINotFound(t, f.ts.getAs(t, f.outsiderTok,
+		fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/attachments?entity_type=page&entity_id=%s", f.ts.OrgID, f.spaceID, pageID)))
+}
+
 // TestAttachment_UploadEntityMustBeInSpace: an upload naming an entity that
 // lives in a different space 404s — the object is never stored against the
 // wrong container.

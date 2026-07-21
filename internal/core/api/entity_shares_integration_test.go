@@ -549,6 +549,127 @@ func TestShare_BadgeEndpoint_SpaceReadableCascade(t *testing.T) {
 	require.True(t, strings.HasPrefix(childPath, rootPath+"."), "child path must extend the shared root")
 }
 
+// TestShare_TeamAudience: a team-audience share reaches only members of that
+// team (subject-side expanded), not the whole org. Exercises the team
+// branch of audience validation and resolution.
+func TestShare_TeamAudience(t *testing.T) {
+	f := newShareFixture(t)
+	ctx := context.Background()
+
+	// A team, and a member of it who otherwise has no space access.
+	team, err := f.ts.TeamService.Create(ctx, f.ts.OrgID, nil, "audience-team", "Audience Team", "")
+	require.NoError(t, err)
+	inTeam := testutil.CreateTestUserWithRole(t, f.ts.DB.Pool, f.ts.OrgID, "member")
+	_, err = f.ts.TeamService.AddMember(ctx, team.ID, inTeam.ID, f.ts.OrgID, "member")
+	require.NoError(t, err)
+	inTeamTok := f.ts.tokenFor(t, inTeam.ID, inTeam.Email)
+
+	pageID, _ := f.createPage(t, "Team Memo", "team only", nil)
+
+	// A team audience without a team id is rejected (400).
+	rr := f.ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/shares", f.ts.OrgID),
+		map[string]interface{}{"entity_type": "page", "entity_id": pageID, "audience": "team"}, true)
+	require.Equal(t, http.StatusBadRequest, rr.StatusCode, "team audience needs a team: %s", rr.Body)
+
+	// A team audience naming a team from another org is rejected (400).
+	otherOrg := testutil.CreateTestOrg(t, f.ts.DB.Pool)
+	var foreignTeam uuid.UUID
+	require.NoError(t, f.ts.DB.Pool.QueryRow(ctx,
+		`SELECT id FROM teams WHERE org_id = $1 AND is_default`, otherOrg.ID).Scan(&foreignTeam))
+	rr = f.ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/shares", f.ts.OrgID),
+		map[string]interface{}{"entity_type": "page", "entity_id": pageID, "audience": "team", "audience_id": foreignTeam.String()}, true)
+	require.Equal(t, http.StatusBadRequest, rr.StatusCode, "foreign team audience rejected: %s", rr.Body)
+
+	// The valid team audience.
+	f.createShare(t, map[string]interface{}{
+		"entity_type": "page", "entity_id": pageID, "audience": "team", "audience_id": team.ID.String(),
+	})
+
+	// A member of the audience team reads it; the outsider (not in the team)
+	// does not — the team audience is narrower than org.
+	require.Equal(t, http.StatusOK, f.ts.getAs(t, inTeamTok,
+		fmt.Sprintf("/api/v1/orgs/%s/shared/page/%s", f.ts.OrgID, pageID)).StatusCode, "team member reads")
+	requireAPINotFound(t, f.readShared(t, "page", pageID))
+}
+
+// TestShare_ItemDeleteRevokes exercises the project-item delete-and-revoke
+// transaction specifically (the ticket path is covered elsewhere).
+func TestShare_ItemDeleteRevokes(t *testing.T) {
+	f := newShareFixture(t)
+	ctx := context.Background()
+	vectorSpace := createScopedSpace(t, f.ts, "Item Board", "item-board", "vector")
+
+	ir := f.ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", f.ts.OrgID, vectorSpace),
+		map[string]interface{}{"title": "Doomed item", "kind": "task", "priority": "low"}, true)
+	require.Equal(t, http.StatusCreated, ir.StatusCode, "create item: %s", ir.Body)
+	var item struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(ir.Body, &item))
+
+	shareID := f.createShare(t, map[string]interface{}{
+		"entity_type": "project_item", "entity_id": item.ID, "audience": "org",
+	})
+	require.Equal(t, http.StatusOK, f.readShared(t, "project_item", item.ID).StatusCode)
+
+	dr := f.ts.delete(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items/%s", f.ts.OrgID, vectorSpace, item.ID), true)
+	require.Equal(t, http.StatusNoContent, dr.StatusCode, "delete item: %s", dr.Body)
+
+	var revokedAt *time.Time
+	require.NoError(t, f.ts.DB.Pool.QueryRow(ctx,
+		`SELECT revoked_at FROM entity_shares WHERE id = $1`, uuid.MustParse(shareID)).Scan(&revokedAt))
+	require.NotNil(t, revokedAt, "the item's share is revoked in the same transaction as the delete")
+	requireAPINotFound(t, f.readShared(t, "project_item", item.ID))
+	requireAuditAction(t, f.ts, "share.revoked", shareID)
+}
+
+// TestShare_MoveWithParentAndImpact exercises the parent-resolution path of a
+// cross-space move and the move-impact (share-count) endpoint.
+func TestShare_MoveWithParentAndImpact(t *testing.T) {
+	f := newShareFixture(t)
+
+	// A subtree: root → child, both shared, in the source space.
+	rootID, _ := f.createPage(t, "Root", "root", nil)
+	childID, _ := f.createPage(t, "Child", "child", &rootID)
+	f.createShare(t, map[string]interface{}{"entity_type": "page", "entity_id": rootID, "audience": "org"})
+	f.createShare(t, map[string]interface{}{"entity_type": "page", "entity_id": childID, "audience": "org"})
+
+	// The move-impact endpoint reports both shares before the move.
+	ir := f.ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s/share-impact", f.ts.OrgID, f.spaceID, rootID), true)
+	require.Equal(t, http.StatusOK, ir.StatusCode, "share-impact: %s", ir.Body)
+	var impact struct {
+		ActiveShareCount int64 `json:"active_share_count"`
+	}
+	require.NoError(t, json.Unmarshal(ir.Body, &impact))
+	require.Equal(t, int64(2), impact.ActiveShareCount, "root + child shares counted")
+
+	// Move the root under a parent in the target space (parent resolution
+	// path). Create the target space and a parent page in it.
+	targetSpace := createScopedSpace(t, f.ts, "Target", "target-space", "codex")
+	pr := f.ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", f.ts.OrgID, targetSpace),
+		map[string]interface{}{"title": "Target Parent", "content": "p"}, true)
+	require.Equal(t, http.StatusCreated, pr.StatusCode)
+	var parent struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(pr.Body, &parent))
+
+	mr := f.ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s/move", f.ts.OrgID, f.spaceID, rootID),
+		map[string]interface{}{"target_space_id": targetSpace, "parent_id": parent.ID, "position": 0}, true)
+	require.Equal(t, http.StatusOK, mr.StatusCode, "move under parent: %s", mr.Body)
+	var moveResp struct {
+		CrossSpace    bool  `json:"cross_space"`
+		RevokedShares int64 `json:"revoked_shares"`
+	}
+	require.NoError(t, json.Unmarshal(mr.Body, &moveResp))
+	require.True(t, moveResp.CrossSpace)
+	require.Equal(t, int64(2), moveResp.RevokedShares, "both subtree shares revoked by the move")
+
+	// Both shares are gone; neither entity is readable via a share now.
+	requireAPINotFound(t, f.readShared(t, "page", rootID))
+	requireAPINotFound(t, f.readShared(t, "page", childID))
+}
+
 // requireAuditAction asserts an append-only audit row exists for the action
 // on the given entity id.
 func requireAuditAction(t *testing.T, ts *testServer, action, entityID string) {

@@ -1,9 +1,11 @@
 package access
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 // TestPathWithinSubtree is the failure-mode-2 guard at the unit level: a
@@ -125,6 +127,35 @@ func TestSharedEntitiesCoverage(t *testing.T) {
 	if se.CoversPage(uuid.New(), spaceB, "root.branch.leaf") {
 		t.Error("a path coincidence in another space must NOT be covered")
 	}
+}
+
+// TestSharedEntitiesUnionInputs proves the accessors that P4/P6 will union
+// into cross-space queries: the direct ids of one type, and the cascade root
+// paths.
+func TestSharedEntitiesUnionInputs(t *testing.T) {
+	pageA, pageB, ticket := uuid.New(), uuid.New(), uuid.New()
+	space := uuid.New()
+	pathA := "root.a"
+	se := NewSharedEntities([]ShareRow{
+		{EntityType: ShareEntityPage, EntityID: pageA, Cascade: true, RootPath: &pathA, RootSpaceID: &space},
+		{EntityType: ShareEntityPage, EntityID: pageB, Cascade: false},
+		{EntityType: ShareEntityTicket, EntityID: ticket, Cascade: false},
+	})
+
+	pageIDs := se.DirectIDs(ShareEntityPage)
+	require.ElementsMatch(t, []uuid.UUID{pageA, pageB}, pageIDs, "both page shares are direct ids")
+	require.Equal(t, []uuid.UUID{ticket}, se.DirectIDs(ShareEntityTicket))
+	require.Empty(t, se.DirectIDs(ShareEntityProjectItem))
+	require.Equal(t, []string{pathA}, se.CascadeRootPaths(), "only the cascade root contributes a path")
+}
+
+// TestResolveSharesRequiresStore proves ResolveShares fails loudly (not
+// silently) when the share store is unconfigured — a wiring mistake must
+// surface as an error, never as silent denial.
+func TestResolveSharesRequiresStore(t *testing.T) {
+	r := NewResolver(nil) // no share store attached
+	_, err := r.ResolveShares(context.Background(), uuid.New(), uuid.New())
+	require.Error(t, err, "resolving shares without a store must error, not silently deny")
 }
 
 // TestSharedEntitiesFailsClosed proves an empty coverage set denies
