@@ -2627,6 +2627,9 @@ export function useCreateShare(orgId: string, entityType: ShareEntityType, entit
     mutationFn: (req) => createShare(orgId, req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.entityShares(orgId, entityType, entityId) });
+      // The page ShareBadge reads the space-wide badge list; refresh it so a
+      // new share (incl. cascade coverage) shows immediately.
+      queryClient.invalidateQueries({ queryKey: ['spacePageShares'] });
     },
   });
 }
@@ -2637,6 +2640,7 @@ export function useRevokeShare(orgId: string, entityType: ShareEntityType, entit
     mutationFn: (shareId) => revokeShare(orgId, shareId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.entityShares(orgId, entityType, entityId) });
+      queryClient.invalidateQueries({ queryKey: ['spacePageShares'] });
     },
   });
 }
