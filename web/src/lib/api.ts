@@ -313,6 +313,9 @@ export interface WikiPage {
   version: number;
   parent_id: string | null;
   author_id: string;
+  /** Dot-separated materialized path of ancestor ids; used to compute
+   *  cascade share coverage client-side (ADR-0008). */
+  path: string;
   created_at: string;
   updated_at: string;
 }
@@ -1314,10 +1317,21 @@ async function fetchWikiDiff(spaceId: string, pageId: string, from: number, to: 
 interface MoveWikiPageRequest {
   parent_id: string | null;
   position: number;
+  /** Move the page to another space (P3, ADR-0008): revokes the moved
+   *  subtree's shares. Omitted or equal to the current space = in-space. */
+  target_space_id?: string;
 }
 
-async function moveWikiPage(spaceId: string, pageId: string, req: MoveWikiPageRequest): Promise<WikiPage> {
-  return apiFetch<WikiPage>(`${spaceBase(spaceId)}/wiki/${pageId}/move`, {
+/** The move response reports whether the move crossed spaces and how many
+ *  shares it revoked, so the UI can confirm the outcome. */
+export interface MoveWikiPageResult {
+  message: string;
+  cross_space: boolean;
+  revoked_shares: number;
+}
+
+async function moveWikiPage(spaceId: string, pageId: string, req: MoveWikiPageRequest): Promise<MoveWikiPageResult> {
+  return apiFetch<MoveWikiPageResult>(`${spaceBase(spaceId)}/wiki/${pageId}/move`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -1451,6 +1465,18 @@ export const queryKeys = {
   accessMatrix: (orgId: string) => ['accessMatrix', orgId] as const,
   auditLog: (orgId: string, filter: AuditFilter) => ['auditLog', orgId, filter] as const,
   auditBatch: (orgId: string, batchId: string) => ['auditLog', orgId, 'batch', batchId] as const,
+  // P3 entity shares. Share lists key by (entity_type, entity_id); the
+  // standalone shared read keys by the same pair.
+  entityShares: (orgId: string, entityType: ShareEntityType, entityId: string) =>
+    ['entityShares', orgId, entityType, entityId] as const,
+  sharedEntity: (orgId: string, entityType: ShareEntityType, entityId: string) =>
+    ['sharedEntity', orgId, entityType, entityId] as const,
+  sharedAttachments: (orgId: string, entityType: ShareEntityType, entityId: string) =>
+    ['sharedAttachments', orgId, entityType, entityId] as const,
+  entityAttachments: (orgId: string, spaceId: string, entityType: ShareEntityType, entityId: string) =>
+    ['entityAttachments', orgId, spaceId, entityType, entityId] as const,
+  moveShareImpact: (orgId: string, spaceId: string, pageId: string) =>
+    ['moveShareImpact', orgId, spaceId, pageId] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -1959,11 +1985,17 @@ export function useAssignTicket(spaceId: string, ticketId: string) {
 
 export function useMoveWikiPage(spaceId: string, pageId: string) {
   const queryClient = useQueryClient();
-  return useMutation<WikiPage, APIError, MoveWikiPageRequest>({
+  return useMutation<MoveWikiPageResult, APIError, MoveWikiPageRequest>({
     mutationFn: (req) => moveWikiPage(spaceId, pageId, req),
-    onSuccess: () => {
+    onSuccess: (_res, req) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.wikiTree(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.wikiPages(spaceId) });
+      // A cross-space move revokes shares — refresh both spaces' badges.
+      queryClient.invalidateQueries({ queryKey: ['spacePageShares'] });
+      if (req.target_space_id) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.wikiTree(req.target_space_id) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.wikiPages(req.target_space_id) });
+      }
     },
   });
 }
@@ -2413,6 +2445,255 @@ export function useAcceptInvite() {
       }
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Entity shares (P3, ADR-0008). Shares widen visibility, never narrow it: a
+// shared entity may be read by an audience with no access to its space. The
+// team audience is schema-ready but only org is surfaced here (P7 adds team).
+// ---------------------------------------------------------------------------
+
+export type ShareEntityType = 'page' | 'ticket' | 'project_item';
+export type ShareAudience = 'org' | 'team';
+
+export interface Share {
+  id: string;
+  entity_type: ShareEntityType;
+  entity_id: string;
+  audience: ShareAudience;
+  audience_id?: string;
+  cascade: boolean;
+  expires_at?: string;
+  expired: boolean;
+  created_at: string;
+  created_by: string;
+}
+
+export interface SharesListResponse {
+  shares: Share[];
+  /** Present for pages: how many pages a cascade share would cover. */
+  cascade_page_count?: number;
+}
+
+export interface CreateShareRequest {
+  entity_type: ShareEntityType;
+  entity_id: string;
+  audience: ShareAudience;
+  audience_id?: string;
+  cascade?: boolean;
+  expires_at?: string;
+}
+
+/** The container-stripped view returned by the standalone shared read route. */
+export interface SharedEntityView {
+  id: string;
+  entity_type: ShareEntityType;
+  title: string;
+  body: string;
+  rendered_html?: string;
+  status?: string;
+  priority?: string;
+  version?: number;
+  updated_at?: string;
+  shared: boolean;
+}
+
+export interface AttachmentMeta {
+  id: string;
+  entity_type: ShareEntityType;
+  entity_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_by: string;
+  created_at: string;
+}
+
+async function fetchEntityShares(
+  orgId: string,
+  entityType: ShareEntityType,
+  entityId: string,
+): Promise<SharesListResponse> {
+  return apiFetch<SharesListResponse>(
+    `/orgs/${orgId}/shares?entity_type=${entityType}&entity_id=${entityId}`,
+  );
+}
+
+async function createShare(orgId: string, req: CreateShareRequest): Promise<Share> {
+  return apiFetch<Share>(`/orgs/${orgId}/shares`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function revokeShare(orgId: string, shareId: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/shares/${shareId}`, { method: 'DELETE' });
+}
+
+async function fetchSharedEntity(
+  orgId: string,
+  entityType: ShareEntityType,
+  entityId: string,
+): Promise<SharedEntityView> {
+  return apiFetch<SharedEntityView>(`/orgs/${orgId}/shared/${entityType}/${entityId}`);
+}
+
+async function fetchSharedAttachments(
+  orgId: string,
+  entityType: ShareEntityType,
+  entityId: string,
+): Promise<AttachmentMeta[]> {
+  const data = await apiFetch<AttachmentMeta[] | null>(
+    `/orgs/${orgId}/shared/${entityType}/${entityId}/attachments`,
+  );
+  return data ?? [];
+}
+
+/** One active page share in a space, for annotating the tree/page with a
+ *  ShareBadge (ADR-0008 rule 5). */
+export interface SpacePageShare {
+  entity_id: string;
+  cascade: boolean;
+  root_path: string;
+}
+
+async function fetchSpacePageShares(orgId: string, spaceId: string): Promise<SpacePageShare[]> {
+  const data = await apiFetch<SpacePageShare[] | null>(
+    `/orgs/${orgId}/spaces/${spaceId}/wiki/shares`,
+  );
+  return data ?? [];
+}
+
+export function useSpacePageShares(orgId: string, spaceId: string, opts?: QueryOpts<SpacePageShare[]>) {
+  return useQuery<SpacePageShare[], APIError>({
+    queryKey: ['spacePageShares', orgId, spaceId] as const,
+    queryFn: () => fetchSpacePageShares(orgId, spaceId),
+    enabled: !!orgId && !!spaceId,
+    ...opts,
+  });
+}
+
+/** Whether a page is shared: a direct share on it, or a cascade share on an
+ *  ancestor. Subtree membership is an exact-segment prefix check on the
+ *  dot-separated path — "a.b" covers "a.b.c" but never the sibling "a.bc". */
+export function pageShareState(
+  shares: SpacePageShare[] | undefined,
+  pageId: string,
+  pagePath: string,
+): { shared: boolean; viaCascade: boolean } {
+  if (!shares) return { shared: false, viaCascade: false };
+  for (const s of shares) {
+    if (!s.cascade && s.entity_id === pageId) return { shared: true, viaCascade: false };
+  }
+  for (const s of shares) {
+    if (!s.cascade) continue;
+    if (pagePath === s.root_path || pagePath.startsWith(s.root_path + '.')) {
+      return { shared: true, viaCascade: s.entity_id !== pageId };
+    }
+  }
+  return { shared: false, viaCascade: false };
+}
+
+/** The move-confirmation warning count (ADR-0008 rule 9), served by the API. */
+export interface MoveShareImpact {
+  active_share_count: number;
+}
+
+async function fetchMoveShareImpact(
+  orgId: string,
+  spaceId: string,
+  pageId: string,
+): Promise<MoveShareImpact> {
+  return apiFetch<MoveShareImpact>(`/orgs/${orgId}/spaces/${spaceId}/wiki/${pageId}/share-impact`);
+}
+
+export function useEntityShares(
+  orgId: string,
+  entityType: ShareEntityType,
+  entityId: string,
+  opts?: QueryOpts<SharesListResponse>,
+) {
+  return useQuery<SharesListResponse, APIError>({
+    queryKey: queryKeys.entityShares(orgId, entityType, entityId),
+    queryFn: () => fetchEntityShares(orgId, entityType, entityId),
+    enabled: !!orgId && !!entityId,
+    ...opts,
+  });
+}
+
+export function useCreateShare(orgId: string, entityType: ShareEntityType, entityId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Share, APIError, CreateShareRequest>({
+    mutationFn: (req) => createShare(orgId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.entityShares(orgId, entityType, entityId) });
+    },
+  });
+}
+
+export function useRevokeShare(orgId: string, entityType: ShareEntityType, entityId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (shareId) => revokeShare(orgId, shareId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.entityShares(orgId, entityType, entityId) });
+    },
+  });
+}
+
+export function useSharedEntity(
+  orgId: string,
+  entityType: ShareEntityType,
+  entityId: string,
+  opts?: QueryOpts<SharedEntityView>,
+) {
+  return useQuery<SharedEntityView, APIError>({
+    queryKey: queryKeys.sharedEntity(orgId, entityType, entityId),
+    queryFn: () => fetchSharedEntity(orgId, entityType, entityId),
+    enabled: !!orgId && !!entityId,
+    retry: false,
+    ...opts,
+  });
+}
+
+export function useSharedAttachments(
+  orgId: string,
+  entityType: ShareEntityType,
+  entityId: string,
+  opts?: QueryOpts<AttachmentMeta[]>,
+) {
+  return useQuery<AttachmentMeta[], APIError>({
+    queryKey: queryKeys.sharedAttachments(orgId, entityType, entityId),
+    queryFn: () => fetchSharedAttachments(orgId, entityType, entityId),
+    enabled: !!orgId && !!entityId,
+    ...opts,
+  });
+}
+
+export function useMoveShareImpact(
+  orgId: string,
+  spaceId: string,
+  pageId: string,
+  opts?: QueryOpts<MoveShareImpact>,
+) {
+  return useQuery<MoveShareImpact, APIError>({
+    queryKey: queryKeys.moveShareImpact(orgId, spaceId, pageId),
+    queryFn: () => fetchMoveShareImpact(orgId, spaceId, pageId),
+    enabled: !!orgId && !!spaceId && !!pageId,
+    ...opts,
+  });
+}
+
+/** The absolute URL of a shared entity's attachment (for <img src>), so the
+ *  browser fetches it with the session cookie. Bearer-only deployments should
+ *  proxy through fetch; here the object streams from a same-origin route. */
+export function sharedAttachmentURL(
+  orgId: string,
+  entityType: ShareEntityType,
+  entityId: string,
+  attachmentId: string,
+): string {
+  return `${API_BASE_URL}/orgs/${orgId}/shared/${entityType}/${entityId}/attachments/${attachmentId}`;
 }
 
 // Re-export create helpers for direct use

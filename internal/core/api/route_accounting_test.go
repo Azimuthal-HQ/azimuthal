@@ -159,6 +159,7 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/":                            "space-write",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/tree":                         "space-read",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/search":                       "space-read",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/shares":                       "space-read: active page shares in the space, for ShareBadge annotation",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}":                     "space-read",
 	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}":                     "space-write: edit_own/edit_any in-handler",
 	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}":                  "space-write: edit_own/edit_any in-handler",

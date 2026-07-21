@@ -4,6 +4,7 @@ import { ChevronRight, Clock, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent } from '../../components/ui/card';
+import { EntityShareControl } from '../../components/EntityShareControl';
 import { cn } from '../../lib/utils';
 import {
   useTicket,
@@ -136,9 +137,18 @@ export function TicketDetailPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Main content */}
         <div className="space-y-6 lg:col-span-2">
-          <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
-            {ticket.title}
-          </h1>
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+              {ticket.title}
+            </h1>
+            <EntityShareControl
+              orgId={orgId}
+              spaceId={spaceId}
+              entityType="ticket"
+              entityId={ticket.id}
+              entityLabel={ticket.title}
+            />
+          </div>
 
           {/* Description */}
           <Card>

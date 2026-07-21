@@ -184,6 +184,21 @@ func (a *ShareAdapter) CountPageSubtree(ctx context.Context, spaceID, pageID uui
 	return n, nil
 }
 
+// ListActiveSharesForSpacePages returns every active page share rooted in
+// the space (one query, constant regardless of page count) — the ShareBadge
+// annotation source for a whole space.
+func (a *ShareAdapter) ListActiveSharesForSpacePages(ctx context.Context, spaceID uuid.UUID) ([]access.SpacePageShare, error) {
+	rows, err := a.q.ListActiveSharesForSpacePages(ctx, spaceID)
+	if err != nil {
+		return nil, fmt.Errorf("listing space page shares: %w", err)
+	}
+	out := make([]access.SpacePageShare, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, access.SpacePageShare{EntityID: r.EntityID, Cascade: r.Cascade, RootPath: r.RootPath})
+	}
+	return out, nil
+}
+
 // CountActiveSharesForPageSubtree counts live shares on the page and its
 // descendants — what a cross-space move would revoke.
 func (a *ShareAdapter) CountActiveSharesForPageSubtree(ctx context.Context, spaceID, pageID uuid.UUID, path string) (int64, error) {

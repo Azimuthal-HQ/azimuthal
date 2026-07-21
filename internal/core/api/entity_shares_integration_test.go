@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -500,6 +501,52 @@ func TestEndpointMatrix_Shares(t *testing.T) {
 	// 410 — revoking an already-revoked share.
 	requireErrorCode(t, m.request(t, http.MethodDelete, m.ts.Token, sharesPath+"/"+share.ID, nil),
 		http.StatusGone, "CONFLICT")
+}
+
+// TestShare_BadgeEndpoint_SpaceReadableCascade: the space ShareBadge
+// endpoint returns active page shares with their root paths, so any space
+// reader (not just admins) can mark a page as shared or cascade-covered
+// (ADR-0008 rule 5). A member with a viewer grant — not manage_shares — must
+// see the badge data.
+func TestShare_BadgeEndpoint_SpaceReadableCascade(t *testing.T) {
+	f := newShareFixture(t)
+
+	rootID, _ := f.createPage(t, "Shared Folder", "root", nil)
+	childID, _ := f.createPage(t, "Child", "child", &rootID)
+	f.createShare(t, map[string]interface{}{
+		"entity_type": "page", "entity_id": rootID, "audience": "org", "cascade": true,
+	})
+
+	// A viewer (can read the space, cannot manage shares) reads the badges.
+	viewer := testutil.CreateTestUserWithRole(t, f.ts.DB.Pool, f.ts.OrgID, "member")
+	viewerTok := f.ts.tokenFor(t, viewer.ID, viewer.Email)
+	spaceUUID := uuid.MustParse(f.spaceID)
+	_, err := f.ts.GrantService.Create(context.Background(), f.ts.OrgID, spaceUUID,
+		access.SubjectUser, viewer.ID, access.RoleViewer, f.ts.UserID)
+	require.NoError(t, err)
+
+	r := f.ts.getAs(t, viewerTok, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/shares", f.ts.OrgID, f.spaceID))
+	require.Equal(t, http.StatusOK, r.StatusCode, "badge endpoint readable by a viewer: %s", r.Body)
+	var badges []struct {
+		EntityID string `json:"entity_id"`
+		Cascade  bool   `json:"cascade"`
+		RootPath string `json:"root_path"`
+	}
+	require.NoError(t, json.Unmarshal(r.Body, &badges))
+	require.Len(t, badges, 1, "one active page share in the space")
+	require.Equal(t, rootID, badges[0].EntityID)
+	require.True(t, badges[0].Cascade)
+	require.NotEmpty(t, badges[0].RootPath, "root path present so the client can compute cascade coverage")
+
+	// The child is not itself in the list, but its path is under the root's —
+	// the client-side coverage check (mirrored server-side by PathWithinSubtree)
+	// marks it shared. Confirm the child's path extends the root's.
+	var childPath, rootPath string
+	require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
+		`SELECT path FROM pages WHERE id = $1`, uuid.MustParse(childID)).Scan(&childPath))
+	require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
+		`SELECT path FROM pages WHERE id = $1`, uuid.MustParse(rootID)).Scan(&rootPath))
+	require.True(t, strings.HasPrefix(childPath, rootPath+"."), "child path must extend the shared root")
 }
 
 // requireAuditAction asserts an append-only audit row exists for the action

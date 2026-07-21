@@ -29,6 +29,7 @@ import { SpaceDirectoryPage } from './pages/spaces/SpaceDirectoryPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { WorkflowAdminPage } from './pages/settings/WorkflowAdminPage';
 import { InviteAcceptPage } from './pages/auth/InviteAcceptPage';
+import { SharedEntityPage } from './pages/shared/SharedEntityPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { PeoplePage } from './pages/admin/PeoplePage';
 import { TeamsAdminPage } from './pages/admin/TeamsAdminPage';
@@ -43,6 +44,14 @@ export function App() {
       {/* Invite acceptance is public: the token in the URL is the credential
           (P2.5 W2). It must stay outside the auth wall. */}
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
+      {/* The standalone shared-entity view (P3, ADR-0008). Authenticated but
+          OUTSIDE the app shell: no space sidebar, no product tabs, no
+          breadcrumb chain into a space the viewer cannot enter. Access is
+          governed entirely by the share, enforced server-side. */}
+      <Route
+        path="/shared/:entityType/:entityId"
+        element={<RequireAuth><SharedEntityPage /></RequireAuth>}
+      />
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
         {/* Home: user- and org-scoped pages under the static "Your work" panel */}
         <Route element={<HomeLayout />}>

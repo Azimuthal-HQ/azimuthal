@@ -19,19 +19,21 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 )
 
-// ShareImpactCounter counts the active shares a cross-space move of a page
-// (and its subtree) would revoke — the move-confirmation warning number
-// (ADR-0008 rule 9), served by the API so the UI never counts client-side.
-type ShareImpactCounter interface {
+// ShareQueries backs the wiki share affordances: the move-confirmation
+// warning count (ADR-0008 rule 9) and the per-space ShareBadge annotation
+// (rule 5). Both are served by the API so the UI never counts or infers
+// share coverage client-side.
+type ShareQueries interface {
 	CountActiveSharesForPageSubtree(ctx context.Context, spaceID, pageID uuid.UUID, path string) (int64, error)
+	ListActiveSharesForSpacePages(ctx context.Context, spaceID uuid.UUID) ([]access.SpacePageShare, error)
 }
 
 // Handler holds the dependencies for wiki HTTP handlers.
 type Handler struct {
-	svc         *wiki.Service
-	locks       *wiki.LockService
-	auditLog    audit.Logger
-	shareImpact ShareImpactCounter
+	svc      *wiki.Service
+	locks    *wiki.LockService
+	auditLog audit.Logger
+	shares   ShareQueries
 }
 
 // NewHandler creates a wiki Handler.
@@ -45,10 +47,10 @@ func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	return h
 }
 
-// WithShareImpact attaches the share-impact counter that backs the move
-// confirmation warning. nil leaves the /share-impact route reporting zero.
-func (h *Handler) WithShareImpact(c ShareImpactCounter) *Handler {
-	h.shareImpact = c
+// WithShareQueries attaches the share read model backing the move-impact
+// count and the space ShareBadge annotation. nil leaves both reporting empty.
+func (h *Handler) WithShareQueries(q ShareQueries) *Handler {
+	h.shares = q
 	return h
 }
 
@@ -59,6 +61,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Post("/", h.CreatePage)
 	r.Get("/tree", h.Tree)
 	r.Get("/search", h.Search)
+	r.Get("/shares", h.SpaceShareBadges)
 	r.Get("/{pageID}", h.GetPage)
 	r.Put("/{pageID}", h.UpdatePage)
 	r.Delete("/{pageID}", h.DeletePage)
@@ -472,14 +475,55 @@ func (h *Handler) ShareImpact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var count int64
-	if h.shareImpact != nil {
-		count, err = h.shareImpact.CountActiveSharesForPageSubtree(r.Context(), spaceID, id, page.Path)
+	if h.shares != nil {
+		count, err = h.shares.CountActiveSharesForPageSubtree(r.Context(), spaceID, id, page.Path)
 		if err != nil {
 			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to count share impact")
 			return
 		}
 	}
 	respond.JSON(w, http.StatusOK, map[string]int64{"active_share_count": count})
+}
+
+// SpaceShareBadges returns the active page shares rooted in the space, each
+// with its root path — enough for the client to mark every page as directly
+// shared or cascade-covered (ShareBadge, ADR-0008 rule 5). Space-read: any
+// reader sees which pages are shared, which is what lets an author know a new
+// page under a shared folder is already org-visible.
+//
+// @Summary      Space page share badges
+// @Description  Active page shares in the space with their root paths, for annotating the page tree with a shared indicator.
+// @Tags         wiki
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Success      200      {array}   map[string]interface{}    "Active page shares"
+// @Failure      404      {object}  api.SwaggerErrorResponse  "Space not found"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/shares [get]
+func (h *Handler) SpaceShareBadges(w http.ResponseWriter, r *http.Request) {
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	type badge struct {
+		EntityID string `json:"entity_id"`
+		Cascade  bool   `json:"cascade"`
+		RootPath string `json:"root_path"`
+	}
+	out := []badge{}
+	if h.shares != nil {
+		rows, err := h.shares.ListActiveSharesForSpacePages(r.Context(), spaceID)
+		if err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list space shares")
+			return
+		}
+		for _, s := range rows {
+			out = append(out, badge{EntityID: s.EntityID.String(), Cascade: s.Cascade, RootPath: s.RootPath})
+		}
+	}
+	respond.JSON(w, http.StatusOK, out)
 }
 
 // Tree returns the full page tree for a space.

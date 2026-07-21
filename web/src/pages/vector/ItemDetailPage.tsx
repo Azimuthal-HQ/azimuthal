@@ -6,6 +6,7 @@ import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { EntityShareControl } from '../../components/EntityShareControl';
 import { cn } from '../../lib/utils';
 import {
   useProjectItem,
@@ -200,7 +201,16 @@ export function ItemDetailPage() {
           ) : (
             <div className="flex items-start justify-between gap-3">
               <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">{item.title}</h1>
-              <Button variant="secondary" onClick={startEditing}>Edit</Button>
+              <div className="flex items-center gap-2">
+                <EntityShareControl
+                  orgId={orgId}
+                  spaceId={spaceId}
+                  entityType="project_item"
+                  entityId={item.id}
+                  entityLabel={item.title}
+                />
+                <Button variant="secondary" onClick={startEditing}>Edit</Button>
+              </div>
             </div>
           )}
 

@@ -30,6 +30,15 @@ func (s Share) Expired() bool {
 	return s.ExpiresAt != nil && !s.ExpiresAt.After(time.Now())
 }
 
+// SpacePageShare is one active page share rooted in a space, with the root's
+// current path — enough for a space reader to compute, per page, whether it
+// is directly shared or covered by a cascade (ShareBadge, ADR-0008 rule 5).
+type SpacePageShare struct {
+	EntityID uuid.UUID
+	Cascade  bool
+	RootPath string
+}
+
 // SharedEntityRef locates a shareable entity: its org and space, and — for
 // pages — the materialized path that cascade coverage is computed from.
 type SharedEntityRef struct {

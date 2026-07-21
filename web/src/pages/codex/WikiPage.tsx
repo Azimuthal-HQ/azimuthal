@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, type ReactElement } from 'react';
 import { useParams } from 'react-router-dom';
-import { FileText, Edit, Plus, AlertCircle, Search, History, X, ChevronRight, Lock } from 'lucide-react';
+import { FileText, Edit, Plus, AlertCircle, Search, History, X, ChevronRight, Lock, Share2, FolderInput } from 'lucide-react';
 import { MarkdownEditor } from '../../components/ui/MarkdownEditor';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
@@ -31,7 +31,13 @@ import {
   useMe,
   useComments,
   useCreateComment,
+  useEffectiveAccess,
+  useSpacePageShares,
+  pageShareState,
 } from '../../lib/api';
+import { ShareBadge } from '../../components/ShareBadge';
+import { ShareDialog } from '../../components/ShareDialog';
+import { MovePageDialog } from '../../components/MovePageDialog';
 
 // ---------------------------------------------------------------------------
 // Sidebar
@@ -272,6 +278,16 @@ export function WikiPage() {
 
   const lockedByOther = pageLock && me && pageLock.user_id !== me.id;
 
+  // Share affordances (P3, ADR-0008). The badge is space-read (any reader
+  // sees which pages are shared, incl. cascade coverage). Managing shares and
+  // cross-space moves are space-admin actions, gated on effective access.
+  const { data: effAccess } = useEffectiveAccess(orgId, spaceId, undefined, { enabled: !!orgId && !!spaceId });
+  const canManageShares = effAccess?.org_admin || effAccess?.role === 'space_admin';
+  const { data: spaceShares } = useSpacePageShares(orgId, spaceId, { enabled: !!orgId && !!spaceId });
+  const shareState = pageShareState(spaceShares, activeId ?? '', activePage?.path ?? '');
+  const [shareOpen, setShareOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+
   async function startEdit() {
     if (!activePage) return;
     try {
@@ -378,8 +394,12 @@ export function WikiPage() {
           <>
             {/* Top bar */}
             <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-2.5">
-              <span className="flex-1 truncate text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                {activePage.title}
+              <span className="flex items-center gap-2 flex-1 truncate text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                <span className="truncate">{activePage.title}</span>
+                <ShareBadge
+                  shared={shareState.shared}
+                  detail={shareState.viaCascade ? 'via a shared folder' : undefined}
+                />
               </span>
               {lockedByOther && (
                 <span className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[var(--color-warning)]/15 px-2.5 py-1 text-[var(--text-xs)] text-[var(--color-warning)]">
@@ -402,6 +422,30 @@ export function WikiPage() {
                     <History className="h-3.5 w-3.5" />
                     History
                   </button>
+                  {canManageShares && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShareOpen(true)}
+                        disabled={!activePage}
+                        data-testid="wiki-share-button"
+                      >
+                        <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                        Share
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setMoveOpen(true)}
+                        disabled={!activePage}
+                        data-testid="wiki-move-button"
+                      >
+                        <FolderInput className="mr-1.5 h-3.5 w-3.5" />
+                        Move
+                      </Button>
+                    </>
+                  )}
                   <Button variant="secondary" size="sm" onClick={startEdit} disabled={!activePage || !!lockedByOther}>
                     <Edit className="mr-1.5 h-3.5 w-3.5" />
                     Edit
@@ -409,6 +453,24 @@ export function WikiPage() {
                 </>
               )}
             </div>
+            {shareOpen && activePage && (
+              <ShareDialog
+                orgId={orgId}
+                entityType="page"
+                entityId={activePage.id}
+                entityLabel={activePage.title}
+                onClose={() => setShareOpen(false)}
+              />
+            )}
+            {moveOpen && activePage && (
+              <MovePageDialog
+                orgId={orgId}
+                spaceId={spaceId}
+                pageId={activePage.id}
+                pageTitle={activePage.title}
+                onClose={() => setMoveOpen(false)}
+              />
+            )}
 
             <div className="flex flex-1 overflow-hidden">
               {/* Page content */}

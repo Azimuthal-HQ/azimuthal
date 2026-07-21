@@ -178,7 +178,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(true),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc),
-		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithShareImpact(shareAdapter),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithShareQueries(shareAdapter),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries),

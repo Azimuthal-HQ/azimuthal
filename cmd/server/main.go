@@ -292,7 +292,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
-		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithAuditLogger(auditLog),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
