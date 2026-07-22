@@ -363,7 +363,13 @@ func TestSpaceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSpace codex twin with shared slug: %v", err)
 	}
-	t.Cleanup(func() { _ = q.SoftDeleteSpace(ctx, twin.ID) })
+	t.Cleanup(func() {
+		// Hard-delete, not soft: a soft-deleted twin still holds its
+		// (org, type, slug) pair, and a committed cross-module duplicate in
+		// this shared schema would trip migration 028's designed
+		// down-migration refusal when TestMigrateDown rolls it back.
+		_, _ = pool.Exec(ctx, "DELETE FROM spaces WHERE id = $1", twin.ID)
+	})
 
 	gotTwin, err := q.GetSpaceBySlug(ctx, generated.GetSpaceBySlugParams{
 		OrgID: org.ID,
