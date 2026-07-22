@@ -1,6 +1,6 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SpaceLayout } from '../SpaceLayout';
 import { WikiPage } from '../../pages/codex/WikiPage';
 
@@ -38,7 +38,18 @@ vi.mock('../../lib/api', () => ({
     isLoading: false,
     error: null,
   })),
-  useWikiSearch: vi.fn(() => ({ data: [], isLoading: false })),
+  // Behaves like the real scoped search: no data until a 2+ character query
+  // arrives (the component gates enabled on the DEBOUNCED value, so this is
+  // what proves the debounce actually feeds the fetch).
+  useWikiSearch: vi.fn((_spaceId: string, q: string) => ({
+    data:
+      q.length > 1
+        ? q.toLowerCase() === 'alpha'
+          ? [{ id: 'p1', title: 'Alpha Page', parent_id: null }]
+          : []
+        : undefined,
+    isLoading: false,
+  })),
   useCreateWikiPage: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false, error: null })),
   useWikiPage: vi.fn(() => ({
     data: { id: 'p1', title: 'Alpha Page', content: 'Alpha body text.', version: 1, path: 'alpha', updated_at: '2026-07-22T00:00:00Z' },
@@ -126,5 +137,82 @@ describe('Codex single navigation panel (ADR-0005)', () => {
     const createButtons = screen.getAllByRole('button', { name: 'New page' });
     expect(createButtons).toHaveLength(1);
     expect(sidebar.contains(createButtons[0])).toBe(true);
+  });
+
+  // Regression (adversarial review): the tree rendered from the LAYOUT
+  // route, whose useParams never sees the child :pageId, so a params-based
+  // highlight was always false — and the panel that DID highlight was
+  // deleted. NavLink derives active from the location; aria-current is the
+  // observable contract.
+  it('highlights the current page in the tree', () => {
+    renderCodexPageView();
+
+    const sidebar = screen.getByTestId('space-sidebar');
+    const active = within(sidebar).getByRole('link', { name: 'Alpha Page' });
+    expect(active).toHaveAttribute('aria-current', 'page');
+    expect(within(sidebar).getByRole('link', { name: 'Beta Child' })).not.toHaveAttribute(
+      'aria-current',
+    );
+  });
+});
+
+describe('Codex scoped search drives the tree zone', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function searchInput() {
+    return screen.getByPlaceholderText('Search this wiki');
+  }
+
+  it('typing switches the tree to flat results through the debounce, and clearing restores hierarchy', () => {
+    vi.useFakeTimers();
+    renderCodexPageView();
+    const tree = screen.getByTestId('codex-page-tree');
+
+    // Baseline: hierarchy, child at depth 1.
+    expect(within(tree).getByText('Beta Child').closest('[data-tree-depth]')).toHaveAttribute(
+      'data-tree-depth',
+      '1',
+    );
+
+    // Typing 2+ characters flips the tree zone to search mode immediately —
+    // the fetch is still gated on the debounced value, so it reads
+    // "Searching…" until the debounce fires.
+    fireEvent.change(searchInput(), { target: { value: 'alpha' } });
+    expect(within(tree).getByText('Searching…')).toBeInTheDocument();
+    expect(within(tree).queryByText('Beta Child')).not.toBeInTheDocument();
+
+    // The debounce delivers the query to the search hook and flat results
+    // replace the placeholder. Would fail if the debounced update were
+    // dropped, the debounced/raw props swapped, or the enabled gate changed.
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    const result = within(tree).getByText('Alpha Page').closest('[data-tree-depth]');
+    expect(result).toHaveAttribute('data-tree-depth', '0');
+    expect(within(tree).queryByText('Searching…')).not.toBeInTheDocument();
+    expect(within(tree).queryByText('Beta Child')).not.toBeInTheDocument();
+
+    // Clearing the query restores the hierarchy without waiting for the
+    // debounce — search mode keys off the live input.
+    fireEvent.change(searchInput(), { target: { value: '' } });
+    expect(within(tree).getByText('Beta Child').closest('[data-tree-depth]')).toHaveAttribute(
+      'data-tree-depth',
+      '1',
+    );
+  });
+
+  it('shows the empty state for a query with no matches', () => {
+    vi.useFakeTimers();
+    renderCodexPageView();
+    const tree = screen.getByTestId('codex-page-tree');
+
+    fireEvent.change(searchInput(), { target: { value: 'zzzz' } });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(within(tree).getByText('No results.')).toBeInTheDocument();
+    expect(within(tree).queryByText('Alpha Page')).not.toBeInTheDocument();
   });
 });

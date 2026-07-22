@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { Clock, FileText, PenLine, Plus, Search, Star } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
@@ -143,7 +143,6 @@ function PageTree({
 }) {
   const collapsed = useSidebarIsCollapsed();
   const navigate = useNavigate();
-  const { pageId } = useParams<{ pageId: string }>();
   const pagesQuery = useWikiPages(spaceId);
   const pages = useMemo(() => pagesQuery.data ?? [], [pagesQuery.data]);
   const nodes = useMemo(() => flattenTree(pages), [pages]);
@@ -212,23 +211,30 @@ function PageTree({
           </p>
         ) : (
           rows.map(({ page, depth }) => (
-            <Link
+            // NavLink, not Link: this component renders from the LAYOUT
+            // route, whose params never include the child :pageId — a
+            // useParams comparison here is always false. NavLink derives
+            // active from the location and sets aria-current="page".
+            <NavLink
               key={page.id}
               to={spacePath('codex', spaceId, `pages/${page.id}`)}
+              end
               data-tree-depth={depth}
               title={page.title}
               style={{ paddingLeft: `calc(var(--space-3) + ${depth} * var(--space-4))` }}
-              className={cn(
-                'flex items-center gap-[var(--space-2)] rounded-[var(--radius-md)] py-[6px] pr-[var(--space-2)]',
-                'text-[var(--text-sm)] transition-colors duration-150',
-                page.id === pageId
-                  ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
-                  : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]',
-              )}
+              className={({ isActive }) =>
+                cn(
+                  'flex items-center gap-[var(--space-2)] rounded-[var(--radius-md)] py-[6px] pr-[var(--space-2)]',
+                  'text-[var(--text-sm)] transition-colors duration-150',
+                  isActive
+                    ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
+                    : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]',
+                )
+              }
             >
               <FileText className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">{page.title}</span>
-            </Link>
+            </NavLink>
           ))
         )}
       </div>

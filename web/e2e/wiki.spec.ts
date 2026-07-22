@@ -33,10 +33,11 @@ test.describe('Wiki', () => {
     await page.fill('#page-title', 'E2E Test Page')
     await page.locator('[role="dialog"] button:has-text("Create Page")').click()
 
-    // The new page lands in the sidebar tree and opens as the current page.
-    await expect(
-      page.getByTestId('codex-page-tree').getByText('E2E Test Page', { exact: true }),
-    ).toBeVisible({ timeout: 5000 })
+    // The new page lands in the sidebar tree and opens as the current page —
+    // with the tree row marked active (aria-current comes from NavLink).
+    const newRow = page.getByTestId('codex-page-tree').getByRole('link', { name: 'E2E Test Page' })
+    await expect(newRow).toBeVisible({ timeout: 5000 })
+    await expect(newRow).toHaveAttribute('aria-current', 'page')
     await expect(page.getByTestId('wiki-page-title')).toContainText('E2E Test Page', { timeout: 5000 })
   })
 
