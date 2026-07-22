@@ -105,11 +105,15 @@ test.describe('Projects', () => {
     }
 
     // Still functional: selecting an option marks it checked and the default
-    // selection (Medium) starts out checked.
-    await expect(options.nth(2)).toHaveAttribute('aria-checked', 'true')
-    await options.nth(0).click()
-    await expect(options.nth(0)).toHaveAttribute('aria-checked', 'true')
-    await expect(options.nth(2)).toHaveAttribute('aria-checked', 'false')
+    // selection (Medium) starts out checked. Options are addressed by name —
+    // the restyle ordered them Low → Critical per the interior prototype, and
+    // names survive reordering where indexes do not.
+    const medium = group.getByRole('radio', { name: 'Medium' })
+    const critical = group.getByRole('radio', { name: 'Critical' })
+    await expect(medium).toHaveAttribute('aria-checked', 'true')
+    await critical.click()
+    await expect(critical).toHaveAttribute('aria-checked', 'true')
+    await expect(medium).toHaveAttribute('aria-checked', 'false')
   })
 
   test('Labels view renders content — regression: blank screen', async ({ page }) => {

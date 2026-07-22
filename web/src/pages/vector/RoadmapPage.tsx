@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
-import { cn, formatUTCDate } from '../../lib/utils';
+import { SegmentedControl } from '../../components/ui/segmented';
+import { PriorityDot, normalizePriority } from '../../components/priority';
+import { formatUTCDate } from '../../lib/utils';
 import { useRoadmap, useRoadmapSprints, type RoadmapItem, type RoadmapSprint } from '../../lib/api';
 
 type ViewMode = 'items' | 'sprints';
@@ -20,25 +22,18 @@ function formatMonth(ym: string) {
   return new Date(Number(y), Number(m) - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
-const PRIORITY_DOT: Record<string, string> = {
-  urgent:   'bg-[var(--color-danger)]',
-  high:     'bg-[var(--color-warning)]',
-  medium:   'bg-[var(--color-info)]',
-  low:      'bg-[var(--color-text-muted)]',
-};
-
 function ItemRow({ ri }: { ri: RoadmapItem }) {
   return (
-    <div className="flex items-center gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
-      <span className={cn('h-2 w-2 rounded-full shrink-0', PRIORITY_DOT[ri.item.priority] ?? 'bg-[var(--color-text-muted)]')} />
-      <span className="flex-1 text-[var(--text-sm)] text-[var(--color-text)] truncate">{ri.item.title}</span>
-      <span className="text-[var(--text-xs)] text-[var(--color-text-muted)] shrink-0">{ri.item.status}</span>
+    <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+      <PriorityDot priority={normalizePriority(ri.item.priority)} />
+      <span className="flex-1 truncate text-[var(--text-sm)] text-[var(--color-text)]">{ri.item.title}</span>
+      <span className="shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)]">{ri.item.status}</span>
       {ri.overdue && (
-        <span className="flex items-center gap-1 rounded-full bg-[var(--color-danger)]/15 px-2 py-0.5 text-[var(--text-xs)] text-[var(--color-danger)] font-medium">
+        <span className="flex items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--color-danger)_15%,transparent)] px-2 py-0.5 text-[var(--text-xs)] font-medium text-[var(--color-danger)]">
           <AlertTriangle className="h-3 w-3" />Overdue
         </span>
       )}
-      <span className="text-[var(--text-xs)] text-[var(--color-text-muted)] shrink-0">{ri.due_at.slice(0, 10)}</span>
+      <span className="shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)]">{ri.due_at.slice(0, 10)}</span>
     </div>
   );
 }
@@ -65,7 +60,7 @@ function SprintCard({ rs }: { rs: RoadmapSprint }) {
         <div className="space-y-1.5">
           {(rs.items ?? []).map(item => (
             <div key={item.id} className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-text)]">
-              <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', PRIORITY_DOT[item.priority] ?? 'bg-[var(--color-text-muted)]')} />
+              <PriorityDot priority={normalizePriority(item.priority)} className="h-1.5 w-1.5" />
               <span className="truncate">{item.title}</span>
               <span className="ml-auto text-[var(--text-xs)] text-[var(--color-text-muted)] shrink-0">{item.status}</span>
             </div>
@@ -94,7 +89,7 @@ export function RoadmapPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">Roadmap</h1>
+          <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">Roadmap</h1>
           {overdueItems.length > 0 && (
             <p className="mt-0.5 flex items-center gap-1 text-[var(--text-sm)] text-[var(--color-danger)]">
               <AlertTriangle className="h-4 w-4" />
@@ -102,23 +97,16 @@ export function RoadmapPage() {
             </p>
           )}
         </div>
-        <div className="flex rounded-[var(--radius-md)] border border-[var(--color-border)] overflow-hidden">
-          {(['items', 'sprints'] as const).map(v => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => setView(v)}
-              className={cn(
-                'px-3 py-1.5 text-[var(--text-sm)] capitalize transition-colors',
-                view === v
-                  ? 'bg-[var(--color-primary)] text-white font-medium'
-                  : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)]',
-              )}
-            >
-              {v === 'items' ? 'All Items' : 'Sprint Timeline'}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          options={[
+            { value: 'items', label: 'All Items' },
+            { value: 'sprints', label: 'Sprint Timeline' },
+          ]}
+          value={view}
+          onChange={setView}
+          aria-label="Roadmap view"
+          fullWidth={false}
+        />
       </div>
 
       {isLoading ? (

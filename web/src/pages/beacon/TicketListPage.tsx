@@ -17,6 +17,7 @@ import {
 } from '../../components/ui/dialog';
 import {
   PRIORITY_SEGMENT_OPTIONS,
+  PRIORITY_TO_API,
   PriorityPill,
   normalizePriority,
   type PriorityKey,
@@ -46,14 +47,6 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
   in_progress: 'In Progress',
   resolved: 'Resolved',
   closed: 'Closed',
-};
-
-/** The wire spells Critical as 'urgent' (legacy); the UI never shows it. */
-const PRIORITY_TO_API: Record<PriorityKey, string> = {
-  critical: 'urgent',
-  high: 'high',
-  medium: 'medium',
-  low: 'low',
 };
 
 const filterSelectClass = cn(

@@ -44,6 +44,14 @@ const PRIORITY_SEGMENT_CLASS: Record<PriorityKey, string> = {
     'bg-[color-mix(in_srgb,var(--color-danger)_26%,transparent)] text-[var(--color-danger)]',
 };
 
+/** The wire spells Critical as 'urgent' (legacy); the UI never shows it. */
+export const PRIORITY_TO_API: Record<PriorityKey, string> = {
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  critical: 'urgent',
+};
+
 /**
  * Collapses the wire's priority spellings onto the vocabulary: the legacy
  * 'urgent' reads as Critical; anything unknown reads as Medium.

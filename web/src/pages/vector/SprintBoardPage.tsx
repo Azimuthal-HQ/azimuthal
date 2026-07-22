@@ -16,8 +16,8 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { AlertCircle } from 'lucide-react';
-import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent } from '../../components/ui/card';
+import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -27,6 +27,7 @@ import {
   useSpace,
   queryKeys,
   transitionProjectItemStatus,
+  friendlyErrorMessage,
   type ProjectItem,
   type WorkflowState,
 } from '../../lib/api';
@@ -63,13 +64,6 @@ function workflowStatesToColumns(states: WorkflowState[]): ColumnDef[] {
     }));
 }
 
-const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
-  critical: 'danger', urgent: 'danger', high: 'warning', medium: 'secondary', low: 'outline',
-};
-const PRIORITY_LABEL: Record<string, string> = {
-  critical: 'Critical', urgent: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
-};
-
 // ---------------------------------------------------------------------------
 // Sortable item card
 // ---------------------------------------------------------------------------
@@ -100,7 +94,6 @@ function SortableItemCard({ item, onItemClick, spaceKey }: { item: ProjectItem; 
 }
 
 function ItemCard({ item, overlay, onItemClick, spaceKey }: { item: ProjectItem; overlay?: boolean; onItemClick?: (id: string) => void; spaceKey?: string }) {
-  const priorityKey = String(item.priority ?? '').toLowerCase();
   return (
     <Card
       className={cn(
@@ -120,9 +113,7 @@ function ItemCard({ item, overlay, onItemClick, spaceKey }: { item: ProjectItem;
           {item.title}
         </p>
         <div className="flex items-center justify-between">
-          <Badge variant={PRIORITY_VARIANT[priorityKey] ?? 'secondary'}>
-            {PRIORITY_LABEL[priorityKey] ?? 'Medium'}
-          </Badge>
+          <PriorityPill priority={normalizePriority(item.priority)} />
         </div>
       </CardContent>
     </Card>
@@ -289,9 +280,9 @@ export function SprintBoardPage() {
   // P2.5: empty state when no active sprint
   if (!activeSprint) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
-          Sprint Board
+      <div className="space-y-5">
+        <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
+          Board
         </h1>
         <div className="flex min-h-[300px] items-center justify-center rounded-[var(--radius-lg)] border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface)]">
           <div className="text-center space-y-2">
@@ -309,20 +300,20 @@ export function SprintBoardPage() {
 
   if (error) {
     return (
-      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4">
         <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
         <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-          Failed to load items: {error.message}
+          {friendlyErrorMessage(error, 'Sprint items could not be loaded.')}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex items-baseline gap-3">
-        <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
-          Sprint Board
+        <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
+          Board
         </h1>
         <span className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
           {activeSprint.name}

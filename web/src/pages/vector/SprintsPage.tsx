@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Plus, Play, CheckCircle, Clock, AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { Field, FieldLabel } from '../../components/ui/field';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogClose,
@@ -10,13 +11,14 @@ import {
 import { cn, formatUTCDate } from '../../lib/utils';
 import {
   useSprints, useActiveSprint, useCreateSprint, useStartSprint, useCompleteSprint,
+  friendlyErrorMessage,
   type Sprint,
 } from '../../lib/api';
 
 const STATUS_STYLES: Record<string, string> = {
   planned:   'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]',
   active:    'bg-[var(--color-primary-muted)] text-[var(--color-primary)]',
-  completed: 'bg-[var(--color-success)]/15 text-[var(--color-success)]',
+  completed: 'bg-[color-mix(in_srgb,var(--color-success)_15%,transparent)] text-[var(--color-success)]',
 };
 
 function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: string; isActive: boolean }) {
@@ -27,7 +29,7 @@ function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: str
   async function handleStart() {
     setStartError(null);
     try { await startMutation.mutateAsync(sprint.id); }
-    catch (e) { setStartError(e instanceof Error ? e.message : 'Failed to start sprint'); }
+    catch (e) { setStartError(friendlyErrorMessage(e, 'The sprint could not be started.')); }
   }
 
   async function handleComplete() {
@@ -127,7 +129,7 @@ export function SprintsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">Sprints</h1>
+          <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">Sprints</h1>
           <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">{sprints.length} sprint{sprints.length !== 1 ? 's' : ''}</p>
         </div>
         <Button onClick={() => setDialogOpen(true)}>
@@ -153,27 +155,29 @@ export function SprintsPage() {
             <DialogTitle>New Sprint</DialogTitle>
             <DialogDescription>Create a new sprint for this project.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Name *</label>
-              <Input placeholder="Sprint 1" value={name} onChange={e => setName(e.target.value)} autoFocus />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Goal</label>
-              <Input placeholder="What do we want to achieve?" value={goal} onChange={e => setGoal(e.target.value)} />
-            </div>
+          <div className="py-2">
+            <Field>
+              <FieldLabel htmlFor="sprint-name">Name</FieldLabel>
+              <Input id="sprint-name" placeholder="Sprint 1" value={name} onChange={e => setName(e.target.value)} autoFocus />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="sprint-goal" optional>Goal</FieldLabel>
+              <Input id="sprint-goal" placeholder="What do we want to achieve?" value={goal} onChange={e => setGoal(e.target.value)} />
+            </Field>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Start date</label>
-                <Input type="date" value={startsAt} onChange={e => setStartsAt(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">End date</label>
-                <Input type="date" value={endsAt} onChange={e => setEndsAt(e.target.value)} />
-              </div>
+              <Field>
+                <FieldLabel htmlFor="sprint-starts">Start date</FieldLabel>
+                <Input id="sprint-starts" type="date" value={startsAt} onChange={e => setStartsAt(e.target.value)} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="sprint-ends">End date</FieldLabel>
+                <Input id="sprint-ends" type="date" value={endsAt} onChange={e => setEndsAt(e.target.value)} />
+              </Field>
             </div>
             {createMutation.error && (
-              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{createMutation.error.message}</p>
+              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
+                {friendlyErrorMessage(createMutation.error, 'The sprint could not be created.')}
+              </p>
             )}
           </div>
           <DialogFooter>

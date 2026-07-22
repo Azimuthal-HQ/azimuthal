@@ -4,6 +4,8 @@ import { Plus, Search, AlertCircle, GripVertical } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
+import { Field, FieldLabel } from '../../components/ui/field';
+import { SegmentedControl } from '../../components/ui/segmented';
 import {
   Dialog,
   DialogContent,
@@ -13,19 +15,27 @@ import {
   DialogFooter,
   DialogClose,
 } from '../../components/ui/dialog';
+import {
+  PRIORITY_SEGMENT_OPTIONS,
+  PRIORITY_TO_API,
+  PriorityPill,
+  normalizePriority,
+  type PriorityKey,
+} from '../../components/priority';
 import { cn } from '../../lib/utils';
-import { useProjectItems, useCreateProjectItem, useRankItem, useSpace, type ProjectItem } from '../../lib/api';
+import {
+  useProjectItems,
+  useCreateProjectItem,
+  useRankItem,
+  useSpace,
+  friendlyErrorMessage,
+  type ProjectItem,
+} from '../../lib/api';
 
 // ---------------------------------------------------------------------------
-// Badge helpers
+// Status vocabulary
 // ---------------------------------------------------------------------------
 
-const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
-  critical: 'danger', urgent: 'danger', high: 'warning', medium: 'secondary', low: 'outline',
-};
-const PRIORITY_LABEL: Record<string, string> = {
-  critical: 'Critical', urgent: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
-};
 // Audit ref: testing-audit.md §3.3 — keys aligned with the values the
 // backend actually returns from internal/core/projects/item.go
 // (default status is "open", not "todo").
@@ -71,7 +81,7 @@ export function BacklogPage() {
   // Modal state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formTitle, setFormTitle] = useState('');
-  const [formPriority, setFormPriority] = useState('medium');
+  const [formPriority, setFormPriority] = useState<PriorityKey>('medium');
   const [formKind, setFormKind] = useState('task');
   const [formDescription, setFormDescription] = useState('');
 
@@ -86,20 +96,17 @@ export function BacklogPage() {
     const title = formTitle.trim();
     if (!title) return;
 
-    const body = {
-      title,
-      description: formDescription.trim() || '',
-      kind: formKind,
-      priority: formPriority || 'medium',
-    };
-    console.log('[BacklogPage] Creating item:', JSON.stringify(body));
-
     try {
-      await createMutation.mutateAsync(body);
+      await createMutation.mutateAsync({
+        title,
+        description: formDescription.trim() || '',
+        kind: formKind,
+        priority: PRIORITY_TO_API[formPriority],
+      });
       setDialogOpen(false);
       resetForm();
-    } catch (err) {
-      console.error('[BacklogPage] Create item error:', err);
+    } catch {
+      // Surfaced below through friendlyErrorMessage.
     }
   }
 
@@ -142,7 +149,7 @@ export function BacklogPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+        <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
           Backlog
         </h1>
         <Button onClick={() => setDialogOpen(true)}>
@@ -168,10 +175,10 @@ export function BacklogPage() {
 
       {/* Error */}
       {error && (
-        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4">
           <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
           <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-            Failed to load items: {error.message}
+            {friendlyErrorMessage(error, 'Backlog items could not be loaded.')}
           </p>
         </div>
       )}
@@ -190,11 +197,11 @@ export function BacklogPage() {
             <table className="w-full text-left text-[var(--text-sm)]">
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
-                  <th className="w-8 px-2 py-3" />
-                  <th className="whitespace-nowrap px-4 py-3 font-medium text-[var(--color-text-muted)]">ID</th>
-                  <th className="px-4 py-3 font-medium text-[var(--color-text-muted)]">Title</th>
-                  <th className="px-4 py-3 font-medium text-[var(--color-text-muted)]">Priority</th>
-                  <th className="px-4 py-3 font-medium text-[var(--color-text-muted)]">Status</th>
+                  <th className="w-8 px-2 py-2.5" />
+                  <th className="whitespace-nowrap px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">ID</th>
+                  <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Title</th>
+                  <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Priority</th>
+                  <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -218,14 +225,14 @@ export function BacklogPage() {
                         <GripVertical className="h-4 w-4" />
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
-                        <Link to={itemPath} className="font-medium text-[var(--color-primary)] hover:underline" style={{ fontFamily: 'var(--font-mono)' }}>
+                        <Link to={itemPath} className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline" style={{ fontFamily: 'var(--font-mono)' }}>
                           {item.number ? `${space?.key ?? 'PROJ'}-${item.number}` : (item.id ?? '').slice(0, 8)}
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-[var(--color-text)]">
                         <Link to={itemPath} className="hover:underline">{item.title}</Link>
                       </td>
-                      <td className="px-4 py-3"><Badge variant={PRIORITY_VARIANT[String(item.priority).toLowerCase()] ?? 'secondary'}>{PRIORITY_LABEL[String(item.priority).toLowerCase()] ?? 'Medium'}</Badge></td>
+                      <td className="px-4 py-3"><PriorityPill priority={normalizePriority(item.priority)} /></td>
                       <td className="px-4 py-3"><Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>{STATUS_LABEL[item.status] ?? item.status}</Badge></td>
                     </tr>
                   );
@@ -252,22 +259,22 @@ export function BacklogPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <label htmlFor="item-title" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Title</label>
+          <div className="py-2">
+            <Field>
+              <FieldLabel htmlFor="item-title">Title</FieldLabel>
               <Input id="item-title" placeholder="e.g. Implement user registration flow" value={formTitle} onChange={(e) => setFormTitle(e.target.value)} autoFocus />
-            </div>
+            </Field>
 
-            <div className="space-y-2">
-              <label htmlFor="item-kind" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Type</label>
+            <Field>
+              <FieldLabel htmlFor="item-kind">Type</FieldLabel>
               <select
                 id="item-kind"
                 value={formKind}
                 onChange={(e) => setFormKind(e.target.value)}
                 className={cn(
-                  'flex h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                  'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+                  'flex h-9 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+                  'bg-[var(--color-input)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
+                  'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
                 )}
               >
                 <option value="task">Task</option>
@@ -275,42 +282,22 @@ export function BacklogPage() {
                 <option value="bug">Bug</option>
                 <option value="epic">Epic</option>
               </select>
-            </div>
+            </Field>
 
-            <div className="space-y-2">
-              <label id="item-priority-label" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Priority</label>
-              {/* One connected segmented control: shared border, joined corners,
-                  divider-separated options of equal width. */}
-              <div
-                role="radiogroup"
-                aria-labelledby="item-priority-label"
-                className="flex w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] divide-x divide-[var(--color-border)]"
-              >
-                {([['urgent', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']] as const).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={formPriority === value}
-                    onClick={() => setFormPriority(value)}
-                    className={cn(
-                      'min-w-16 flex-1 px-3 py-1.5 text-center text-[var(--text-sm)] transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]',
-                      formPriority === value
-                        ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-medium'
-                        : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]',
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <Field>
+              <FieldLabel id="item-priority-label">Priority</FieldLabel>
+              <SegmentedControl
+                options={PRIORITY_SEGMENT_OPTIONS}
+                value={formPriority}
+                onChange={setFormPriority}
+                aria-label="Priority"
+              />
+            </Field>
 
-            <div className="space-y-2">
-              <label htmlFor="item-desc" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                Description <span className="text-[var(--color-text-muted)] font-normal">(optional)</span>
-              </label>
+            <Field>
+              <FieldLabel htmlFor="item-desc" optional>
+                Description
+              </FieldLabel>
               <textarea
                 id="item-desc"
                 placeholder="What needs to be built and why"
@@ -318,13 +305,15 @@ export function BacklogPage() {
                 onChange={(e) => setFormDescription(e.target.value)}
                 rows={3}
                 className={cn(
-                  'flex w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] shadow-[var(--shadow-sm)] transition-colors placeholder:text-[var(--color-text-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-1 resize-y',
+                  'flex w-full resize-y rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] transition-colors placeholder:text-[var(--color-text-muted)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
                 )}
               />
-            </div>
+            </Field>
 
             {createMutation.error && (
-              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{createMutation.error.message}</p>
+              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
+                {friendlyErrorMessage(createMutation.error, 'The item could not be created.')}
+              </p>
             )}
           </div>
 
