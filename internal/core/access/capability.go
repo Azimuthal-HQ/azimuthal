@@ -70,6 +70,12 @@ const (
 	CapManageGrants      Capability = "manage_grants"
 	CapManageShares      Capability = "manage_shares"
 	CapManageWorkflow    Capability = "manage_workflow"
+
+	// CapSetVisibility governs changing a space's visibility. Deliberately
+	// absent from minRoleFor: no space role holds it — not even space_admin —
+	// because visibility changes what the whole organisation sees, an
+	// org-level concern. Only the org-admin bypass grants it.
+	CapSetVisibility Capability = "set_visibility"
 )
 
 // minRoleFor is the ADR-0007 capability table: the lowest role holding each

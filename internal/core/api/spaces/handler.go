@@ -676,7 +676,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // Update modifies an existing space.
 //
 // @Summary      Update space
-// @Description  Updates a space's name, description, icon, privacy, visibility, and owning team. Requires manage_space. Changing owner_team_id or visibility is audited.
+// @Description  Updates a space's name, description, icon, privacy, visibility, and owning team. Requires manage_space; changing visibility additionally requires set_visibility, held only by org admins. Changing owner_team_id or visibility is audited.
 // @Tags         spaces
 // @Accept       json
 // @Produce      json
@@ -687,7 +687,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // @Success      200      {object}  map[string]interface{}           "Updated space"
 // @Failure      400      {object}  api.SwaggerErrorResponse         "Validation error"
 // @Failure      401      {object}  api.SwaggerErrorResponse         "Not authenticated"
-// @Failure      403      {object}  api.SwaggerErrorResponse         "manage_space required"
+// @Failure      403      {object}  api.SwaggerErrorResponse         "manage_space required; or set_visibility (org admin) for a visibility change"
 // @Failure      404      {object}  api.SwaggerErrorResponse         "Not found"
 // @Failure      500      {object}  api.SwaggerErrorResponse         "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID} [put]
@@ -712,6 +712,16 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	current, err := h.queries.GetSpaceByID(r.Context(), id)
 	if err != nil {
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "space not found")
+		return
+	}
+
+	// Visibility is an org-level concern: changing it needs set_visibility,
+	// which no space role holds — org admins only. Checked before any field
+	// is written so a denied request applies nothing. An unchanged value is
+	// not a change and passes through as a no-op.
+	if req.Visibility != "" && req.Visibility != current.Visibility &&
+		!access.Can(r.Context(), access.CapSetVisibility, id) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "set_visibility required")
 		return
 	}
 	key := req.Key

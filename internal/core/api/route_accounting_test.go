@@ -124,7 +124,7 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/spaces/":                              "org-member: directory, filtered against the readable set in-handler",
 	"POST /api/v1/orgs/{orgID}/spaces/":                             "org-member: authority checked in-handler (org admin or lead of owning team)",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/":                    "space-read",
-	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/":                    "space-cap: manage_space",
+	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/":                    "space-cap: manage_space; visibility changes additionally set_visibility (org admin only)",
 	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/":                 "space-cap: manage_space",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/summary":             "space-cap: manage_space — delete-confirmation contents counts",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/members":             "space-read",

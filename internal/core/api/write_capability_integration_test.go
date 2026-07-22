@@ -254,6 +254,63 @@ func TestWriteCapability_ProjectItemOwnership(t *testing.T) {
 	require.Equal(t, http.StatusOK, r.StatusCode, "agent edits contributor item: %s", r.Body)
 }
 
+// TestWriteCapability_VisibilityOrgAdminOnly: changing a space's visibility
+// requires set_visibility, which no space role holds — space_admin included.
+// The rest of the space update stays manage_space, so the fixture proves the
+// premise (the space_admin can rename) before proving the denial (the same
+// caller's visibility change dies with a positive 403 and applies nothing).
+// Matrix rows per §2.5: space admin denied, org admin permitted.
+func TestWriteCapability_VisibilityOrgAdminOnly(t *testing.T) {
+	f := newWriteCapFixture(t)
+	spaceUUID := uuid.MustParse(f.spaceID)
+
+	sa := testutil.CreateTestUserWithRole(t, f.ts.DB.Pool, f.ts.OrgID, "member")
+	_, err := f.ts.GrantService.Create(context.Background(), f.ts.OrgID, spaceUUID,
+		access.SubjectUser, sa.ID, access.RoleSpaceAdmin, f.ts.UserID)
+	require.NoError(t, err)
+	saTok := f.ts.tokenFor(t, sa.ID, sa.Email)
+
+	path := f.spacePath("")
+	getSpace := func() (name, visibility string) {
+		r := f.requestAs(t, saTok, http.MethodGet, path, nil)
+		require.Equal(t, http.StatusOK, r.StatusCode, "read space: %s", r.Body)
+		var s struct {
+			Name       string `json:"name"`
+			Visibility string `json:"visibility"`
+		}
+		require.NoError(t, json.Unmarshal(r.Body, &s))
+		return s.Name, s.Visibility
+	}
+
+	_, visibility := getSpace()
+	require.Equal(t, access.VisibilityDiscoverable, visibility, "fixture default")
+
+	// Premise: manage_space is intact for the space_admin — a rename with no
+	// visibility field succeeds…
+	r := f.requestAs(t, saTok, http.MethodPut, path, map[string]string{"name": "Renamed By SA"})
+	require.Equal(t, http.StatusOK, r.StatusCode, "space_admin renames: %s", r.Body)
+
+	// …and echoing the current visibility is a no-op, not a change.
+	r = f.requestAs(t, saTok, http.MethodPut, path,
+		map[string]string{"name": "Renamed By SA", "visibility": access.VisibilityDiscoverable})
+	require.Equal(t, http.StatusOK, r.StatusCode, "unchanged visibility must pass: %s", r.Body)
+
+	// The denial: an actual visibility change from the space_admin is 403…
+	requireAPIForbidden(t, f.requestAs(t, saTok, http.MethodPut, path,
+		map[string]string{"name": "Sneaky Rename", "visibility": access.VisibilityOrg}))
+
+	// …and applies nothing — the piggybacked rename must not land either.
+	name, visibility := getSpace()
+	require.Equal(t, "Renamed By SA", name, "denied update must write no fields")
+	require.Equal(t, access.VisibilityDiscoverable, visibility, "denied update must not change visibility")
+
+	// Org admin holds set_visibility via the bypass; the change persists.
+	r = f.ts.put(t, path, map[string]string{"name": "Renamed By SA", "visibility": access.VisibilityOrg}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "org admin changes visibility: %s", r.Body)
+	_, visibility = getSpace()
+	require.Equal(t, access.VisibilityOrg, visibility)
+}
+
 // TestWriteCapability_Comments: commenting needs the comment capability
 // (contributor and above); a viewer's attempt dies with a positive 403.
 func TestWriteCapability_Comments(t *testing.T) {

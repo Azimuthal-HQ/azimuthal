@@ -153,8 +153,13 @@ func (res *Resolution) RoleOn(spaceID uuid.UUID) Role {
 }
 
 // Can reports whether the caller holds the capability on the space. Org
-// admins hold every capability on every org space via the bypass.
+// admins hold every capability on every org space via the bypass — including
+// org-only capabilities (set_visibility) that no space role grants, which is
+// why the bypass answers directly instead of routing through RoleSpaceAdmin.
 func (res *Resolution) Can(c Capability, spaceID uuid.UUID) bool {
+	if res.IsOrgAdmin {
+		return res.CanReadSpace(spaceID)
+	}
 	return res.RoleOn(spaceID).Grants(c)
 }
 
