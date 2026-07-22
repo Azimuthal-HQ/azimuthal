@@ -475,7 +475,7 @@ that the repository has since falsified.
 | D42 | #15 "blocked by `item_relations` FK to `items`" | **False, and already false when written.** Migration 015 dropped both FKs, added `from_type`/`to_type`, and renamed the table to `entity_relations`. Only the ticket *endpoints* are missing | Root cause corrected; deferral instruction withdrawn |
 | D43 | #9 and #10 cite `docs/project-state.md` as a live reference | The file is `.gitignore`d as "private repo only — never push to public", so it is unreachable from this repository by design — not merely absent | References annotated as dead links |
 
-#### D44 — `CLAUDE.md` has never existed because it is `.gitignore`d — **FLAGGED, NOT RESOLVED**
+#### D44 — `CLAUDE.md` has never existed because it is `.gitignore`d — **RESOLVED BY MAINTAINER DECISION**
 
 - **Every phase prompt since P0** has opened with "read `CLAUDE.md`". P1.5 recorded its absence as
   an observation ("stale copies exist only on old worktrees/deleted branches") without finding the
@@ -488,22 +488,27 @@ that the repository has since falsified.
   silently skips it. Every agent that has been told to read it has been reading nothing, and every
   phase has therefore run on prompt-embedded rules alone — which is exactly the failure mode W5
   was meant to end.
-- **Why this is not resolved here:** un-ignoring it would reverse a recorded decision that this
-  path is private-repo-only, and would push to a public repository a file the repository
-  explicitly marks "never push to public". That is a decision, not a fact, and it belongs to the
-  maintainer.
+- **Why this needed a decision:** un-ignoring it reverses a recorded decision that this path is
+  private-repo-only, and publishes to a public repository a file the repository explicitly marked
+  "never push to public". That is a decision, not a fact, so it was raised rather than taken
+  unilaterally.
+- **Decision taken:** the maintainer authorised removing `CLAUDE.md` from `.gitignore`. The line is
+  removed, the reason is recorded in place in `.gitignore`, and the file is committed. The rest of
+  the private-only block is untouched.
+- **Side effect worth knowing:** because `.gitignore` is neither under `docs/` nor a `*.md` file,
+  this PR is **not** classified docs-only, so the full CI pipeline runs rather than cascade-skipping.
 - **Also explains D43:** `docs/project-state.md` is in the same block. The references to it from
   `known-issues.md` and from `internal/core/api/known_issues_test.go` are not sloppy — they point
   at a document that exists only in the private mirror.
-- **What was prepared:** a complete `CLAUDE.md`, assembled only from settled public material
-  (spec §2 and §10, the autonomy envelope, the real verification battery), audited to contain no
-  secret and no unfixed-vulnerability detail, and therefore safe to publish **if** the maintainer
-  decides this path should no longer be private. It is not committed.
+- **What shipped:** a complete `CLAUDE.md`, assembled only from settled public material (spec §2
+  and §10, the autonomy envelope, the real verification battery), audited to contain no secret and
+  no unfixed-vulnerability detail. It must stay that way — it is now a public file.
 
 **Total discrepancies found in this pass: 34** (D11–D44), spanning §4, §5, §9, Appendix B, the ADR
-index, `known-issues.md` and `.gitignore`. Three of them — **D27** (version collision), **D33**
-(§10 vs the autonomy envelope) and **D44** (`CLAUDE.md` is gitignored) — are **flagged and
-deliberately unresolved**, because resolving any of them would change a decision.
+index, `known-issues.md` and `.gitignore`. Two of them — **D27** (version collision) and **D33**
+(§10 vs the autonomy envelope) — are **flagged and deliberately unresolved**, because resolving
+either would change a decision. A third, **D44**, was raised for the same reason and resolved by an
+explicit maintainer decision recorded above.
 
 Cumulative across both passes: **44** (P1.5's D1–D10 plus these).
 

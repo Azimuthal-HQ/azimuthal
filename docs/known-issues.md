@@ -170,10 +170,9 @@ The permanent fix landed (see below), and both successor tables carry the defaul
 The broader gap is closed by the real-PostgreSQL integration suite under `internal/core/api/`
 and by CI running real Postgres and MinIO containers with migrations applied before tests.
 
-The mitigation clause below pointed at "CLAUDE.md Testing Requirements". `CLAUDE.md` is listed
-in `.gitignore` under "private repo only — never push to public", so it has never been reachable
-from this repository — see the note in `spec-repo-reconciliation.md` (D44). The governing rules
-are spec section 2 regardless.
+The mitigation clause below pointed at "CLAUDE.md Testing Requirements" when `CLAUDE.md` was
+`.gitignore`d and therefore could not exist — see `spec-repo-reconciliation.md` D44. It exists at
+the repository root as of this pass, and the governing rules are spec section 2.
 
 Agent tests use `go test ./...` which does not catch database constraint
 violations that only surface when inserting real rows with missing fields.
