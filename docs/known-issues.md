@@ -323,3 +323,5 @@ are planned and the deploy topology is already documented for them.
 **Proper fix**: construct an `S3Store`, call `EnsureBucket` on startup, and
 pass it to the handlers that need it, behind a failing test that uploads and
 retrieves an object end-to-end.
+
+<!-- CI probe: verifying docs-only path detection; branch is throwaway and never merged -->
