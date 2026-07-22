@@ -363,13 +363,17 @@ func TestSpaceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSpace codex twin with shared slug: %v", err)
 	}
-	t.Cleanup(func() {
-		// Hard-delete, not soft: a soft-deleted twin still holds its
-		// (org, type, slug) pair, and a committed cross-module duplicate in
-		// this shared schema would trip migration 028's designed
-		// down-migration refusal when TestMigrateDown rolls it back.
-		_, _ = pool.Exec(ctx, "DELETE FROM spaces WHERE id = $1", twin.ID)
-	})
+	// Hard-delete, not soft: a soft-deleted twin still holds its (org, type,
+	// slug) pair, and a committed cross-module duplicate in this shared
+	// schema would trip migration 028's designed down-migration refusal when
+	// TestMigrateDown rolls it back. A defer, not t.Cleanup: the deferred
+	// testPool cleanup closes the pool before t.Cleanup callbacks run, so a
+	// t.Cleanup here silently no-ops on a closed pool.
+	defer func() {
+		if _, err := pool.Exec(ctx, "DELETE FROM spaces WHERE id = $1", twin.ID); err != nil {
+			t.Errorf("hard-deleting codex twin: %v", err)
+		}
+	}()
 
 	gotTwin, err := q.GetSpaceBySlug(ctx, generated.GetSpaceBySlugParams{
 		OrgID: org.ID,
