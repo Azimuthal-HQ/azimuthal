@@ -8,6 +8,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { Field, FieldLabel } from '../../components/ui/field';
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,7 @@ import {
 } from '../../components/ui/dialog';
 import { cn } from '../../lib/utils';
 import {
+  friendlyErrorMessage,
   useWikiPages,
   useWikiPage,
   useCreateWikiPage,
@@ -72,7 +74,7 @@ function WikiSidebar({ pages, activeId, onSelect, spaceId }: SidebarProps) {
           value={search}
           onChange={e => handleSearchChange(e.target.value)}
           placeholder="Search pages…"
-          className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-hover)] py-1.5 pl-8 pr-3 text-[var(--text-sm)] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+          className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] py-1.5 pl-8 pr-3 text-[var(--text-sm)] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
         />
       </div>
       <div className="flex-1 overflow-y-auto space-y-0.5">
@@ -322,7 +324,7 @@ export function WikiPage() {
       setEditMode(false);
       releaseLock.mutate();
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : 'Save failed');
+      setEditError(friendlyErrorMessage(err, 'The page could not be saved.'));
     }
   }
 
@@ -339,8 +341,8 @@ export function WikiPage() {
       setDialogOpen(false);
       setFormTitle('');
       setFormParentId('');
-    } catch (err) {
-      console.error('[WikiPage] Create page error:', err);
+    } catch {
+      // Surfaced in the dialog through friendlyErrorMessage.
     }
   }
 
@@ -360,10 +362,10 @@ export function WikiPage() {
 
   if (error) {
     return (
-      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4">
         <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
         <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-          Failed to load wiki: {error.message}
+          {friendlyErrorMessage(error, 'The wiki could not be loaded.')}
         </p>
       </div>
     );
@@ -506,8 +508,11 @@ export function WikiPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="mb-4">
-                      <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+                    {/* Reading surface: a bounded measure — full-width prose
+                        is unreadable past ~75ch. */}
+                    <div className="mx-auto w-full max-w-[76ch]">
+                    <div className="mb-5">
+                      <h1 className="text-[21px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]">
                         {activePage.title}
                       </h1>
                       <p className="mt-1 text-[var(--text-sm)] text-[var(--color-text-muted)]">
@@ -521,11 +526,13 @@ export function WikiPage() {
                     {activePage.content ? (
                       <article
                         className={cn(
-                          'prose max-w-none',
-                          'prose-headings:text-[var(--color-text)] prose-p:text-[var(--color-text)]',
+                          'prose prose-sm max-w-none leading-[1.7]',
+                          'prose-headings:text-[var(--color-text)] prose-headings:font-semibold prose-headings:tracking-[-.01em]',
+                          'prose-h1:text-[19px] prose-h2:text-[16px] prose-h3:text-[14px]',
+                          'prose-p:text-[var(--color-text)]',
                           'prose-a:text-[var(--color-primary)] prose-strong:text-[var(--color-text)]',
-                          'prose-code:text-[var(--color-primary)] prose-code:bg-[var(--color-surface-hover)] prose-code:rounded prose-code:px-1',
-                          'prose-pre:bg-[var(--color-surface)] prose-pre:border prose-pre:border-[var(--color-border)]',
+                          'prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5',
+                          'prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]',
                           'prose-th:text-[var(--color-text-muted)] prose-td:text-[var(--color-text)]',
                           'prose-li:text-[var(--color-text)]',
                           'dark:prose-invert',
@@ -600,20 +607,21 @@ export function WikiPage() {
                             onChange={(e) => setNewComment(e.target.value)}
                             placeholder="Add a comment..."
                             className={cn(
-                              'w-full resize-none rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
-                              'placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+                              'w-full resize-none rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
+                              'placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]',
                             )}
                             rows={3}
                           />
                           <button
                             onClick={handleAddComment}
                             disabled={!newComment.trim() || createCommentMutation.isPending}
-                            className="mt-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] px-4 py-1.5 text-[var(--text-sm)] font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
+                            className="mt-2 rounded-[var(--radius-lg)] bg-[var(--color-primary)] px-4 py-1.5 text-[var(--text-sm)] font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
                           >
                             {createCommentMutation.isPending ? 'Posting…' : 'Comment'}
                           </button>
                         </div>
                       </div>
+                    </div>
                     </div>
                   </>
                 )}
@@ -646,9 +654,9 @@ export function WikiPage() {
             <DialogTitle>New Page</DialogTitle>
             <DialogDescription>Create a new wiki page.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <label htmlFor="page-title" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Title</label>
+          <div className="py-2">
+            <Field>
+              <FieldLabel htmlFor="page-title">Title</FieldLabel>
               <Input
                 id="page-title"
                 placeholder="e.g. Getting Started Guide"
@@ -656,23 +664,25 @@ export function WikiPage() {
                 onChange={(e) => setFormTitle(e.target.value)}
                 autoFocus
               />
-            </div>
-            <div className="space-y-2">
-              <label htmlFor="page-parent" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Parent page</label>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="page-parent" optional>Parent page</FieldLabel>
               <select
                 id="page-parent"
                 value={formParentId}
                 onChange={(e) => setFormParentId(e.target.value)}
-                className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
               >
                 <option value="">None (top level)</option>
                 {pages.map((p) => (
                   <option key={p.id} value={p.id}>{p.title}</option>
                 ))}
               </select>
-            </div>
+            </Field>
             {createMutation.error && (
-              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{createMutation.error.message}</p>
+              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
+                {friendlyErrorMessage(createMutation.error, 'The page could not be created.')}
+              </p>
             )}
           </div>
           <DialogFooter>
