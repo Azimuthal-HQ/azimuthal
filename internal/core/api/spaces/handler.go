@@ -715,13 +715,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Visibility is an org-level concern: changing it needs set_visibility,
-	// which no space role holds — org admins only. Checked before any field
-	// is written so a denied request applies nothing. An unchanged value is
-	// not a change and passes through as a no-op.
-	if req.Visibility != "" && req.Visibility != current.Visibility &&
-		!access.Can(r.Context(), access.CapSetVisibility, id) {
-		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "set_visibility required")
+	// Checked before any field is written so a denied request applies nothing.
+	if !requireVisibilityAuthority(w, r, current, req.Visibility) {
 		return
 	}
 	key := req.Key
@@ -775,6 +770,21 @@ func decodeSpaceUpdate(w http.ResponseWriter, r *http.Request) (updateSpaceReque
 		return req, false
 	}
 	return req, true
+}
+
+// requireVisibilityAuthority enforces set_visibility when the update asks for
+// an actual visibility change, writing the 403 itself. Visibility is an
+// org-level concern: the capability is held only by the org-admin bypass, not
+// by space_admin. An empty or unchanged value is not a change and passes.
+func requireVisibilityAuthority(w http.ResponseWriter, r *http.Request, current generated.Space, requested string) bool {
+	if requested == "" || requested == current.Visibility {
+		return true
+	}
+	if !access.Can(r.Context(), access.CapSetVisibility, current.ID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "set_visibility required")
+		return false
+	}
+	return true
 }
 
 // applyVisibilityChange persists a requested visibility change and writes
