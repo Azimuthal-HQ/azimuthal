@@ -2,6 +2,8 @@
 
 Documented by Agent 2E (Integration Validator) after validating Phases 0-2.
 Updated by test/backend-coverage branch with test references.
+Reviewed against the repository after P3 (post-P3 reconciliation): entries resolved by P1-P3
+struck, stale premises corrected. No new entries were added in that pass.
 
 ---
 
@@ -74,10 +76,19 @@ The domain services (auth, tickets, projects) define repository interfaces using
 
 ---
 
-## 2. Test Coverage Below 60% Floor (47.1%) — IMPROVED
+## 2. ~~Test Coverage Below 60% Floor (47.1%)~~ (RESOLVED)
 
 **Severity**: Medium
-**Status**: Improved to 82.4% (cross-package) / 59.2% (per-package) with integration tests
+**Status**: Resolved — the CI floor is now 80%, enforced, and met
+
+The 60% floor this entry describes no longer exists. P1.5 raised the CI gate from 70 to the 80
+the specification requires, and P3 merged at 80.2%. The gate is the "Enforce minimum coverage
+(80%)" step in `.github/workflows/ci.yml`, run with `-coverpkg=./internal/...` and `-p 1`. It
+rises to 85% at the end of P5 per spec section 2.8. The detail below is retained only as a record
+of where the v0.1.x line started; `internal/db` and `cmd/server` are now exercised by the
+integration suites.
+
+<details><summary>Original entry</summary>
 
 Overall statement coverage was 47.1%. After adding integration tests (test/backend-coverage branch), cross-package coverage is 82.4% using `-coverpkg=./internal/...`. Previously-lowest-coverage packages:
 
@@ -94,14 +105,23 @@ Overall statement coverage was 47.1%. After adding integration tests (test/backe
 
 The DB and generated packages are integration-test only (require real Postgres). API handler sub-packages have partial test coverage.
 
+</details>
+
 ---
 
-## 3. Race Detector Requires CGO (Windows CI)
+## 3. ~~Race Detector Requires CGO (Windows CI)~~ (RESOLVED as an issue; retained as an environment fact)
 
 **Severity**: Low
-**Status**: Environment constraint
+**Status**: Resolved — CI runs `-race` with a C toolchain installed
 
-`go test -race ./...` requires `CGO_ENABLED=1` and a C compiler (GCC). On Windows without GCC installed, race detection cannot run locally. The CI pipeline (Linux-based) should handle this. Ensure the CI runner has GCC available.
+The action this entry asked for is done. `.github/workflows/ci.yml` has an "Install C build tools
+(required for -race detector)" step and runs `go test -race` with `CGO_ENABLED=1`, so race
+coverage is real on every code PR.
+
+The underlying environment fact is unchanged and is not a defect: `-race` still cannot run on a
+Windows box without GCC, so `make test` and `make test-live` fail there on the toolchain rather
+than on your change. That is documented as a standing environment fact in `CLAUDE.md` rather than
+tracked here. Do not "fix" it by removing `-race` from the Makefile.
 
 ---
 
@@ -116,6 +136,11 @@ The following tables lack `deleted_at` columns:
 - `sprints` — sprint history could be useful for reporting
 
 These may be intentional design choices (ephemeral data), but should be reviewed before GA.
+
+**Still open**, confirmed against migrations 001-028: none of the three has gained a `deleted_at`.
+One clarification — `space_members` still exists but is no longer an access-control table. Space
+access moved to `space_grants` in migration 023; the remaining `space_members` endpoints are
+explicitly legacy metadata.
 
 ---
 
@@ -135,10 +160,19 @@ All API routes (auth, tickets, wiki, projects, spaces) are served alongside heal
 
 ---
 
-## 6. Testing Gap — Real Database Integration Tests
+## 6. ~~Testing Gap — Real Database Integration Tests~~ (RESOLVED)
 
 **Discovered:** v0.1.4 testing
-**Status:** Partially mitigated — see CLAUDE.md Testing Requirements
+**Status:** Resolved — permanent fix shipped, and the gap is closed by the integration suite
+
+The permanent fix landed (see below), and both successor tables carry the default inline:
+`tickets.labels` and `project_items.labels` are `TEXT[] NOT NULL DEFAULT '{}'` (migration 014).
+The broader gap is closed by the real-PostgreSQL integration suite under `internal/core/api/`
+and by CI running real Postgres and MinIO containers with migrations applied before tests.
+
+The mitigation clause below pointed at "CLAUDE.md Testing Requirements" when `CLAUDE.md` was
+`.gitignore`d and therefore could not exist — see `spec-repo-reconciliation.md` D44. It exists at
+the repository root as of this pass, and the governing rules are spec section 2.
 
 Agent tests use `go test ./...` which does not catch database constraint
 violations that only surface when inserting real rows with missing fields.
@@ -193,29 +227,46 @@ middleware is only used when the allow-list is `nil` (non-production defaults).
 
 ---
 
-## 9. Audit Logger Discards All Events
+## 9. ~~Audit Logger Discards All Events~~ (RESOLVED)
 
 **Severity**: Low
-**Status**: Open — documented with skipped test
+**Status**: Resolved — `audit.NewDBLogger` persists events; wired in production
 
-The default audit logger implementation silently discards all events.
-`IsAvailable()` returns false. No events are persisted to the database.
+`internal/core/audit/db_logger.go` writes events to `audit_log` via the `CreateAuditEvent`
+query, and `IsAvailable()` returns true. It is constructed in `cmd/server/main.go` and threaded
+into the handlers. The no-op `defaultLogger` still exists in the package but is not what the
+server uses. P2, P2.5 and P3 all write real audit events through it.
 
-**Test**: `internal/core/api/known_issues_test.go` — `TestAuditLog_PersistsEvents` (skipped)
-**See also**: `docs/project-state.md` Section 3 — Audit Logging
+**Tests**: `internal/core/audit/db_logger_integration_test.go` (six cases, real Postgres) and
+`internal/core/api/audit_events_integration_test.go`.
+
+**Note on the old references**: `TestAuditLog_PersistsEvents` in
+`internal/core/api/known_issues_test.go` is *not* a skipped test — it is an empty function that
+asserts nothing and passes unconditionally. It is a placeholder, not coverage. The referenced
+`docs/project-state.md` is not missing by accident — `.gitignore` lists it under "private repo
+only — never push to public", so it is unreachable from this repository by design. Treat it as a
+dead link here.
 
 ---
 
-## 10. Profile Update Endpoint Missing
+## 10. ~~Profile Update Endpoint Missing~~ (RESOLVED)
 
 **Severity**: Low
-**Status**: Open — documented with skipped test
+**Status**: Resolved — `PATCH /api/v1/auth/me`
 
-The frontend profile form exists but the Save button is not connected to any
-API endpoint. There is no `PUT /api/v1/me` or `PATCH /api/v1/me` endpoint.
+The endpoint exists and is wired end to end: route in `internal/core/api/router.go`, handler
+`Handler.UpdateMe` in `internal/core/api/auth/handler.go`, service `UserService.UpdateProfile`,
+persistence `UserAdapter.UpdateProfile`. It is classified `user-scoped` in the route accounting
+table.
 
-**Test**: `internal/core/api/known_issues_test.go` — `TestProfileUpdate_SavesChanges` (skipped)
-**See also**: `docs/project-state.md` Section 3 — Profile Settings Save
+It landed at `PATCH /api/v1/auth/me`, not the `PUT/PATCH /api/v1/me` this entry anticipated.
+
+**Tests**: `TestIntegration_Auth_UpdateMe`, `TestUserService_UpdateProfile`,
+`TestUserService_UpdateProfile_NotFound`, `TestUserAdapter_UpdateProfile`.
+
+**Note on the old references**: `TestProfileUpdate_SavesChanges` is an empty placeholder that
+asserts nothing, not a skipped test. The referenced `docs/project-state.md` is private-repo-only
+per `.gitignore` and is unreachable from here.
 
 ---
 
@@ -232,7 +283,7 @@ does not map postgres unique constraint violations to `auth.ErrEmailTaken`.
 
 ---
 
-## 12. Goose Migration Mutex Required for Parallel Tests
+## 12. ~~Goose Migration Mutex Required for Parallel Tests~~ (RESOLVED)
 
 **Severity**: Low
 **Status**: Fixed in test/backend-coverage branch
@@ -245,29 +296,31 @@ table names race and cause `SQLSTATE 42P01` or `SQLSTATE 23505` errors.
 
 ---
 
-## 13. Smoke Test login_user Failure (Pre-existing)
+## 13. ~~Smoke Test login_user Failure (Pre-existing)~~ (RESOLVED)
 
 **Severity**: Medium
-**Status**: Open — pre-existing on main branch
+**Status**: Resolved — the subtest mints a unique address
 
-`cmd/server/smoke_test.go` `TestSmoke/login_user` fails because it registers
-two users with the same email. The second registration returns 500 (due to
-issue #11 above), causing the login step to fail.
+`cmd/server/smoke_test.go` `TestSmoke/login_user` now registers
+`smoke-login-<nanos>@test.local`, expects 201, then logs in expecting 200. It no longer collides
+with a previously registered address and no longer depends on issue #11's behaviour.
 
 **Test**: `cmd/server/smoke_test.go` — `TestSmoke/login_user`
 
 ---
 
-## 14. Labels: Two Parallel Label Stores (P2.9 — Deferred to P5)
+## 14. Labels: Two Parallel Label Stores (deferral target stale — see below)
 
 **Severity**: Medium
 **Status**: Documented — fix deferred to Phase 5 (Items Table Split)
 
 Two label mechanisms exist in parallel and are not linked:
 
-1. `items.labels TEXT[]` — a text array column on the `items` table. Project
-   items store their labels here as plain strings. The frontend reads and
-   writes this array directly.
+1. A `labels TEXT[]` array column. **The premise has shifted**: `items` was renamed to
+   `items_archive` by migration 015, and the live columns are now `tickets.labels` and
+   `project_items.labels` (both `TEXT[] NOT NULL DEFAULT '{}'`, migration 014). So there are
+   two array columns plus the table, not one. Items store labels here as plain strings and the
+   frontend reads and writes the array directly.
 
 2. `labels(id, org_id, name, color)` table — a proper labels admin table with
    color/grouping support. Accessible at `GET /orgs/{orgID}/labels`. Not
@@ -280,34 +333,69 @@ There is no way to query "all items with label X" efficiently.
 **Root cause**: The design was split across two PRs during Phase 0/1 with
 conflicting approaches. Neither was backed out before shipping.
 
-**Proper fix**: Migrate `items.labels TEXT[]` to a join table
-`item_labels(item_id, label_id)` referencing the `labels` table. This is
-in scope for Phase 5 (Items Table Split) where the items schema is being
-restructured anyway.
+**Proper fix**: Migrate the array columns to a join table referencing the `labels` table.
 
-**Do not fix in P2 or P3.** Document only.
+**Still open.** No `item_labels` join table exists in migrations 001-028. Note that the "Items
+Table Split" this entry defers to has partly already happened — migration 014 created `tickets`
+and `project_items` — so the scheduling assumption below is stale and is a maintainer's call, not
+a documented plan.
+
+**Not fixed in P2, P2.5 or P3.** Document only.
 
 ---
 
-## Issue 15 — Ticket relations blocked by schema FK constraint
+## Issue 15 — Ticket relations not implemented (the recorded FK blocker no longer exists)
 
 **Phase discovered**: P3  
 **Status**: Deferred to P5 (Items Table Split)
 
 **Symptom**: The P3 spec intended to add `GET/POST /tickets/{id}/relations` and `DELETE /relations/{id}` endpoints for service desk tickets, reusing the existing `item_relations` table and `RelationService`.
 
-**Root cause**: `item_relations.from_id` and `item_relations.to_id` both carry `REFERENCES items(id)` foreign keys. Ticket IDs live in the `tickets` table, not `items`. Inserting a ticket ID as `from_id` violates the FK constraint at the database level. Adding ticket relations without a schema change is not possible.
+**Root cause as originally recorded**: `item_relations.from_id` / `to_id` carry
+`REFERENCES items(id)` foreign keys, so a ticket ID cannot be inserted.
 
-**Proper fix**: P5 (Items Table Split) makes `item_relations` polymorphic — `entity_type TEXT + entity_id UUID` with no FK, or a union FK pattern. Once P5 lands, ticket relations can be added with a single handler and no migration.
+**That root cause is no longer true, and was already untrue when this entry was written.**
+Migration 015 — which predates this entry — dropped both foreign keys, added `from_type` /
+`to_type` with a CHECK over `('ticket', 'project_item', 'page')`, renamed the table to
+`entity_relations`, and added polymorphic indexes. The schema change this entry defers to has
+already shipped.
 
-**Do not fix before P5.**
+**What is actually missing**: the endpoints. Relations routes exist only for project items
+(`GET/POST /items/{itemID}/relations`, `DELETE /relations/{relationID}` in the projects handler);
+the tickets handler has no relations routes. On the current schema this appears to need handler
+work and no migration.
+
+**Still open**, but the blocker recorded above is not the reason. Whether and when to build it is
+a maintainer's decision — this entry no longer supports the "do not fix before P5" instruction it
+originally carried.
 
 ---
 
-## 16. Object Storage Service Not Yet Wired (attachments/uploads)
+## 16. ~~Object Storage Service Not Yet Wired (attachments/uploads)~~ (RESOLVED)
 
 **Severity**: Low
-**Status**: Open — future feature scope
+**Status**: Resolved in P3 — `attachments` (migration 027) is the first production consumer
+
+P3 wired it. `cmd/server/main.go` constructs an `S3Store`, calls `EnsureBucket` on startup, and
+passes it into the attachments handler — degrading gracefully to a disabled feature rather than
+failing boot if the store is unavailable. Migration 027 created the `attachments` table, and the
+API serves list, upload, download and delete under `/spaces/{spaceID}/attachments`, plus a
+share-authorised read path under `/shared/...`.
+
+This was forced by ADR-0008 rule 3: a page shared org-wide must render its images for a viewer
+with no space access. The object key is derived from the row rather than accepted from the
+client, so the shared read path cannot be used to fetch arbitrary keys — there is a test for
+exactly that.
+
+**Tests**: `internal/core/api/entity_attachments_integration_test.go`, including
+`TestAttachment_SharedPageLoadsForViewerWithoutSpaceAccess` and
+`TestAttachment_CannotReadArbitraryKeys`. CI runs MinIO for these.
+
+**Scope note**: frontend support is currently read-only and limited to the shared-entity view;
+there is no in-app upload UI on ticket, wiki or project pages. The backend issue this entry
+tracked is closed.
+
+<details><summary>Original entry</summary>
 
 `build/docker-compose.yml` brings up a MinIO `storage` service and the app
 accepts `STORAGE_*` env vars, but the running server does not yet wire an
@@ -323,3 +411,5 @@ are planned and the deploy topology is already documented for them.
 **Proper fix**: construct an `S3Store`, call `EnsureBucket` on startup, and
 pass it to the handlers that need it, behind a failing test that uploads and
 retrieves an object end-to-end.
+
+</details>

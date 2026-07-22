@@ -51,8 +51,15 @@ cmd/server/data/
 .claude/
 
 # CI progress tracking (private repo only — never push to public)
+#
+# CLAUDE.md was removed from this list in the post-P3 reconciliation, by
+# maintainer decision. It had been ignored here since the private/public split,
+# which is why the file never existed despite every phase prompt since P0
+# opening with "read CLAUDE.md" — git silently skipped it on every `git add`.
+# The committed CLAUDE.md is assembled only from material that is already
+# public (spec §2 and §10, the Makefile, ci.yml) and carries no secret and no
+# unfixed-vulnerability detail. Keep it that way: it is a public file.
 github-actions-progress/.gitleaks.toml
-CLAUDE.md
 docs/agent-briefs.md
 docs/github-setup-checklist.md
 docs/project-state.md

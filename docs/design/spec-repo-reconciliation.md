@@ -196,3 +196,448 @@ repository wins and the spec gets corrected in the same PR that discovers it —
 entry appended here. When the disagreement would change a **decision** (ADRs, capability
 model, §2, §10), stop and raise it instead. That is this spec's own §0 conflict rule; P1.5
 merely applied it wholesale.
+
+---
+---
+
+# Spec ↔ repository reconciliation — post-P3
+
+**Date:** 2026-07-21
+**Scope:** `docs/design/v0.3-ia-spec.md` re-verified against the repository at `92f60e1`
+(after P3 / PR #56, the security and docs-CI fix / #58, the ADR directory / #57, and the space
+slug fix / #60). Also covers `docs/known-issues.md` and the ADR index.
+**Method:** unchanged from P1.5 — every migration number, table, column, constraint name, index
+name, identifier, route, test name and tag asserted about an **existing** structure was checked
+against `migrations/`, `internal/`, `web/src/`, `web/e2e/`, `Makefile`, `.github/workflows/ci.yml`
+and `git` itself. Sketches for future structures were checked for their claims about existing
+objects they touch.
+
+**Why this second pass exists.** P1.5 reconciled the spec and was correct on the day it merged.
+The spec drifted again within two days, and for a structural reason worth naming: **the spec's
+§4 migration table is written as a plan but read as a record.** Two unplanned phases (P1.5, P2.5)
+shipped, one of them taking migration numbers this document had already promised to P3 and P4.
+Everything downstream shifted.
+
+The rule from P1.5 applies here unchanged. Facts are corrected. Decisions are not. Where reality
+and the plan disagree about the **future**, the disagreement is recorded and flagged — see D27
+and D33, both deliberately left unresolved.
+
+---
+
+## 1. Discrepancies found and corrected
+
+Numbering continues from P1.5's D1–D10.
+
+### W1 — Migrations and schema (§4)
+
+#### D11 — The §4 migration table was stale from row 024 down
+
+- **Spec said:** 024 entity shares (P3) / 025 saved views (P4) / 026 dashboards (P5) /
+  027 full-text search (P6). Header: "the shipped sequence ends at `021`".
+- **Repo says:** 28 migrations exist, `001`–`028`. `024` and `025` are P2.5's
+  (`024_invites_session_control.sql`, `025_audit_batch_correlation.sql`); entity shares shipped
+  as `026`; attachments as `027`; the space slug fix as `028`.
+- **Root cause:** P2.5 was not in the plan and took 024–025 two days after P1.5 renumbered the
+  table. `026_entity_shares.sql:4-5` records the shift in-file — the code noticed, the spec did
+  not.
+- **Changed:** table rebuilt from the directory, with filenames and what each does, marking
+  021–028 shipped and naming `029` as the next assignable number. Added a note on why it went
+  wrong twice, so the next phase reads `migrations/` rather than the table.
+
+#### D12 — The attachments table was absent from the specification entirely
+
+- **Spec said:** nothing. `attachments` appears nowhere in the document.
+- **Repo says:** `027_attachments.sql` created it in P3 — 11 columns, 4 named constraints, a
+  partial index, soft delete. It is the first production consumer of `ObjectStore` and it closed
+  known-issue #16.
+- **Changed:** full subsection added to §4, including the two load-bearing design choices — the
+  object key is derived from the row rather than accepted from the client (otherwise the shared
+  read path becomes an arbitrary-object-read primitive), and there is deliberately no `space_id`
+  column so a cross-space move cannot strand a stale container reference.
+- **Decision impact:** none. It implements ADR-0008 rule 3, which already required it.
+
+#### D13 — The entity-shares sketch was missing an index that shipped
+
+- **Spec said:** four indexes.
+- **Repo says:** five. `026` adds `entity_shares_org_idx ON entity_shares (org_id) WHERE
+  revoked_at IS NULL`, flagged in-file as "Not in the spec sketch": the resolution query and the
+  org share listing both filter `org_id` first, and without it every resolution full-scans once
+  several orgs share an instance.
+- **Changed:** index added to the §4 SQL block. Columns and all five constraint names were
+  verified identical to the sketch — that part of the sketch was exactly right.
+
+#### D14 — Migration 028 and the constraint it did *not* change
+
+- **Spec said:** nothing; 028 postdates the document.
+- **Repo says:** slug uniqueness moved from `(org_id, slug)` to `(org_id, type, slug)`. Its down
+  migration deliberately fails on a database that has used the new freedom, rather than silently
+  re-slugging someone's space.
+- **Changed:** subsection added — including the non-obvious part: `idx_spaces_org_key` from
+  `017_space_key.sql` was **not** touched and remains org-wide, so space *keys* still collide
+  across modules even though slugs no longer do.
+
+#### D15 — The "legacy `items` table" no longer exists under that name
+
+- **Spec said:** "The legacy `items` table (superseded by the ADR-0003 split, never dropped)".
+  P1.5's own record repeated this.
+- **Repo says:** `015_polymorphic_comments_relations.sql` **renamed** `items` to `items_archive`.
+  PostgreSQL does not rename a table's indexes with the table, so its GIN index is still called
+  `idx_items_search` and now sits on `items_archive`.
+- **Changed:** §4 search subsection corrected. Two traps recorded: `idx_items_search` does not
+  refer to a live table, and the name `items` is not free.
+- **Note:** this was wrong in P1.5's record too, and is corrected here rather than left standing.
+
+#### D16 — The search sketch accounts for only two of the four search vectors
+
+- **Spec said:** drop the `tickets` / `project_items` triggers, functions and indexes, then add
+  generated columns.
+- **Repo says:** all six identifiers the sketch names still exist at the exact places P1.5 cited,
+  and **nothing in migrations 015–028 touched any search vector** — D7 survives intact. But
+  `pages.search_vector` and `items_archive.search_vector` are *generated* columns whose indexes
+  (`idx_pages_search`, `idx_items_search`) the sketch never names. A generated column cannot be
+  converted by dropping a trigger, because it has none.
+- **Changed:** recorded in the search subsection as an obligation for P6.
+
+### W1 — Permission resolution (§5)
+
+The `readable_space_ids` and `readable_entity_ids` sketches are substantially accurate and were
+verified against P2's shipped `ResolveAccessRows` and P3's share resolution. The **cross-space
+read-query shape** is a different matter: it was never implemented, and taken literally it is
+both incorrect and unsafe. It is the direct input to P4 and P6.
+
+#### D17 — The subtree term binds raw paths where LIKE patterns are required
+
+- **Spec said:** `OR path LIKE ANY($shared_subtree_path_prefixes)`.
+- **Repo says:** a stored path is not a pattern. P3 builds one via `SubtreeLikePattern(root)` =
+  `EscapeLike(root) + ".%"`. `EscapeLike` neutralises `\`, `%` and `_` first, because
+  `pages.path` is unconstrained `TEXT` and a metacharacter that ever landed there must match
+  itself rather than widen the match.
+- **Changed:** §5 corrected, with the escaping requirement stated explicitly.
+
+#### D18 — The shared root page was excluded from its own coverage
+
+- **Spec said:** `direct := entity_id for shares where cascade = false`, plus a subtree term.
+- **Repo says:** the LIKE pattern matches *strict descendants only* — deliberately. P3 therefore
+  puts **every** share row into the direct set regardless of `cascade`, which is how the root
+  gets covered. The spec's two clauses together cover the descendants and not the root.
+- **Changed:** both the pseudocode and the query shape corrected, with the interaction between
+  them called out — this is the failure the two halves conceal when read separately.
+
+#### D19 — The subtree match was not pinned to the root's space
+
+- **Spec said:** a bare path-prefix match.
+- **Repo says:** `pages.path` uniqueness is not enforced across spaces. P3's `CoversPage` skips
+  any cascade root whose `spaceID` differs from the candidate's, and all three shipped subtree
+  queries pin `p.space_id`. There is a regression test for the path-coincidence case.
+- **Changed:** the space pin added to the query shape.
+- **Severity note:** as written, this term could have widened share coverage across a space
+  boundary. It is the most consequential correction in this pass.
+
+#### D20 — The org-admin bypass condition was too narrow
+
+- **Spec said:** `if org_role(user, org) == 'admin'`.
+- **Repo says:** the adapter classifies **both** `owner` and `admin` as org admin.
+- **Changed:** pseudocode reads `in ('admin', 'owner')`.
+
+#### D21 — Two omissions in `readable_space_ids` that change results
+
+- **Repo says:** the shipped query joins `spaces ... deleted_at IS NULL` on the grants leg, so a
+  grant on a soft-deleted space does not resolve; and it wraps the direct-team array in
+  `COALESCE(..., '{}')`, because a teamless user would otherwise produce `path && NULL` → NULL
+  and silently lose the whole leg.
+- **Changed:** both recorded in the pseudocode.
+
+#### D22 — "Have every query filter against the result" describes an intent, not the mechanism
+
+- **Spec said:** resolve once, then "have every query filter against the result".
+- **Repo says:** no shipped query binds the readable set as a parameter. Space routes 404 in
+  middleware via `RequireSpaceReadable`; the directory filters in the handler. The accessor that
+  would make the sentence literally true has no production caller.
+- **Changed:** §5 now says which mechanism is in force today and marks the bound-array shape as
+  design for P4/P6 rather than a description of running code.
+
+#### D23 — §5 does not say that share resolution is route-scoped
+
+- **Repo says:** P3 mounts share resolution **only** on the `/shared` subtree, deliberately, so
+  space-scoped routes keep P2's per-request query budget.
+- **Changed:** recorded, with the instruction that P4 and P6 mount it explicitly on their
+  cross-space routes and re-run the case-23 constancy tracer rather than hoisting it to org-wide
+  middleware.
+
+### W2 — Versions and phase history (§9, Appendix B)
+
+#### D24 — P1.5 is absent from the phase history
+
+- **Repo says:** P1.5 merged as PR #52 and shipped this reconciliation document, the
+  `WorkflowAdminPage` fix, a Playwright locator-integrity audit, and the CI coverage floor raised
+  from 70 to 80. It has no version number and no tag of its own; it rode into `v0.3.1`.
+- **Changed:** recorded in §9 as history.
+
+#### D25 — P2.5 is absent from the phase history
+
+- **Repo says:** P2.5 merged as PR #54, took migrations 024–025, and delivered session control,
+  the invite lifecycle, the people lifecycle, bulk grants and the entire `/admin` area —
+  including the release's headline breaking change, open registration defaulting off. The string
+  `P2.5` appears nowhere in the specification, while appearing across code, migrations and other
+  docs.
+- **Changed:** recorded in §9 as history, including that the `org-admin-404` guard class enters
+  here.
+
+#### D26 — §9's P3 entry named the wrong migration
+
+- **Spec said:** "ADR-0008. Migration 024".
+- **Repo says:** P3 shipped `026_entity_shares.sql` and `027_attachments.sql`.
+- **Changed:** corrected to 026–027, with attachments noted as unplanned-for.
+
+#### D27 — Two phases claim version v0.3.2 — **FLAGGED, NOT RESOLVED**
+
+- **Repo says:** two merge subjects claim `v0.3.2` — `feab5b0` (P2.5, #54) and `6aaece7`
+  (P3, #56). Established from git:
+  - the `v0.3.2` tag's own annotation reads "administration, users, and the access matrix (P2.5)";
+  - `git merge-base --is-ancestor` puts **P2.5 inside** the tag and **P3 outside** it;
+  - `git tag --contains` on P3's merge returns **nothing**;
+  - five further places map v0.3.2 to P2.5 (`docs/upgrade.md`, `docs/self-hosting.md`, the headers
+    of migrations 024 and 025, `scripts/verify-api.sh`); exactly one — the spec's own P3 heading —
+    maps it to P3.
+- **Changed:** the conflict is stated plainly in §9 with the evidence, and **left open**. On the
+  evidence the released v0.3.2 is P2.5 and P3 claimed a number already taken, but that is a
+  statement of what the repository says, not a decision.
+- **Consequence noted, not applied:** if the maintainer gives P3 its own version, P4–P6 all shift.
+  **This pass did not renumber them.** Renumbering the roadmap is not a documentation correction.
+
+#### D28 — The `v0.3.2` tag is one commit past its intended target
+
+- **Repo says:** the tag points at `eab99b0` (#55, a 314-line prototype HTML file), not at
+  `feab5b0` (#54, P2.5) which its annotation describes. It was created 35 seconds after #55
+  merged, against whatever `main` then pointed at.
+- **Changed:** recorded in §9 as a separable defect from D27. Content impact is one static file.
+
+#### D29 — P3 and everything after it is untagged
+
+- **Repo says:** `git describe origin/main` reads `v0.3.2-4-g92f60e1`. Four merged commits sit
+  past the newest tag — P3 (#56, migrations 026–027), the security fix (#58), the ADR directory
+  (#57), and migration 028 (#60). (Measured against `origin/main`; on a feature branch `describe`
+  counts that branch's own commits too.)
+- **Changed:** recorded in §9. Whether to cut a tag is a maintainer decision, untouched here.
+
+#### D30 — Appendix B row C4 carried a consumed migration number
+
+- **Spec said:** C4 "PostgreSQL FTS, generated stored columns, migration 027".
+- **Changed:** number marked unassigned (027 was consumed by P3). Decision content untouched.
+
+#### D31 — §9's P4, P5 and P6 entries carried consumed migration numbers
+
+- **Spec said:** P4 "Migration 025", P5 "Migration 026", P6 "Migration 027".
+- **Changed:** P4 → 029; P5 and P6 → unassigned. **Only the migration numbers changed. The
+  version numbers in those headings were deliberately left alone** — see D27.
+
+### W3 — ADR extraction
+
+#### D32 — ADRs 0005–0010 lived inside the specification, not in `docs/adr/`
+
+- **Repo said:** the ADR index (added in #57) listed all six with location
+  `../design/v0.3-ia-spec.md §3`, and noted they should be extracted.
+- **Changed:** each extracted to `docs/adr/000N-slug.md`. The body of every new file was verified
+  mechanically to be a byte-identical substring of the specification; only a status and provenance
+  header was added. §3 is now a pointer table. Every index row points at a file.
+- **Reference check:** a sweep for `ADR[\s-]?00(0[3-9]|1[0-2])` across the tree at `92f60e1`
+  returned 167 occurrences in 88 files. **Every one cites an ADR by number, never by location.**
+  (Counts move with the pattern and the commit — a hyphen-only `ADR-00NN` at the same commit gives
+  174/90 — so treat them as scale, not as a fixture.) The only location-bearing references were the
+  six index rows in `docs/adr/README.md`, which this pass updated. **No live reference resolves to
+  the old location**; the six extracted files each carry an `**Origin:**` line naming
+  `v0.3-ia-spec.md` §3, but that is provenance, not a pointer, and §3 is now a pointer table.
+
+### W5 — Rules
+
+#### D33 — §10 forbids the git operations every phase performs — **FLAGGED, NOT RESOLVED**
+
+- **Spec said:** §10, Repository: "Agents perform **no git operations** — no commits, pushes,
+  tags, or branch changes."
+- **Reality says:** every phase since P0 has branched, committed, pushed and opened its own PR,
+  under explicit instruction in its prompt. The autonomy envelope in use is narrower and
+  different: never `main`, never force-push, never self-merge, never tag.
+- **Changed:** nothing in §10. `CLAUDE.md` records §10 as authoritative, documents the envelope
+  actually in force, and **flags the conflict for a maintainer** rather than quietly writing
+  practice down as the rule. This is exactly the "would change a decision → stop and raise it"
+  case from §4 of this document.
+
+### W6 — Known issues
+
+Seven entries were resolved by work merged in P1–P3 and never struck; two more carried premises
+that the repository has since falsified.
+
+| # | Was | Repo says | Action |
+|---|---|---|---|
+| D34 | #2 "coverage below 60% floor" | CI enforces **80%**; P3 merged at 80.2% | Struck |
+| D35 | #3 "ensure the CI runner has GCC" | CI installs build tooling and runs `-race` | Struck; local constraint moved to `CLAUDE.md` |
+| D36 | #6 "partially mitigated — see CLAUDE.md" | Permanent fix shipped; the cited `CLAUDE.md` did not exist | Struck |
+| D37 | #9 "audit logger discards all events" | `audit.NewDBLogger` persists; wired in `main.go`; six integration tests | Struck |
+| D38 | #10 "no profile update endpoint" | `PATCH /api/v1/auth/me` exists end to end | Struck |
+| D39 | #13 "smoke login_user fails" | Subtest mints a unique address | Struck |
+| D40 | #16 "object storage not wired" | P3 wired it; migration 027; five integration tests | Struck (backend); UI gap noted in place |
+| D41 | #14 "`items.labels`" | `items` was renamed `items_archive` in 015; the live columns are `tickets.labels` and `project_items.labels` — two arrays, not one | Premise corrected |
+| D42 | #15 "blocked by `item_relations` FK to `items`" | **False, and already false when written.** Migration 015 dropped both FKs, added `from_type`/`to_type`, and renamed the table to `entity_relations`. Only the ticket *endpoints* are missing | Root cause corrected; deferral instruction withdrawn |
+| D43 | #9 and #10 cite `docs/project-state.md` as a live reference | The file is `.gitignore`d as "private repo only — never push to public", so it is unreachable from this repository by design — not merely absent | References annotated as dead links |
+
+#### D44 — `CLAUDE.md` has never existed because it is `.gitignore`d — **RESOLVED BY MAINTAINER DECISION**
+
+- **Every phase prompt since P0** has opened with "read `CLAUDE.md`". P1.5 recorded its absence as
+  an observation ("stale copies exist only on old worktrees/deleted branches") without finding the
+  cause.
+- **The cause:** `.gitignore` line 55 lists `CLAUDE.md`, inside a block headed
+  **"CI progress tracking (private repo only — never push to public)"** — together with
+  `docs/agent-briefs.md`, `docs/github-setup-checklist.md`, `docs/project-state.md`,
+  `docs/regression-test-checklist.md` and the `push-private.sh` / `push-public.sh` scripts.
+- **Consequence:** `CLAUDE.md` could not be created in this repository by writing the file.
+  `git add` silently skipped it — no error, no warning. Every agent told to read it has been
+  reading nothing, and every phase has therefore run on prompt-embedded rules alone, which is
+  exactly the failure mode W5 was meant to end.
+- **Caught in this branch's own history.** Commit `d30bce8` is titled "add shared-surfaces.md and
+  CLAUDE.md" and its diffstat contains one file. That is the silent skip happening in real time,
+  and it is left in the history rather than rewritten, because it is the clearest evidence of the
+  defect.
+- **Why this needed a decision:** un-ignoring it reverses a recorded decision that this path is
+  private-repo-only, and publishes to a public repository a file the repository explicitly marked
+  "never push to public". That is a decision, not a fact, so it was raised rather than taken
+  unilaterally.
+- **Decision taken:** the maintainer authorised removing `CLAUDE.md` from `.gitignore`. The line is
+  removed, the reason is recorded in place in `.gitignore`, and the file is committed. The rest of
+  the private-only block is untouched.
+- **Side effect worth knowing:** because `.gitignore` is neither under `docs/` nor a `*.md` file,
+  this PR is **not** classified docs-only, so the full CI pipeline runs rather than cascade-skipping.
+- **Also explains D43:** `docs/project-state.md` is in the same block. The references to it from
+  `known-issues.md` and from `internal/core/api/known_issues_test.go` are not sloppy — they point
+  at a document that exists only in the private mirror.
+- **What shipped:** a complete `CLAUDE.md`, assembled only from settled public material (spec §2
+  and §10, the autonomy envelope, the real verification battery), audited to contain no secret and
+  no unfixed-vulnerability detail. It must stay that way — it is now a public file.
+
+### Found by adversarially verifying this pass's own output
+
+The three below were found by fact-checking the corrections above against the repository, after
+they were written. Two are defects in *this pass's own work*; they are recorded rather than
+quietly fixed, because the failure mode is instructive.
+
+#### D45 — §2.8's "no mocks exist" is false about the repository — **FLAGGED, NOT RESOLVED**
+
+- **Spec says:** "**Real PostgreSQL only**, via `internal/testutil.NewTestDB(t)`. No mocks exist,
+  none will be added." P1.5's record repeated it as "No mocks anywhere."
+- **Repo says:** roughly thirty hand-written `mock*` types exist across eight Go test files —
+  `internal/core/api/router_test.go` alone declares twelve — plus `vi.mock` usage in the frontend
+  suite. They stub repository *interfaces* in handler and service unit tests; the real-database
+  coverage lives in the `*_integration_test.go` files beside them.
+- **Why it is not resolved here:** the sentence is half rule and half fact. The **rule** — never
+  mock the database — is a §2 decision and is untouchable by a reconciliation pass. The **factual
+  assertion** is simply wrong. Reconciling them means either deleting ~30 test doubles or amending
+  §2, and both are decisions.
+- **What changed:** nothing in §2. `CLAUDE.md` states the rule as a rule ("never mock the
+  database") and carries a note recording the gap, so the rules file does not assert something
+  the repository contradicts.
+
+#### D46 — The corrected cross-space query shape was itself wrong on first writing
+
+- **This pass first wrote:** `OR (space_id = ANY($shared_subtree_space_ids) AND path LIKE
+  ANY($shared_subtree_like_patterns))`.
+- **Why that is wrong:** two independent arrays match the **cartesian product**, not paired rows.
+  With root A in space 1 and root B in space 2, a page in space 1 whose path sits under root B's
+  subtree satisfies both halves. That is exactly the cross-space widening D19 was written to
+  prevent — reintroduced by the sketch that claims to fix it, three lines above the paragraph
+  forbidding it.
+- **Changed:** the shape now uses `EXISTS (SELECT 1 FROM unnest(space_ids, patterns) AS
+  root(space_id, pattern) WHERE pages.space_id = root.space_id AND pages.path LIKE root.pattern)`,
+  which keeps each `(space_id, pattern)` bound together, plus an explicit warning that the pin must
+  be per-root rather than per-query.
+- **Also recorded:** `$shared_subtree_space_ids` cannot currently be populated —
+  `CascadeRootPaths()` returns paths only and `cascadeRoot.spaceID` is unexported. P4 must add an
+  accessor returning the pairs. Without that note, the obvious workaround is to bind paths alone,
+  which is the defect again.
+- **Lesson worth keeping:** a correction is not self-verifying. This one read as more rigorous than
+  what it replaced while carrying the same class of bug.
+
+#### D47 — §5's inventory of read paths was incomplete
+
+- **This pass first wrote:** "everything else is single-space behind `RequireSpaceReadable`."
+- **Repo says:** two shipped read paths are neither. The space directory
+  (`GET /orgs/{org_id}/spaces`) is org-wide and filters per space in the handler, deliberately, so
+  it can show locked `discoverable` rows a middleware 404 would hide. And `GET /notifications` is
+  user-scoped, mounted outside the `/orgs/{orgID}` group, and consults no readable set at all —
+  `notifications` carries no `space_id`.
+- **Changed:** §5 now enumerates all three enforcement mechanisms. Whether a notification row
+  should survive revocation of access to the entity it names is flagged as an open question, not
+  answered.
+
+**Total discrepancies found in this pass: 37** (D11–D47), spanning §4, §5, §9, Appendix B, the ADR
+index, `known-issues.md` and `.gitignore`. Three are **flagged and deliberately unresolved**
+because resolving them would change a decision — **D27** (version collision), **D33** (§10 vs the
+autonomy envelope) and **D45** (§2.8 "no mocks exist"). A fourth, **D44**, was raised for the same
+reason and resolved by an explicit maintainer decision recorded above. Two — **D46** and **D47** —
+are defects in this pass's own corrections, caught by adversarial verification and fixed before
+merge.
+
+Cumulative across both passes: **47** (P1.5's D1–D10 plus these).
+
+---
+
+## 2. Claims re-verified accurate — no change needed
+
+- **P1.5's D7 survives.** All six search identifiers still exist at the cited lines, and nothing
+  in migrations 015–028 touched a search vector, index, function or trigger.
+- **P1.5's D8 survives.** `pages.path` is still dot-separated `TEXT` from
+  `012_pages_materialized_path.sql`; the array-overlap framing stays correctly retired. The
+  corrections in D17–D19 refine the replacement, they do not reverse it.
+- **P1.5's D6 survives.** `audit_log` still carries `entity_kind` / `entity_id` / `payload`.
+  Migration 025 added only nullable `batch_id` and `ticket_ref`, with no backfill — the
+  append-only contract is intact.
+- **The entity-shares sketch was right about everything except one index.** All 12 columns and
+  all five constraint names shipped exactly as sketched. `cascade` is literally the column name,
+  unquoted — `CASCADE` is a non-reserved keyword and no workaround name exists anywhere.
+- **The teams and grants sketches (022, 023) shipped with no contradictions.** `teams.path` is
+  genuinely `UUID[]` with a GIN index; the depth-5 constraint, the polymorphic FK-less
+  `subject_id`, and both vocabularies match.
+- **No collision for the future sketches.** No `saved_views`, `dashboards` or `dashboard_gadgets`
+  table exists in any migration.
+- **§5's `effective_teams` via `path && $direct_team_ids`** is exactly what shipped, GIN-backed.
+- **Share resolution filters `revoked_at IS NULL` and `(expires_at IS NULL OR expires_at > now())`
+  in the resolution query**, so expiry and revocation deny on the next request with no sweeper —
+  ADR-0008 rules 8 and 11 hold in code.
+- **Highest-role-wins** is implemented as an ordered enum reduced in Go over the grant rows.
+- **Per-request caching** is `context.WithValue` with an unexported key. No package-level cache
+  exists, so the resolution genuinely cannot outlive the request.
+
+---
+
+## 3. Observed, out of scope for this pass
+
+- **`internal/core/api/known_issues_test.go` contains four placeholder tests that assert
+  nothing.** `TestAuditLog_PersistsEvents`, `TestProfileUpdate_SavesChanges`,
+  `TestRSAKey_SurvivesRestart` and `TestCORS_RestrictedInProduction` are empty functions taking
+  `_ *testing.T`. They are not skipped — they pass unconditionally. `known-issues.md` cited two of
+  them as evidence of tracked defects. Real coverage for all four exists elsewhere, so this is
+  misleading bookkeeping rather than a coverage hole, but it fails §2's negative-test question
+  outright. This pass changes no code; flagged for a maintainer.
+- **The regression test for known-issue #11 asserts `409 || 500`.** It documents the defect
+  instead of catching it, and would pass if the bug were fixed *or* if it got worse. Same
+  category as above.
+- **Known-issue #11 remains genuinely open.** `UserAdapter.Create` still has no `23505` mapping,
+  though the helper that would do it exists and is unused on that path.
+- **Known-issue #4 remains genuinely open.** None of `memberships`, `space_members` or `sprints`
+  has gained `deleted_at`.
+- **`docs/project-state.md` is referenced from `internal/core/api/known_issues_test.go` as well**,
+  and does not exist. Code comment, not documentation; not changed here.
+- **`idx_spaces_org_key` remains org-wide** after migration 028 made slugs per-module. Whether
+  space keys should also become per-module is a product question, not a documentation one.
+
+---
+
+## 4. Standing instruction — reaffirmed, with one addition
+
+The P1.5 instruction stands unchanged: repository wins on **existing** structures, correct the
+spec in the same PR and append here; a disagreement that would change a **decision** means stop
+and raise it.
+
+**Addition, learned from this pass:** the §4 migration table is a *plan*, and a plan is not a
+record. It has now been wrong twice for the same reason — a phase that was not in the plan took
+numbers first. **Read `migrations/` before assigning a number.** The same caution applies to
+constraint and index names: PostgreSQL generates names, and it does not rename a table's indexes
+when the table is renamed. Both facts have already produced defects here.
