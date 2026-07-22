@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, type ReactElement } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { FileText, Edit, Plus, AlertCircle, Search, History, X, ChevronRight, Lock, Share2, FolderInput } from 'lucide-react';
+import { Edit, AlertCircle, History, X, ChevronRight, Lock, Share2, FolderInput } from 'lucide-react';
 import { MarkdownEditor } from '../../components/ui/MarkdownEditor';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
@@ -8,24 +8,12 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Field, FieldLabel } from '../../components/ui/field';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-  DialogClose,
-} from '../../components/ui/dialog';
 import { cn } from '../../lib/utils';
 import {
   friendlyErrorMessage,
   useWikiPages,
   useWikiPage,
-  useCreateWikiPage,
   useUpdateWikiPage,
-  useWikiSearch,
   useWikiRevisions,
   usePageLock,
   useAcquirePageLock,
@@ -40,111 +28,6 @@ import {
 import { ShareBadge } from '../../components/ShareBadge';
 import { ShareDialog } from '../../components/ShareDialog';
 import { MovePageDialog } from '../../components/MovePageDialog';
-
-// ---------------------------------------------------------------------------
-// Sidebar
-// ---------------------------------------------------------------------------
-
-interface SidebarProps {
-  pages: { id: string; title: string; parent_id?: string | null }[];
-  activeId: string | null;
-  onSelect: (id: string) => void;
-  spaceId: string;
-}
-
-function WikiSidebar({ pages, activeId, onSelect, spaceId }: SidebarProps) {
-  const [search, setSearch] = useState('');
-  const [searchDebounced, setSearchDebounced] = useState('');
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { data: searchResults } = useWikiSearch(spaceId, searchDebounced, { enabled: searchDebounced.length > 1 });
-
-  function handleSearchChange(v: string) {
-    setSearch(v);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setSearchDebounced(v), 300);
-  }
-
-  const showing = search.length > 1 && searchResults ? searchResults : pages;
-
-  return (
-    <div className="flex h-full flex-col gap-2">
-      <div className="relative">
-        <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-muted)]" />
-        <input
-          value={search}
-          onChange={e => handleSearchChange(e.target.value)}
-          placeholder="Search pages…"
-          className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] py-1.5 pl-8 pr-3 text-[var(--text-sm)] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
-        />
-      </div>
-      <div className="flex-1 overflow-y-auto space-y-0.5">
-        {showing.length === 0 ? (
-          <p className="px-2 py-3 text-[var(--text-sm)] text-[var(--color-text-muted)]">
-            {search.length > 1 ? 'No results.' : 'No pages yet.'}
-          </p>
-        ) : search.length > 1 ? (
-          // Search results stay flat — hierarchy only applies to the tree view.
-          showing.map(p => (
-            <SidebarPageButton key={p.id} page={p} depth={0} activeId={activeId} onSelect={onSelect} />
-          ))
-        ) : (
-          <SidebarTree pages={showing} activeId={activeId} onSelect={onSelect} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-interface SidebarPageButtonProps {
-  page: { id: string; title: string };
-  depth: number;
-  activeId: string | null;
-  onSelect: (id: string) => void;
-}
-
-function SidebarPageButton({ page, depth, activeId, onSelect }: SidebarPageButtonProps) {
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(page.id)}
-      style={{ paddingLeft: `${8 + depth * 16}px` }}
-      className={cn(
-        'flex w-full items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 text-left text-[var(--text-sm)] transition-colors',
-        activeId === page.id
-          ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)] font-medium'
-          : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]',
-      )}
-    >
-      <FileText className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">{page.title}</span>
-    </button>
-  );
-}
-
-// SidebarTree renders the real page hierarchy: children nest (indented)
-// under their parent via parent_id — never a flat list.
-function SidebarTree({ pages, activeId, onSelect }: Omit<SidebarProps, 'spaceId'>) {
-  const byParent = new Map<string, typeof pages>();
-  const ids = new Set(pages.map(p => p.id));
-  for (const p of pages) {
-    // Pages whose parent isn't in this space's list render at the root.
-    const key = p.parent_id && ids.has(p.parent_id) ? p.parent_id : '';
-    const list = byParent.get(key) ?? [];
-    list.push(p);
-    byParent.set(key, list);
-  }
-
-  function renderLevel(parentKey: string, depth: number): ReactElement[] {
-    return (byParent.get(parentKey) ?? []).map(p => (
-      <div key={p.id} data-tree-depth={depth}>
-        <SidebarPageButton page={p} depth={depth} activeId={activeId} onSelect={onSelect} />
-        {renderLevel(p.id, depth + 1)}
-      </div>
-    ));
-  }
-
-  return <>{renderLevel('', 0)}</>;
-}
 
 // ---------------------------------------------------------------------------
 // Revisions panel
@@ -194,7 +77,7 @@ function RevisionsPanel({ spaceId, pageId, currentVersion, onClose }: RevisionsP
                   <p className="text-[var(--text-sm)] text-[var(--color-text)]">
                     v{rev.version}
                     {rev.version === currentVersion && (
-                      <span className="ml-2 rounded-full bg-[var(--color-primary)] px-1.5 py-0.5 text-[var(--text-xs)] text-white">current</span>
+                      <span className="ml-2 rounded-full bg-[var(--color-primary-muted)] px-1.5 py-0.5 text-[var(--text-xs)] text-[var(--color-primary)]">current</span>
                     )}
                   </p>
                   <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
@@ -222,11 +105,16 @@ function RevisionsPanel({ spaceId, pageId, currentVersion, onClose }: RevisionsP
 // Main component
 // ---------------------------------------------------------------------------
 
-/** Two-panel wiki page with sidebar list and markdown content. */
+/**
+ * WikiPage renders the reading/editing surface for one page. Navigation —
+ * the page tree, the scoped search, and the create-page affordance — lives
+ * in the shell's CodexSidebar (ADR-0005), not here: the pre-P1 in-content
+ * page panel this component once rendered is deleted, so the content column
+ * starts immediately after the sidebar at full width.
+ */
 export function WikiPage() {
   const { spaceId = '', pageId } = useParams<{ spaceId: string; pageId: string }>();
   const { data: pages = [], isLoading, error } = useWikiPages(spaceId);
-  const createMutation = useCreateWikiPage(spaceId);
 
   const [activeId, setActiveId] = useState<string | null>(pageId ?? null);
   const [revisionsOpen, setRevisionsOpen] = useState(false);
@@ -244,10 +132,14 @@ export function WikiPage() {
   const editContentRef = useRef('');
   const [editError, setEditError] = useState<string | null>(null);
 
-  // New Page modal state
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [formTitle, setFormTitle] = useState('');
-  const [formParentId, setFormParentId] = useState('');
+  // Selecting a different page (via the sidebar tree) leaves edit mode and
+  // closes the revisions panel — the behaviour the in-content panel's
+  // click handler used to provide, now keyed off the selection itself.
+  useEffect(() => {
+    setEditMode(false);
+    setEditError(null);
+    setRevisionsOpen(false);
+  }, [activeId]);
 
   // Auto-select first page once pages load (e.g. after a reload with no page
   // in the URL). This is a side effect, so it belongs in useEffect — a
@@ -328,30 +220,6 @@ export function WikiPage() {
     }
   }
 
-  async function handleCreatePage() {
-    const title = formTitle.trim();
-    if (!title) return;
-    try {
-      const created = await createMutation.mutateAsync({
-        title,
-        content: '',
-        parent_id: formParentId || null,
-      });
-      setActiveId(created.id);
-      setDialogOpen(false);
-      setFormTitle('');
-      setFormParentId('');
-    } catch {
-      // Surfaced in the dialog through friendlyErrorMessage.
-    }
-  }
-
-  function handleSelectPage(id: string) {
-    setActiveId(id);
-    setEditMode(false);
-    setRevisionsOpen(false);
-  }
-
   if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center text-[var(--color-text-muted)]">
@@ -372,329 +240,263 @@ export function WikiPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-var(--topnav-height)-2rem)] gap-0 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)]">
-      {/* ── Left sidebar ── */}
-      <div className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-[var(--text-xs)] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Pages</span>
-          <button
-            type="button"
-            onClick={() => setDialogOpen(true)}
-            className="rounded p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-primary)] transition-colors"
-            title="New page"
-            aria-label="New page"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-        </div>
-        <WikiSidebar pages={pages} activeId={activeId} onSelect={handleSelectPage} spaceId={spaceId} />
-      </div>
-
-      {/* ── Main content ── */}
-      <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
-        {activePage ? (
-          <>
-            {/* Top bar */}
-            <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-2.5">
-              <span className="flex items-center gap-2 flex-1 truncate text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                <span className="truncate">{activePage.title}</span>
-                <ShareBadge
-                  shared={shareState.shared}
-                  detail={shareState.viaCascade ? 'via a shared folder' : undefined}
-                />
+    <div className="flex h-[calc(100vh-var(--topnav-height)-2rem)] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)]">
+      {activePage ? (
+        <>
+          {/* Top bar */}
+          <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-2.5">
+            <span
+              data-testid="wiki-page-title"
+              className="flex items-center gap-2 flex-1 truncate text-[var(--text-sm)] font-medium text-[var(--color-text)]"
+            >
+              <span className="truncate">{activePage.title}</span>
+              <ShareBadge
+                shared={shareState.shared}
+                detail={shareState.viaCascade ? 'via a shared folder' : undefined}
+              />
+            </span>
+            {lockedByOther && (
+              <span className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-warning)_15%,transparent)] px-2.5 py-1 text-[var(--text-xs)] text-[var(--color-warning)]">
+                <Lock className="h-3 w-3" />
+                {pageLock!.user_name} is editing
               </span>
-              {lockedByOther && (
-                <span className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[var(--color-warning)]/15 px-2.5 py-1 text-[var(--text-xs)] text-[var(--color-warning)]">
-                  <Lock className="h-3 w-3" />
-                  {pageLock!.user_name} is editing
-                </span>
-              )}
-              {!editMode && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setRevisionsOpen(o => !o)}
-                    className={cn(
-                      'flex items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1.5 text-[var(--text-sm)] transition-colors',
-                      revisionsOpen
-                        ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
-                        : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]',
-                    )}
-                  >
-                    <History className="h-3.5 w-3.5" />
-                    History
-                  </button>
-                  {canManageShares && (
-                    <>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShareOpen(true)}
-                        disabled={!activePage}
-                        data-testid="wiki-share-button"
-                      >
-                        <Share2 className="mr-1.5 h-3.5 w-3.5" />
-                        Share
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setMoveOpen(true)}
-                        disabled={!activePage}
-                        data-testid="wiki-move-button"
-                      >
-                        <FolderInput className="mr-1.5 h-3.5 w-3.5" />
-                        Move
-                      </Button>
-                    </>
+            )}
+            {!editMode && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setRevisionsOpen(o => !o)}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1.5 text-[var(--text-sm)] transition-colors',
+                    revisionsOpen
+                      ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]',
                   )}
-                  <Button variant="secondary" size="sm" onClick={startEdit} disabled={!activePage || !!lockedByOther}>
-                    <Edit className="mr-1.5 h-3.5 w-3.5" />
-                    Edit
-                  </Button>
+                >
+                  <History className="h-3.5 w-3.5" />
+                  History
+                </button>
+                {canManageShares && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShareOpen(true)}
+                      disabled={!activePage}
+                      data-testid="wiki-share-button"
+                    >
+                      <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                      Share
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setMoveOpen(true)}
+                      disabled={!activePage}
+                      data-testid="wiki-move-button"
+                    >
+                      <FolderInput className="mr-1.5 h-3.5 w-3.5" />
+                      Move
+                    </Button>
+                  </>
+                )}
+                <Button variant="secondary" size="sm" onClick={startEdit} disabled={!activePage || !!lockedByOther}>
+                  <Edit className="mr-1.5 h-3.5 w-3.5" />
+                  Edit
+                </Button>
+              </>
+            )}
+          </div>
+          {shareOpen && activePage && (
+            <ShareDialog
+              orgId={orgId}
+              entityType="page"
+              entityId={activePage.id}
+              entityLabel={activePage.title}
+              onClose={() => setShareOpen(false)}
+            />
+          )}
+          {moveOpen && activePage && (
+            <MovePageDialog
+              orgId={orgId}
+              spaceId={spaceId}
+              pageId={activePage.id}
+              pageTitle={activePage.title}
+              onClose={() => setMoveOpen(false)}
+            />
+          )}
+
+          <div className="flex flex-1 overflow-hidden">
+            {/* Page content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {editMode ? (
+                <div className="space-y-3">
+                  <Input
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="text-[var(--text-xl)] font-bold"
+                    placeholder="Page title"
+                  />
+                  <MarkdownEditor
+                    key={activeId ?? ''}
+                    value={editContent}
+                    onChange={(md) => {
+                      editContentRef.current = md;
+                      setEditContent(md);
+                    }}
+                    disabled={updateMutation.isPending}
+                  />
+                  {editError && (
+                    <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{editError}</p>
+                  )}
+                  <div className="flex gap-2">
+                    <Button onClick={handleSave} disabled={updateMutation.isPending}>
+                      {updateMutation.isPending ? 'Saving…' : 'Save'}
+                    </Button>
+                    <Button variant="outline" onClick={cancelEdit} disabled={updateMutation.isPending}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Reading surface: a bounded measure — full-width prose
+                      is unreadable past ~75ch. */}
+                  <div className="mx-auto w-full max-w-[76ch]">
+                  <div className="mb-5">
+                    <h1 className="text-[21px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]">
+                      {activePage.title}
+                    </h1>
+                    <p className="mt-1 text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                      Last edited {(activePage.updated_at ?? '').slice(0, 10)}
+                      {activePage.version != null && (
+                        <span className="ml-2 text-[var(--text-xs)]">· v{activePage.version}</span>
+                      )}
+                    </p>
+                  </div>
+
+                  {activePage.content ? (
+                    <article
+                      className={cn(
+                        'prose prose-sm max-w-none leading-[1.7]',
+                        'prose-headings:text-[var(--color-text)] prose-headings:font-semibold prose-headings:tracking-[-.01em]',
+                        'prose-h1:text-[19px] prose-h2:text-[16px] prose-h3:text-[14px]',
+                        'prose-p:text-[var(--color-text)]',
+                        'prose-a:text-[var(--color-primary)] prose-strong:text-[var(--color-text)]',
+                        'prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5',
+                        'prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]',
+                        'prose-th:text-[var(--color-text-muted)] prose-td:text-[var(--color-text)]',
+                        'prose-li:text-[var(--color-text)]',
+                        'dark:prose-invert',
+                      )}
+                    >
+                      <ReactMarkdown
+                        rehypePlugins={[rehypeRaw]}
+                        components={{
+                          code({ className, children, ...props }: any) {
+                            const match = /language-(\w+)/.exec(className || '');
+                            const isBlock = !props.inline && match;
+                            return isBlock ? (
+                              <SyntaxHighlighter
+                                style={oneDark}
+                                language={match[1]}
+                                PreTag="div"
+                                customStyle={{ borderRadius: '0.5rem', margin: '0.75rem 0', fontSize: '0.875rem' }}
+                              >
+                                {String(children).replace(/\n$/, '')}
+                              </SyntaxHighlighter>
+                            ) : (
+                              <code className={className} {...props}>{children}</code>
+                            );
+                          },
+                        }}
+                      >
+                        {activePage.content}
+                      </ReactMarkdown>
+                    </article>
+                  ) : (
+                    <div className="flex min-h-[300px] items-center justify-center rounded-[var(--radius-lg)] border-2 border-dashed border-[var(--color-border)]">
+                      <p className="text-[var(--text-lg)] text-[var(--color-text-muted)]">
+                        This page is empty. Click Edit to start writing.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Comments */}
+                  <div className="mt-8 border-t border-[var(--color-border)] pt-6">
+                    <h3 className="mb-4 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">Comments</h3>
+                    <div className="mb-6 space-y-4">
+                      {(comments ?? []).length === 0 ? (
+                        <p className="text-[var(--text-sm)] italic text-[var(--color-text-muted)]">No comments yet.</p>
+                      ) : (comments ?? []).map((comment) => (
+                        <div key={comment.id} className="flex gap-3">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-[var(--text-sm)] font-medium text-white">
+                            {comment.author_name?.[0]?.toUpperCase() ?? '?'}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-1 flex items-center gap-2">
+                              <span className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                                {comment.author_name ?? 'Unknown'}
+                              </span>
+                              <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
+                                {new Date(comment.created_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                            <p className="whitespace-pre-wrap text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                              {comment.content ?? comment.body}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-[var(--text-sm)] font-medium text-white">
+                        {me?.display_name?.[0]?.toUpperCase() ?? 'U'}
+                      </div>
+                      <div className="flex-1">
+                        <textarea
+                          value={newComment}
+                          onChange={(e) => setNewComment(e.target.value)}
+                          placeholder="Add a comment..."
+                          className={cn(
+                            'w-full resize-none rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
+                            'placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]',
+                          )}
+                          rows={3}
+                        />
+                        <button
+                          onClick={handleAddComment}
+                          disabled={!newComment.trim() || createCommentMutation.isPending}
+                          className="mt-2 rounded-[var(--radius-lg)] bg-[var(--color-primary)] px-4 py-1.5 text-[var(--text-sm)] font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+                        >
+                          {createCommentMutation.isPending ? 'Posting…' : 'Comment'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  </div>
                 </>
               )}
             </div>
-            {shareOpen && activePage && (
-              <ShareDialog
-                orgId={orgId}
-                entityType="page"
-                entityId={activePage.id}
-                entityLabel={activePage.title}
-                onClose={() => setShareOpen(false)}
-              />
-            )}
-            {moveOpen && activePage && (
-              <MovePageDialog
-                orgId={orgId}
-                spaceId={spaceId}
-                pageId={activePage.id}
-                pageTitle={activePage.title}
-                onClose={() => setMoveOpen(false)}
-              />
-            )}
 
-            <div className="flex flex-1 overflow-hidden">
-              {/* Page content */}
-              <div className="flex-1 overflow-y-auto p-6">
-                {editMode ? (
-                  <div className="space-y-3">
-                    <Input
-                      value={editTitle}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      className="text-[var(--text-xl)] font-bold"
-                      placeholder="Page title"
-                    />
-                    <MarkdownEditor
-                      key={activeId ?? ''}
-                      value={editContent}
-                      onChange={(md) => {
-                        editContentRef.current = md;
-                        setEditContent(md);
-                      }}
-                      disabled={updateMutation.isPending}
-                    />
-                    {editError && (
-                      <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{editError}</p>
-                    )}
-                    <div className="flex gap-2">
-                      <Button onClick={handleSave} disabled={updateMutation.isPending}>
-                        {updateMutation.isPending ? 'Saving…' : 'Save'}
-                      </Button>
-                      <Button variant="outline" onClick={cancelEdit} disabled={updateMutation.isPending}>
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {/* Reading surface: a bounded measure — full-width prose
-                        is unreadable past ~75ch. */}
-                    <div className="mx-auto w-full max-w-[76ch]">
-                    <div className="mb-5">
-                      <h1 className="text-[21px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]">
-                        {activePage.title}
-                      </h1>
-                      <p className="mt-1 text-[var(--text-sm)] text-[var(--color-text-muted)]">
-                        Last edited {(activePage.updated_at ?? '').slice(0, 10)}
-                        {activePage.version != null && (
-                          <span className="ml-2 text-[var(--text-xs)]">· v{activePage.version}</span>
-                        )}
-                      </p>
-                    </div>
-
-                    {activePage.content ? (
-                      <article
-                        className={cn(
-                          'prose prose-sm max-w-none leading-[1.7]',
-                          'prose-headings:text-[var(--color-text)] prose-headings:font-semibold prose-headings:tracking-[-.01em]',
-                          'prose-h1:text-[19px] prose-h2:text-[16px] prose-h3:text-[14px]',
-                          'prose-p:text-[var(--color-text)]',
-                          'prose-a:text-[var(--color-primary)] prose-strong:text-[var(--color-text)]',
-                          'prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5',
-                          'prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]',
-                          'prose-th:text-[var(--color-text-muted)] prose-td:text-[var(--color-text)]',
-                          'prose-li:text-[var(--color-text)]',
-                          'dark:prose-invert',
-                        )}
-                      >
-                        <ReactMarkdown
-                          rehypePlugins={[rehypeRaw]}
-                          components={{
-                            code({ className, children, ...props }: any) {
-                              const match = /language-(\w+)/.exec(className || '');
-                              const isBlock = !props.inline && match;
-                              return isBlock ? (
-                                <SyntaxHighlighter
-                                  style={oneDark}
-                                  language={match[1]}
-                                  PreTag="div"
-                                  customStyle={{ borderRadius: '0.5rem', margin: '0.75rem 0', fontSize: '0.875rem' }}
-                                >
-                                  {String(children).replace(/\n$/, '')}
-                                </SyntaxHighlighter>
-                              ) : (
-                                <code className={className} {...props}>{children}</code>
-                              );
-                            },
-                          }}
-                        >
-                          {activePage.content}
-                        </ReactMarkdown>
-                      </article>
-                    ) : (
-                      <div className="flex min-h-[300px] items-center justify-center rounded-[var(--radius-lg)] border-2 border-dashed border-[var(--color-border)]">
-                        <p className="text-[var(--text-lg)] text-[var(--color-text-muted)]">
-                          This page is empty. Click Edit to start writing.
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Comments */}
-                    <div className="mt-8 border-t border-[var(--color-border)] pt-6">
-                      <h3 className="mb-4 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">Comments</h3>
-                      <div className="mb-6 space-y-4">
-                        {(comments ?? []).length === 0 ? (
-                          <p className="text-[var(--text-sm)] italic text-[var(--color-text-muted)]">No comments yet.</p>
-                        ) : (comments ?? []).map((comment) => (
-                          <div key={comment.id} className="flex gap-3">
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-[var(--text-sm)] font-medium text-white">
-                              {comment.author_name?.[0]?.toUpperCase() ?? '?'}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="mb-1 flex items-center gap-2">
-                                <span className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                                  {comment.author_name ?? 'Unknown'}
-                                </span>
-                                <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                                  {new Date(comment.created_at).toLocaleDateString()}
-                                </span>
-                              </div>
-                              <p className="whitespace-pre-wrap text-[var(--text-sm)] text-[var(--color-text-muted)]">
-                                {comment.content ?? comment.body}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex gap-3">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-[var(--text-sm)] font-medium text-white">
-                          {me?.display_name?.[0]?.toUpperCase() ?? 'U'}
-                        </div>
-                        <div className="flex-1">
-                          <textarea
-                            value={newComment}
-                            onChange={(e) => setNewComment(e.target.value)}
-                            placeholder="Add a comment..."
-                            className={cn(
-                              'w-full resize-none rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
-                              'placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]',
-                            )}
-                            rows={3}
-                          />
-                          <button
-                            onClick={handleAddComment}
-                            disabled={!newComment.trim() || createCommentMutation.isPending}
-                            className="mt-2 rounded-[var(--radius-lg)] bg-[var(--color-primary)] px-4 py-1.5 text-[var(--text-sm)] font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
-                          >
-                            {createCommentMutation.isPending ? 'Posting…' : 'Comment'}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                    </div>
-                  </>
-                )}
+            {/* Revisions panel */}
+            {revisionsOpen && activeId && (
+              <div className="w-64 shrink-0 overflow-hidden">
+                <RevisionsPanel
+                  spaceId={spaceId}
+                  pageId={activeId}
+                  currentVersion={activePage.version ?? 0}
+                  onClose={() => setRevisionsOpen(false)}
+                />
               </div>
-
-              {/* Revisions panel */}
-              {revisionsOpen && activeId && (
-                <div className="w-64 shrink-0 overflow-hidden">
-                  <RevisionsPanel
-                    spaceId={spaceId}
-                    pageId={activeId}
-                    currentVersion={activePage.version ?? 0}
-                    onClose={() => setRevisionsOpen(false)}
-                  />
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-[var(--color-text-muted)]">
-            {pages.length > 0 ? 'Select a page from the sidebar.' : 'No pages yet. Create one to get started.'}
-          </div>
-        )}
-      </div>
-
-      {/* New Page dialog */}
-      <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) setFormTitle(''); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New Page</DialogTitle>
-            <DialogDescription>Create a new wiki page.</DialogDescription>
-          </DialogHeader>
-          <div className="py-2">
-            <Field>
-              <FieldLabel htmlFor="page-title">Title</FieldLabel>
-              <Input
-                id="page-title"
-                placeholder="e.g. Getting Started Guide"
-                value={formTitle}
-                onChange={(e) => setFormTitle(e.target.value)}
-                autoFocus
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="page-parent" optional>Parent page</FieldLabel>
-              <select
-                id="page-parent"
-                value={formParentId}
-                onChange={(e) => setFormParentId(e.target.value)}
-                className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
-              >
-                <option value="">None (top level)</option>
-                {pages.map((p) => (
-                  <option key={p.id} value={p.id}>{p.title}</option>
-                ))}
-              </select>
-            </Field>
-            {createMutation.error && (
-              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-                {friendlyErrorMessage(createMutation.error, 'The page could not be created.')}
-              </p>
             )}
           </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline" type="button">Cancel</Button>
-            </DialogClose>
-            <Button onClick={handleCreatePage} disabled={createMutation.isPending || !formTitle.trim()}>
-              {createMutation.isPending ? 'Creating...' : 'Create Page'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </>
+      ) : (
+        <div className="flex flex-1 items-center justify-center text-[var(--color-text-muted)]">
+          {pages.length > 0 ? 'Select a page from the sidebar.' : 'No pages yet. Create one from the sidebar to get started.'}
+        </div>
+      )}
     </div>
   );
 }
