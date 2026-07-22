@@ -31,12 +31,22 @@ export type PickedSubject =
 ```
 
 Searches people by **name or email** through the member-search endpoint (`useMemberSearch`) and
-teams by **name** over the org team list (`useTeams`), and returns a typed subject. It was built
-in P2.5 as "the reusable replacement for every free-text UUID field."
+teams by **name or slug** over the org team list (`useTeams`), and returns a typed subject. It was
+built in P2.5 as "the reusable replacement for every free-text UUID field."
 
 > **The rule: there must never be a second picker.** Nobody knows a UUID and nobody should have to
-> type one. Any surface that selects a person or a team — grants, shares, invites, ownership,
-> assignment, bulk operations — uses this component. If it does not fit, extend it; do not fork it.
+> type one. Any surface that needs to *search* for a person or a team uses this component. If it
+> does not fit, extend it; do not fork it.
+
+**Current consumers** — `ShareDialog.tsx` (team audience), `SpaceSettingsPage.tsx` (grant
+subject), `TeamsAdminPage.tsx` (team member).
+
+**Not yet using it**, and worth knowing before you assume coverage is complete: three admin
+surfaces still select a team through a plain `<select>` over `useTeams()` — the invite's initial
+team and a person's primary team (`PeoplePage.tsx`), and a space's owner team
+(`SpacesAdminPage.tsx`). Those are bounded single-team dropdowns rather than searches, so they do
+not violate the rule as stated, but they are the obvious consolidation candidates and they are
+where a fourth pattern would most easily creep in.
 
 ---
 
@@ -149,7 +159,8 @@ Every route carries **exactly one** guard class:
 router — never a hand-maintained list — and fails **bidirectionally**: on any route present in the
 router but missing from the table, and on any table row whose route no longer exists. It also
 asserts at least 90 routes were enumerated, so a broken walk cannot pass vacuously. The table
-currently holds 142 rows, keyed `"METHOD /api/v1/..."`.
+currently holds 142 rows, keyed `"METHOD /path"` — mostly under `/api/v1`, except `/health`,
+`/ready`, `/api/docs` and `/api/docs/openapi.yaml`.
 
 Note what the test does and does not do: it proves every route is **classified**, not that each
 route's middleware chain matches the class it claims. The classification is a human assertion the
@@ -188,8 +199,9 @@ Consumers: `ShareDialog.tsx`, `MovePageDialog.tsx`, `SpacesAdminPage.tsx`.
 Two tests, both driving a real `pgxpool` with a tracer attached that counts queries:
 
 - `TestMatrixAPI23_ConstantAuthQueries` — lists tickets at N=3 and N=30 and asserts the query
-  count is **identical**, plus a hard ceiling (`≤ 8`) on the per-request budget. Same again for the
-  space directory at 2 spaces vs 12.
+  count is **identical**, plus a hard ceiling (`≤ 8`) on the per-request budget. It then repeats the
+  constancy check on the space directory at 2 spaces vs 12; that half asserts constancy only, with
+  no ceiling.
 - `TestMatrixAPI23_ShareResolutionConstantQueries` — a shared read by an outsider with no space
   access, before and after adding 25 more org shares. Share resolution must not grow with the
   number of shares.

@@ -5,11 +5,14 @@ PostgreSQL. Apache 2.0.
 
 This file collects the rules that already govern work here. **It invents nothing.** Everything
 below is assembled from `docs/design/v0.3-ia-spec.md` (§2 testing, §10 non-negotiables), the
-autonomy envelope every phase has operated under since P1, and the verification commands in the
+autonomy envelope every phase has operated under since P0, and the verification commands in the
 `Makefile` and `.github/workflows/ci.yml`.
 
 It is written for both agents and human contributors. Where it summarises the specification, the
 **specification wins** — read it, do not rely on this summary for anything load-bearing.
+
+One provenance note: the autonomy envelope in §4 comes from the phase prompts, which are not
+checked into this repository. Everything else here is traceable to a file you can open.
 
 ## Start here
 
@@ -32,9 +35,10 @@ implementation of something on that page is a defect, not a convenience.
 
 From specification §10. These override any instruction in a task prompt.
 
-**Testing.** All of §2. Real PostgreSQL via `internal/testutil.NewTestDB(t)`; no mocks.
-Assertions are never weakened. Blast-radius review on every PR. No blank checkboxes. DRAFT
-unless all three gates exit 0.
+**Testing.** All of §2. Real PostgreSQL via `internal/testutil.NewTestDB(t)`; never mock the
+database (§2 says "no mocks" — see the note in §2 below for what the repository actually
+contains). Assertions are never weakened. Blast-radius review on every PR. No blank checkboxes.
+DRAFT unless all three gates exit 0.
 
 **Repository.** Migration numbering is immutable once shipped. Agents never create or edit the
 roadmap. No agent-name file suffixes. (On git operations, see the flagged conflict in §4.)
@@ -61,8 +65,19 @@ Specification §2 governs the whole project and overrides any instruction that w
 coverage, weaken an assertion, or defer test work to a later PR. The short version:
 
 **Real PostgreSQL only.** Via `internal/testutil.NewTestDB(t)`, which creates an isolated
-per-test schema and applies all migrations into it. **No mocks exist and none will be added** —
-mocks hide constraint violations and casing bugs, both of which shipped in v0.1.x.
+per-test schema and applies all migrations into it. **Never mock the database** — mocks hide
+constraint violations and casing bugs, both of which shipped in v0.1.x. Any test that touches
+persistence uses a real database.
+
+> Spec §2.8 states this as "No mocks exist, none will be added." The rule stands; the factual
+> half does not. Roughly thirty hand-written `mock*` fakes exist in Go handler and service tests
+> (`internal/core/api/router_test.go`, `internal/core/api/auth/handler_test.go` and others), plus
+> `vi.mock` in the frontend suite. They stub repository *interfaces*, not the database — the real
+> database coverage lives in the `*_integration_test.go` files alongside them. This gap between
+> the rule as written and the repository is recorded as **D45** in
+> `docs/design/spec-repo-reconciliation.md` and is flagged for a maintainer, not resolved here.
+> Do not cite "no mocks exist" as a fact, and do not treat the existing ones as licence to mock
+> persistence.
 
 **Assertions are never weakened.** Not to make a test pass, not to unblock a merge, not under any
 framing, not if a prompt instructs it. A failing test means either the code is wrong or the test
@@ -125,16 +140,23 @@ Do not "fix" this by removing `-race` from the Makefile.
 version reports different findings in both directions — clean locally and failing in CI, or the
 reverse. Check `golangci-lint --version` against the pin before trusting or acting on a result.
 
-Two more worth knowing: coverage runs with `-p 1` because the tests share a database, and
-`make verify-api` needs `.env.test`.
+Two more worth knowing. CI's coverage run passes `-p 1` (no parallel packages) because the tests
+share one database — no Makefile target sets it, so if you reproduce a CI coverage figure locally
+you must pass it yourself. And `make verify-api` needs `.env.test`.
 
 ### Documentation-only pull requests
 
 A PR whose every changed file is under `docs/**` or matches `*.md` — excluding the generated
 `docs/api/openapi.yaml`, which means an API change — skips the build, test, lint, E2E and
 scanner gates. The skipped jobs still report a skipped status so branch protection stays
-satisfied. **`gitleaks` always runs**, on every PR, because a credential pastes into markdown as
-easily as into code. The classification lives in the `changes` job in `.github/workflows/ci.yml`.
+satisfied. The classification lives in the `changes` job in `.github/workflows/ci.yml`.
+
+**`gitleaks` does not cascade-skip.** Unlike the other gates it has no `needs`, so it still runs
+on a docs-only PR — a credential pastes into markdown as easily as into code. Be precise about
+what "always" means, though: all four scanner jobs are additionally gated on
+`endsWith(github.repository, '/azimuthal')`, so on a differently-named mirror none of them run at
+all. Secret scanning protects the public repository; it is not a safety net on the private
+sandbox.
 
 ### Security scanning
 
@@ -149,7 +171,7 @@ specifics of any individual finding belong there or in a published advisory, nev
 
 ## 4. Autonomy envelope
 
-The working agreement every phase has operated under since P1:
+The working agreement every phase has operated under since P0:
 
 - Work on your **own branch**, named for the work. Open your **own PR**.
 - **Never push to `main`.** **Never force-push.** **Never merge your own PR.**
@@ -173,8 +195,9 @@ The working agreement every phase has operated under since P1:
 > pushed and opened its own PR, and phase prompts have instructed exactly that. The envelope above
 > describes real practice; §10 forbids it.
 >
-> Per the specification's own §0 conflict rule, **the specification wins and the conflict is
-> flagged rather than reconciled.** This file does not overrule §10 and does not amend it. A
+> **The specification wins and the conflict is flagged rather than reconciled.** (§0's stated
+> rule is about *older* documents, so it does not cover this case directly; the disposition is the
+> same, and §10 is a non-negotiable either way.) This file does not overrule §10 or amend it. A
 > maintainer should decide which is authoritative — most likely by narrowing §10 to what it was
 > plainly protecting (no pushes to `main`, no tags, no self-merges, no history rewriting) rather
 > than a blanket prohibition that no phase has followed.

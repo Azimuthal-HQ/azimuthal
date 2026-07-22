@@ -414,9 +414,10 @@ both incorrect and unsafe. It is the direct input to P4 and P6.
 
 #### D29 — P3 and everything after it is untagged
 
-- **Repo says:** `git describe HEAD` reads `v0.3.2-4-g92f60e1`. Four merged commits sit past the
-  newest tag — P3 (#56, migrations 026–027), the security fix (#58), the ADR directory (#57), and
-  migration 028 (#60).
+- **Repo says:** `git describe origin/main` reads `v0.3.2-4-g92f60e1`. Four merged commits sit
+  past the newest tag — P3 (#56, migrations 026–027), the security fix (#58), the ADR directory
+  (#57), and migration 028 (#60). (Measured against `origin/main`; on a feature branch `describe`
+  counts that branch's own commits too.)
 - **Changed:** recorded in §9. Whether to cut a tag is a maintainer decision, untouched here.
 
 #### D30 — Appendix B row C4 carried a consumed migration number
@@ -439,9 +440,13 @@ both incorrect and unsafe. It is the direct input to P4 and P6.
 - **Changed:** each extracted to `docs/adr/000N-slug.md`. The body of every new file was verified
   mechanically to be a byte-identical substring of the specification; only a status and provenance
   header was added. §3 is now a pointer table. Every index row points at a file.
-- **Reference check:** 167 references to ADRs 0003–0012 across 88 files were swept. **All cite
-  ADRs by number, never by location.** The only location-bearing references were the six index
-  rows, which this pass updated. Nothing points at a moved ADR's old home.
+- **Reference check:** a sweep for `ADR[\s-]?00(0[3-9]|1[0-2])` across the tree at `92f60e1`
+  returned 167 occurrences in 88 files. **Every one cites an ADR by number, never by location.**
+  (Counts move with the pattern and the commit — a hyphen-only `ADR-00NN` at the same commit gives
+  174/90 — so treat them as scale, not as a fixture.) The only location-bearing references were the
+  six index rows in `docs/adr/README.md`, which this pass updated. **No live reference resolves to
+  the old location**; the six extracted files each carry an `**Origin:**` line naming
+  `v0.3-ia-spec.md` §3, but that is provenance, not a pointer, and §3 is now a pointer table.
 
 ### W5 — Rules
 
@@ -484,10 +489,14 @@ that the repository has since falsified.
   **"CI progress tracking (private repo only — never push to public)"** — together with
   `docs/agent-briefs.md`, `docs/github-setup-checklist.md`, `docs/project-state.md`,
   `docs/regression-test-checklist.md` and the `push-private.sh` / `push-public.sh` scripts.
-- **Consequence:** `CLAUDE.md` cannot be created in this repository by writing the file. `git add`
-  silently skips it. Every agent that has been told to read it has been reading nothing, and every
-  phase has therefore run on prompt-embedded rules alone — which is exactly the failure mode W5
-  was meant to end.
+- **Consequence:** `CLAUDE.md` could not be created in this repository by writing the file.
+  `git add` silently skipped it — no error, no warning. Every agent told to read it has been
+  reading nothing, and every phase has therefore run on prompt-embedded rules alone, which is
+  exactly the failure mode W5 was meant to end.
+- **Caught in this branch's own history.** Commit `d30bce8` is titled "add shared-surfaces.md and
+  CLAUDE.md" and its diffstat contains one file. That is the silent skip happening in real time,
+  and it is left in the history rather than rewritten, because it is the clearest evidence of the
+  defect.
 - **Why this needed a decision:** un-ignoring it reverses a recorded decision that this path is
   private-repo-only, and publishes to a public repository a file the repository explicitly marked
   "never push to public". That is a decision, not a fact, so it was raised rather than taken
@@ -504,13 +513,69 @@ that the repository has since falsified.
   and §10, the autonomy envelope, the real verification battery), audited to contain no secret and
   no unfixed-vulnerability detail. It must stay that way — it is now a public file.
 
-**Total discrepancies found in this pass: 34** (D11–D44), spanning §4, §5, §9, Appendix B, the ADR
-index, `known-issues.md` and `.gitignore`. Two of them — **D27** (version collision) and **D33**
-(§10 vs the autonomy envelope) — are **flagged and deliberately unresolved**, because resolving
-either would change a decision. A third, **D44**, was raised for the same reason and resolved by an
-explicit maintainer decision recorded above.
+### Found by adversarially verifying this pass's own output
 
-Cumulative across both passes: **44** (P1.5's D1–D10 plus these).
+The three below were found by fact-checking the corrections above against the repository, after
+they were written. Two are defects in *this pass's own work*; they are recorded rather than
+quietly fixed, because the failure mode is instructive.
+
+#### D45 — §2.8's "no mocks exist" is false about the repository — **FLAGGED, NOT RESOLVED**
+
+- **Spec says:** "**Real PostgreSQL only**, via `internal/testutil.NewTestDB(t)`. No mocks exist,
+  none will be added." P1.5's record repeated it as "No mocks anywhere."
+- **Repo says:** roughly thirty hand-written `mock*` types exist across eight Go test files —
+  `internal/core/api/router_test.go` alone declares twelve — plus `vi.mock` usage in the frontend
+  suite. They stub repository *interfaces* in handler and service unit tests; the real-database
+  coverage lives in the `*_integration_test.go` files beside them.
+- **Why it is not resolved here:** the sentence is half rule and half fact. The **rule** — never
+  mock the database — is a §2 decision and is untouchable by a reconciliation pass. The **factual
+  assertion** is simply wrong. Reconciling them means either deleting ~30 test doubles or amending
+  §2, and both are decisions.
+- **What changed:** nothing in §2. `CLAUDE.md` states the rule as a rule ("never mock the
+  database") and carries a note recording the gap, so the rules file does not assert something
+  the repository contradicts.
+
+#### D46 — The corrected cross-space query shape was itself wrong on first writing
+
+- **This pass first wrote:** `OR (space_id = ANY($shared_subtree_space_ids) AND path LIKE
+  ANY($shared_subtree_like_patterns))`.
+- **Why that is wrong:** two independent arrays match the **cartesian product**, not paired rows.
+  With root A in space 1 and root B in space 2, a page in space 1 whose path sits under root B's
+  subtree satisfies both halves. That is exactly the cross-space widening D19 was written to
+  prevent — reintroduced by the sketch that claims to fix it, three lines above the paragraph
+  forbidding it.
+- **Changed:** the shape now uses `EXISTS (SELECT 1 FROM unnest(space_ids, patterns) AS
+  root(space_id, pattern) WHERE pages.space_id = root.space_id AND pages.path LIKE root.pattern)`,
+  which keeps each `(space_id, pattern)` bound together, plus an explicit warning that the pin must
+  be per-root rather than per-query.
+- **Also recorded:** `$shared_subtree_space_ids` cannot currently be populated —
+  `CascadeRootPaths()` returns paths only and `cascadeRoot.spaceID` is unexported. P4 must add an
+  accessor returning the pairs. Without that note, the obvious workaround is to bind paths alone,
+  which is the defect again.
+- **Lesson worth keeping:** a correction is not self-verifying. This one read as more rigorous than
+  what it replaced while carrying the same class of bug.
+
+#### D47 — §5's inventory of read paths was incomplete
+
+- **This pass first wrote:** "everything else is single-space behind `RequireSpaceReadable`."
+- **Repo says:** two shipped read paths are neither. The space directory
+  (`GET /orgs/{org_id}/spaces`) is org-wide and filters per space in the handler, deliberately, so
+  it can show locked `discoverable` rows a middleware 404 would hide. And `GET /notifications` is
+  user-scoped, mounted outside the `/orgs/{orgID}` group, and consults no readable set at all —
+  `notifications` carries no `space_id`.
+- **Changed:** §5 now enumerates all three enforcement mechanisms. Whether a notification row
+  should survive revocation of access to the entity it names is flagged as an open question, not
+  answered.
+
+**Total discrepancies found in this pass: 37** (D11–D47), spanning §4, §5, §9, Appendix B, the ADR
+index, `known-issues.md` and `.gitignore`. Three are **flagged and deliberately unresolved**
+because resolving them would change a decision — **D27** (version collision), **D33** (§10 vs the
+autonomy envelope) and **D45** (§2.8 "no mocks exist"). A fourth, **D44**, was raised for the same
+reason and resolved by an explicit maintainer decision recorded above. Two — **D46** and **D47** —
+are defects in this pass's own corrections, caught by adversarial verification and fixed before
+merge.
+
+Cumulative across both passes: **47** (P1.5's D1–D10 plus these).
 
 ---
 
