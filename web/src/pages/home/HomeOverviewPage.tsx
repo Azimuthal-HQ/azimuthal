@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, BarChart3, Columns3, LayoutGrid, AlertCircle, Compass, LifeBuoy } from 'lucide-react';
+import { Plus, BarChart3, LayoutGrid, AlertCircle, Compass } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { FieldLabel } from '../../components/ui/field';
 import {
   Dialog,
   DialogContent,
@@ -121,10 +122,10 @@ export function HomeOverviewPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+          <h1 className="text-[19px] font-semibold tracking-[-.01em] text-[var(--color-text)]">
             Welcome back
           </h1>
-          <p className="mt-1 text-[var(--text-sm)] text-[var(--color-text-muted)]">
+          <p className="mt-0.5 text-[var(--text-sm)] text-[var(--color-text-muted)]">
             Here is an overview of your spaces and activity.
           </p>
         </div>
@@ -143,10 +144,10 @@ export function HomeOverviewPage() {
 
       {/* Error state */}
       {error && (
-        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4">
           <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
           <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-            Failed to load spaces: {error.message}
+            {friendlyErrorMessage(error, 'Your spaces could not be loaded.')}
           </p>
         </div>
       )}
@@ -192,12 +193,29 @@ export function HomeOverviewPage() {
         </div>
       )}
 
-      {/* Quick stats — only shown when spaces exist */}
+      {/* Quick stats — every module gets a card, and captions pluralise
+          ("1 Vector space", never "1 Vector spaces"). */}
       {spaces && spaces.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <StatCard icon={LayoutGrid} label="Spaces" value={spaces.length} />
-          <StatCard icon={LifeBuoy} label="Beacon spaces" value={spaces.filter(s => s.type === 'beacon').length} />
-          <StatCard icon={Columns3} label="Vector spaces" value={spaces.filter(s => s.type === 'vector').length} />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard
+            icon={LayoutGrid}
+            label={spaces.length === 1 ? 'Space' : 'Spaces'}
+            value={spaces.length}
+            testId="stat-all"
+          />
+          {MODULE_KEYS.map((key) => {
+            const count = spaces.filter((s) => s.type === key).length;
+            return (
+              <StatCard
+                key={key}
+                icon={MODULES[key].icon}
+                label={`${MODULES[key].name} ${count === 1 ? 'space' : 'spaces'}`}
+                value={count}
+                hueVar={MODULES[key].hueVar}
+                testId={`stat-${key}`}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -208,11 +226,17 @@ export function HomeOverviewPage() {
             const Icon = MODULES[space.type].icon;
             return (
               <Link key={space.id} to={linkForSpace(space)} className="group">
-                <Card className="h-full transition-shadow group-hover:shadow-[var(--shadow-md)]">
+                <Card className="h-full transition-colors group-hover:border-[var(--color-text-muted)] group-hover:bg-[var(--color-surface-hover)]">
                   <CardHeader>
                     <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-primary-muted)]">
-                        <Icon className="h-5 w-5 text-[var(--color-primary)]" />
+                      <div
+                        className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-lg)]"
+                        style={{
+                          backgroundColor: `color-mix(in srgb, var(${MODULES[space.type].hueVar}) 16%, transparent)`,
+                          color: `var(${MODULES[space.type].hueVar})`,
+                        }}
+                      >
+                        <Icon className="h-[17px] w-[17px]" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <CardTitle className="truncate">{space.name}</CardTitle>
@@ -244,10 +268,8 @@ export function HomeOverviewPage() {
 
           <div className="space-y-4 py-2">
             {/* Name */}
-            <div className="space-y-2">
-              <label htmlFor="space-name" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                Name
-              </label>
+            <div>
+              <FieldLabel htmlFor="space-name">Name</FieldLabel>
               <Input
                 id="space-name"
                 placeholder="e.g. HR Support"
@@ -258,10 +280,8 @@ export function HomeOverviewPage() {
             </div>
 
             {/* Type */}
-            <div className="space-y-2">
-              <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                Type
-              </label>
+            <div>
+              <FieldLabel id="space-type-label">Type</FieldLabel>
               <div className="grid grid-cols-3 gap-2">
                 {MODULE_KEYS.map((key) => {
                   const def = MODULES[key];
@@ -288,9 +308,7 @@ export function HomeOverviewPage() {
             {/* Key — required for Beacon spaces only */}
             {formType === 'beacon' && (
               <div className="space-y-2">
-                <label htmlFor="space-key" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                  Ticket abbreviation <span className="text-[var(--color-danger)]">*</span>
-                </label>
+                <FieldLabel htmlFor="space-key">Ticket abbreviation</FieldLabel>
                 <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
                   A short prefix used to number tickets — e.g. <span className="font-mono">HR</span> → <span className="font-mono">HR-1</span>, <span className="font-mono">HR-2</span>
                 </p>
@@ -310,10 +328,8 @@ export function HomeOverviewPage() {
             )}
 
             {/* Description */}
-            <div className="space-y-2">
-              <label htmlFor="space-desc" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                Description <span className="text-[var(--color-text-muted)] font-normal">(optional)</span>
-              </label>
+            <div>
+              <FieldLabel htmlFor="space-desc" optional>Description</FieldLabel>
               <Input
                 id="space-desc"
                 placeholder="What is this space for?"
@@ -354,21 +370,34 @@ interface StatCardProps {
   icon: typeof BarChart3;
   label: string;
   value: number;
+  /** Module hue variable for the icon box tint; neutral when absent. */
+  hueVar?: string;
+  testId?: string;
 }
 
-function StatCard({ icon: Icon, label, value }: StatCardProps) {
+function StatCard({ icon: Icon, label, value, hueVar, testId }: StatCardProps) {
+  const iconStyle = hueVar
+    ? {
+        backgroundColor: `color-mix(in srgb, var(${hueVar}) 16%, transparent)`,
+        color: `var(${hueVar})`,
+      }
+    : undefined;
   return (
-    <Card>
-      <CardContent className={cn('flex items-center gap-4 p-5')}>
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-primary-muted)]">
-          <Icon className="h-5 w-5 text-[var(--color-primary)]" />
+    <Card data-testid={testId}>
+      <CardContent className="p-4">
+        <div
+          className={cn(
+            'mb-2.5 flex h-[34px] w-[34px] items-center justify-center rounded-[9px]',
+            !hueVar && 'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]',
+          )}
+          style={iconStyle}
+        >
+          <Icon className="h-[17px] w-[17px]" />
         </div>
-        <div>
-          <p className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
-            {value}
-          </p>
-          <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">{label}</p>
-        </div>
+        <p className="text-[23px] font-semibold leading-none tracking-[-.02em] text-[var(--color-text)]">
+          {value}
+        </p>
+        <p className="mt-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">{label}</p>
       </CardContent>
     </Card>
   );

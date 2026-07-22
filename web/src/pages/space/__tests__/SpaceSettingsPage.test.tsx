@@ -89,12 +89,17 @@ describe('SpaceSettingsPage grants section', () => {
     expect(screen.queryByTestId('grant-add-button')).not.toBeInTheDocument();
   });
 
-  it('still offers the visibility section alongside the forbidden grants state', () => {
+  // Expectation change (interior restyle): visibility is org-admin-only
+  // (set_visibility) and its card lives in the admin panel's space
+  // management. Space settings must no longer render it — this test fails
+  // if the card is ever re-added here.
+  it('renders no visibility card — visibility moved to the admin panel', () => {
     renderPage();
 
-    expect(screen.getByTestId('visibility-option-hidden')).toBeInTheDocument();
-    expect(screen.getByTestId('visibility-option-discoverable')).toBeInTheDocument();
-    expect(screen.getByTestId('visibility-option-org')).toBeInTheDocument();
+    expect(screen.queryByTestId('visibility-option-hidden')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('visibility-option-discoverable')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('visibility-option-org')).not.toBeInTheDocument();
+    expect(screen.queryByText('Visibility')).not.toBeInTheDocument();
   });
 
   it('offers the person/team picker instead of a raw UUID field once grants load', () => {
@@ -111,5 +116,20 @@ describe('SpaceSettingsPage grants section', () => {
     // …and the free-text UUID field and its old team-select sibling are gone.
     expect(screen.queryByTestId('grant-subject-user-input')).not.toBeInTheDocument();
     expect(screen.queryByTestId('grant-subject-team-select')).not.toBeInTheDocument();
+  });
+
+  it('offers the user/team toggle as a segmented radiogroup on the add-grant row', () => {
+    vi.mocked(api.useSpaceGrants).mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof api.useSpaceGrants>);
+
+    renderPage();
+
+    const group = screen.getByRole('radiogroup', { name: 'Subject type' });
+    expect(group).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'User' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Team' })).toHaveAttribute('aria-checked', 'false');
   });
 });

@@ -11,6 +11,7 @@ import {
 } from '../../lib/api';
 import { ShareBadge } from '../../components/ShareBadge';
 import { Badge } from '../../components/ui';
+import { PriorityPill, normalizePriority } from '../../components/priority';
 
 const VALID_TYPES: ShareEntityType[] = ['page', 'ticket', 'project_item'];
 
@@ -63,13 +64,13 @@ export function SharedEntityPage() {
           </nav>
 
           <div className="flex items-center gap-3">
-            <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">{entity.data.title}</h1>
+            <h1 className="text-[19px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]">{entity.data.title}</h1>
           </div>
 
           {(entity.data.status || entity.data.priority) && (
             <div className="flex gap-2">
               {entity.data.status && <Badge variant="secondary">{entity.data.status}</Badge>}
-              {entity.data.priority && <Badge variant="outline">{entity.data.priority}</Badge>}
+              {entity.data.priority && <PriorityPill priority={normalizePriority(entity.data.priority)} />}
             </div>
           )}
 
