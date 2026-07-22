@@ -170,8 +170,10 @@ The permanent fix landed (see below), and both successor tables carry the defaul
 The broader gap is closed by the real-PostgreSQL integration suite under `internal/core/api/`
 and by CI running real Postgres and MinIO containers with migrations applied before tests.
 
-The mitigation clause below pointed at "CLAUDE.md Testing Requirements" when no `CLAUDE.md`
-existed. One now exists at the repository root, and the governing rules are spec section 2.
+The mitigation clause below pointed at "CLAUDE.md Testing Requirements". `CLAUDE.md` is listed
+in `.gitignore` under "private repo only — never push to public", so it has never been reachable
+from this repository — see the note in `spec-repo-reconciliation.md` (D44). The governing rules
+are spec section 2 regardless.
 
 Agent tests use `go test ./...` which does not catch database constraint
 violations that only surface when inserting real rows with missing fields.
@@ -242,7 +244,9 @@ server uses. P2, P2.5 and P3 all write real audit events through it.
 **Note on the old references**: `TestAuditLog_PersistsEvents` in
 `internal/core/api/known_issues_test.go` is *not* a skipped test — it is an empty function that
 asserts nothing and passes unconditionally. It is a placeholder, not coverage. The referenced
-`docs/project-state.md` does not exist.
+`docs/project-state.md` is not missing by accident — `.gitignore` lists it under "private repo
+only — never push to public", so it is unreachable from this repository by design. Treat it as a
+dead link here.
 
 ---
 
@@ -262,7 +266,8 @@ It landed at `PATCH /api/v1/auth/me`, not the `PUT/PATCH /api/v1/me` this entry 
 `TestUserService_UpdateProfile_NotFound`, `TestUserAdapter_UpdateProfile`.
 
 **Note on the old references**: `TestProfileUpdate_SavesChanges` is an empty placeholder that
-asserts nothing, not a skipped test. The referenced `docs/project-state.md` does not exist.
+asserts nothing, not a skipped test. The referenced `docs/project-state.md` is private-repo-only
+per `.gitignore` and is unreachable from here.
 
 ---
 
