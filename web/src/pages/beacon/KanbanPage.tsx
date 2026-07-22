@@ -17,10 +17,17 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { AlertCircle } from 'lucide-react';
-import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Card, CardContent } from '../../components/ui/card';
+import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
-import { useTickets, useSpace, useTicketStatusTransition, type Ticket, type TicketStatus } from '../../lib/api';
+import {
+  useTickets,
+  useSpace,
+  useTicketStatusTransition,
+  friendlyErrorMessage,
+  type Ticket,
+  type TicketStatus,
+} from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,22 +50,6 @@ const COLUMNS: ColumnDef[] = [
   { id: 'resolved', label: 'Resolved' },
   { id: 'closed', label: 'Closed' },
 ];
-
-const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
-  critical: 'danger',
-  urgent: 'danger',
-  high: 'warning',
-  medium: 'secondary',
-  low: 'outline',
-};
-
-const PRIORITY_LABEL: Record<string, string> = {
-  critical: 'Critical',
-  urgent: 'Critical',
-  high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-};
 
 // ---------------------------------------------------------------------------
 // Sortable ticket card
@@ -98,7 +89,6 @@ function SortableTicketCard({ ticket, spaceId, spaceKey }: { ticket: Ticket; spa
 
 function TicketCard({ ticket, overlay, spaceId, spaceKey }: SortableTicketCardProps) {
   const ticketPath = `/beacon/${spaceId}/tickets/${ticket.id}`;
-  const priorityKey = String(ticket.priority ?? '').toLowerCase();
   return (
     <Card
       className={cn(
@@ -118,9 +108,7 @@ function TicketCard({ ticket, overlay, spaceId, spaceKey }: SortableTicketCardPr
           {ticket.title}
         </p>
         <div className="flex items-center justify-between">
-          <Badge variant={PRIORITY_VARIANT[priorityKey] ?? 'secondary'}>
-            {PRIORITY_LABEL[priorityKey] ?? 'Medium'}
-          </Badge>
+          <PriorityPill priority={normalizePriority(ticket.priority)} />
         </div>
       </CardContent>
     </Card>
@@ -245,7 +233,9 @@ export function KanbanPage() {
         { ticketId: ticket.id, status: targetColumn as TicketStatus },
         {
           onError: (err) =>
-            setTransitionError(`Could not move "${ticket.title}": ${err.message}`),
+            setTransitionError(
+              friendlyErrorMessage(err, `"${ticket.title}" could not be moved.`),
+            ),
         },
       );
     },
@@ -262,19 +252,19 @@ export function KanbanPage() {
 
   if (error) {
     return (
-      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4">
         <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
         <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-          Failed to load tickets: {error.message}
+          {friendlyErrorMessage(error, 'The board could not be loaded.')}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
-        Kanban Board
+    <div className="space-y-5">
+      <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
+        Board
       </h1>
 
       {transitionError && (

@@ -3,8 +3,16 @@ import { useParams, Link } from 'react-router-dom';
 import { ChevronRight, Clock, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
-import { Card, CardContent } from '../../components/ui/card';
+import {
+  DetailLayout,
+  DetailMain,
+  DetailSide,
+  DetailField,
+  DetailDivider,
+} from '../../components/layout/DetailLayout';
 import { EntityShareControl } from '../../components/EntityShareControl';
+import { ModuleChip } from '../../shell/ModuleChip';
+import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import {
   useTicket,
@@ -15,11 +23,12 @@ import {
   useCreateComment,
   useMe,
   useSpace,
+  friendlyErrorMessage,
   type TicketStatus,
 } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
-// Badge helpers
+// Status vocabulary
 // ---------------------------------------------------------------------------
 
 const STATUS_VARIANT: Record<TicketStatus, BadgeProps['variant']> = {
@@ -36,23 +45,27 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
   closed: 'Closed',
 };
 
-const PRIORITY_LABEL: Record<string, string> = {
-  critical: 'Critical',
-  urgent: 'Critical',
-  high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-};
-
-const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
-  critical: 'danger',
-  urgent: 'danger',
-  high: 'warning',
-  medium: 'secondary',
-  low: 'outline',
-};
-
 const ALL_STATUSES: TicketStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
+
+const sideSelectClass = cn(
+  'h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+  'bg-[var(--color-input)] px-2 text-[var(--text-xs)] text-[var(--color-text)]',
+  'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
+);
+
+function InitialAvatar({ name, className }: { name?: string | null; className?: string }) {
+  return (
+    <span
+      className={cn(
+        'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full',
+        'bg-[var(--color-primary-muted)] text-[9px] font-medium text-[var(--color-primary)]',
+        className,
+      )}
+    >
+      {name?.[0]?.toUpperCase() ?? '?'}
+    </span>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -100,10 +113,12 @@ export function TicketDetailPage() {
 
   if (error) {
     return (
-      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4">
         <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
         <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-          {error.status === 404 ? 'Ticket not found.' : `Failed to load ticket: ${error.message}`}
+          {error.status === 404
+            ? 'Ticket not found.'
+            : friendlyErrorMessage(error, 'The ticket could not be loaded.')}
         </p>
       </div>
     );
@@ -118,11 +133,14 @@ export function TicketDetailPage() {
   }
 
   const ticketsPath = spaceId ? `/beacon/${spaceId}/tickets` : '/beacon';
-  const priorityKey = String(ticket.priority ?? '').toLowerCase();
+  const ticketKey = ticket.number
+    ? `${space?.key ?? 'SD'}-${ticket.number}`
+    : ticket.id.slice(0, 8);
   const reporter = (members ?? []).find((m) => m.user_id === ticket.reporter_id);
+  const assignee = (members ?? []).find((m) => m.user_id === ticket.assignee_id);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1 text-[var(--text-sm)] text-[var(--color-text-muted)]">
         <Link to={ticketsPath} className="hover:text-[var(--color-text)]">
@@ -130,15 +148,20 @@ export function TicketDetailPage() {
         </Link>
         <ChevronRight className="h-4 w-4" />
         <span className="text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono)' }}>
-          {ticket.number ? `${space?.key ?? 'SD'}-${ticket.number}` : ticket.id.slice(0, 8)}
+          {ticketKey}
         </span>
       </nav>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Main content */}
-        <div className="space-y-6 lg:col-span-2">
+      <DetailLayout>
+        <DetailMain>
+          <div
+            className="mb-2 text-[var(--text-xs)] text-[var(--color-text-muted)]"
+            style={{ fontFamily: 'var(--font-mono)' }}
+          >
+            {ticketKey}
+          </div>
           <div className="flex items-start justify-between gap-3">
-            <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+            <h1 className="mb-3.5 text-[19px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]">
               {ticket.title}
             </h1>
             <EntityShareControl
@@ -150,36 +173,39 @@ export function TicketDetailPage() {
             />
           </div>
 
+          {/* Meta row: status, priority, module — the one vocabulary. */}
+          <div className="mb-5 flex flex-wrap items-center gap-2">
+            <Badge variant={STATUS_VARIANT[ticket.status]}>
+              {STATUS_LABEL[ticket.status]}
+            </Badge>
+            <PriorityPill priority={normalizePriority(ticket.priority)} />
+            <ModuleChip module="beacon" />
+          </div>
+
           {/* Description */}
-          <Card>
-            <CardContent className="p-5">
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                {ticket.description ? (
-                  <ReactMarkdown>{ticket.description}</ReactMarkdown>
-                ) : (
-                  <span className="italic text-[var(--color-text-muted)] text-[var(--text-sm)]">
-                    No description provided.
-                  </span>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+          <div className="prose prose-sm dark:prose-invert max-w-none text-[var(--color-text)]">
+            {ticket.description ? (
+              <ReactMarkdown>{ticket.description}</ReactMarkdown>
+            ) : (
+              <span className="italic text-[var(--color-text-muted)] text-[var(--text-sm)]">
+                No description provided.
+              </span>
+            )}
+          </div>
 
           {/* Comments section */}
-          <div className="border-t border-[var(--color-border)] pt-6">
-            <h3 className="text-[var(--text-sm)] font-semibold mb-4 text-[var(--color-text)]">Activity</h3>
+          <div className="mt-6 border-t border-[var(--color-border)] pt-5">
+            <h3 className="mb-4 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">Activity</h3>
 
-            <div className="space-y-4 mb-6">
+            <div className="mb-6 space-y-4">
               {(comments ?? []).length === 0 && (
                 <p className="text-[var(--text-sm)] italic text-[var(--color-text-muted)]">No comments yet.</p>
               )}
               {(comments ?? []).map((comment) => (
                 <div key={comment.id} className="flex gap-3">
-                  <div className="h-8 w-8 rounded-full bg-[var(--color-primary)] flex items-center justify-center text-[var(--text-sm)] text-white font-medium flex-shrink-0">
-                    {comment.author_name?.[0]?.toUpperCase() ?? '?'}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                  <InitialAvatar name={comment.author_name} className="h-8 w-8 text-[var(--text-sm)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center gap-2">
                       <span className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
                         {comment.author_name ?? 'Unknown'}
                       </span>
@@ -187,7 +213,7 @@ export function TicketDetailPage() {
                         {new Date(comment.created_at).toLocaleDateString()}
                       </span>
                     </div>
-                    <p className="text-[var(--text-sm)] text-[var(--color-text-muted)] whitespace-pre-wrap">
+                    <p className="whitespace-pre-wrap text-[var(--text-sm)] text-[var(--color-text-muted)]">
                       {comment.content ?? comment.body}
                     </p>
                   </div>
@@ -196,143 +222,127 @@ export function TicketDetailPage() {
             </div>
 
             <div className="flex gap-3">
-              <div className="h-8 w-8 rounded-full bg-[var(--color-primary)] flex items-center justify-center text-[var(--text-sm)] text-white font-medium flex-shrink-0">
-                {me?.display_name?.[0]?.toUpperCase() ?? 'U'}
-              </div>
+              <InitialAvatar name={me?.display_name} className="h-8 w-8 text-[var(--text-sm)]" />
               <div className="flex-1">
                 <textarea
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
                   placeholder="Add a comment..."
                   className={cn(
-                    'w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] resize-none',
-                    'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+                    'w-full resize-none rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
                     'placeholder:text-[var(--color-text-muted)]',
+                    'focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]',
                   )}
                   rows={3}
                 />
                 <button
                   onClick={handleAddComment}
                   disabled={!newComment.trim() || createCommentMutation.isPending}
-                  className="mt-2 px-4 py-1.5 bg-[var(--color-primary)] text-white rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium disabled:opacity-50 hover:opacity-90 transition-colors"
+                  className="mt-2 rounded-[var(--radius-lg)] bg-[var(--color-primary)] px-4 py-1.5 text-[var(--text-sm)] font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
                 >
                   {createCommentMutation.isPending ? 'Posting...' : 'Comment'}
                 </button>
               </div>
             </div>
           </div>
-        </div>
+        </DetailMain>
 
-        {/* Sidebar */}
-        <div className="space-y-4">
-          <Card>
-            <CardContent className="space-y-5 p-5">
-              {/* Status */}
-              <div>
-                <label className="mb-1 block text-[var(--text-xs)] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Status
-                </label>
+        <DetailSide>
+          <DetailField label="Assignee">
+            <div className="space-y-1.5">
+              {assignee ? (
                 <div className="flex items-center gap-2">
-                  <Badge variant={STATUS_VARIANT[ticket.status]}>
-                    {STATUS_LABEL[ticket.status]}
-                  </Badge>
-                  <select
-                    value={ticket.status}
-                    onChange={(e) => handleStatusChange(e.target.value as TicketStatus)}
-                    className={cn(
-                      'h-9 flex-1 rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                      'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
-                    )}
-                  >
-                    {ALL_STATUSES.map((s) => (
-                      <option key={s} value={s}>{STATUS_LABEL[s]}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Priority */}
-              <div>
-                <label className="mb-1 block text-[var(--text-xs)] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Priority
-                </label>
-                <Badge variant={PRIORITY_VARIANT[priorityKey] ?? 'secondary'}>
-                  {PRIORITY_LABEL[priorityKey] ?? 'Medium'}
-                </Badge>
-              </div>
-
-              {/* Assignee */}
-              <div className="space-y-1">
-                <label className="text-[var(--text-xs)] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Assignee
-                </label>
-                <select
-                  value={ticket.assignee_id ?? ''}
-                  onChange={(e) => handleAssigneeChange(e.target.value)}
-                  className={cn(
-                    'w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                    'bg-[var(--color-surface)] px-2 py-1.5 text-[var(--text-sm)] text-[var(--color-text)]',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
-                  )}
-                >
-                  <option value="">Unassigned</option>
-                  {(members ?? []).map((m) => (
-                    <option key={m.user_id} value={m.user_id}>{m.display_name}</option>
-                  ))}
-                </select>
-                <div className="flex gap-[var(--space-2)]">
-                  {ticket.assignee_id !== me?.id && (
-                    <button
-                      type="button"
-                      onClick={() => handleAssigneeChange(me?.id ?? '')}
-                      className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline"
-                    >
-                      Assign to me
-                    </button>
-                  )}
-                  {ticket.assignee_id && (
-                    <button
-                      type="button"
-                      onClick={() => handleAssigneeChange('')}
-                      className="text-[var(--text-xs)] text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:underline"
-                    >
-                      Unassign
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Reporter */}
-              <div className="space-y-1">
-                <label className="text-[var(--text-xs)] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Reporter
-                </label>
-                <div className="flex items-center gap-2">
-                  <div className="h-6 w-6 rounded-full bg-[var(--color-primary)] flex items-center justify-center text-[var(--text-xs)] text-white font-medium">
-                    {reporter?.display_name?.[0]?.toUpperCase() ?? '?'}
-                  </div>
+                  <InitialAvatar name={assignee.display_name} />
                   <span className="text-[var(--text-sm)] text-[var(--color-text)]">
-                    {reporter?.display_name ?? 'Unknown'}
+                    {assignee.display_name}
                   </span>
                 </div>
+              ) : (
+                <div className="text-[var(--text-sm)] text-[var(--color-text-muted)]">Unassigned</div>
+              )}
+              <select
+                value={ticket.assignee_id ?? ''}
+                onChange={(e) => handleAssigneeChange(e.target.value)}
+                aria-label="Change assignee"
+                className={sideSelectClass}
+              >
+                <option value="">Unassigned</option>
+                {(members ?? []).map((m) => (
+                  <option key={m.user_id} value={m.user_id}>{m.display_name}</option>
+                ))}
+              </select>
+              <div className="flex gap-[var(--space-2)]">
+                {ticket.assignee_id !== me?.id && (
+                  <button
+                    type="button"
+                    onClick={() => handleAssigneeChange(me?.id ?? '')}
+                    className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline"
+                  >
+                    Assign to me
+                  </button>
+                )}
+                {ticket.assignee_id && (
+                  <button
+                    type="button"
+                    onClick={() => handleAssigneeChange('')}
+                    className="text-[var(--text-xs)] text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:underline"
+                  >
+                    Unassign
+                  </button>
+                )}
               </div>
+            </div>
+          </DetailField>
 
-              {/* Dates */}
-              <div className="space-y-2 border-t border-[var(--color-border)] pt-4">
-                <div className="flex items-center gap-2 text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                  <Clock className="h-3 w-3" />
-                  Created {ticket.created_at.slice(0, 10)}
-                </div>
-                <div className="flex items-center gap-2 text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                  <Clock className="h-3 w-3" />
-                  Updated {ticket.updated_at.slice(0, 10)}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+          <DetailField label="Reporter">
+            <div className="flex items-center gap-2" data-testid="ticket-reporter">
+              <InitialAvatar name={reporter?.display_name} />
+              <span className="text-[var(--text-sm)] text-[var(--color-text)]">
+                {reporter?.display_name ?? 'Unknown'}
+              </span>
+            </div>
+          </DetailField>
+
+          <DetailDivider />
+
+          <DetailField label="Priority">
+            <PriorityPill priority={normalizePriority(ticket.priority)} />
+          </DetailField>
+
+          <DetailField label="Status">
+            <div className="space-y-1.5">
+              <Badge variant={STATUS_VARIANT[ticket.status]}>
+                {STATUS_LABEL[ticket.status]}
+              </Badge>
+              <select
+                value={ticket.status}
+                onChange={(e) => handleStatusChange(e.target.value as TicketStatus)}
+                aria-label="Change status"
+                className={sideSelectClass}
+              >
+                {ALL_STATUSES.map((s) => (
+                  <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+                ))}
+              </select>
+            </div>
+          </DetailField>
+
+          <DetailDivider />
+
+          <DetailField label="Created">
+            <div className="flex items-center gap-2 text-[var(--text-xs)] text-[var(--color-text-muted)]">
+              <Clock className="h-3 w-3" />
+              {ticket.created_at.slice(0, 10)}
+            </div>
+          </DetailField>
+          <DetailField label="Updated">
+            <div className="flex items-center gap-2 text-[var(--text-xs)] text-[var(--color-text-muted)]">
+              <Clock className="h-3 w-3" />
+              {ticket.updated_at.slice(0, 10)}
+            </div>
+          </DetailField>
+        </DetailSide>
+      </DetailLayout>
     </div>
   );
 }

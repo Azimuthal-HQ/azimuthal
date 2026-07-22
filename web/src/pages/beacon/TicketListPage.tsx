@@ -1,9 +1,11 @@
 import { useState, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Plus, Search, AlertTriangle, ArrowUp, Minus, ArrowDown, AlertCircle } from 'lucide-react';
+import { Plus, Search, AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
+import { Field, FieldLabel } from '../../components/ui/field';
+import { SegmentedControl } from '../../components/ui/segmented';
 import {
   Dialog,
   DialogContent,
@@ -13,17 +15,23 @@ import {
   DialogFooter,
   DialogClose,
 } from '../../components/ui/dialog';
+import {
+  PRIORITY_SEGMENT_OPTIONS,
+  PriorityPill,
+  normalizePriority,
+  type PriorityKey,
+} from '../../components/priority';
 import { cn } from '../../lib/utils';
-import { useTickets, useCreateTicket, useSpace, type TicketStatus } from '../../lib/api';
+import {
+  useTickets,
+  useCreateTicket,
+  useSpace,
+  friendlyErrorMessage,
+  type TicketStatus,
+} from '../../lib/api';
 
 // ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type TicketPriority = 'critical' | 'high' | 'medium' | 'low';
-
-// ---------------------------------------------------------------------------
-// Badge helpers
+// Status vocabulary
 // ---------------------------------------------------------------------------
 
 const STATUS_VARIANT: Record<TicketStatus, BadgeProps['variant']> = {
@@ -40,35 +48,19 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
   closed: 'Closed',
 };
 
-const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
-  critical: 'danger',
-  urgent: 'danger',
-  high: 'warning',
-  medium: 'secondary',
-  low: 'outline',
-};
-
-const PRIORITY_LABEL: Record<string, string> = {
-  critical: 'Critical',
-  urgent: 'Critical',
-  high: 'High',
-  medium: 'Medium',
-  low: 'Low',
-};
-
-const PRIORITY_ICON: Record<TicketPriority, typeof AlertTriangle> = {
-  critical: AlertTriangle,
-  high: ArrowUp,
-  medium: Minus,
-  low: ArrowDown,
-};
-
-const PRIORITY_NAME_TO_API: Record<TicketPriority, string> = {
+/** The wire spells Critical as 'urgent' (legacy); the UI never shows it. */
+const PRIORITY_TO_API: Record<PriorityKey, string> = {
   critical: 'urgent',
   high: 'high',
   medium: 'medium',
   low: 'low',
 };
+
+const filterSelectClass = cn(
+  'h-9 rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+  'bg-[var(--color-input)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
+  'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
+);
 
 // ---------------------------------------------------------------------------
 // Component
@@ -89,7 +81,7 @@ export function TicketListPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formTitle, setFormTitle] = useState('');
   const [formDescription, setFormDescription] = useState('');
-  const [formPriority, setFormPriority] = useState<TicketPriority>('medium');
+  const [formPriority, setFormPriority] = useState<PriorityKey>('medium');
 
   function resetForm() {
     setFormTitle('');
@@ -101,19 +93,16 @@ export function TicketListPage() {
     const title = formTitle.trim();
     if (!title) return;
 
-    const body = {
-      title,
-      description: formDescription.trim() || '',
-      priority: PRIORITY_NAME_TO_API[formPriority] || 'medium',
-    };
-    console.log('[TicketListPage] Creating ticket:', JSON.stringify(body));
-
     try {
-      await createTicketMutation.mutateAsync(body);
+      await createTicketMutation.mutateAsync({
+        title,
+        description: formDescription.trim() || '',
+        priority: PRIORITY_TO_API[formPriority],
+      });
       setDialogOpen(false);
       resetForm();
-    } catch (err) {
-      console.error('[TicketListPage] Create ticket error:', err);
+    } catch {
+      // Surfaced below through friendlyErrorMessage.
     }
   }
 
@@ -128,10 +117,10 @@ export function TicketListPage() {
   }, [tickets, statusFilter, priorityFilter, search]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+        <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
           Tickets
         </h1>
         <Button onClick={() => setDialogOpen(true)}>
@@ -142,7 +131,7 @@ export function TicketListPage() {
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[200px] max-w-xs">
+        <div className="relative min-w-[200px] max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
           <Input
             placeholder="Search tickets..."
@@ -155,11 +144,7 @@ export function TicketListPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as TicketStatus | 'all')}
-          className={cn(
-            'h-9 rounded-[var(--radius-md)] border border-[var(--color-border)]',
-            'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
-          )}
+          className={filterSelectClass}
         >
           <option value="all">All Statuses</option>
           <option value="open">Open</option>
@@ -171,11 +156,7 @@ export function TicketListPage() {
         <select
           value={priorityFilter}
           onChange={(e) => setPriorityFilter(e.target.value)}
-          className={cn(
-            'h-9 rounded-[var(--radius-md)] border border-[var(--color-border)]',
-            'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
-          )}
+          className={filterSelectClass}
         >
           <option value="all">All Priorities</option>
           <option value="critical">Critical</option>
@@ -194,25 +175,25 @@ export function TicketListPage() {
 
       {/* Error */}
       {error && (
-        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4">
           <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
           <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-            Failed to load tickets: {error.message}
+            {friendlyErrorMessage(error, 'Tickets could not be loaded.')}
           </p>
         </div>
       )}
 
       {/* Table */}
       {tickets && (
-        <div className="overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <div className="overflow-x-auto rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)]">
           <table className="w-full text-left text-[var(--text-sm)]">
             <thead>
               <tr className="border-b border-[var(--color-border)]">
-                <th className="whitespace-nowrap px-4 py-3 font-medium text-[var(--color-text-muted)]">ID</th>
-                <th className="px-4 py-3 font-medium text-[var(--color-text-muted)]">Title</th>
-                <th className="px-4 py-3 font-medium text-[var(--color-text-muted)]">Status</th>
-                <th className="px-4 py-3 font-medium text-[var(--color-text-muted)]">Priority</th>
-                <th className="whitespace-nowrap px-4 py-3 font-medium text-[var(--color-text-muted)]">Created</th>
+                <th className="whitespace-nowrap px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">ID</th>
+                <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Title</th>
+                <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Status</th>
+                <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Priority</th>
+                <th className="whitespace-nowrap px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Created</th>
               </tr>
             </thead>
             <tbody>
@@ -221,12 +202,12 @@ export function TicketListPage() {
                 return (
                   <tr
                     key={ticket.id}
-                    className="border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors"
+                    className="border-b border-[var(--color-border)] transition-colors last:border-b-0 hover:bg-[var(--color-surface-hover)]"
                   >
                     <td className="whitespace-nowrap px-4 py-3">
                       <Link
                         to={ticketPath}
-                        className="font-[var(--font-mono)] text-[var(--color-primary)] hover:underline"
+                        className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline"
                         style={{ fontFamily: 'var(--font-mono)' }}
                       >
                         {ticket.number ? `${space?.key ?? 'SD'}-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
@@ -243,9 +224,7 @@ export function TicketListPage() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={PRIORITY_VARIANT[String(ticket.priority).toLowerCase()] ?? 'secondary'}>
-                        {PRIORITY_LABEL[String(ticket.priority).toLowerCase()] ?? 'Medium'}
-                      </Badge>
+                      <PriorityPill priority={normalizePriority(ticket.priority)} />
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-[var(--color-text-muted)]">
                       {(ticket.created_at ?? '').slice(0, 10)}
@@ -276,12 +255,9 @@ export function TicketListPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            {/* Title */}
-            <div className="space-y-2">
-              <label htmlFor="ticket-title" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                Title
-              </label>
+          <div className="py-2">
+            <Field>
+              <FieldLabel htmlFor="ticket-title">Title</FieldLabel>
               <Input
                 id="ticket-title"
                 placeholder="e.g. Login page returns 500 error"
@@ -289,13 +265,12 @@ export function TicketListPage() {
                 onChange={(e) => setFormTitle(e.target.value)}
                 autoFocus
               />
-            </div>
+            </Field>
 
-            {/* Description */}
-            <div className="space-y-2">
-              <label htmlFor="ticket-desc" className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-                Description <span className="text-[var(--color-text-muted)] font-normal">(optional)</span>
-              </label>
+            <Field>
+              <FieldLabel htmlFor="ticket-desc" optional>
+                Description
+              </FieldLabel>
               <textarea
                 id="ticket-desc"
                 placeholder="Describe the issue, steps to reproduce, expected vs actual behaviour"
@@ -303,39 +278,25 @@ export function TicketListPage() {
                 onChange={(e) => setFormDescription(e.target.value)}
                 rows={3}
                 className={cn(
-                  'flex w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] shadow-[var(--shadow-sm)] transition-colors placeholder:text-[var(--color-text-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-1 resize-y',
+                  'flex w-full resize-y rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] transition-colors placeholder:text-[var(--color-text-muted)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
                 )}
               />
-            </div>
+            </Field>
 
-            {/* Priority */}
-            <div className="space-y-2">
-              <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Priority</label>
-              <div className="grid grid-cols-4 gap-2">
-                {(['critical', 'high', 'medium', 'low'] as const).map((p) => {
-                  const Icon = PRIORITY_ICON[p];
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => setFormPriority(p)}
-                      className={cn(
-                        'flex flex-col items-center gap-1.5 rounded-[var(--radius-lg)] border p-3 transition-colors',
-                        formPriority === p
-                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
-                          : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      <span className="text-[var(--text-xs)] font-medium">{p.charAt(0).toUpperCase() + p.slice(1)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <Field>
+              <FieldLabel id="ticket-priority-label">Priority</FieldLabel>
+              <SegmentedControl
+                options={PRIORITY_SEGMENT_OPTIONS}
+                value={formPriority}
+                onChange={setFormPriority}
+                aria-label="Priority"
+              />
+            </Field>
 
             {createTicketMutation.error && (
-              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{createTicketMutation.error.message}</p>
+              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
+                {friendlyErrorMessage(createTicketMutation.error, 'The ticket could not be created.')}
+              </p>
             )}
           </div>
 

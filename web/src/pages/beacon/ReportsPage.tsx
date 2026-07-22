@@ -11,7 +11,7 @@ export function ReportsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">Reports</h1>
+        <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">Reports</h1>
         <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
           Insights for this service desk
         </p>
