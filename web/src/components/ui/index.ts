@@ -60,3 +60,11 @@ export {
   SelectContent,
   SelectItem,
 } from './select';
+
+export { SegmentedControl } from './segmented';
+export type { SegmentedOption } from './segmented';
+
+export { RadioCardGroup } from './radio-card';
+export type { RadioCardOption } from './radio-card';
+
+export { Field, FieldLabel, FieldHint } from './field';
