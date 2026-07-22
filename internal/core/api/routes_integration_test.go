@@ -525,6 +525,36 @@ func TestIntegration_CreateSpace_DuplicateSlug(t *testing.T) {
 		"the conflict message must be human-readable and name the module")
 }
 
+// TestIntegration_SpaceContentsSummary covers the delete-confirmation
+// summary endpoint (P2.5 W8), a sibling route of Create in the same handler
+// (spec §2.2): empty space → zero counts, counts move when content lands,
+// and no credentials → 401.
+func TestIntegration_SpaceContentsSummary(t *testing.T) {
+	ts := newTestServer(t)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	summaryPath := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/summary", ts.OrgID, space.ID)
+
+	r := ts.get(t, summaryPath, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "summary on empty space: %s", r.Body)
+	var counts map[string]int
+	require.NoError(t, json.Unmarshal(r.Body, &counts))
+	require.Equal(t, map[string]int{"tickets": 0, "pages": 0, "items": 0}, counts)
+
+	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/tickets", ts.OrgID, space.ID), map[string]any{
+		"title":    "Summary Ticket",
+		"priority": "medium",
+	}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "creating ticket: %s", r.Body)
+
+	r = ts.get(t, summaryPath, true)
+	require.Equal(t, http.StatusOK, r.StatusCode)
+	require.NoError(t, json.Unmarshal(r.Body, &counts))
+	require.Equal(t, 1, counts["tickets"], "summary must count the live ticket")
+
+	r = ts.get(t, summaryPath, false)
+	require.Equal(t, http.StatusUnauthorized, r.StatusCode, "unauthenticated summary must 401")
+}
+
 // TestIntegration_CreateSpace_SameSlugAcrossModules pins the migration-028
 // semantics end to end: a team called DevOps wants a Beacon desk, a Codex
 // wiki, and a Vector board all slugged "devops" — every one must succeed.
