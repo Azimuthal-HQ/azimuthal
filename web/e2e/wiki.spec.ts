@@ -130,22 +130,26 @@ test.describe('Wiki', () => {
     const tree = page.getByTestId('codex-page-tree')
     await expect(tree.locator('[data-tree-depth]')).toHaveCount(64, { timeout: 10000 })
 
-    // The tree overflows and scrolls inside its own container…
-    const scrolled = await tree.evaluate((el) => {
+    // The tree overflows and scrolls fully inside its own container.
+    const metrics = await tree.evaluate((el) => {
       el.scrollTop = el.scrollHeight
-      return el.scrollTop
+      return { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }
     })
-    expect(scrolled).toBeGreaterThan(0)
+    expect(metrics.scrollTop).toBeGreaterThan(0)
+    expect(metrics.scrollTop + metrics.clientHeight).toBeGreaterThanOrEqual(metrics.scrollHeight - 1)
 
-    // …so the last page is reachable inside the tree…
-    await expect(
-      tree.locator('[data-tree-depth]').filter({ hasText: 'Deep Page 64' }),
-    ).toBeInViewport()
+    // A named deep page is reachable by scrolling the tree alone. (Sibling
+    // order from the API is not title-order, so the row is scrolled to
+    // explicitly rather than assumed to be last.)
+    const target = tree.locator('[data-tree-depth]').filter({ hasText: 'Deep Page 64' })
+    await target.scrollIntoViewIfNeeded()
+    await expect(target).toBeInViewport()
 
-    // …while the fixed zone never left the viewport and the sidebar itself
-    // did not scroll to keep it there.
+    // The fixed zone never left the viewport, and nothing but the tree
+    // scrolled to make that reachability happen.
     const sidebar = page.getByTestId('space-sidebar')
     expect(await sidebar.evaluate((el) => el.scrollTop)).toBe(0)
+    expect(await page.evaluate(() => window.scrollY)).toBe(0)
     await expect(page.getByTestId('codex-page-search')).toBeInViewport()
     await expect(sidebar.getByRole('link', { name: 'Recent', exact: true })).toBeInViewport()
     await expect(sidebar.getByRole('link', { name: 'Starred', exact: true })).toBeInViewport()
