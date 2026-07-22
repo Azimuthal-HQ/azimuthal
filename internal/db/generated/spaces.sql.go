@@ -153,16 +153,19 @@ func (q *Queries) GetSpaceByID(ctx context.Context, id uuid.UUID) (Space, error)
 }
 
 const getSpaceBySlug = `-- name: GetSpaceBySlug :one
-SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility FROM spaces WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL
+SELECT id, org_id, slug, name, description, type, icon, is_private, created_by, created_at, updated_at, deleted_at, workflow_id, key, owner_team_id, visibility FROM spaces WHERE org_id = $1 AND type = $2 AND slug = $3 AND deleted_at IS NULL
 `
 
 type GetSpaceBySlugParams struct {
 	OrgID uuid.UUID `json:"org_id"`
+	Type  string    `json:"type"`
 	Slug  string    `json:"slug"`
 }
 
+// Slugs are unique per (org, module) since migration 028, so resolving a
+// space by slug requires the module type — slug alone is ambiguous.
 func (q *Queries) GetSpaceBySlug(ctx context.Context, arg GetSpaceBySlugParams) (Space, error) {
-	row := q.db.QueryRow(ctx, getSpaceBySlug, arg.OrgID, arg.Slug)
+	row := q.db.QueryRow(ctx, getSpaceBySlug, arg.OrgID, arg.Type, arg.Slug)
 	var i Space
 	err := row.Scan(
 		&i.ID,

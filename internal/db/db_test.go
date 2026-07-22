@@ -333,6 +333,7 @@ func TestSpaceLifecycle(t *testing.T) {
 
 	got, err := q.GetSpaceBySlug(ctx, generated.GetSpaceBySlugParams{
 		OrgID: org.ID,
+		Type:  space.Type,
 		Slug:  space.Slug,
 	})
 	if err != nil {
@@ -340,6 +341,40 @@ func TestSpaceLifecycle(t *testing.T) {
 	}
 	if got.ID != space.ID {
 		t.Errorf("space ID mismatch")
+	}
+
+	// Slugs are per-module since migration 028: the same slug in another
+	// module is a distinct space, and GetSpaceBySlug resolves each precisely.
+	def, err := q.GetDefaultTeam(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("GetDefaultTeam: %v", err)
+	}
+	twin, err := q.CreateSpace(ctx, generated.CreateSpaceParams{
+		ID:          uuid.New(),
+		OrgID:       org.ID,
+		Slug:        space.Slug,
+		Name:        "codex twin",
+		Type:        "codex",
+		CreatedBy:   user.ID,
+		Key:         "TWIN",
+		OwnerTeamID: def.ID,
+		Visibility:  "discoverable",
+	})
+	if err != nil {
+		t.Fatalf("CreateSpace codex twin with shared slug: %v", err)
+	}
+	t.Cleanup(func() { _ = q.SoftDeleteSpace(ctx, twin.ID) })
+
+	gotTwin, err := q.GetSpaceBySlug(ctx, generated.GetSpaceBySlugParams{
+		OrgID: org.ID,
+		Type:  "codex",
+		Slug:  space.Slug,
+	})
+	if err != nil {
+		t.Fatalf("GetSpaceBySlug (codex twin): %v", err)
+	}
+	if gotTwin.ID != twin.ID {
+		t.Errorf("GetSpaceBySlug resolved the wrong module's space: got %s, want %s", gotTwin.ID, twin.ID)
 	}
 
 	spaces, err := q.ListSpacesByOrg(ctx, org.ID)

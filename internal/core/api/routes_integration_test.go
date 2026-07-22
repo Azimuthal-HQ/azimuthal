@@ -491,8 +491,9 @@ func TestIntegration_CreateSpace_ExplicitDuplicateKey(t *testing.T) {
 		"explicit duplicate key must be 409: %s", r.Body)
 }
 
-// TestIntegration_CreateSpace_DuplicateSlug: a duplicate slug in the same org
-// is a client error — 409, never a 500.
+// TestIntegration_CreateSpace_DuplicateSlug: a duplicate slug in the same
+// module of the same org is a client error — 409 with a message written for
+// a person (it names the module), never a 500 and never a constraint string.
 func TestIntegration_CreateSpace_DuplicateSlug(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -509,7 +510,46 @@ func TestIntegration_CreateSpace_DuplicateSlug(t *testing.T) {
 		"type": "vector",
 	}, true)
 	require.Equal(t, http.StatusConflict, r.StatusCode,
-		"duplicate slug must be 409: %s", r.Body)
+		"duplicate slug in the same module must be 409: %s", r.Body)
+
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(r.Body, &body), "error envelope expected: %s", r.Body)
+	require.Equal(t, "CONFLICT", body.Error.Code)
+	require.Equal(t, "a Vector space with this slug already exists in the organization",
+		body.Error.Message,
+		"the conflict message must be human-readable and name the module")
+}
+
+// TestIntegration_CreateSpace_SameSlugAcrossModules pins the migration-028
+// semantics end to end: a team called DevOps wants a Beacon desk, a Codex
+// wiki, and a Vector board all slugged "devops" — every one must succeed.
+// The identical names also collide on the derived key, so this exercises the
+// key de-dupe alongside per-module slug uniqueness.
+func TestIntegration_CreateSpace_SameSlugAcrossModules(t *testing.T) {
+	ts := newTestServer(t)
+
+	for _, module := range []string{"beacon", "codex", "vector"} {
+		r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID), map[string]string{
+			"name": "DevOps",
+			"slug": "devops",
+			"type": module,
+		}, true)
+		require.Equal(t, http.StatusCreated, r.StatusCode,
+			"creating slug 'devops' in module %s must succeed: %s", module, r.Body)
+
+		var created struct {
+			Slug string `json:"slug"`
+			Type string `json:"type"`
+		}
+		require.NoError(t, json.Unmarshal(r.Body, &created))
+		require.Equal(t, "devops", created.Slug)
+		require.Equal(t, module, created.Type)
+	}
 }
 
 // TestIntegration_CreateSpace_MissingName returns 400.

@@ -7,7 +7,9 @@ RETURNING *;
 SELECT * FROM spaces WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GetSpaceBySlug :one
-SELECT * FROM spaces WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL;
+-- Slugs are unique per (org, module) since migration 028, so resolving a
+-- space by slug requires the module type — slug alone is ambiguous.
+SELECT * FROM spaces WHERE org_id = $1 AND type = $2 AND slug = $3 AND deleted_at IS NULL;
 
 -- name: ListSpacesByOrg :many
 SELECT * FROM spaces WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC;
