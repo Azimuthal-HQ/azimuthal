@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azimuthal — interior surfaces prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+ --page:#090A0D;--bg:#0F1117;--top:#12151D;--content:#0C0E14;
+ --card:#151922;--card2:#1A1F29;--pop:#1B212C;--input:#0E1016;
+ --line:rgba(255,255,255,.07);--line2:rgba(255,255,255,.11);--line3:rgba(255,255,255,.16);
+ --text:#E6E9F0;--text2:#CBD1DC;--muted:#8A92A2;--faint:#5C6474;
+ --accent:#4A90D9;--accent-h:#5B9CE0;--accent-t:rgba(74,144,217,.15);--afg:#6FA9E3;--afg2:#CFE1F5;
+ --beacon:#E0806A;--codex:#A99BEE;--vector:#4A90D9;--chip-fg:#A6AEBC;
+ --ok:#5DCAA5;--warn:#E4A04A;--crit:#E06A6A;--hi:#E0806A;
+ --mono:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--page);font-family:'Inter',system-ui,sans-serif;color:var(--text);-webkit-font-smoothing:antialiased;font-size:13px}
+.ic{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;width:16px;height:16px;flex:none}
+.wrap{max-width:1180px;margin:0 auto;padding:24px 18px 60px}
+.head{display:flex;align-items:center;gap:9px;color:var(--faint);font-size:12px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px}
+.head .ic{width:15px;height:15px;color:var(--accent)}
+.intro{color:var(--muted);font-size:13px;line-height:1.65;margin:0 2px 20px;max-width:760px}
+.intro b{color:var(--afg);font-weight:500}
+
+.tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tab{padding:9px 15px;font-size:13px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .12s,border-color .12s;white-space:nowrap}
+.tab:hover{color:var(--text2)}
+.tab.on{color:var(--afg2);border-color:var(--accent)}
+.panel{display:none}
+.panel.on{display:block;animation:fade .18s ease}
+@keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1}}
+.caption{color:var(--faint);font-size:12px;line-height:1.6;margin:0 2px 15px;max-width:720px}
+.caption b{color:var(--muted);font-weight:500}
+
+/* frame */
+.frame{background:var(--bg);border:1px solid var(--line2);border-radius:13px;overflow:hidden}
+.tbar{display:flex;align-items:center;gap:10px;height:48px;padding:0 14px;background:var(--top);border-bottom:1px solid var(--line)}
+.logo{width:19px;height:19px;color:var(--accent)}
+.ptab{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:7px;font-size:12.5px;color:#9AA3B4;cursor:default}
+.ptab .ic{width:15px;height:15px}
+.ptab.on{background:var(--accent-t);color:var(--afg2)}.ptab.on .ic{color:var(--afg)}
+.tbar .sp{margin-left:auto}
+.tsearch{display:flex;align-items:center;gap:7px;height:29px;padding:0 10px;background:var(--input);border:1px solid var(--line);border-radius:7px;color:var(--faint);font-size:12px;width:190px}
+.tsearch .ic{width:13px;height:13px}
+.tbtn{display:flex;align-items:center;gap:5px;height:29px;padding:0 11px;background:var(--accent);color:#fff;border-radius:7px;font-size:12.5px;font-weight:500}
+.tbtn .ic{width:13px;height:13px;stroke-width:2}
+.av{width:25px;height:25px;border-radius:50%;background:rgba(74,144,217,.22);color:#8FBCE8;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500}
+
+.body{display:flex;min-height:540px}
+.side{width:184px;flex:none;border-right:1px solid var(--line);padding:11px 9px;background:var(--bg)}
+.spick{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line2);border-radius:8px;margin-bottom:11px;cursor:default}
+.spick .nm{font-weight:500;font-size:12.5px}.spick .ic{width:14px;height:14px;color:var(--faint);margin-left:auto}
+.spick .mi{width:15px;height:15px;color:var(--beacon)}
+.si{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;color:#9AA3B4;font-size:12.5px;cursor:default;transition:background .12s}
+.si .ic{width:15px;height:15px}
+.si:hover{background:rgba(255,255,255,.04)}
+.si.on{background:var(--accent-t);color:var(--afg2)}.si.on .ic{color:var(--afg)}
+.main{flex:1;min-width:0;background:var(--content);padding:20px 22px;overflow:auto}
+
+/* generic bits */
+.h1{font-size:17px;font-weight:600;letter-spacing:-.01em}
+.h2{font-size:14px;font-weight:600;margin-bottom:3px}
+.sub{color:var(--muted);font-size:12.5px;line-height:1.6}
+.btn{display:inline-flex;align-items:center;gap:6px;height:33px;padding:0 13px;border-radius:8px;font-size:12.5px;font-weight:500;cursor:default;border:none}
+.btn .ic{width:14px;height:14px}
+.btn.pri{background:var(--accent);color:#fff}
+.btn.pri:hover{background:var(--accent-h)}
+.btn.gho{background:transparent;border:1px solid var(--line2);color:var(--muted)}
+.btn.dgr{background:transparent;border:1px solid rgba(224,106,106,.4);color:#E68B87}
+.field{margin-bottom:16px}
+.lbl{display:block;font-size:12px;font-weight:500;color:var(--text2);margin-bottom:7px}
+.lbl .opt{color:var(--faint);font-weight:400;margin-left:5px}
+.inp{width:100%;height:35px;background:var(--input);border:1px solid var(--line2);border-radius:8px;padding:0 11px;color:var(--text);font-size:13px;font-family:inherit}
+.inp:focus{outline:none;border-color:var(--accent)}
+.inp::placeholder{color:var(--faint)}
+textarea.inp{height:auto;padding:9px 11px;resize:vertical;line-height:1.5}
+.hintline{font-size:11px;color:var(--faint);margin-top:6px}
+
+/* segmented control — the priority fix */
+.seg{display:flex;gap:0;border:1px solid var(--line2);border-radius:8px;overflow:hidden;width:100%}
+.seg button{flex:1;height:35px;background:var(--input);border:none;border-right:1px solid var(--line2);color:var(--muted);font-size:12.5px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:background .12s,color .12s;font-family:inherit}
+.seg button:last-child{border-right:none}
+.seg button:hover{background:var(--card2);color:var(--text2)}
+.seg button .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.seg button.on{color:#fff}
+.seg button.on.low{background:rgba(93,202,165,.22);color:#7FD4B4}
+.seg button.on.med{background:rgba(74,144,217,.26);color:#8FBCE8}
+.seg button.on.high{background:rgba(224,128,106,.24);color:#E89B84}
+.seg button.on.crit{background:rgba(224,106,106,.26);color:#EC8A87}
+.d-low{background:var(--ok)}.d-med{background:var(--accent)}.d-high{background:var(--hi)}.d-crit{background:var(--crit)}
+
+.seg-old{display:flex;gap:6px}
+.seg-old button{background:var(--input);border:1px solid var(--line2);border-radius:5px;padding:4px 8px;color:var(--muted);font-size:12px;cursor:default}
+.seg-old button.on{background:var(--accent-t);color:var(--afg2);border-color:var(--accent)}
+
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:500;padding:2px 7px;border-radius:5px;color:var(--chip-fg)}
+.chip .ic{width:11px;height:11px}
+.c-beacon{background:rgba(224,128,106,.30)}.c-codex{background:rgba(169,155,238,.30)}.c-vector{background:rgba(74,144,217,.30)}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:20px}
+.p-open{background:rgba(74,144,217,.16);color:#8FBCE8}
+.p-prog{background:rgba(228,160,74,.16);color:#E4A04A}
+.p-done{background:rgba(93,202,165,.16);color:#63C6A0}
+.pr{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:5px}
+.pr .dot{width:7px;height:7px;border-radius:50%}
+.pr-high{background:rgba(224,128,106,.16);color:#E89B84}
+.pr-crit{background:rgba(224,106,106,.18);color:#EC8A87}
+.pr-med{background:rgba(74,144,217,.16);color:#8FBCE8}
+
+/* modal */
+.stage{position:relative;background:
+  repeating-linear-gradient(45deg,rgba(255,255,255,.012) 0 10px,transparent 10px 20px),var(--content);
+  border:1px solid var(--line);border-radius:12px;padding:34px 20px;display:flex;justify-content:center}
+.modal{width:100%;max-width:560px;background:var(--card);border:1px solid var(--line3);border-radius:13px;box-shadow:0 24px 60px rgba(0,0,0,.5);overflow:hidden}
+.mhead{display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid var(--line)}
+.mhead .mt{font-size:14px;font-weight:600}
+.mhead .x{margin-left:auto;color:var(--faint);cursor:default}
+.mbody{padding:18px}
+.mfoot{display:flex;align-items:center;gap:9px;padding:13px 18px;border-top:1px solid var(--line);background:var(--card)}
+.mfoot .sp{margin-left:auto}
+
+/* detail */
+.dgrid{display:grid;grid-template-columns:1fr 260px;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card)}
+.dmain{padding:20px 22px;border-right:1px solid var(--line);min-width:0}
+.dkey{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-bottom:8px}
+.dtitle{font-size:19px;font-weight:600;line-height:1.3;margin-bottom:14px;letter-spacing:-.01em}
+.dmeta{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:20px}
+.dprose{color:var(--text2);font-size:13px;line-height:1.7}
+.dprose p{margin-bottom:11px}
+.dprose h4{font-size:13px;font-weight:600;color:var(--text);margin:16px 0 7px}
+.dprose code{font-family:var(--mono);font-size:12px;background:var(--input);padding:1px 5px;border-radius:4px;color:#C7D2E0}
+.dprose ul{margin:0 0 11px 4px;list-style:none}
+.dprose li{position:relative;padding-left:16px;margin-bottom:5px}
+.dprose li:before{content:'';position:absolute;left:3px;top:8px;width:4px;height:4px;border-radius:50%;background:var(--faint)}
+.dside{padding:18px;background:var(--card)}
+.dfield{margin-bottom:15px}
+.dflabel{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);margin-bottom:6px}
+.dperson{display:flex;align-items:center;gap:8px}
+.dperson .av{width:22px;height:22px;font-size:9px}
+.dperson span{font-size:12.5px;color:var(--text2)}
+.divider{height:1px;background:var(--line);margin:16px 0}
+.tabrow{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:20px 0 0}
+.dtab{padding:8px 13px;font-size:12.5px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;cursor:default}
+.dtab.on{color:var(--afg2);border-color:var(--accent)}
+
+/* settings */
+.card{border:1px solid var(--line);border-radius:12px;background:var(--card);margin-bottom:16px;overflow:hidden}
+.chead{padding:14px 18px;border-bottom:1px solid var(--line)}
+.cbody{padding:18px}
+.opt-row{display:flex;gap:13px;padding:13px;border:1px solid var(--line2);border-radius:9px;margin-bottom:9px;cursor:default}
+.opt-row:last-child{margin-bottom:0}
+.opt-row.sel{border-color:var(--accent);background:rgba(74,144,217,.06)}
+.radio{width:17px;height:17px;border-radius:50%;border:1.5px solid var(--line3);flex:none;margin-top:1px;position:relative}
+.opt-row.sel .radio{border-color:var(--accent)}
+.opt-row.sel .radio:after{content:'';position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+.opt-row .ot{font-size:13px;font-weight:500;margin-bottom:3px}
+.opt-row.sel .ot{color:var(--afg2)}
+.opt-row .od{font-size:12px;color:var(--muted);line-height:1.5}
+.grantrow{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--line)}
+.grantrow:last-child{border:none}
+.gname{display:flex;align-items:center;gap:9px}
+.gname .ic{width:15px;height:15px;color:var(--faint)}
+.gsel{margin-left:auto;display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;background:var(--input);border:1px solid var(--line2);border-radius:7px;font-size:12px;color:var(--text2)}
+.gsel .ic{width:12px;height:12px;color:var(--faint)}
+
+/* home */
+.hgreet{font-size:19px;font-weight:600;letter-spacing:-.01em;margin-bottom:2px}
+.hsub{color:var(--muted);font-size:13px;margin-bottom:20px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+.stat{border:1px solid var(--line);border-radius:11px;background:var(--card);padding:15px}
+.stat .si2{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:11px}
+.stat .si2 .ic{width:17px;height:17px}
+.si-all{background:rgba(138,146,162,.14);color:#A6AEBC}
+.si-beacon{background:rgba(224,128,106,.16);color:var(--beacon)}
+.si-codex{background:rgba(169,155,238,.16);color:var(--codex)}
+.si-vector{background:rgba(74,144,217,.16);color:var(--vector)}
+.stat .num{font-size:23px;font-weight:600;letter-spacing:-.02em;line-height:1}
+.stat .cap{font-size:12px;color:var(--muted);margin-top:4px}
+.sgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.scard{border:1px solid var(--line);border-radius:11px;background:var(--card);padding:15px;cursor:default;transition:border-color .12s,background .12s}
+.scard:hover{border-color:var(--line3);background:var(--card2)}
+.scard .top{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.scard .mbox{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.scard .mbox .ic{width:17px;height:17px}
+.mb-beacon{background:rgba(224,128,106,.16);color:var(--beacon)}
+.mb-codex{background:rgba(169,155,238,.16);color:var(--codex)}
+.mb-vector{background:rgba(74,144,217,.16);color:var(--vector)}
+.scard .nm{font-size:13.5px;font-weight:600}
+.scard .desc{font-size:12px;color:var(--muted);line-height:1.5}
+.scard .foot{display:flex;align-items:center;gap:6px;margin-top:12px;font-size:11.5px;color:var(--faint)}
+
+.callout{margin-top:14px;padding:12px 14px;border:1px solid rgba(74,144,217,.25);background:rgba(74,144,217,.06);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.6}
+.callout b{color:var(--afg);font-weight:500}
+.bug{display:inline-block;font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;background:rgba(93,202,165,.16);color:#63C6A0;margin-left:7px;vertical-align:middle;letter-spacing:.02em}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-6 8 6"/><path d="M6 10v9h12v-9"/></symbol>
+<symbol id="i-beacon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></symbol>
+<symbol id="i-codex" viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 015.5 4H11v16H5.5A1.5 1.5 0 014 18.5z"/><path d="M20 5.5A1.5 1.5 0 0018.5 4H13v16h5.5a1.5 1.5 0 001.5-1.5z"/></symbol>
+<symbol id="i-vector" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.4"/><rect x="13" y="4" width="7" height="16" rx="1.4"/><rect x="4" y="13" width="7" height="7" rx="1.4"/></symbol>
+<symbol id="i-ticket" viewBox="0 0 24 24"><path d="M4 8a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 000 4v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2a2 2 0 000-4z"/><path d="M14 6v12" stroke-dasharray="2 2"/></symbol>
+<symbol id="i-board" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></symbol>
+<symbol id="i-report" viewBox="0 0 24 24"><path d="M5 20V10M12 20V4M19 20v-7"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-3.8-3.8"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0111 0"/><path d="M16 6.6a3 3 0 010 5.8M15.5 20a5.5 5.5 0 00-1.4-3.6"/></symbol>
+<symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4"/><path d="M5.5 20a6.5 6.5 0 0113 0"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7L11.5 7"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7L12.5 17"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5a13 13 0 010 17M12 3.5a13 13 0 000 17"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 018 0V10"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+<symbol id="i-msg" viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/></symbol>
+<symbol id="i-cal" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 9h16M8 3v4M16 3v4"/></symbol>
+<symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></symbol>
+</svg>
+
+<div class="wrap">
+<div class="head"><svg class="ic"><use href="#i-compass"/></svg>Azimuthal · interior surfaces</div>
+<p class="intro">The shell got the redesign in P1 — this covers the <b>interior surfaces still on the old styling</b>: the create-item dialog, a detail view, space settings, and the Home overview. Same tokens as the shell (steel blue, dark slate, Inter, the module palette), applied to the content areas P1 didn't reach. Two Home bugs you flagged are fixed here in context. Tab through and mark up anything you'd change.</p>
+
+<div class="tabs">
+<div class="tab on" data-p="create">Create dialog</div>
+<div class="tab" data-p="detail">Ticket detail</div>
+<div class="tab" data-p="settings">Space settings</div>
+<div class="tab" data-p="home">Home overview</div>
+<div class="tab" data-p="priority">Priority control</div>
+</div>
+
+<!-- CREATE -->
+<div class="panel on" data-panel="create">
+<p class="caption">The create-item dialog. The headline fix is the <b>priority selector</b> — rebuilt as a segmented control with equal-width options and a colour dot per level, replacing the four cramped chips. Modal over a dimmed board.</p>
+<div class="stage">
+<div class="modal">
+<div class="mhead"><span class="chip c-beacon"><svg class="ic"><use href="#i-beacon"/></svg>Beacon</span><span class="mt">New ticket</span><span class="x"><svg class="ic"><use href="#i-x"/></svg></span></div>
+<div class="mbody">
+<div class="field"><label class="lbl">Title</label><input class="inp" value="Login page returns 500 after password reset"></div>
+<div class="field"><label class="lbl">Description</label><textarea class="inp" rows="3">Users who reset their password can't log back in — the callback 500s. Started after the last deploy.</textarea></div>
+<div class="field"><label class="lbl">Priority</label>
+<div class="seg">
+<button><span class="dot d-low"></span>Low</button>
+<button><span class="dot d-med"></span>Medium</button>
+<button class="on high"><span class="dot d-high"></span>High</button>
+<button><span class="dot d-crit"></span>Critical</button>
+</div></div>
+<div class="row2">
+<div class="field" style="margin-bottom:0"><label class="lbl">Assignee <span class="opt">optional</span></label>
+<div class="inp" style="display:flex;align-items:center;gap:8px;color:var(--text2)"><span class="av" style="width:20px;height:20px;font-size:9px">AM</span>Ana Mireles</div></div>
+<div class="field" style="margin-bottom:0"><label class="lbl">Status</label>
+<div class="inp" style="display:flex;align-items:center;justify-content:space-between;color:var(--text2)">Open<svg class="ic" style="width:13px;height:13px;color:var(--faint)"><use href="#i-chev"/></svg></div></div>
+</div>
+</div>
+<div class="mfoot"><span class="hintline">Ticket will be <span style="font-family:var(--mono);color:var(--muted)">DEVOPS-48</span></span><span class="sp"></span><button class="btn gho">Cancel</button><button class="btn pri">Create ticket</button></div>
+</div>
+</div>
+<div class="callout"><b>Why segmented, not a dropdown.</b> Priority has four fixed values chosen constantly — a segmented control shows all of them at once, colour-codes them, and takes one click. A dropdown hides three options behind a click every time. The colour dots also match the priority pills used on the board and detail views, so the language is consistent end to end.</div>
+</div>
+</div>
+
+<!-- DETAIL -->
+<div class="panel" data-panel="detail">
+<p class="caption">Ticket detail — two-column: content left, properties right. Replaces the current view, which stacks everything in one column with unstyled fields. The tab row (Detail / Activity / Comments) sits under the description.</p>
+<div class="frame">
+<div class="tbar">
+<svg class="ic logo"><use href="#i-compass"/></svg>
+<div class="ptab"><svg class="ic"><use href="#i-home"/></svg>Home</div>
+<div class="ptab on"><svg class="ic"><use href="#i-beacon"/></svg>Beacon</div>
+<div class="ptab"><svg class="ic"><use href="#i-codex"/></svg>Codex</div>
+<div class="ptab"><svg class="ic"><use href="#i-vector"/></svg>Vector</div>
+<span class="sp"></span>
+<div class="tsearch"><svg class="ic"><use href="#i-search"/></svg>Search everything</div>
+<div class="av">A</div>
+</div>
+<div class="body">
+<div class="side">
+<div class="spick"><svg class="ic mi"><use href="#i-beacon"/></svg><span class="nm">DevOps</span><svg class="ic"><use href="#i-chev"/></svg></div>
+<div class="si on"><svg class="ic"><use href="#i-ticket"/></svg>Tickets</div>
+<div class="si"><svg class="ic"><use href="#i-board"/></svg>Board</div>
+<div class="si"><svg class="ic"><use href="#i-report"/></svg>Reports</div>
+</div>
+<div class="main" style="padding:0">
+<div class="dgrid" style="border:none;border-radius:0">
+<div class="dmain">
+<div class="dkey">DEVOPS-48</div>
+<div class="dtitle">Login page returns 500 after password reset</div>
+<div class="dmeta">
+<span class="pill p-prog"><svg class="ic" style="width:11px;height:11px"><use href="#i-clock"/></svg>In progress</span>
+<span class="pr pr-high"><span class="dot d-high"></span>High</span>
+<span class="chip c-beacon"><svg class="ic"><use href="#i-beacon"/></svg>Beacon</span>
+</div>
+<div class="dprose">
+<p>Users who reset their password can't log back in — the OAuth callback returns a 500. Started immediately after the last deploy.</p>
+<h4>Steps to reproduce</h4>
+<ul><li>Request a password reset from the login page</li><li>Follow the email link and set a new password</li><li>Attempt to log in — the callback 500s with <code>invalid_grant</code></li></ul>
+<h4>Suspected cause</h4>
+<p>The token refresh change in <code>auth/callback.go</code> looks like the culprit — the reset flow issues a token the callback doesn't expect.</p>
+</div>
+<div class="tabrow"><div class="dtab on">Detail</div><div class="dtab">Activity</div><div class="dtab">Comments · 3</div></div>
+</div>
+<div class="dside">
+<div class="dfield"><div class="dflabel">Assignee</div><div class="dperson"><span class="av">AM</span><span>Ana Mireles</span></div></div>
+<div class="dfield"><div class="dflabel">Reporter</div><div class="dperson"><span class="av">JK</span><span>Josh Kitsune</span></div></div>
+<div class="divider"></div>
+<div class="dfield"><div class="dflabel">Priority</div><span class="pr pr-high"><span class="dot d-high"></span>High</span></div>
+<div class="dfield"><div class="dflabel">Status</div><span class="pill p-prog">In progress</span></div>
+<div class="dfield"><div class="dflabel">Due</div><div style="display:flex;align-items:center;gap:7px;color:var(--text2);font-size:12.5px"><svg class="ic" style="width:13px;height:13px;color:var(--faint)"><use href="#i-cal"/></svg>Jul 24, 2026</div></div>
+<div class="divider"></div>
+<div class="dfield"><div class="dflabel">Created</div><div style="color:var(--muted);font-size:12px">2 days ago</div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="callout"><b>Consistent priority language.</b> The same dot-plus-label priority marker appears in the create dialog, on the board, and here — one visual vocabulary rather than three. Status pills and module chips follow the tokens from the shell.</div>
+</div>
+
+<!-- SETTINGS -->
+<div class="panel" data-panel="settings">
+<p class="caption">Space settings, restyled. Same information as today's page — grants and visibility — but the <b>UUID field is gone</b> (replaced by the picker, per P2.5) and visibility is a proper radio-card group rather than a bare select.</p>
+<div class="frame">
+<div class="tbar">
+<svg class="ic logo"><use href="#i-compass"/></svg>
+<div class="ptab"><svg class="ic"><use href="#i-home"/></svg>Home</div>
+<div class="ptab on"><svg class="ic"><use href="#i-beacon"/></svg>Beacon</div>
+<div class="ptab"><svg class="ic"><use href="#i-codex"/></svg>Codex</div>
+<div class="ptab"><svg class="ic"><use href="#i-vector"/></svg>Vector</div>
+<span class="sp"></span><div class="av">A</div>
+</div>
+<div class="body">
+<div class="side">
+<div class="spick"><svg class="ic mi"><use href="#i-beacon"/></svg><span class="nm">DevOps</span><svg class="ic"><use href="#i-chev"/></svg></div>
+<div class="si"><svg class="ic"><use href="#i-ticket"/></svg>Tickets</div>
+<div class="si"><svg class="ic"><use href="#i-board"/></svg>Board</div>
+<div class="si"><svg class="ic"><use href="#i-report"/></svg>Reports</div>
+<div class="si on"><svg class="ic"><use href="#i-gear"/></svg>Settings</div>
+</div>
+<div class="main">
+<div style="display:flex;align-items:center;gap:11px;margin-bottom:18px">
+<div style="width:38px;height:38px;border-radius:9px;background:rgba(224,128,106,.16);color:var(--beacon);display:flex;align-items:center;justify-content:center"><svg class="ic" style="width:19px;height:19px"><use href="#i-gear"/></svg></div>
+<div><div class="h2">Space settings</div><div class="sub">Access and visibility for DevOps.</div></div>
+</div>
+<div class="card">
+<div class="chead"><div class="h2">Access grants</div><div class="sub" style="margin-top:2px">Who can enter this space, and with what role. Team grants reach every member of the team and its sub-teams.</div></div>
+<div class="cbody">
+<div class="grantrow"><div class="gname"><svg class="ic"><use href="#i-users"/></svg>Platform</div><div class="gsel">Agent<svg class="ic"><use href="#i-chev"/></svg></div></div>
+<div class="grantrow"><div class="gname"><svg class="ic"><use href="#i-user"/></svg>Ana Mireles</div><div class="gsel">Contributor<svg class="ic"><use href="#i-chev"/></svg></div></div>
+<div style="margin-top:14px"><label class="lbl">Add a grant</label>
+<div style="display:flex;gap:8px;align-items:center">
+<div class="seg" style="width:auto"><button class="on med" style="flex:none;padding:0 14px">User</button><button style="flex:none;padding:0 14px">Team</button></div>
+<div class="inp" style="flex:1;display:flex;align-items:center;gap:8px;color:var(--faint)"><svg class="ic" style="width:14px;height:14px"><use href="#i-search"/></svg>Search name or email…</div>
+<div class="gsel" style="margin:0">Contributor<svg class="ic"><use href="#i-chev"/></svg></div>
+<button class="btn pri" style="height:35px">Add</button>
+</div>
+<div class="hintline">The old free-text UUID field is gone — search by name instead.</div>
+</div>
+</div>
+</div>
+<div class="card" style="margin-bottom:0">
+<div class="chead"><div class="h2">Visibility</div><div class="sub" style="margin-top:2px">How this space appears to org members without a grant.</div></div>
+<div class="cbody">
+<div class="opt-row"><div class="radio"></div><div><div class="ot">Hidden</div><div class="od">Invisible except to people with a grant. Does not appear in the directory.</div></div></div>
+<div class="opt-row sel"><div class="radio"></div><div><div class="ot">Discoverable</div><div class="od">Listed in the directory for everyone in the org, but only people with a grant can open it. Others see a locked row.</div></div></div>
+<div class="opt-row"><div class="radio"></div><div><div class="ot">Org</div><div class="od">Everyone in the org can view this space as a viewer. Grants still control editing.</div></div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- HOME -->
+<div class="panel" data-panel="home">
+<p class="caption">The Home overview, rebuilt — and both bugs you flagged are fixed here. <span class="bug">FIXED</span> the missing <b>Codex count card</b> is present, and <span class="bug">FIXED</span> the counts pluralise correctly ("1 Vector space", not "1 Vector spaces").</p>
+<div class="frame">
+<div class="tbar">
+<svg class="ic logo"><use href="#i-compass"/></svg>
+<div class="ptab on"><svg class="ic"><use href="#i-home"/></svg>Home</div>
+<div class="ptab"><svg class="ic"><use href="#i-beacon"/></svg>Beacon</div>
+<div class="ptab"><svg class="ic"><use href="#i-codex"/></svg>Codex</div>
+<div class="ptab"><svg class="ic"><use href="#i-vector"/></svg>Vector</div>
+<span class="sp"></span>
+<div class="tsearch"><svg class="ic"><use href="#i-search"/></svg>Search everything</div>
+<div class="tbtn"><svg class="ic"><use href="#i-plus"/></svg>Create</div>
+<div class="av">A</div>
+</div>
+<div class="body">
+<div class="side">
+<div class="spick" style="border:none;padding:6px 10px"><svg class="ic" style="width:15px;height:15px;color:var(--faint)"><use href="#i-grid"/></svg><span class="nm">Your work</span></div>
+<div class="si on"><svg class="ic"><use href="#i-home"/></svg>Overview</div>
+<div style="padding:10px 10px 4px;color:var(--faint);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase">Dashboards</div>
+<div class="si"><svg class="ic"><use href="#i-plus"/></svg>New dashboard</div>
+</div>
+<div class="main">
+<div class="hgreet">Welcome back, Josh</div>
+<div class="hsub">Here's an overview of your spaces and activity.</div>
+<div class="stats">
+<div class="stat"><div class="si2 si-all"><svg class="ic"><use href="#i-grid"/></svg></div><div class="num">4</div><div class="cap">Spaces</div></div>
+<div class="stat"><div class="si2 si-beacon"><svg class="ic"><use href="#i-beacon"/></svg></div><div class="num">2</div><div class="cap">Beacon spaces</div></div>
+<div class="stat"><div class="si2 si-codex"><svg class="ic"><use href="#i-codex"/></svg></div><div class="num">1</div><div class="cap">Codex space</div></div>
+<div class="stat"><div class="si2 si-vector"><svg class="ic"><use href="#i-vector"/></svg></div><div class="num">1</div><div class="cap">Vector space</div></div>
+</div>
+<div class="sgrid">
+<div class="scard"><div class="top"><div class="mbox mb-beacon"><svg class="ic"><use href="#i-beacon"/></svg></div><div><div class="nm">DevOps</div></div></div><div class="desc">Service desk for infrastructure and platform requests.</div><div class="foot"><svg class="ic" style="width:13px;height:13px"><use href="#i-ticket"/></svg>12 open tickets</div></div>
+<div class="scard"><div class="top"><div class="mbox mb-beacon"><svg class="ic"><use href="#i-beacon"/></svg></div><div><div class="nm">ServiceDesk</div></div></div><div class="desc">Customer-facing support requests and triage.</div><div class="foot"><svg class="ic" style="width:13px;height:13px"><use href="#i-ticket"/></svg>4 open tickets</div></div>
+<div class="scard"><div class="top"><div class="mbox mb-vector"><svg class="ic"><use href="#i-vector"/></svg></div><div><div class="nm">Product roadmap</div></div></div><div class="desc">Sprint planning and the delivery backlog.</div><div class="foot"><svg class="ic" style="width:13px;height:13px"><use href="#i-board"/></svg>23 items in progress</div></div>
+<div class="scard"><div class="top"><div class="mbox mb-codex"><svg class="ic"><use href="#i-codex"/></svg></div><div><div class="nm">Engineering wiki</div></div></div><div class="desc">Architecture notes, runbooks, and decisions.</div><div class="foot"><svg class="ic" style="width:13px;height:13px"><use href="#i-codex"/></svg>38 pages</div></div>
+</div>
+<div class="callout"><b>Note.</b> Home is scoped to the user, not a space, so the left panel reads "Your work" and the space picker is inert here — matching ADR-0005. This whole surface is replaced by the gadget dashboard in P5; this is the interim styling, not the final Home.</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- PRIORITY -->
+<div class="panel" data-panel="priority">
+<p class="caption">The priority control, before and after — isolated so the change is unmistakable.</p>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+<div class="card" style="margin:0"><div class="chead"><div class="h2" style="color:var(--crit)">Before</div><div class="sub" style="margin-top:2px">Four content-width chips, minimal padding, no colour coding.</div></div>
+<div class="cbody"><label class="lbl">Priority</label>
+<div class="seg-old"><button>Low</button><button>Medium</button><button class="on">High</button><button>Critical</button></div>
+<div class="hintline" style="margin-top:12px">Reads as loose chips. Hard to tell it's one control, and nothing signals severity.</div>
+</div></div>
+<div class="card" style="margin:0"><div class="chead"><div class="h2" style="color:var(--ok)">After</div><div class="sub" style="margin-top:2px">Equal-width segments, a colour dot per level, one connected control.</div></div>
+<div class="cbody"><label class="lbl">Priority</label>
+<div class="seg"><button><span class="dot d-low"></span>Low</button><button><span class="dot d-med"></span>Medium</button><button class="on high"><span class="dot d-high"></span>High</button><button><span class="dot d-crit"></span>Critical</button></div>
+<div class="hintline" style="margin-top:12px">Obviously one control. Severity is colour-coded, and the dots match the priority pills everywhere else.</div>
+</div></div>
+</div>
+<div class="callout" style="margin-top:16px"><b>Reuse beyond priority.</b> The segmented control isn't priority-specific — it's the pattern for any small fixed set of exclusive choices. The user/team toggle on the grants panel uses the same component, so it's worth building once as a shared primitive rather than a one-off.</div>
+</div>
+
+</div>
+
+<script>
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+ document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
+ t.classList.add('on');
+ document.querySelector('.panel[data-panel="'+t.dataset.p+'"]').classList.add('on');
+}));
+// segmented control interactivity within create + priority panels
+document.querySelectorAll('.seg').forEach(seg=>{
+ seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+  const cls=['low','med','high','crit'];
+  seg.querySelectorAll('button').forEach(x=>{x.classList.remove('on',...cls)});
+  b.classList.add('on');
+  const dot=b.querySelector('.dot');
+  if(dot){cls.forEach((c,i)=>{if(dot.classList.contains('d-'+['low','med','high','crit'][i]))b.classList.add(c)})}
+ }));
+});
+</script>
+</body>
+</html>
