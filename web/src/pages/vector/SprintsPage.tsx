@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Plus, Play, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Field, FieldLabel } from '../../components/ui/field';
@@ -8,17 +9,25 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogClose,
 } from '../../components/ui/dialog';
-import { cn, formatUTCDate } from '../../lib/utils';
+import { formatUTCDate } from '../../lib/utils';
 import {
   useSprints, useActiveSprint, useCreateSprint, useStartSprint, useCompleteSprint,
   friendlyErrorMessage,
   type Sprint,
 } from '../../lib/api';
 
-const STATUS_STYLES: Record<string, string> = {
-  planned:   'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]',
-  active:    'bg-[var(--color-primary-muted)] text-[var(--color-primary)]',
-  completed: 'bg-[color-mix(in_srgb,var(--color-success)_15%,transparent)] text-[var(--color-success)]',
+// One status vocabulary: the shared tinted Badge, like every other status
+// surface. Playwright's `text=planned` matching is case-insensitive, so the
+// display labels stay compatible with the sprint status regression test.
+const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
+  planned: 'secondary',
+  active: 'default',
+  completed: 'success',
+};
+const STATUS_LABEL: Record<string, string> = {
+  planned: 'Planned',
+  active: 'Active',
+  completed: 'Completed',
 };
 
 function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: string; isActive: boolean }) {
@@ -41,12 +50,14 @@ function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: str
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-medium text-[var(--color-text)] truncate">{sprint.name}</span>
-          {isActive && (
-            <span className="rounded-full bg-[var(--color-primary)] px-2 py-0.5 text-[var(--text-xs)] text-white font-semibold">Active</span>
+          <Badge variant={STATUS_VARIANT[sprint.status] ?? 'secondary'}>
+            {STATUS_LABEL[sprint.status] ?? sprint.status}
+          </Badge>
+          {isActive && sprint.status !== 'active' && (
+            // Server truth can disagree with the list row's status; surface
+            // it rather than showing two identical pills in the common case.
+            <Badge variant="default">Active</Badge>
           )}
-          <span className={cn('rounded-full px-2 py-0.5 text-[var(--text-xs)] font-medium capitalize', STATUS_STYLES[sprint.status] ?? STATUS_STYLES.planned)}>
-            {sprint.status}
-          </span>
         </div>
         {sprint.goal && (
           <p className="mt-0.5 text-[var(--text-sm)] text-[var(--color-text-muted)] truncate">{sprint.goal}</p>

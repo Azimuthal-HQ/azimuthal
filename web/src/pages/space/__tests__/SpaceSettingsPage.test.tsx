@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SpaceSettingsPage } from '../SpaceSettingsPage';
@@ -131,5 +131,35 @@ describe('SpaceSettingsPage grants section', () => {
     expect(group).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'User' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('radio', { name: 'Team' })).toHaveAttribute('aria-checked', 'false');
+  });
+
+  // Regression: the picker is controlled, so a selection made under one kind
+  // survived flipping the toggle — "Add grant" would then submit a
+  // subject_type contradicting the visible toggle.
+  it('clears a picked subject when the kind toggle changes', async () => {
+    vi.mocked(api.useSpaceGrants).mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof api.useSpaceGrants>);
+    vi.mocked(api.useMemberSearch).mockReturnValue({
+      data: [{ id: 'u2', display_name: 'Ada Person', email: 'ada@example.com' }],
+      isLoading: false,
+    } as unknown as ReturnType<typeof api.useMemberSearch>);
+
+    renderPage();
+
+    // Pick a user while the toggle reads User…
+    fireEvent.change(screen.getByTestId('grant-subject-picker-input'), {
+      target: { value: 'Ada' },
+    });
+    fireEvent.click(await screen.findByTestId('grant-subject-picker-option-user-ada@example.com'));
+    expect(screen.getByTestId('grant-subject-picker-selected')).toHaveTextContent('Ada Person');
+    expect(screen.getByTestId('grant-add-button')).toBeEnabled();
+
+    // …then flip to Team: the stale user selection must not survive.
+    fireEvent.click(screen.getByRole('radio', { name: 'Team' }));
+    expect(screen.queryByTestId('grant-subject-picker-selected')).not.toBeInTheDocument();
+    expect(screen.getByTestId('grant-add-button')).toBeDisabled();
   });
 });

@@ -439,7 +439,7 @@ func directoryRowFor(s generated.Space, res *access.Resolution) (directoryRow, b
 // Create creates a new space.
 //
 // @Summary      Create space
-// @Description  Creates a space in the organization. Type must be 'beacon', 'codex', or 'vector'. Slugs are unique per module: the same slug may exist in different modules of one organization. The owning team defaults to the org default team. Authority: org admin, or a lead of the owning team.
+// @Description  Creates a space in the organization. Type must be 'beacon', 'codex', or 'vector'. Slugs are unique per module: the same slug may exist in different modules of one organization. The owning team defaults to the org default team. Authority: org admin, or a lead of the owning team. The initial visibility is accepted from either authority — unlike later changes, which require set_visibility (org admin only).
 // @Tags         spaces
 // @Accept       json
 // @Produce      json

@@ -158,7 +158,13 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
                     { value: 'team', label: 'Team' },
                   ]}
                   value={subjectKind}
-                  onChange={setSubjectKind}
+                  onChange={(kind) => {
+                    setSubjectKind(kind);
+                    // A selection of the other kind must not survive the
+                    // toggle — the picker is controlled and would otherwise
+                    // submit a subject_type contradicting the visible toggle.
+                    setSubject(null);
+                  }}
                   aria-label="Subject type"
                   fullWidth={false}
                   testId="grant-subject-kind"

@@ -122,10 +122,16 @@ export async function getAuthToken(page: Page): Promise<string> {
 /**
  * Asserts no error states are visible on the current page.
  * Call this after any navigation to verify the page loaded correctly.
+ *
+ * The interior restyle routed every load-failure message through
+ * friendlyErrorMessage, whose fallbacks read "… could not be loaded." —
+ * without that pattern here, the "Failed to load" check would pass
+ * vacuously against pages that can no longer render that string.
  */
 export async function assertNoErrors(page: Page): Promise<void> {
   await expect(page.locator('text=Something went wrong')).not.toBeVisible()
   await expect(page.locator('text=Failed to load')).not.toBeVisible()
+  await expect(page.locator('text=could not be loaded')).not.toBeVisible()
   await expect(page.locator('text=invalid space_id')).not.toBeVisible()
   await expect(page.locator('text=invalid request body')).not.toBeVisible()
   await expect(page.locator('text=UNAUTHORIZED')).not.toBeVisible()

@@ -75,6 +75,12 @@ const (
 	// absent from minRoleFor: no space role holds it — not even space_admin —
 	// because visibility changes what the whole organisation sees, an
 	// org-level concern. Only the org-admin bypass grants it.
+	//
+	// Known carve-out: space CREATION (org admin or a lead of the owning
+	// team) still accepts an initial visibility without this capability and
+	// without a visibility_changed audit event — pre-existing behaviour this
+	// capability did not change. Whether creation should also require
+	// set_visibility for a non-default value is an open maintainer decision.
 	CapSetVisibility Capability = "set_visibility"
 )
 
