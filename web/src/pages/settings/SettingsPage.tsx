@@ -3,9 +3,10 @@ import { Shield, Palette, User, Building2, Check } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { SegmentedControl } from '../../components/ui/segmented';
 import { useTheme } from '../../components/theme/ThemeProvider';
 import { useAuth } from '../../lib/auth';
-import { useOrganization, useUpdateOrganization, useUpdateProfile } from '../../lib/api';
+import { friendlyErrorMessage, useOrganization, useUpdateOrganization, useUpdateProfile } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -26,7 +27,7 @@ const TABS: TabDef[] = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
 ];
 
-const FONT_SIZE_OPTIONS = [
+const FONT_SIZE_OPTIONS: { value: 'sm' | 'base' | 'lg'; label: string }[] = [
   { value: 'sm', label: 'Small' },
   { value: 'base', label: 'Default' },
   { value: 'lg', label: 'Large' },
@@ -91,7 +92,7 @@ export function SettingsPage() {
 
   // Appearance state
   const { theme, setTheme } = useTheme();
-  const [fontSize, setFontSize] = useState('base');
+  const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg'>('base');
 
   const initials = displayName
     ? displayName.slice(0, 2).toUpperCase()
@@ -99,7 +100,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+      <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
         Settings
       </h1>
 
@@ -191,7 +192,9 @@ export function SettingsPage() {
                     </span>
                   )}
                   {updateProfileMutation.error && (
-                    <span className="text-[var(--text-sm)] text-[var(--color-danger)]">{updateProfileMutation.error.message}</span>
+                    <span className="text-[var(--text-sm)] text-[var(--color-danger)]">
+                      {friendlyErrorMessage(updateProfileMutation.error, 'Your profile could not be saved.')}
+                    </span>
                   )}
                   <Button onClick={handleSaveProfile} disabled={updateProfileMutation.isPending}>
                     {updateProfileMutation.isPending ? 'Saving...' : 'Save Changes'}
@@ -248,20 +251,20 @@ export function SettingsPage() {
                     value={orgDescription}
                     onChange={(e) => setOrgDescription(e.target.value)}
                     className={cn(
-                      'flex w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                      'bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
-                      'shadow-[var(--shadow-sm)] placeholder:text-[var(--color-text-muted)]',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+                      'flex w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+                      'bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
+                      'placeholder:text-[var(--color-text-muted)]',
+                      'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
                     )}
                   />
                 </div>
                 {updateOrgMutation.error && (
                   <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-                    {updateOrgMutation.error.message}
+                    {friendlyErrorMessage(updateOrgMutation.error, 'The organization could not be saved.')}
                   </p>
                 )}
                 {orgSaveSuccess && (
-                  <div className="flex items-center gap-2 text-[var(--text-sm)] text-green-600">
+                  <div className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-success)]">
                     <Check className="h-4 w-4" />
                     Changes saved successfully
                   </div>
@@ -333,23 +336,13 @@ export function SettingsPage() {
                 <CardTitle>Font Size</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex gap-2">
-                  {FONT_SIZE_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setFontSize(option.value)}
-                      className={cn(
-                        'rounded-[var(--radius-md)] border px-4 py-2 text-[var(--text-sm)] font-medium transition-colors',
-                        fontSize === option.value
-                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
-                          : 'border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]',
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
+                <SegmentedControl
+                  options={FONT_SIZE_OPTIONS}
+                  value={fontSize}
+                  onChange={setFontSize}
+                  aria-label="Font size"
+                  fullWidth={false}
+                />
               </CardContent>
             </Card>
 

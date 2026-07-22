@@ -79,7 +79,7 @@ export function MovePageDialog({ orgId, spaceId, pageId, pageTitle, onClose }: M
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               data-testid="move-target-select"
-              className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]"
+              className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]"
             >
               <option value="">Choose a space…</option>
               {destinations.map((s) => (

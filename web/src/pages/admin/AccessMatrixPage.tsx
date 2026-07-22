@@ -181,7 +181,7 @@ export function AccessMatrixPage() {
           value={moduleFilter}
           onChange={(e) => setModuleFilter(e.target.value as SpaceType | 'all')}
           data-testid="matrix-filter-module"
-          className="h-8 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-[var(--text-sm)] text-[var(--color-text)]"
+          className="h-8 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-2 text-[var(--text-sm)] text-[var(--color-text)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]"
         >
           <option value="all">All modules</option>
           <option value="beacon">Beacon</option>

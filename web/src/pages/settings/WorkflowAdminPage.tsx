@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Circle, Workflow as WorkflowIcon } from 'luc
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { useAuth } from '../../lib/auth';
 import {
+  friendlyErrorMessage,
   useOrgWorkflows,
   useOrgWorkflowStates,
   type Workflow,
@@ -14,9 +15,9 @@ import {
 // ---------------------------------------------------------------------------
 
 const CATEGORY_COLOR: Record<string, string> = {
-  todo: 'text-blue-500',
-  in_progress: 'text-amber-500',
-  done: 'text-emerald-500',
+  todo: 'text-[var(--color-info)]',
+  in_progress: 'text-[var(--color-warning)]',
+  done: 'text-[var(--color-success)]',
 };
 
 // ---------------------------------------------------------------------------
@@ -118,8 +119,8 @@ export function WorkflowAdminPage() {
 
   if (error) {
     return (
-      <div className="rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4 text-[var(--text-sm)] text-[var(--color-danger)]">
-        Failed to load workflows.
+      <div className="rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4 text-[var(--text-sm)] text-[var(--color-danger)]">
+        {friendlyErrorMessage(error, 'Workflows could not be loaded.')}
       </div>
     );
   }
@@ -129,7 +130,7 @@ export function WorkflowAdminPage() {
       <div className="flex items-center gap-3">
         <WorkflowIcon className="h-6 w-6 text-[var(--color-primary)]" />
         <div>
-          <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+          <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
             Workflows
           </h1>
           <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">

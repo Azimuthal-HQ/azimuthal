@@ -46,12 +46,14 @@ interface ColumnDef {
 // Constants
 // ---------------------------------------------------------------------------
 
+// Fallback column hues come from the token set; workflow-derived columns
+// keep their API-provided colors.
 const FALLBACK_COLUMNS: ColumnDef[] = [
-  { id: 'open', label: 'Open', color: '#3b82f6' },
-  { id: 'todo', label: 'To Do', color: '#3b82f6' },
-  { id: 'in_progress', label: 'In Progress', color: '#f59e0b' },
-  { id: 'in_review', label: 'In Review', color: '#8b5cf6' },
-  { id: 'done', label: 'Done', color: '#10b981' },
+  { id: 'open', label: 'Open', color: 'var(--color-info)' },
+  { id: 'todo', label: 'To Do', color: 'var(--color-text-muted)' },
+  { id: 'in_progress', label: 'In Progress', color: 'var(--color-warning)' },
+  { id: 'in_review', label: 'In Review', color: 'var(--color-primary)' },
+  { id: 'done', label: 'Done', color: 'var(--color-success)' },
 ];
 
 function workflowStatesToColumns(states: WorkflowState[]): ColumnDef[] {

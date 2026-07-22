@@ -43,9 +43,9 @@ import {
 // ---------------------------------------------------------------------------
 
 const selectClass = cn(
-  'h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
-  'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+  'h-9 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+  'bg-[var(--color-input)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
+  'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
 );
 
 /** slugify derives a lowercase-kebab slug from a team name. */
