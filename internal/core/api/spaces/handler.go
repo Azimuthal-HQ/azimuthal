@@ -35,6 +35,10 @@ var nonAlphanumeric = regexp.MustCompile(`[^A-Z0-9]`)
 // spaces_type_valid CHECK constraint (migration 021).
 var validSpaceTypes = map[string]bool{"beacon": true, "codex": true, "vector": true}
 
+// moduleDisplayNames maps space type values to the module names users see in
+// the product, for error messages that name the module.
+var moduleDisplayNames = map[string]string{"beacon": "Beacon", "codex": "Codex", "vector": "Vector"}
+
 // validVisibilities matches spaces_visibility_valid (migration 023).
 var validVisibilities = map[string]bool{
 	access.VisibilityHidden:       true,
@@ -435,7 +439,7 @@ func directoryRowFor(s generated.Space, res *access.Resolution) (directoryRow, b
 // Create creates a new space.
 //
 // @Summary      Create space
-// @Description  Creates a space in the organization. Type must be 'beacon', 'codex', or 'vector'. The owning team defaults to the org default team. Authority: org admin, or a lead of the owning team.
+// @Description  Creates a space in the organization. Type must be 'beacon', 'codex', or 'vector'. Slugs are unique per module: the same slug may exist in different modules of one organization. The owning team defaults to the org default team. Authority: org admin, or a lead of the owning team.
 // @Tags         spaces
 // @Accept       json
 // @Produce      json
@@ -446,10 +450,10 @@ func directoryRowFor(s generated.Space, res *access.Resolution) (directoryRow, b
 // @Failure      400    {object}  api.SwaggerErrorResponse        "Validation error"
 // @Failure      401    {object}  api.SwaggerErrorResponse        "Not authenticated"
 // @Failure      403    {object}  api.SwaggerErrorResponse        "Not org admin or lead of the owning team"
-// @Failure      409    {object}  api.SwaggerErrorResponse        "Duplicate key or slug in this organization"
+// @Failure      409    {object}  api.SwaggerErrorResponse        "Duplicate key in the organization, or duplicate slug within the module"
 // @Failure      500    {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /orgs/{orgID}/spaces [post]
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen,gocognit // HTTP handler; validation + authority + key derivation requires branching
+func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // HTTP handler; validation + authority + key derivation requires branching
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
@@ -535,22 +539,31 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 			break
 		}
 		constraint, isUnique := uniqueViolation(err)
-		if !isUnique {
+		switch {
+		case !isUnique:
 			slog.Error("CreateSpace failed", "error", err, "org_id", orgID) //nolint:gosec // G706: org_id is a UUID, not attacker-controlled
 			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create space")
 			return
-		}
-		if constraint == "idx_spaces_org_key" {
+		case constraint == "idx_spaces_org_key":
 			if keyDerived && attempt < maxKeyAttempts {
 				key = dedupeKey(baseKey, attempt)
 				continue
 			}
 			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "a space with this key already exists in the organization")
 			return
+		case constraint == "spaces_org_id_type_slug_key":
+			// Slug collisions are per (org, module) since migration 028 — the
+			// same slug in a different module is not a conflict at all.
+			respond.Error(w, r, http.StatusConflict, respond.CodeConflict,
+				fmt.Sprintf("a %s space with this slug already exists in the organization", moduleDisplayNames[req.Type]))
+			return
+		default:
+			// A unique violation on a constraint this handler doesn't know is
+			// a bug, not a client conflict — surface it as one.
+			slog.Error("CreateSpace unexpected unique violation", "constraint", constraint, "org_id", orgID) //nolint:gosec // G706: constraint is a Postgres identifier from our own schema, org_id a UUID
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create space")
+			return
 		}
-		// Any other unique violation (org_id, slug) is a client conflict.
-		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "a space with this slug already exists in the organization")
-		return
 	}
 
 	// Auto-add the creator as an admin member of the new space (legacy

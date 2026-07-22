@@ -2875,8 +2875,9 @@ paths:
       - spaces
     post:
       description: 'Creates a space in the organization. Type must be ''beacon'',
-        ''codex'', or ''vector''. The owning team defaults to the org default team.
-        Authority: org admin, or a lead of the owning team.'
+        ''codex'', or ''vector''. Slugs are unique per module: the same slug may exist
+        in different modules of one organization. The owning team defaults to the
+        org default team. Authority: org admin, or a lead of the owning team.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -2926,7 +2927,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Duplicate key or slug in this organization
+          description: Duplicate key in the organization, or duplicate slug within
+            the module
         "500":
           content:
             application/json:

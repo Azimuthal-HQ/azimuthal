@@ -14,7 +14,7 @@ import {
   DialogClose,
 } from '../../components/ui/dialog';
 import { cn } from '../../lib/utils';
-import { useSpaces, useCreateSpace, type Space, type SpaceType } from '../../lib/api';
+import { useSpaces, useCreateSpace, friendlyErrorMessage, type Space, type SpaceType } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { MODULE_KEYS, MODULES, spacePath } from '../../shell/modules';
 import { ModuleChip } from '../../shell/ModuleChip';
@@ -322,9 +322,13 @@ export function HomeOverviewPage() {
               />
             </div>
 
-            {/* Error */}
+            {/* Error — friendlyErrorMessage passes human-written conflict and
+                validation messages through (e.g. a slug taken in this module)
+                and collapses everything else to the fallback (P2.5 W5). */}
             {createSpaceMutation.error && (
-              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{createSpaceMutation.error.message}</p>
+              <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
+                {friendlyErrorMessage(createSpaceMutation.error, 'The space could not be created.')}
+              </p>
             )}
           </div>
 
