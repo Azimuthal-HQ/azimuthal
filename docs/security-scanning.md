@@ -21,9 +21,18 @@ a known false positive (with the required documentation standards).
 
 ## Overview
 
-All four scanners run on every pull request. The `all-checks` gate at the end
-of the pipeline requires every scanner to pass before a PR can merge.
+All four scanners run on every code pull request. The `all-checks` gate at the
+end of the pipeline requires every scanner to pass before a PR can merge.
 No exceptions, no bypasses — not even for admins.
+
+**Documentation-only pull requests** (every changed file under `docs/**` or a
+`*.md` anywhere, excluding the generated `docs/api/openapi.yaml`) skip gosec,
+govulncheck, and trivy along with the build/test gates — a markdown change
+cannot alter the code or dependencies those scanners examine. The skipped jobs
+still report a (skipped) status, so required checks stay satisfied.
+**gitleaks always runs**, on every PR including docs-only ones: a credential
+can be pasted into a markdown file as easily as into code. The path
+classification lives in the `changes` job in `.github/workflows/ci.yml`.
 
 | Scanner      | What it scans            | Fails on               | CI job          |
 |--------------|--------------------------|------------------------|-----------------|

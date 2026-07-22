@@ -19,10 +19,98 @@ env:
 jobs:
 
   # ─────────────────────────────────────────────────────────────
+  # GATE 0: Detect changed paths
+  #
+  # Documentation-only pull requests skip the expensive gates. The
+  # definition of "documentation-only" is: every changed file matches
+  #
+  #     docs/**  OR  **/*.md
+  #
+  # with one exception: docs/api/openapi.yaml is GENERATED from handler
+  # annotations — a change there means an API change and runs the full
+  # pipeline.
+  #
+  # Mechanism: this job always runs; the `build` job is gated on its
+  # output, and every expensive job `needs: build`, so they cascade-skip.
+  # A job skipped by an `if:` still reports a (skipped) status, which
+  # satisfies branch-protection required checks.
+  #
+  # DO NOT convert this to workflow-level `paths-ignore`: if the workflow
+  # never triggers, its required checks never report at all and branch
+  # protection blocks the PR forever at "Expected — waiting for status".
+  #
+  # `secret-scan` deliberately has no `needs` and therefore ALWAYS runs —
+  # a credential pastes into markdown as easily as into code.
+  # ─────────────────────────────────────────────────────────────
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: classify
+        run: |
+          # Only pull requests may skip gates. Pushes to main/develop and
+          # manual dispatches always run the full pipeline.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Event is '${{ github.event_name }}' — full pipeline."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # On pull_request, HEAD is the synthetic merge commit; its first
+          # parent is the base branch tip, so this diff is exactly the set
+          # of files the PR changes relative to the current base.
+          CHANGED=$(git diff --name-only HEAD^1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          if [ -z "$CHANGED" ]; then
+            echo "Empty change set — treating as code (fail safe)."
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          docs_only=true
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              docs/api/openapi.yaml)
+                # Generated API spec — an API change, never documentation.
+                echo "code:  $f (generated OpenAPI spec)"
+                docs_only=false
+                break
+                ;;
+              docs/*) echo "docs:  $f" ;;
+              *.md)   echo "docs:  $f" ;;
+              *)
+                echo "code:  $f"
+                docs_only=false
+                break
+                ;;
+            esac
+          done <<< "$CHANGED"
+
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "Result: docs_only=$docs_only"
+
+
+  # ─────────────────────────────────────────────────────────────
   # GATE 1: Build
   # ─────────────────────────────────────────────────────────────
   build:
     name: Build
+    needs: changes
+    # Skipping build cascade-skips every job that `needs` it (test, lint,
+    # sast, vuln-scan, container-scan, e2e, docs-check, docker-e2e). All
+    # of them still report a skipped status, which satisfies required
+    # checks. secret-scan does not depend on build and always runs.
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -851,7 +939,10 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   all-checks:
     name: All Gates Passed
-    needs: [build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e]
+    # `changes` is listed so a failed path-detection job fails this gate —
+    # otherwise a broken detection job would skip every gate and still merge.
+    # Skipped results (docs-only PRs) are not failures and pass this gate.
+    needs: [changes, build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e]
     runs-on: ubuntu-latest
     if: always()
     steps:
