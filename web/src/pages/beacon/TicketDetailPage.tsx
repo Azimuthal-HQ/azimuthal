@@ -182,8 +182,19 @@ export function TicketDetailPage() {
             <ModuleChip module="beacon" />
           </div>
 
-          {/* Description */}
-          <div className="prose prose-sm dark:prose-invert max-w-none text-[var(--color-text)]">
+          {/* Description — prose colors pinned to the theme tokens: the app's
+              theme is the .dark class, while prose-invert keys off the OS
+              media query, so the two can desync. */}
+          <div
+            className={cn(
+              'prose prose-sm dark:prose-invert max-w-none leading-[1.7]',
+              'prose-headings:text-[var(--color-text)] prose-headings:font-semibold',
+              'prose-p:text-[var(--color-text)] prose-li:text-[var(--color-text)] prose-strong:text-[var(--color-text)]',
+              'prose-a:text-[var(--color-primary)]',
+              'prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5',
+              'prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]',
+            )}
+          >
             {ticket.description ? (
               <ReactMarkdown>{ticket.description}</ReactMarkdown>
             ) : (

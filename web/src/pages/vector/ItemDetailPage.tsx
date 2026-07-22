@@ -258,7 +258,18 @@ export function ItemDetailPage() {
                 <ModuleChip module="vector" />
               </div>
 
-              <div className="prose prose-sm dark:prose-invert max-w-none text-[var(--color-text)]">
+              {/* Prose colors pinned to the theme tokens — prose-invert keys
+                  off the OS media query, not the app's .dark class. */}
+              <div
+                className={cn(
+                  'prose prose-sm dark:prose-invert max-w-none leading-[1.7]',
+                  'prose-headings:text-[var(--color-text)] prose-headings:font-semibold',
+                  'prose-p:text-[var(--color-text)] prose-li:text-[var(--color-text)] prose-strong:text-[var(--color-text)]',
+                  'prose-a:text-[var(--color-primary)]',
+                  'prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5',
+                  'prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]',
+                )}
+              >
                 {item.description ? (
                   <ReactMarkdown>{item.description}</ReactMarkdown>
                 ) : (
