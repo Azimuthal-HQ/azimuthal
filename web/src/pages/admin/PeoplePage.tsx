@@ -374,8 +374,9 @@ function PendingInvites({ orgId, invites }: { orgId: string; invites: Invite[] }
           <div
             key={inv.id}
             data-testid={`invite-row-${inv.email}`}
-            className="flex items-center gap-[var(--space-3)] border-b border-[var(--color-border)] py-[var(--space-2)] last:border-b-0"
+            className="border-b border-[var(--color-border)] py-[var(--space-2)] last:border-b-0"
           >
+           <div className="flex items-center gap-[var(--space-3)]">
             <Mail className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[var(--text-sm)] text-[var(--color-text)]">{inv.email}</span>
@@ -417,16 +418,17 @@ function PendingInvites({ orgId, invites }: { orgId: string; invites: Invite[] }
             >
               Revoke
             </Button>
+           </div>
+            {freshLink && freshLink.id === inv.id && (
+              <InviteLinkNote
+                invite={freshLink}
+                note="New link generated — the previous one no longer works. Copy it now and send it."
+                onDismiss={() => setFreshLink(null)}
+              />
+            )}
           </div>
         ))}
         {error && <p className="mt-2 text-[var(--text-sm)] text-[var(--color-danger)]">{error}</p>}
-        {freshLink && (
-          <InviteLinkNote
-            invite={freshLink}
-            note="New link generated — the previous one no longer works."
-            onDismiss={() => setFreshLink(null)}
-          />
-        )}
       </CardContent>
     </Card>
   );
