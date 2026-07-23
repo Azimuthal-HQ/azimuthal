@@ -30,6 +30,7 @@ import {
   useDeleteRelation,
   useItemSearch,
   useSpace,
+  useItemTypes,
   friendlyErrorMessage,
 } from '../../lib/api';
 
@@ -82,6 +83,7 @@ export function ItemDetailPage() {
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
   const { data: members } = useMembers(orgId, spaceId);
+  const { data: itemTypes } = useItemTypes(orgId);
   const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, 'project_item', itemId);
   const createCommentMutation = useCreateComment(orgId, spaceId, 'project_item', itemId);
 
@@ -182,6 +184,12 @@ export function ItemDetailPage() {
   }
 
   const keyLabel = itemKeyLabel(item, space?.key);
+  // Resolve the item's type slug (item.kind) to its display name; fall back to
+  // a humanized slug if the type list hasn't loaded or the type was removed.
+  const typeName = item.kind
+    ? (itemTypes ?? []).find((t) => t.slug === item.kind)?.name ??
+      item.kind.charAt(0).toUpperCase() + item.kind.slice(1)
+    : '';
   const reporter = (members ?? []).find((m) => m.user_id === item.reporter_id);
 
   return (
@@ -245,8 +253,9 @@ export function ItemDetailPage() {
                 </div>
               </div>
 
-              {/* Meta row: status, priority, module — the one vocabulary. */}
+              {/* Meta row: type, status, priority, module — the one vocabulary. */}
               <div className="mb-5 flex flex-wrap items-center gap-2">
+                {typeName && <Badge variant="secondary" data-testid="item-type-chip">{typeName}</Badge>}
                 <Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>
                   {STATUS_LABEL[item.status] ?? item.status}
                 </Badge>

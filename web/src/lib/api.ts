@@ -1221,6 +1221,53 @@ async function createLabel(orgId: string, req: CreateLabelRequest): Promise<Labe
 }
 
 // ---------------------------------------------------------------------------
+// Item type API functions
+// ---------------------------------------------------------------------------
+
+export interface ItemType {
+  id: string;
+  org_id: string;
+  slug: string;
+  name: string;
+  position: number;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CreateItemTypeRequest {
+  name: string;
+}
+
+interface UpdateItemTypeRequest {
+  name?: string;
+  archived?: boolean;
+}
+
+async function fetchItemTypes(orgId: string): Promise<ItemType[]> {
+  const data = await apiFetch<ItemType[] | null>(`/orgs/${orgId}/item-types`);
+  return Array.isArray(data) ? data : [];
+}
+
+async function createItemType(orgId: string, req: CreateItemTypeRequest): Promise<ItemType> {
+  return apiFetch<ItemType>(`/orgs/${orgId}/item-types`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function updateItemType(orgId: string, typeId: string, req: UpdateItemTypeRequest): Promise<ItemType> {
+  return apiFetch<ItemType>(`/orgs/${orgId}/item-types/${typeId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+async function deleteItemType(orgId: string, typeId: string): Promise<void> {
+  await apiFetch<void>(`/orgs/${orgId}/item-types/${typeId}`, { method: 'DELETE' });
+}
+
+// ---------------------------------------------------------------------------
 // Organization API functions
 // ---------------------------------------------------------------------------
 
@@ -1467,6 +1514,7 @@ export const queryKeys = {
   activeSprint: (spaceId: string) => ['sprints', spaceId, 'active'] as const,
   sprintItems: (spaceId: string, sprintId: string) => ['sprints', spaceId, sprintId, 'items'] as const,
   labels: (orgId: string) => ['labels', orgId] as const,
+  itemTypes: (orgId: string) => ['itemTypes', orgId] as const,
   members: (orgId: string, spaceId: string) => ['members', orgId, spaceId] as const,
   comments: (spaceId: string, entityType: string, entityId: string) => ['comments', spaceId, entityType, entityId] as const,
   notifications: () => ['notifications'] as const,
@@ -1649,6 +1697,45 @@ export function useLabels(orgId: string, opts?: QueryOpts<Label[]>) {
     queryFn: () => fetchLabels(orgId),
     enabled: !!orgId,
     ...opts,
+  });
+}
+
+export function useItemTypes(orgId: string, opts?: QueryOpts<ItemType[]>) {
+  return useQuery<ItemType[], APIError>({
+    queryKey: queryKeys.itemTypes(orgId),
+    queryFn: () => fetchItemTypes(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function useCreateItemType(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<ItemType, APIError, CreateItemTypeRequest>({
+    mutationFn: (req) => createItemType(orgId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.itemTypes(orgId) });
+    },
+  });
+}
+
+export function useUpdateItemType(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<ItemType, APIError, { typeId: string; req: UpdateItemTypeRequest }>({
+    mutationFn: ({ typeId, req }) => updateItemType(orgId, typeId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.itemTypes(orgId) });
+    },
+  });
+}
+
+export function useDeleteItemType(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (typeId) => deleteItemType(orgId, typeId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.itemTypes(orgId) });
+    },
   });
 }
 

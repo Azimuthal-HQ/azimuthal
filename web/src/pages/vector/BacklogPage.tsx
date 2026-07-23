@@ -24,14 +24,26 @@ import {
   type PriorityKey,
 } from '../../components/priority';
 import { cn } from '../../lib/utils';
+import { getCurrentOrgId } from '../../lib/auth';
 import {
   useProjectItems,
   useCreateProjectItem,
   useRankItem,
   useSpace,
+  useItemTypes,
   friendlyErrorMessage,
   type ProjectItem,
+  type ItemType,
 } from '../../lib/api';
+
+// The default type set, shown in the create picker until the org's item types
+// load (mirrors the server-seeded task/story/bug/epic).
+const DEFAULT_TYPE_OPTIONS: Pick<ItemType, 'slug' | 'name'>[] = [
+  { slug: 'task', name: 'Task' },
+  { slug: 'story', name: 'Story' },
+  { slug: 'bug', name: 'Bug' },
+  { slug: 'epic', name: 'Epic' },
+];
 
 // ---------------------------------------------------------------------------
 // Status vocabulary
@@ -58,6 +70,12 @@ export function BacklogPage() {
   const { data: items, isLoading, error } = useProjectItems(spaceId);
   const createMutation = useCreateProjectItem(spaceId);
   const rankMutation = useRankItem(spaceId);
+  const orgId = getCurrentOrgId() ?? '';
+  const { data: itemTypes } = useItemTypes(orgId);
+  // Active (non-archived) types for the creation picker, falling back to the
+  // default set before the query resolves.
+  const typeOptions = (itemTypes ?? []).filter((t) => !t.archived_at);
+  const pickerTypes = typeOptions.length > 0 ? typeOptions : DEFAULT_TYPE_OPTIONS;
 
   const [search, setSearch] = useState('');
 
@@ -288,10 +306,9 @@ export function BacklogPage() {
                   'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
                 )}
               >
-                <option value="task">Task</option>
-                <option value="story">Story</option>
-                <option value="bug">Bug</option>
-                <option value="epic">Epic</option>
+                {pickerTypes.map((t) => (
+                  <option key={t.slug} value={t.slug}>{t.name}</option>
+                ))}
               </select>
             </Field>
 

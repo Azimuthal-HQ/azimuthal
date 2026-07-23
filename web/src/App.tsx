@@ -37,6 +37,7 @@ import { AccessMatrixPage } from './pages/admin/AccessMatrixPage';
 import { SpacesAdminPage } from './pages/admin/SpacesAdminPage';
 import { AuditLogPage } from './pages/admin/AuditLogPage';
 import { OrgSettingsPage } from './pages/admin/OrgSettingsPage';
+import { ItemTypesAdminPage } from './pages/admin/ItemTypesAdminPage';
 
 export function App() {
   return (
@@ -76,6 +77,7 @@ export function App() {
             <Route path="teams" element={<TeamsAdminPage />} />
             <Route path="access" element={<AccessMatrixPage />} />
             <Route path="spaces" element={<SpacesAdminPage />} />
+            <Route path="item-types" element={<ItemTypesAdminPage />} />
             <Route path="audit-log" element={<AuditLogPage />} />
             <Route path="settings" element={<OrgSettingsPage />} />
           </Route>
