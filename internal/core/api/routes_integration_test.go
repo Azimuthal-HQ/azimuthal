@@ -1246,6 +1246,41 @@ func TestIntegration_Notifications_List(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.Body, &resp))
 }
 
+// TestIntegration_Notifications_CarryEntitySpace is the S1 data-layer
+// regression: a notification must expose entity_space_id so the bell can build
+// a route to the entity. Before the migration + serializer change the column
+// and JSON field did not exist, so the recipient's client had no space to
+// route to.
+func TestIntegration_Notifications_CarryEntitySpace(t *testing.T) {
+	ts := newTestServer(t)
+
+	spaceID := uuid.New()
+	entityID := uuid.New()
+	_, err := ts.DB.Pool.Exec(context.Background(),
+		`INSERT INTO notifications (id, user_id, kind, title, entity_kind, entity_id, entity_space_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		uuid.New(), ts.UserID, "ticket.assigned", "You have been assigned to: X",
+		"ticket", entityID, spaceID)
+	require.NoError(t, err)
+
+	r := ts.get(t, "/api/v1/notifications", true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "list: %s", r.Body)
+
+	var resp struct {
+		Notifications []struct {
+			EntityKind    string `json:"entity_kind"`
+			EntityID      string `json:"entity_id"`
+			EntitySpaceID string `json:"entity_space_id"`
+		} `json:"notifications"`
+	}
+	require.NoError(t, json.Unmarshal(r.Body, &resp))
+	require.Len(t, resp.Notifications, 1, "body: %s", r.Body)
+	require.Equal(t, "ticket", resp.Notifications[0].EntityKind)
+	require.Equal(t, entityID.String(), resp.Notifications[0].EntityID)
+	require.Equal(t, spaceID.String(), resp.Notifications[0].EntitySpaceID,
+		"notification must carry entity_space_id so the bell can route: %s", r.Body)
+}
+
 // TestIntegration_Notifications_ReadAll marks all notifications as read.
 func TestIntegration_Notifications_ReadAll(t *testing.T) {
 	ts := newTestServer(t)

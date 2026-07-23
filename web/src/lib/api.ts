@@ -387,6 +387,7 @@ export interface Notification {
   is_read: boolean;
   entity_kind?: string;
   entity_id?: string;
+  entity_space_id?: string;
   created_at: string;
 }
 

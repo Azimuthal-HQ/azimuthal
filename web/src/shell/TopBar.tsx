@@ -27,6 +27,7 @@ import { DarkModeToggle } from '../components/theme/DarkModeToggle';
 import { ProductTabs } from './ProductTabs';
 import { FocusChip } from './FocusChip';
 import { useShellUI } from './ShellUIContext';
+import { notificationRoute } from './modules';
 
 /**
  * TopBar is the persistent application header (ADR-0005): logomark, product
@@ -209,8 +210,13 @@ export function TopBar() {
                     <NotificationRow
                       key={n.id}
                       notification={n}
-                      onRead={() => {
+                      onActivate={() => {
                         if (!n.is_read) markRead.mutate(n.id);
+                        const route = notificationRoute(n);
+                        if (route) {
+                          setNotifOpen(false);
+                          navigate(route);
+                        }
                       }}
                     />
                   ))
@@ -356,15 +362,18 @@ function MenuLink({
 
 function NotificationRow({
   notification: n,
-  onRead,
+  onActivate,
 }: {
   notification: Notification;
-  onRead: () => void;
+  onActivate: () => void;
 }) {
+  const routable = notificationRoute(n) !== null;
   return (
     <button
       type="button"
-      onClick={onRead}
+      onClick={onActivate}
+      data-testid={`notification-row-${n.id}`}
+      aria-label={routable ? `${n.title} — open` : n.title}
       className={cn(
         'w-full text-left px-[var(--space-3)] py-[var(--space-2)]',
         'border-b border-[var(--color-border)] last:border-b-0',

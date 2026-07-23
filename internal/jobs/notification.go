@@ -24,6 +24,10 @@ type NotificationArgs struct {
 	ResourceID string `json:"resource_id,omitempty"`
 	// EntityKind is the type of entity (e.g. "ticket", "page").
 	EntityKind string `json:"entity_kind,omitempty"`
+	// SpaceID is the space the entity lives in, captured so the bell can build
+	// a space-scoped route to it. Empty when unknown (the notification then
+	// stays non-navigable).
+	SpaceID string `json:"space_id,omitempty"`
 }
 
 // Kind returns the unique job kind identifier used by River.
@@ -71,6 +75,12 @@ func (w *NotificationWorker) Work(ctx context.Context, job *river.Job[Notificati
 		if err == nil {
 			params.EntityID.Bytes = parsed
 			params.EntityID.Valid = true
+		}
+	}
+	if args.SpaceID != "" {
+		if parsed, err := uuid.Parse(args.SpaceID); err == nil {
+			params.EntitySpaceID.Bytes = parsed
+			params.EntitySpaceID.Valid = true
 		}
 	}
 

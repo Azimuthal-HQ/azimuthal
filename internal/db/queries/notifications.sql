@@ -1,6 +1,6 @@
 -- name: CreateNotification :one
-INSERT INTO notifications (id, user_id, kind, title, body, entity_kind, entity_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO notifications (id, user_id, kind, title, body, entity_kind, entity_id, entity_space_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: ListNotificationsByUser :many
