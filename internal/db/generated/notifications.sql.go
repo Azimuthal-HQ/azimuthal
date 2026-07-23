@@ -24,19 +24,20 @@ func (q *Queries) CountUnreadNotifications(ctx context.Context, userID uuid.UUID
 }
 
 const createNotification = `-- name: CreateNotification :one
-INSERT INTO notifications (id, user_id, kind, title, body, entity_kind, entity_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, kind, title, body, entity_kind, entity_id, is_read, created_at, read_at
+INSERT INTO notifications (id, user_id, kind, title, body, entity_kind, entity_id, entity_space_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, user_id, kind, title, body, entity_kind, entity_id, is_read, created_at, read_at, entity_space_id
 `
 
 type CreateNotificationParams struct {
-	ID         uuid.UUID   `json:"id"`
-	UserID     uuid.UUID   `json:"user_id"`
-	Kind       string      `json:"kind"`
-	Title      string      `json:"title"`
-	Body       *string     `json:"body"`
-	EntityKind *string     `json:"entity_kind"`
-	EntityID   pgtype.UUID `json:"entity_id"`
+	ID            uuid.UUID   `json:"id"`
+	UserID        uuid.UUID   `json:"user_id"`
+	Kind          string      `json:"kind"`
+	Title         string      `json:"title"`
+	Body          *string     `json:"body"`
+	EntityKind    *string     `json:"entity_kind"`
+	EntityID      pgtype.UUID `json:"entity_id"`
+	EntitySpaceID pgtype.UUID `json:"entity_space_id"`
 }
 
 func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotificationParams) (Notification, error) {
@@ -48,6 +49,7 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		arg.Body,
 		arg.EntityKind,
 		arg.EntityID,
+		arg.EntitySpaceID,
 	)
 	var i Notification
 	err := row.Scan(
@@ -61,12 +63,13 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		&i.IsRead,
 		&i.CreatedAt,
 		&i.ReadAt,
+		&i.EntitySpaceID,
 	)
 	return i, err
 }
 
 const listNotificationsByUser = `-- name: ListNotificationsByUser :many
-SELECT id, user_id, kind, title, body, entity_kind, entity_id, is_read, created_at, read_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
+SELECT id, user_id, kind, title, body, entity_kind, entity_id, is_read, created_at, read_at, entity_space_id FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3
 `
 
 type ListNotificationsByUserParams struct {
@@ -95,6 +98,7 @@ func (q *Queries) ListNotificationsByUser(ctx context.Context, arg ListNotificat
 			&i.IsRead,
 			&i.CreatedAt,
 			&i.ReadAt,
+			&i.EntitySpaceID,
 		); err != nil {
 			return nil, err
 		}
@@ -107,7 +111,7 @@ func (q *Queries) ListNotificationsByUser(ctx context.Context, arg ListNotificat
 }
 
 const listUnreadNotificationsByUser = `-- name: ListUnreadNotificationsByUser :many
-SELECT id, user_id, kind, title, body, entity_kind, entity_id, is_read, created_at, read_at FROM notifications WHERE user_id = $1 AND is_read = FALSE ORDER BY created_at DESC
+SELECT id, user_id, kind, title, body, entity_kind, entity_id, is_read, created_at, read_at, entity_space_id FROM notifications WHERE user_id = $1 AND is_read = FALSE ORDER BY created_at DESC
 `
 
 func (q *Queries) ListUnreadNotificationsByUser(ctx context.Context, userID uuid.UUID) ([]Notification, error) {
@@ -130,6 +134,7 @@ func (q *Queries) ListUnreadNotificationsByUser(ctx context.Context, userID uuid
 			&i.IsRead,
 			&i.CreatedAt,
 			&i.ReadAt,
+			&i.EntitySpaceID,
 		); err != nil {
 			return nil, err
 		}

@@ -1,19 +1,19 @@
-import { useState, useEffect } from 'react';
-import { Shield, Palette, User, Building2, Check } from 'lucide-react';
+import { useRef, useState, type ChangeEvent } from 'react';
+import { Shield, Palette, User, Check } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { SegmentedControl } from '../../components/ui/segmented';
 import { useTheme } from '../../components/theme/ThemeProvider';
 import { useAuth } from '../../lib/auth';
-import { friendlyErrorMessage, useOrganization, useUpdateOrganization, useUpdateProfile } from '../../lib/api';
+import { friendlyErrorMessage, useUpdateProfile, useUploadOwnAvatar } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type TabId = 'profile' | 'organization' | 'appearance';
+type TabId = 'profile' | 'appearance';
 
 interface TabDef {
   id: TabId;
@@ -21,9 +21,10 @@ interface TabDef {
   icon: typeof User;
 }
 
+// Organization settings moved to the admin panel (/admin/settings) — this
+// page holds only the user's own Profile and Appearance.
 const TABS: TabDef[] = [
   { id: 'profile', label: 'Profile', icon: User },
-  { id: 'organization', label: 'Organization', icon: Building2 },
   { id: 'appearance', label: 'Appearance', icon: Palette },
 ];
 
@@ -48,23 +49,17 @@ export function SettingsPage() {
   const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
   const updateProfileMutation = useUpdateProfile();
 
-  // Organization state — populated from API
-  const orgId = user?.orgId ?? '';
-  const { data: org } = useOrganization(orgId);
-  const updateOrgMutation = useUpdateOrganization(orgId);
-  const [orgName, setOrgName] = useState('');
-  const [orgSlug, setOrgSlug] = useState('');
-  const [orgDescription, setOrgDescription] = useState('');
-  const [orgSaveSuccess, setOrgSaveSuccess] = useState(false);
+  // Self avatar upload.
+  const uploadAvatar = useUploadOwnAvatar();
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const avatarFileRef = useRef<HTMLInputElement>(null);
 
-  // Populate org fields when data loads
-  useEffect(() => {
-    if (org) {
-      setOrgName(org.name ?? '');
-      setOrgSlug(org.slug ?? '');
-      setOrgDescription(org.description ?? '');
-    }
-  }, [org]);
+  const onPickAvatar = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    uploadAvatar.mutate(file, { onSuccess: (res) => setAvatarUrl(res.avatar_url) });
+  };
 
   async function handleSaveProfile() {
     try {
@@ -73,20 +68,6 @@ export function SettingsPage() {
       setTimeout(() => setProfileSaveSuccess(false), 3000);
     } catch {
       // error handled by mutation state
-    }
-  }
-
-  async function handleSaveOrg() {
-    if (!orgName.trim()) return;
-    try {
-      await updateOrgMutation.mutateAsync({
-        name: orgName.trim(),
-        description: orgDescription.trim() || undefined,
-      });
-      setOrgSaveSuccess(true);
-      setTimeout(() => setOrgSaveSuccess(false), 3000);
-    } catch {
-      // Error handled by mutation state
     }
   }
 
@@ -139,13 +120,46 @@ export function SettingsPage() {
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-4">
-                  <div
-                    className={cn(
-                      'flex h-16 w-16 items-center justify-center rounded-full',
-                      'bg-[var(--color-primary-muted)] text-[var(--text-xl)] font-semibold text-[var(--color-primary)]',
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt="Your avatar"
+                      data-testid="settings-avatar-image"
+                      className="h-16 w-16 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div
+                      className={cn(
+                        'flex h-16 w-16 items-center justify-center rounded-full',
+                        'bg-[var(--color-primary-muted)] text-[var(--text-xl)] font-semibold text-[var(--color-primary)]',
+                      )}
+                    >
+                      {initials}
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="settings-avatar-upload"
+                      disabled={uploadAvatar.isPending}
+                      onClick={() => avatarFileRef.current?.click()}
+                    >
+                      {uploadAvatar.isPending ? 'Uploading...' : 'Change avatar'}
+                    </Button>
+                    <input
+                      ref={avatarFileRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="hidden"
+                      data-testid="settings-avatar-input"
+                      onChange={onPickAvatar}
+                    />
+                    {uploadAvatar.error && (
+                      <p className="text-[var(--text-xs)] text-[var(--color-danger)]">
+                        {friendlyErrorMessage(uploadAvatar.error, 'The avatar could not be uploaded.')}
+                      </p>
                     )}
-                  >
-                    {initials}
                   </div>
                 </div>
               </CardContent>
@@ -198,83 +212,6 @@ export function SettingsPage() {
                   )}
                   <Button onClick={handleSaveProfile} disabled={updateProfileMutation.isPending}>
                     {updateProfileMutation.isPending ? 'Saving...' : 'Save Changes'}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {activeTab === 'organization' && (
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Organization Details</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <label
-                    htmlFor="orgName"
-                    className="block text-[var(--text-sm)] font-medium text-[var(--color-text)]"
-                  >
-                    Name
-                  </label>
-                  <Input
-                    id="orgName"
-                    value={orgName}
-                    onChange={(e) => setOrgName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label
-                    htmlFor="orgSlug"
-                    className="block text-[var(--text-sm)] font-medium text-[var(--color-text)]"
-                  >
-                    Slug
-                  </label>
-                  <Input
-                    id="orgSlug"
-                    value={orgSlug}
-                    onChange={(e) => setOrgSlug(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label
-                    htmlFor="orgDesc"
-                    className="block text-[var(--text-sm)] font-medium text-[var(--color-text)]"
-                  >
-                    Description
-                  </label>
-                  <textarea
-                    id="orgDesc"
-                    rows={3}
-                    value={orgDescription}
-                    onChange={(e) => setOrgDescription(e.target.value)}
-                    className={cn(
-                      'flex w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
-                      'bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
-                      'placeholder:text-[var(--color-text-muted)]',
-                      'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
-                    )}
-                  />
-                </div>
-                {updateOrgMutation.error && (
-                  <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-                    {friendlyErrorMessage(updateOrgMutation.error, 'The organization could not be saved.')}
-                  </p>
-                )}
-                {orgSaveSuccess && (
-                  <div className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-success)]">
-                    <Check className="h-4 w-4" />
-                    Changes saved successfully
-                  </div>
-                )}
-                <div className="flex justify-end">
-                  <Button
-                    onClick={handleSaveOrg}
-                    disabled={updateOrgMutation.isPending || !orgName.trim()}
-                  >
-                    {updateOrgMutation.isPending ? 'Saving...' : 'Save Changes'}
                   </Button>
                 </div>
               </CardContent>

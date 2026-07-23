@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Copy, Mail, MoreHorizontal, UserPlus } from 'lucide-react';
+import { useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { Check as CheckIcon, Copy, Mail, MoreHorizontal, Pencil, UserPlus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
 import {
@@ -10,6 +10,7 @@ import {
   usePersonLifecycle,
   useRemovePerson,
   useResendInvite,
+  useUploadUserAvatar,
   useRevokeInvite,
   useTeams,
   useUpdatePerson,
@@ -154,8 +155,40 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
   const update = useUpdatePerson(orgId);
   const remove = useRemovePerson(orgId);
   const teams = useTeams(orgId);
+  const uploadAvatar = useUploadUserAvatar(orgId);
 
-  const busy = lifecycle.isPending || update.isPending || remove.isPending;
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(person.display_name);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const busy = lifecycle.isPending || update.isPending || remove.isPending || uploadAvatar.isPending;
+
+  const saveName = () => {
+    const name = nameDraft.trim();
+    if (!name || name === person.display_name) {
+      setEditingName(false);
+      return;
+    }
+    setError(null);
+    update.mutate(
+      { userId: person.user_id, display_name: name },
+      {
+        onSuccess: () => setEditingName(false),
+        onError: (err) => setError(friendlyErrorMessage(err, 'The display name could not be changed.')),
+      },
+    );
+  };
+
+  const onPickAvatar = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setError(null);
+    uploadAvatar.mutate(
+      { userId: person.user_id, file },
+      { onError: (err) => setError(friendlyErrorMessage(err, 'The avatar could not be uploaded.')) },
+    );
+  };
 
   const runLifecycle = (action: 'deactivate' | 'reactivate' | 'force-logout') => {
     setError(null);
@@ -176,14 +209,74 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
     >
       <div className="grid grid-cols-[minmax(220px,2fr)_1fr_1fr_1fr_1fr_auto] items-center gap-x-[var(--space-3)]">
         <span className="flex min-w-0 items-center gap-[var(--space-2)]">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-muted)] text-[var(--text-sm)] font-medium text-[var(--color-primary)]">
-            {person.display_name.charAt(0).toUpperCase()}
-          </span>
+          <button
+            type="button"
+            data-testid={`person-avatar-upload-${person.email}`}
+            onClick={() => fileRef.current?.click()}
+            disabled={busy}
+            title="Change avatar"
+            className="h-8 w-8 shrink-0 overflow-hidden rounded-full"
+          >
+            {person.avatar_url ? (
+              <img src={person.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover" />
+            ) : (
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-primary-muted)] text-[var(--text-sm)] font-medium text-[var(--color-primary)]">
+                {person.display_name.charAt(0).toUpperCase()}
+              </span>
+            )}
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="hidden"
+            data-testid={`person-avatar-input-${person.email}`}
+            onChange={onPickAvatar}
+          />
           <span className="min-w-0">
-            <span className="block truncate text-[var(--text-sm)] font-medium text-[var(--color-text)]">
-              {person.display_name}
-              {isSelf && <span className="ml-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">(you)</span>}
-            </span>
+            {editingName ? (
+              <span className="flex items-center gap-1">
+                <input
+                  autoFocus
+                  data-testid={`person-name-input-${person.email}`}
+                  value={nameDraft}
+                  disabled={busy}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveName();
+                    if (e.key === 'Escape') setEditingName(false);
+                  }}
+                  className="h-7 min-w-0 flex-1 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-2 text-[var(--text-sm)] text-[var(--color-text)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]"
+                />
+                <button
+                  type="button"
+                  data-testid={`person-name-save-${person.email}`}
+                  onClick={saveName}
+                  disabled={busy}
+                  title="Save name"
+                  className="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]"
+                >
+                  <CheckIcon className="h-4 w-4" />
+                </button>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                <span className="truncate">{person.display_name}</span>
+                {isSelf && <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">(you)</span>}
+                <button
+                  type="button"
+                  data-testid={`person-name-edit-${person.email}`}
+                  onClick={() => {
+                    setNameDraft(person.display_name);
+                    setEditingName(true);
+                  }}
+                  title="Edit display name"
+                  className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              </span>
+            )}
             <span className="block truncate text-[var(--text-xs)] text-[var(--color-text-muted)]">{person.email}</span>
           </span>
         </span>
@@ -374,8 +467,9 @@ function PendingInvites({ orgId, invites }: { orgId: string; invites: Invite[] }
           <div
             key={inv.id}
             data-testid={`invite-row-${inv.email}`}
-            className="flex items-center gap-[var(--space-3)] border-b border-[var(--color-border)] py-[var(--space-2)] last:border-b-0"
+            className="border-b border-[var(--color-border)] py-[var(--space-2)] last:border-b-0"
           >
+           <div className="flex items-center gap-[var(--space-3)]">
             <Mail className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[var(--text-sm)] text-[var(--color-text)]">{inv.email}</span>
@@ -417,16 +511,17 @@ function PendingInvites({ orgId, invites }: { orgId: string; invites: Invite[] }
             >
               Revoke
             </Button>
+           </div>
+            {freshLink && freshLink.id === inv.id && (
+              <InviteLinkNote
+                invite={freshLink}
+                note="New link generated — the previous one no longer works. Copy it now and send it."
+                onDismiss={() => setFreshLink(null)}
+              />
+            )}
           </div>
         ))}
         {error && <p className="mt-2 text-[var(--text-sm)] text-[var(--color-danger)]">{error}</p>}
-        {freshLink && (
-          <InviteLinkNote
-            invite={freshLink}
-            note="New link generated — the previous one no longer works."
-            onDismiss={() => setFreshLink(null)}
-          />
-        )}
       </CardContent>
     </Card>
   );

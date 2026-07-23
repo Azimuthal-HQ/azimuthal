@@ -47,12 +47,13 @@ func newBulkFixture(t *testing.T) *bulkFixture {
 }
 
 type bulkResult struct {
-	BatchID *uuid.UUID `json:"batch_id"`
-	Creates int        `json:"creates"`
-	Updates int        `json:"updates"`
-	Revokes int        `json:"revokes"`
-	Noops   int        `json:"noops"`
-	Actions []struct {
+	BatchID   *uuid.UUID `json:"batch_id"`
+	TicketRef *string    `json:"ticket_ref"`
+	Creates   int        `json:"creates"`
+	Updates   int        `json:"updates"`
+	Revokes   int        `json:"revokes"`
+	Noops     int        `json:"noops"`
+	Actions   []struct {
 		TeamID   uuid.UUID `json:"team_id"`
 		SpaceID  uuid.UUID `json:"space_id"`
 		Action   string    `json:"action"`
@@ -167,6 +168,11 @@ func TestBulkGrants_OneTransactionOneBatchID_AuditBatch(t *testing.T) {
 	}, "BEA-42")
 	require.Equal(t, http.StatusOK, r.StatusCode, "apply: %s", r.Body)
 	require.NotNil(t, ap.BatchID)
+
+	// S7: the apply response echoes the ticket_ref (alongside batch_id) so the
+	// confirmation surface can show the operator it was recorded.
+	require.NotNil(t, ap.TicketRef, "apply response must echo ticket_ref: %s", r.Body)
+	require.Equal(t, "BEA-42", *ap.TicketRef)
 
 	// Every audit event of the batch carries the ONE batch_id and the
 	// ticket_ref, written in the same transaction as the grants.

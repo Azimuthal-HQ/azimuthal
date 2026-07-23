@@ -1,5 +1,5 @@
-﻿import { useState, useMemo } from 'react';
-import { Link, useParams } from 'react-router-dom';
+﻿import { useEffect, useState, useMemo } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Plus, Search, AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
@@ -76,6 +76,15 @@ export function TicketListPage() {
   const [formDescription, setFormDescription] = useState('');
   const [formPriority, setFormPriority] = useState<PriorityKey>('medium');
 
+  // The top bar's contextual Create lands here as ?create=ticket.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('create') === 'ticket') {
+      setDialogOpen(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   function resetForm() {
     setFormTitle('');
     setFormDescription('');
@@ -103,7 +112,7 @@ export function TicketListPage() {
     if (!tickets) return [];
     return tickets.filter((t) => {
       if (statusFilter !== 'all' && t.status !== statusFilter) return false;
-      if (priorityFilter !== 'all' && String(t.priority).toLowerCase() !== priorityFilter) return false;
+      if (priorityFilter !== 'all' && normalizePriority(t.priority) !== priorityFilter) return false;
       if (search && !t.title.toLowerCase().includes(search.toLowerCase()) && !t.id.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });

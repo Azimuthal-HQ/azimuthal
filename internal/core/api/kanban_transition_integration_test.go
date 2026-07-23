@@ -77,6 +77,33 @@ func TestKanbanDrag_StatusTransitionPersists_Regression(t *testing.T) {
 	require.True(t, found, "transitioned ticket missing from list: %s", r.Body)
 }
 
+// TestTicketStatus_ReverseTransition_ResolvedToInProgress is the S5 regression:
+// a resolved ticket must be able to step back to in_progress directly (the UI
+// dropdown offers it) rather than being forced through `open`. Before the fix
+// the Go state machine lacked the resolved->in_progress edge, so this POST
+// /status returned 409 INVALID_TRANSITION.
+func TestTicketStatus_ReverseTransition_ResolvedToInProgress(t *testing.T) {
+	ts := newTestServer(t)
+	spaceBase, ticketID := createKanbanTicket(t, ts)
+
+	// Drive the ticket forward to resolved.
+	for _, s := range []string{"in_progress", "resolved"} {
+		r := ts.post(t, fmt.Sprintf("%s/tickets/%s/status", spaceBase, ticketID),
+			map[string]any{"status": s}, true)
+		require.Equal(t, http.StatusOK, r.StatusCode, "advance to %s: %s", s, r.Body)
+	}
+
+	// The reverse step must now be accepted and persisted.
+	r := ts.post(t, fmt.Sprintf("%s/tickets/%s/status", spaceBase, ticketID),
+		map[string]any{"status": "in_progress"}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "resolved -> in_progress: %s", r.Body)
+	require.Equal(t, "in_progress", decodeJSONMap(t, r.Body)["status"])
+
+	r = ts.get(t, fmt.Sprintf("%s/tickets/%s", spaceBase, ticketID), true)
+	require.Equal(t, http.StatusOK, r.StatusCode)
+	require.Equal(t, "in_progress", decodeJSONMap(t, r.Body)["status"])
+}
+
 // TestKanbanDrag_InvalidTransition_Returns409 pins the state-machine
 // rejection: open → resolved skips in_progress and must return 409 with the
 // documented error shape. The board surfaces this error and rolls the card

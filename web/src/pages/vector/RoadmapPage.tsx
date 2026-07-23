@@ -1,12 +1,52 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
 import { SegmentedControl } from '../../components/ui/segmented';
 import { PriorityDot, normalizePriority } from '../../components/priority';
 import { formatUTCDate } from '../../lib/utils';
-import { useRoadmap, useRoadmapSprints, type RoadmapItem, type RoadmapSprint } from '../../lib/api';
+import {
+  useRoadmap,
+  useRoadmapSprints,
+  useSprints,
+  friendlyErrorMessage,
+  type RoadmapItem,
+  type RoadmapSprint,
+  type Sprint,
+} from '../../lib/api';
 
 type ViewMode = 'items' | 'sprints';
+
+const DAY_MS = 86_400_000;
+
+function toYMD(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
+ * The "All Items" roadmap endpoint requires a from/to window. We derive a
+ * default that (a) spans every open/active sprint and (b) floors ~90 days
+ * into the past so client-derived overdue items (past due dates) still
+ * surface, with a ~180-day forward ceiling for near-term planned work.
+ * The backend treats `to` as inclusive at midnight UTC (due <= to), so the
+ * ceiling is pushed one day out to include items due any time on that day.
+ */
+function computeRoadmapWindow(sprints: Sprint[]): { from: string; to: string } {
+  const now = Date.now();
+  let earliest = now - 90 * DAY_MS;
+  let latest = now + 180 * DAY_MS;
+  for (const s of sprints) {
+    if (s.status === 'completed') continue;
+    if (s.starts_at) {
+      const t = Date.parse(s.starts_at);
+      if (!Number.isNaN(t)) earliest = Math.min(earliest, t);
+    }
+    if (s.ends_at) {
+      const t = Date.parse(s.ends_at);
+      if (!Number.isNaN(t)) latest = Math.max(latest, t);
+    }
+  }
+  return { from: toYMD(earliest), to: toYMD(latest + DAY_MS) };
+}
 
 function groupByMonth(items: RoadmapItem[]): Record<string, RoadmapItem[]> {
   return items.reduce((acc, ri) => {
@@ -75,10 +115,25 @@ export function RoadmapPage() {
   const { spaceId = '' } = useParams<{ spaceId: string }>();
   const [view, setView] = useState<ViewMode>('items');
 
-  const { data: roadmapItems = [], isLoading: loadingItems } = useRoadmap(spaceId);
-  const { data: sprintRoadmap = [], isLoading: loadingSprints } = useRoadmapSprints(spaceId, { enabled: view === 'sprints' });
+  const { data: sprints = [] } = useSprints(spaceId);
+  const { from, to } = useMemo(() => computeRoadmapWindow(sprints), [sprints]);
+
+  const {
+    data: roadmapItems = [],
+    isLoading: loadingItems,
+    isError: itemsError,
+    error: itemsErr,
+  } = useRoadmap(spaceId, from, to);
+  const {
+    data: sprintRoadmap = [],
+    isLoading: loadingSprints,
+    isError: sprintsError,
+    error: sprintsErr,
+  } = useRoadmapSprints(spaceId, { enabled: view === 'sprints' });
 
   const isLoading = view === 'items' ? loadingItems : loadingSprints;
+  const isError = view === 'items' ? itemsError : sprintsError;
+  const error = view === 'items' ? itemsErr : sprintsErr;
 
   const grouped = groupByMonth(roadmapItems);
   const months = Object.keys(grouped).sort();
@@ -111,6 +166,16 @@ export function RoadmapPage() {
 
       {isLoading ? (
         <div className="flex h-48 items-center justify-center text-[var(--color-text-muted)]">Loading…</div>
+      ) : isError ? (
+        <div
+          data-testid="roadmap-error"
+          className="flex h-48 items-center justify-center rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] px-4 text-center"
+        >
+          <p className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-danger)]">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {friendlyErrorMessage(error, 'The roadmap is unavailable right now. Try again.')}
+          </p>
+        </div>
       ) : view === 'items' ? (
         months.length === 0 ? (
           <div className="flex h-48 items-center justify-center rounded-[var(--radius-lg)] border-2 border-dashed border-[var(--color-border)]">

@@ -1,5 +1,5 @@
-﻿import { useState, useMemo, useRef } from 'react';
-import { Link, useParams } from 'react-router-dom';
+﻿import { useEffect, useState, useMemo, useRef } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Plus, Search, AlertCircle, GripVertical } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
@@ -80,6 +80,16 @@ export function BacklogPage() {
 
   // Modal state
   const [dialogOpen, setDialogOpen] = useState(false);
+
+  // The top bar's contextual Create lands here as ?create=item.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('create') === 'item') {
+      setDialogOpen(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
   const [formTitle, setFormTitle] = useState('');
   const [formPriority, setFormPriority] = useState<PriorityKey>('medium');
   const [formKind, setFormKind] = useState('task');

@@ -123,6 +123,36 @@ func TestWorkflowAdapter_ListAvailableTransitions(t *testing.T) {
 	require.NotEmpty(t, transitions, "open state should have transitions")
 }
 
+// TestWorkflowAdapter_SeededTicketWorkflow_HasReverseEdges is the S5 seed-side
+// regression: the seeded default service-desk workflow must offer the
+// one-step-back reverse edges so the DB workflow engine stays in lockstep with
+// the Go state machine. Before the seed change these rows did not exist.
+func TestWorkflowAdapter_SeededTicketWorkflow_HasReverseEdges(t *testing.T) {
+	db, orgID, adapter := setupWorkflow(t)
+	ctx := context.Background()
+
+	require.NoError(t, adapter.SeedDefaultWorkflows(ctx, orgID))
+
+	wf, err := adapter.GetDefaultWorkflow(ctx, orgID, "tickets")
+	require.NoError(t, err)
+
+	reverses := [][2]string{
+		{"resolved", "in_progress"},
+		{"closed", "resolved"},
+		{"closed", "in_progress"},
+	}
+	for _, rv := range reverses {
+		var n int
+		err := db.Pool.QueryRow(ctx, `
+			SELECT count(*) FROM workflow_transitions t
+			JOIN workflow_states f ON f.id = t.from_state_id AND f.name = $2
+			JOIN workflow_states s ON s.id = t.to_state_id   AND s.name = $3
+			WHERE t.workflow_id = $1`, wf.ID, rv[0], rv[1]).Scan(&n)
+		require.NoError(t, err)
+		require.Equal(t, 1, n, "seeded ticket workflow must allow %s -> %s", rv[0], rv[1])
+	}
+}
+
 func TestWorkflowAdapter_AssignDefaultWorkflowToSpace(t *testing.T) {
 	db, orgID, adapter := setupWorkflow(t)
 	ctx := context.Background()

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useMatch, useNavigate } from 'react-router-dom';
 import {
   Bell,
   Check,
+  ChevronDown,
   ChevronRight,
   Globe,
   LogOut,
@@ -13,6 +14,13 @@ import {
   Shield,
   User,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown';
 import { cn } from '../lib/utils';
 import { useAuth } from '../lib/auth';
 import {
@@ -27,6 +35,14 @@ import { DarkModeToggle } from '../components/theme/DarkModeToggle';
 import { ProductTabs } from './ProductTabs';
 import { FocusChip } from './FocusChip';
 import { useShellUI } from './ShellUIContext';
+import { isModuleKey, notificationRoute, spacePath, type ModuleKey } from './modules';
+
+/** The primary create action for each module, keyed to the space in context. */
+const MODULE_CREATE: Record<ModuleKey, { label: string; subpath: string; param: string }> = {
+  beacon: { label: 'New ticket', subpath: 'tickets', param: 'ticket' },
+  codex: { label: 'New page', subpath: '', param: 'page' },
+  vector: { label: 'New item', subpath: 'backlog', param: 'item' },
+};
 
 /**
  * TopBar is the persistent application header (ADR-0005): logomark, product
@@ -37,6 +53,20 @@ import { useShellUI } from './ShellUIContext';
 export function TopBar() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+
+  // Contextual Create: when the URL is inside a module space, the primary
+  // create action is that module's entity (a ticket/page/item) in that space;
+  // otherwise it falls back to creating a space (the historical behaviour).
+  const spaceMatch = useMatch('/:module/:spaceId/*');
+  const contextModule = isModuleKey(spaceMatch?.params.module) ? spaceMatch!.params.module : undefined;
+  const contextSpaceId = contextModule ? (spaceMatch?.params.spaceId ?? undefined) : undefined;
+  const moduleCreate = contextModule && contextSpaceId ? MODULE_CREATE[contextModule] : null;
+  const moduleCreateTo =
+    moduleCreate && contextSpaceId
+      ? `${spacePath(contextModule!, contextSpaceId, moduleCreate.subpath)}?create=${moduleCreate.param}`
+      : null;
+  const newSpaceTo = '/?create=space';
+  const primaryCreateTo = moduleCreateTo ?? newSpaceTo;
   const { mobileNavOpen, setMobileNavOpen } = useShellUI();
 
   const org = useOrganization(user?.orgId ?? '');
@@ -130,18 +160,59 @@ export function TopBar() {
           <Search className="h-[18px] w-[18px]" />
         </button>
 
-        <button
-          type="button"
-          onClick={() => navigate('/?create=space')}
-          className={cn(
-            'flex h-8 items-center gap-[var(--space-1)] rounded-[var(--radius-md)] px-[var(--space-3)]',
-            'bg-[var(--color-primary)] text-[var(--text-sm)] font-medium text-white',
-            'hover:bg-[var(--color-primary-hover)] transition-colors duration-150',
-          )}
-        >
-          <Plus className="h-4 w-4" />
-          <span className="hidden sm:inline">Create</span>
-        </button>
+        <div className="flex items-center">
+          <button
+            type="button"
+            data-testid="topbar-create"
+            onClick={() => navigate(primaryCreateTo)}
+            className={cn(
+              'flex h-8 items-center gap-[var(--space-1)] rounded-l-[var(--radius-md)] px-[var(--space-3)]',
+              'bg-[var(--color-primary)] text-[var(--text-sm)] font-medium text-white',
+              'hover:bg-[var(--color-primary-hover)] transition-colors duration-150',
+            )}
+          >
+            <Plus className="h-4 w-4" />
+            {/* Always "Create" — a module-specific label (e.g. "New page")
+                would collide with each module's own create button. The
+                contextual action is disclosed in the caret menu below. */}
+            <span className="hidden sm:inline">Create</span>
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="topbar-create-menu"
+                aria-label="More create options"
+                className={cn(
+                  'flex h-8 items-center rounded-r-[var(--radius-md)] border-l border-white/20 px-1.5',
+                  'bg-[var(--color-primary)] text-white',
+                  'hover:bg-[var(--color-primary-hover)] transition-colors duration-150',
+                )}
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {moduleCreateTo && moduleCreate && (
+                <>
+                  <DropdownMenuItem
+                    data-testid="topbar-create-module"
+                    onSelect={() => navigate(moduleCreateTo)}
+                  >
+                    {moduleCreate.label}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem
+                data-testid="topbar-create-space"
+                onSelect={() => navigate(newSpaceTo)}
+              >
+                New space
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
         {/* Notification bell */}
         <div className="relative" ref={notifRef}>
@@ -209,8 +280,13 @@ export function TopBar() {
                     <NotificationRow
                       key={n.id}
                       notification={n}
-                      onRead={() => {
+                      onActivate={() => {
                         if (!n.is_read) markRead.mutate(n.id);
+                        const route = notificationRoute(n);
+                        if (route) {
+                          setNotifOpen(false);
+                          navigate(route);
+                        }
                       }}
                     />
                   ))
@@ -284,11 +360,14 @@ export function TopBar() {
               </div>
 
               <MenuLink icon={User} label="Profile" onClick={() => { setAvatarOpen(false); navigate('/settings'); }} />
-              <MenuLink
-                icon={Settings}
-                label="Workspace settings"
-                onClick={() => { setAvatarOpen(false); navigate('/settings/organization'); }}
-              />
+              {/* Org settings now live in the admin panel (org admins only). */}
+              {org.data?.caller_is_admin && (
+                <MenuLink
+                  icon={Settings}
+                  label="Workspace settings"
+                  onClick={() => { setAvatarOpen(false); navigate('/admin/settings'); }}
+                />
+              )}
               {/* Administration (P2.5): shown to org admins only. The role
                   comes from the org response's caller_is_admin — resolved
                   server-side per request; the JWT role claim is the legacy
@@ -356,15 +435,18 @@ function MenuLink({
 
 function NotificationRow({
   notification: n,
-  onRead,
+  onActivate,
 }: {
   notification: Notification;
-  onRead: () => void;
+  onActivate: () => void;
 }) {
+  const routable = notificationRoute(n) !== null;
   return (
     <button
       type="button"
-      onClick={onRead}
+      onClick={onActivate}
+      data-testid={`notification-row-${n.id}`}
+      aria-label={routable ? `${n.title} — open` : n.title}
       className={cn(
         'w-full text-left px-[var(--space-3)] py-[var(--space-2)]',
         'border-b border-[var(--color-border)] last:border-b-0',

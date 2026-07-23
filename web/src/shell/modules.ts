@@ -50,3 +50,33 @@ export function spacePath(module: ModuleKey, spaceId: string, subpath?: string):
   const base = `/${module}/${spaceId}`;
   return subpath ? `${base}/${subpath}` : base;
 }
+
+/**
+ * Maps a notification's entity_kind to the module + detail sub-path of the
+ * entity it references. The trailing route segment is the entity UUID for all
+ * three (tickets/:ticketId, pages/:pageId, backlog/:itemKey are all UUIDs).
+ */
+const NOTIFICATION_ENTITY: Record<string, { module: ModuleKey; sub: string }> = {
+  ticket: { module: 'beacon', sub: 'tickets' },
+  page: { module: 'codex', sub: 'pages' },
+  item: { module: 'vector', sub: 'backlog' },
+  project_item: { module: 'vector', sub: 'backlog' },
+};
+
+/**
+ * notificationRoute builds the in-app route for a notification, or null when it
+ * cannot be routed (unknown/absent entity kind, or a legacy row without the
+ * denormalised space). A null result keeps the bell's mark-read-only behaviour.
+ * Navigation lands on the normal space-scoped detail page, which enforces read
+ * authz and 404s a deleted / no-longer-accessible entity — it is never a
+ * permission oracle.
+ */
+export function notificationRoute(n: {
+  entity_kind?: string;
+  entity_id?: string;
+  entity_space_id?: string;
+}): string | null {
+  const target = n.entity_kind ? NOTIFICATION_ENTITY[n.entity_kind] : undefined;
+  if (!target || !n.entity_id || !n.entity_space_id) return null;
+  return spacePath(target.module, n.entity_space_id, `${target.sub}/${n.entity_id}`);
+}

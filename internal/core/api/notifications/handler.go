@@ -156,14 +156,15 @@ func (h *Handler) ReadAll(w http.ResponseWriter, r *http.Request) {
 }
 
 type notificationResponse struct {
-	ID         uuid.UUID  `json:"id"`
-	Kind       string     `json:"kind"`
-	Title      string     `json:"title"`
-	Body       *string    `json:"body,omitempty"`
-	EntityKind *string    `json:"entity_kind,omitempty"`
-	EntityID   *uuid.UUID `json:"entity_id,omitempty"`
-	IsRead     bool       `json:"is_read"`
-	CreatedAt  string     `json:"created_at"`
+	ID            uuid.UUID  `json:"id"`
+	Kind          string     `json:"kind"`
+	Title         string     `json:"title"`
+	Body          *string    `json:"body,omitempty"`
+	EntityKind    *string    `json:"entity_kind,omitempty"`
+	EntityID      *uuid.UUID `json:"entity_id,omitempty"`
+	EntitySpaceID *uuid.UUID `json:"entity_space_id,omitempty"`
+	IsRead        bool       `json:"is_read"`
+	CreatedAt     string     `json:"created_at"`
 }
 
 type listNotificationsResponse struct {
@@ -184,6 +185,10 @@ func toResponse(n generated.Notification) notificationResponse {
 	if n.EntityID.Valid {
 		uid := uuid.UUID(n.EntityID.Bytes)
 		r.EntityID = &uid
+	}
+	if n.EntitySpaceID.Valid {
+		sid := uuid.UUID(n.EntitySpaceID.Bytes)
+		r.EntitySpaceID = &sid
 	}
 	return r
 }

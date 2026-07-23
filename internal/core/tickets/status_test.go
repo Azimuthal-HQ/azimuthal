@@ -53,15 +53,16 @@ func TestCanTransitionTo(t *testing.T) {
 		{StatusInProgress, StatusOpen, true},
 		{StatusInProgress, StatusClosed, true},
 
-		// Valid transitions from resolved
+		// Valid transitions from resolved (one-step-back reverse edges: a
+		// resolved ticket can resume progress without going through open).
 		{StatusResolved, StatusClosed, true},
 		{StatusResolved, StatusOpen, true},
-		{StatusResolved, StatusInProgress, false},
+		{StatusResolved, StatusInProgress, true},
 
-		// Valid transitions from closed
+		// Valid transitions from closed (reopen without forcing through open).
 		{StatusClosed, StatusOpen, true},
-		{StatusClosed, StatusInProgress, false},
-		{StatusClosed, StatusResolved, false},
+		{StatusClosed, StatusInProgress, true},
+		{StatusClosed, StatusResolved, true},
 
 		// Same status
 		{StatusOpen, StatusOpen, false},

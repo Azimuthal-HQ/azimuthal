@@ -62,6 +62,7 @@ import (
 	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
 	attachmentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/attachments"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
+	avatarapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/avatar"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
@@ -258,9 +259,11 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	// the attachment handler nil — the feature is absent, nothing else
 	// breaks — exactly the pre-P3 behaviour.
 	var attachmentHandler *attachmentsapi.Handler
-	if blobStore, err := newObjectStore(context.Background(), cfg); err != nil {
-		slog.Warn("attachments disabled: object store unavailable", "error", err)
+	var blobStore storage.ObjectStore
+	if bs, err := newObjectStore(context.Background(), cfg); err != nil {
+		slog.Warn("object storage disabled: attachments and avatars unavailable", "error", err)
 	} else {
+		blobStore = bs
 		attachmentSvc := attachments.NewService(adapters.NewAttachmentAdapter(pool), blobStore)
 		attachmentHandler = attachmentsapi.NewHandler(attachmentSvc, shareSvc)
 	}
@@ -273,7 +276,15 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	// P2.5 administration: people lifecycle, invites, bulk grants, audit
 	// viewer. Invite delivery follows config — link mode returns the URL to
 	// the admin; email mode sends it (SMTP validated at startup).
-	peopleSvc := people.NewService(adapters.NewPeopleAdapter(pool))
+	peopleAdapter := adapters.NewPeopleAdapter(pool)
+	peopleSvc := people.NewService(peopleAdapter)
+
+	// Avatars reuse the shared object store; the handler is nil (feature
+	// absent) when object storage is unavailable, exactly like attachments.
+	var avatarHandler *avatarapi.Handler
+	if blobStore != nil {
+		avatarHandler = avatarapi.NewHandler(people.NewAvatarService(peopleAdapter, blobStore)).WithAuditLogger(auditLog)
+	}
 	var inviteSender invites.Sender
 	if cfg.InviteDelivery == config.InviteDeliveryEmail {
 		inviteSender = adapters.NewInviteEmailSender(sender, queries)
@@ -304,6 +315,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		AttachmentHandler:   attachmentHandler,
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
 		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
+		AvatarHandler:       avatarHandler,
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		QueueStatus:         queueStatus,

@@ -89,6 +89,51 @@ test.describe('Notifications — P1', () => {
     await expect(page.getByTestId('notification-panel')).not.toBeVisible({ timeout: 3000 })
   })
 
+  // S1 regression: clicking an assignment notification navigates to the
+  // ticket. Before S1, NotificationRow only marked read and the payload
+  // carried no space to route to, so the bell was mark-read-only.
+  test('clicking an assignment notification navigates to the ticket', async ({ page }) => {
+    await createUserAndLogin(page)
+    await createSpace(page, 'Notif Nav Desk', 'beacon')
+
+    // Create a ticket and open it to self-assign (produces the notification).
+    await page.click('button:has-text("New Ticket")')
+    await expect(page.locator('#ticket-title')).toBeVisible()
+    await page.fill('#ticket-title', 'Navigate To Me')
+    await page.locator('[role="dialog"] button:has-text("Create Ticket")').click()
+    await expect(page.locator('text=Navigate To Me')).toBeVisible({ timeout: 5000 })
+    await page.click('text=Navigate To Me')
+    await expect(page).toHaveURL(/\/tickets\//, { timeout: 5000 })
+
+    const assigneeSelect = page.locator('select').filter({ hasText: 'Unassigned' }).first()
+    await expect(assigneeSelect).toBeVisible({ timeout: 5000 })
+    const memberOptions = assigneeSelect.locator('option:not([value=""])')
+    await expect(memberOptions).not.toHaveCount(0, { timeout: 5000 })
+    const memberValue = await memberOptions.first().getAttribute('value')
+    await assigneeSelect.selectOption(memberValue ?? '')
+
+    // River persists async; then move away from the ticket so the navigation
+    // assertion is meaningful.
+    await page.waitForTimeout(3000)
+    await page.goto('/')
+    await expect(page).not.toHaveURL(/\/tickets\//)
+    await page.reload()
+
+    // Open the bell and click the assignment notification.
+    await page.locator('header button[aria-label="Notifications"]').click()
+    await expect(page.getByTestId('notification-panel')).toBeVisible({ timeout: 3000 })
+    const row = page
+      .locator('[data-testid^="notification-row-"]')
+      .filter({ hasText: 'You have been assigned' })
+      .first()
+    await expect(row).toBeVisible({ timeout: 5000 })
+    await row.click()
+
+    // The click must land on the ticket detail route.
+    await expect(page).toHaveURL(/\/beacon\/.+\/tickets\/.+/, { timeout: 5000 })
+    await expect(page.locator('text=Navigate To Me')).toBeVisible({ timeout: 5000 })
+  })
+
   test('GET /api/v1/notifications returns correct shape', async ({ page }) => {
     await createUserAndLogin(page)
     const token = await page.evaluate((): string | null =>

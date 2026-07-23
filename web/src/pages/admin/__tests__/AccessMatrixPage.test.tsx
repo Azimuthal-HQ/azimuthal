@@ -84,4 +84,36 @@ describe('AccessMatrixPage', () => {
     const changes = previewMutate.mock.calls.at(-1)?.[0];
     expect(changes).toEqual([{ team_id: 'team-child', space_id: 'space-1', role: null }]);
   });
+
+  // S7: after applying with a ticket_ref, the confirmation surface must echo
+  // it so the operator sees it was recorded. Before S7 the applied note showed
+  // only counts and BulkResult carried no ticket_ref.
+  it('echoes the recorded ticket_ref on the confirmation surface after apply', () => {
+    const action = { team_id: 'team-parent', space_id: 'space-1', action: 'create', from_role: '', to_role: 'agent' };
+    // Preview succeeds with one non-noop action so the ticket_ref input + apply
+    // button render.
+    previewMutate.mockImplementation((_changes: unknown, opts?: { onSuccess?: (r: unknown) => void }) =>
+      opts?.onSuccess?.({ creates: 1, updates: 0, revokes: 0, noops: 0, actions: [action] }),
+    );
+    // Apply echoes back the ticket_ref the caller sent (server is source of truth).
+    applyMutate.mockImplementation((vars: { ticketRef?: string }, opts?: { onSuccess?: (r: unknown) => void }) =>
+      opts?.onSuccess?.({
+        batch_id: 'batch-1',
+        ticket_ref: vars.ticketRef,
+        creates: 1, updates: 0, revokes: 0, noops: 0,
+        actions: [action],
+      }),
+    );
+
+    renderPage();
+    fireEvent.click(screen.getByTestId('matrix-cell-team-parent-space-1'));
+    fireEvent.click(screen.getByTestId('matrix-editor-role-agent'));
+    fireEvent.click(screen.getByTestId('matrix-preview-button'));
+
+    fireEvent.change(screen.getByTestId('matrix-ticket-ref'), { target: { value: 'BEA-42' } });
+    fireEvent.click(screen.getByTestId('matrix-apply-button'));
+
+    expect(screen.getByTestId('matrix-applied-note').textContent).toContain('BEA-42');
+    expect(screen.getByTestId('matrix-applied-ticket-ref').textContent).toBe('BEA-42');
+  });
 });

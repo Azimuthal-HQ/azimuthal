@@ -144,16 +144,17 @@ type Membership struct {
 }
 
 type Notification struct {
-	ID         uuid.UUID          `json:"id"`
-	UserID     uuid.UUID          `json:"user_id"`
-	Kind       string             `json:"kind"`
-	Title      string             `json:"title"`
-	Body       *string            `json:"body"`
-	EntityKind *string            `json:"entity_kind"`
-	EntityID   pgtype.UUID        `json:"entity_id"`
-	IsRead     bool               `json:"is_read"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	ReadAt     pgtype.Timestamptz `json:"read_at"`
+	ID            uuid.UUID          `json:"id"`
+	UserID        uuid.UUID          `json:"user_id"`
+	Kind          string             `json:"kind"`
+	Title         string             `json:"title"`
+	Body          *string            `json:"body"`
+	EntityKind    *string            `json:"entity_kind"`
+	EntityID      pgtype.UUID        `json:"entity_id"`
+	IsRead        bool               `json:"is_read"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ReadAt        pgtype.Timestamptz `json:"read_at"`
+	EntitySpaceID pgtype.UUID        `json:"entity_space_id"`
 }
 
 type Organization struct {

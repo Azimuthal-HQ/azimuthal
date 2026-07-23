@@ -623,13 +623,14 @@ type queueAssignmentNotifier struct {
 	enqueuer NotificationEnqueuer
 }
 
-func (n *queueAssignmentNotifier) NotifyAssignment(ctx context.Context, ticketID uuid.UUID, assigneeID uuid.UUID, title string) error {
+func (n *queueAssignmentNotifier) NotifyAssignment(ctx context.Context, ticketID uuid.UUID, spaceID uuid.UUID, assigneeID uuid.UUID, title string) error {
 	if err := n.enqueuer.EnqueueNotification(ctx, jobs.NotificationArgs{
 		UserID:     assigneeID.String(),
 		EventKind:  "ticket.assigned",
 		Message:    "You have been assigned to: " + title,
 		ResourceID: ticketID.String(),
 		EntityKind: "ticket",
+		SpaceID:    spaceID.String(),
 	}); err != nil {
 		return fmt.Errorf("enqueuing assignment notification: %w", err)
 	}

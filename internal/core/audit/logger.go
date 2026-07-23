@@ -115,6 +115,11 @@ const (
 	EventTypeUserOrgRoleChanged EventType = "user.org_role_changed"
 	// EventTypeUserPrimaryTeamChanged records a primary team change.
 	EventTypeUserPrimaryTeamChanged EventType = "user.primary_team_changed"
+	// EventTypeUserProfileChanged records a profile field change (e.g. display
+	// name), whether by the user or an admin on their behalf.
+	EventTypeUserProfileChanged EventType = "user.profile_changed"
+	// EventTypeUserAvatarChanged records an avatar image being set.
+	EventTypeUserAvatarChanged EventType = "user.avatar_changed"
 
 	// EventTypeShareCreated records an entity share being created (P3,
 	// ADR-0008).

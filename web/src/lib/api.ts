@@ -74,7 +74,9 @@ async function apiFetch<T>(
 ): Promise<T> {
   const headers = new Headers(options.headers);
 
-  if (!headers.has('Content-Type') && options.body) {
+  // Default to JSON, but never for FormData — the browser must set the
+  // multipart Content-Type with its boundary itself.
+  if (!headers.has('Content-Type') && options.body && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
@@ -387,6 +389,7 @@ export interface Notification {
   is_read: boolean;
   entity_kind?: string;
   entity_id?: string;
+  entity_space_id?: string;
   created_at: string;
 }
 
@@ -776,6 +779,7 @@ export interface BulkAction {
 
 export interface BulkResult {
   batch_id?: string;
+  ticket_ref?: string;
   creates: number;
   updates: number;
   revokes: number;
@@ -854,6 +858,7 @@ async function resendInvite(orgId: string, inviteId: string): Promise<CreatedInv
 interface UpdatePersonRequest {
   org_role?: string;
   primary_team_id?: string;
+  display_name?: string;
 }
 
 async function updatePerson(orgId: string, userId: string, req: UpdatePersonRequest): Promise<void> {
@@ -861,6 +866,23 @@ async function updatePerson(orgId: string, userId: string, req: UpdatePersonRequ
     method: 'PATCH',
     body: JSON.stringify(req),
   });
+}
+
+/** AvatarUploadResult carries the serve URL of a freshly uploaded avatar. */
+export interface AvatarUploadResult {
+  avatar_url: string;
+}
+
+async function uploadOwnAvatar(file: File): Promise<AvatarUploadResult> {
+  const body = new FormData();
+  body.append('file', file);
+  return apiFetch<AvatarUploadResult>(`/auth/me/avatar`, { method: 'PUT', body });
+}
+
+async function uploadUserAvatar(orgId: string, userId: string, file: File): Promise<AvatarUploadResult> {
+  const body = new FormData();
+  body.append('file', file);
+  return apiFetch<AvatarUploadResult>(`/orgs/${orgId}/users/${userId}/avatar`, { method: 'PUT', body });
 }
 
 async function personLifecycle(orgId: string, userId: string, action: 'deactivate' | 'reactivate' | 'force-logout'): Promise<void> {
@@ -1401,8 +1423,11 @@ async function completeSprint(spaceId: string, sprintId: string): Promise<Sprint
 // Roadmap API functions
 // ---------------------------------------------------------------------------
 
-async function fetchRoadmap(spaceId: string): Promise<RoadmapItem[]> {
-  const data = await apiFetch<RoadmapItem[] | null>(`${spaceBase(spaceId)}/projects/roadmap`);
+async function fetchRoadmap(spaceId: string, from: string, to: string): Promise<RoadmapItem[]> {
+  const params = new URLSearchParams({ from, to });
+  const data = await apiFetch<RoadmapItem[] | null>(
+    `${spaceBase(spaceId)}/projects/roadmap?${params.toString()}`,
+  );
   return data ?? [];
 }
 
@@ -1445,7 +1470,7 @@ export const queryKeys = {
   wikiRevision: (spaceId: string, pageId: string, version: number) => ['wikiRevision', spaceId, pageId, version] as const,
   wikiDiff: (spaceId: string, pageId: string, from: number, to: number) => ['wikiDiff', spaceId, pageId, from, to] as const,
   relations: (spaceId: string, itemId: string) => ['relations', spaceId, itemId] as const,
-  roadmap: (spaceId: string) => ['roadmap', spaceId] as const,
+  roadmap: (spaceId: string, from: string, to: string) => ['roadmap', spaceId, from, to] as const,
   roadmapOverdue: (spaceId: string) => ['roadmapOverdue', spaceId] as const,
   roadmapSprints: (spaceId: string) => ['roadmapSprints', spaceId] as const,
   itemSearch: (spaceId: string, q: string) => ['itemSearch', spaceId, q] as const,
@@ -1938,11 +1963,16 @@ export function useRelations(spaceId: string, itemId: string, opts?: QueryOpts<R
   });
 }
 
-export function useRoadmap(spaceId: string, opts?: QueryOpts<RoadmapItem[]>) {
+export function useRoadmap(
+  spaceId: string,
+  from: string,
+  to: string,
+  opts?: QueryOpts<RoadmapItem[]>,
+) {
   return useQuery<RoadmapItem[], APIError>({
-    queryKey: queryKeys.roadmap(spaceId),
-    queryFn: () => fetchRoadmap(spaceId),
-    enabled: !!spaceId,
+    queryKey: queryKeys.roadmap(spaceId, from, to),
+    queryFn: () => fetchRoadmap(spaceId, from, to),
+    enabled: !!spaceId && !!from && !!to,
     ...opts,
   });
 }
@@ -2322,6 +2352,22 @@ export function useResendInvite(orgId: string) {
     mutationFn: (inviteId) => resendInvite(orgId, inviteId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.invites(orgId) });
+    },
+  });
+}
+
+export function useUploadOwnAvatar() {
+  return useMutation<AvatarUploadResult, APIError, File>({
+    mutationFn: (file) => uploadOwnAvatar(file),
+  });
+}
+
+export function useUploadUserAvatar(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<AvatarUploadResult, APIError, { userId: string; file: File }>({
+    mutationFn: ({ userId, file }) => uploadUserAvatar(orgId, userId, file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) });
     },
   });
 }

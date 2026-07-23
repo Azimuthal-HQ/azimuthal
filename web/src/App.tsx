@@ -36,6 +36,7 @@ import { TeamsAdminPage } from './pages/admin/TeamsAdminPage';
 import { AccessMatrixPage } from './pages/admin/AccessMatrixPage';
 import { SpacesAdminPage } from './pages/admin/SpacesAdminPage';
 import { AuditLogPage } from './pages/admin/AuditLogPage';
+import { OrgSettingsPage } from './pages/admin/OrgSettingsPage';
 
 export function App() {
   return (
@@ -60,6 +61,8 @@ export function App() {
           <Route path="search" element={<SearchPage />} />
           <Route path="spaces" element={<SpaceDirectoryPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          {/* Org settings moved to the admin panel; keep old links working. */}
+          <Route path="settings/organization" element={<Navigate to="/admin/settings" replace />} />
           <Route path="settings/:section" element={<SettingsPage />} />
           <Route path="admin/workflows" element={<WorkflowAdminPage />} />
 
@@ -74,6 +77,7 @@ export function App() {
             <Route path="access" element={<AccessMatrixPage />} />
             <Route path="spaces" element={<SpacesAdminPage />} />
             <Route path="audit-log" element={<AuditLogPage />} />
+            <Route path="settings" element={<OrgSettingsPage />} />
           </Route>
         </Route>
 

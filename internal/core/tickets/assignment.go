@@ -10,8 +10,10 @@ import (
 // AssignmentNotifier is called when a ticket assignment changes.
 // Implementations should deliver notifications (e.g. via the job queue).
 type AssignmentNotifier interface {
-	// NotifyAssignment sends a notification about a ticket assignment.
-	NotifyAssignment(ctx context.Context, ticketID uuid.UUID, assigneeID uuid.UUID, title string) error
+	// NotifyAssignment sends a notification about a ticket assignment. spaceID
+	// is carried through so the recipient's bell can build a route to the
+	// ticket.
+	NotifyAssignment(ctx context.Context, ticketID uuid.UUID, spaceID uuid.UUID, assigneeID uuid.UUID, title string) error
 }
 
 // Assign sets or changes the assignee on a ticket. It validates that the new
@@ -32,7 +34,7 @@ func (s *TicketService) Assign(ctx context.Context, ticketID uuid.UUID, assignee
 	}
 
 	if notifier != nil {
-		if err := notifier.NotifyAssignment(ctx, ticketID, assigneeID, t.Title); err != nil {
+		if err := notifier.NotifyAssignment(ctx, ticketID, t.SpaceID, assigneeID, t.Title); err != nil {
 			// Log but don't fail the assignment if notification fails.
 			fmt.Printf("warning: failed to notify assignee: %v\n", err)
 		}

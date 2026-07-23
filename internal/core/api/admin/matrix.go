@@ -117,12 +117,15 @@ type bulkActionResponse struct {
 
 // bulkResultResponse reports a diff (preview) or an applied batch (apply).
 type bulkResultResponse struct {
-	BatchID *uuid.UUID           `json:"batch_id,omitempty"`
-	Creates int                  `json:"creates"`
-	Updates int                  `json:"updates"`
-	Revokes int                  `json:"revokes"`
-	Noops   int                  `json:"noops"`
-	Actions []bulkActionResponse `json:"actions"`
+	BatchID *uuid.UUID `json:"batch_id,omitempty"`
+	// TicketRef echoes the operator's free-text reference recorded on every
+	// audit event of this batch. Present on apply, absent on preview.
+	TicketRef string               `json:"ticket_ref,omitempty"`
+	Creates   int                  `json:"creates"`
+	Updates   int                  `json:"updates"`
+	Revokes   int                  `json:"revokes"`
+	Noops     int                  `json:"noops"`
+	Actions   []bulkActionResponse `json:"actions"`
 }
 
 func toBulkResultResponse(res access.BulkResult, includeBatch bool) bulkResultResponse {
@@ -264,5 +267,9 @@ func (h *Handler) BulkApply(w http.ResponseWriter, r *http.Request) {
 		mapBulkError(w, r, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, toBulkResultResponse(res, true))
+	// Echo the operator's ticket_ref so the confirmation surface can show it
+	// was recorded (the adapter writes it onto every audit event of the batch).
+	out := toBulkResultResponse(res, true)
+	out.TicketRef = req.TicketRef
+	respond.JSON(w, http.StatusOK, out)
 }

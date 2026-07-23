@@ -135,12 +135,14 @@ func (m *mockRepo) Search(_ context.Context, spaceID uuid.UUID, query string, li
 type mockNotifier struct {
 	called     bool
 	ticketID   uuid.UUID
+	spaceID    uuid.UUID
 	assigneeID uuid.UUID
 }
 
-func (n *mockNotifier) NotifyAssignment(_ context.Context, ticketID uuid.UUID, assigneeID uuid.UUID, _ string) error {
+func (n *mockNotifier) NotifyAssignment(_ context.Context, ticketID uuid.UUID, spaceID uuid.UUID, assigneeID uuid.UUID, _ string) error {
 	n.called = true
 	n.ticketID = ticketID
+	n.spaceID = spaceID
 	n.assigneeID = assigneeID
 	return nil
 }

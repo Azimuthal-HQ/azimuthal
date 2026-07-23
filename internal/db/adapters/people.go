@@ -271,6 +271,41 @@ func (a *PeopleAdapter) ChangePrimaryTeam(ctx context.Context, orgID, userID, te
 	})
 }
 
+// UpdateProfile changes the target member's display name. The target is
+// scoped to the org via requireMembership (so an admin can only edit a member
+// of their own org); only display_name is touched.
+func (a *PeopleAdapter) UpdateProfile(ctx context.Context, orgID, userID uuid.UUID, displayName string) error {
+	return a.inTx(ctx, func(q *generated.Queries) error {
+		if _, err := requireMembership(ctx, q, orgID, userID); err != nil {
+			return err
+		}
+		if err := q.UpdateUserDisplayName(ctx, generated.UpdateUserDisplayNameParams{
+			ID:          userID,
+			DisplayName: displayName,
+		}); err != nil {
+			return fmt.Errorf("updating display name: %w", err)
+		}
+		return nil
+	})
+}
+
+// SetAvatarURL records the avatar serve reference on the user row, scoped to
+// the org via requireMembership. Only avatar_url is touched.
+func (a *PeopleAdapter) SetAvatarURL(ctx context.Context, orgID, userID uuid.UUID, url string) error {
+	return a.inTx(ctx, func(q *generated.Queries) error {
+		if _, err := requireMembership(ctx, q, orgID, userID); err != nil {
+			return err
+		}
+		if err := q.UpdateUserAvatarURL(ctx, generated.UpdateUserAvatarURLParams{
+			ID:        userID,
+			AvatarUrl: &url,
+		}); err != nil {
+			return fmt.Errorf("updating avatar url: %w", err)
+		}
+		return nil
+	})
+}
+
 // isAdminClass reports whether a membership role carries org-admin
 // authority, delegating the interpretation to rbac.
 func isAdminClass(role string) bool {
