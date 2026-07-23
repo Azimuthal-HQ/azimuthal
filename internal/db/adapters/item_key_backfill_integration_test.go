@@ -1,4 +1,4 @@
-package db_test
+package adapters_test
 
 import (
 	"context"

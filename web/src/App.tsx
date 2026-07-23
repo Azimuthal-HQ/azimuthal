@@ -38,6 +38,7 @@ import { SpacesAdminPage } from './pages/admin/SpacesAdminPage';
 import { AuditLogPage } from './pages/admin/AuditLogPage';
 import { OrgSettingsPage } from './pages/admin/OrgSettingsPage';
 import { ItemTypesAdminPage } from './pages/admin/ItemTypesAdminPage';
+import { CustomFieldsAdminPage } from './pages/admin/CustomFieldsAdminPage';
 
 export function App() {
   return (
@@ -78,6 +79,7 @@ export function App() {
             <Route path="access" element={<AccessMatrixPage />} />
             <Route path="spaces" element={<SpacesAdminPage />} />
             <Route path="item-types" element={<ItemTypesAdminPage />} />
+            <Route path="custom-fields" element={<CustomFieldsAdminPage />} />
             <Route path="audit-log" element={<AuditLogPage />} />
             <Route path="settings" element={<OrgSettingsPage />} />
           </Route>

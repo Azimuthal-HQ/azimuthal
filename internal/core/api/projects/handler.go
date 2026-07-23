@@ -258,10 +258,8 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 
 	// The type vocabulary is org-defined (item_types). Validate the chosen type
 	// against the org's active types — this is where org context lives, so it
-	// stays out of the space-scoped item service. A blank kind defaults to task.
-	if req.Kind == "" {
-		req.Kind = "task"
-	}
+	// stays out of the space-scoped item service. A blank or unknown type is
+	// rejected (the frontend picker defaults to task, so real requests carry one).
 	if h.itemTypes != nil {
 		orgID, oerr := orgIDFromURL(r)
 		if oerr != nil {

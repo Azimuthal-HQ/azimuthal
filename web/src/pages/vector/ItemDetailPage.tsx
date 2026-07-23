@@ -15,6 +15,7 @@ import {
 import { EntityShareControl } from '../../components/EntityShareControl';
 import { ModuleChip } from '../../shell/ModuleChip';
 import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
+import { CustomFieldsSection } from '../../components/CustomFieldsSection';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import {
@@ -466,6 +467,9 @@ export function ItemDetailPage() {
               <Clock className="h-3 w-3" /> {item.updated_at.slice(0, 10)}
             </div>
           </DetailField>
+
+          <DetailDivider />
+          <CustomFieldsSection spaceId={spaceId} itemId={itemId} />
         </DetailSide>
       </DetailLayout>
     </div>
