@@ -1401,8 +1401,11 @@ async function completeSprint(spaceId: string, sprintId: string): Promise<Sprint
 // Roadmap API functions
 // ---------------------------------------------------------------------------
 
-async function fetchRoadmap(spaceId: string): Promise<RoadmapItem[]> {
-  const data = await apiFetch<RoadmapItem[] | null>(`${spaceBase(spaceId)}/projects/roadmap`);
+async function fetchRoadmap(spaceId: string, from: string, to: string): Promise<RoadmapItem[]> {
+  const params = new URLSearchParams({ from, to });
+  const data = await apiFetch<RoadmapItem[] | null>(
+    `${spaceBase(spaceId)}/projects/roadmap?${params.toString()}`,
+  );
   return data ?? [];
 }
 
@@ -1445,7 +1448,7 @@ export const queryKeys = {
   wikiRevision: (spaceId: string, pageId: string, version: number) => ['wikiRevision', spaceId, pageId, version] as const,
   wikiDiff: (spaceId: string, pageId: string, from: number, to: number) => ['wikiDiff', spaceId, pageId, from, to] as const,
   relations: (spaceId: string, itemId: string) => ['relations', spaceId, itemId] as const,
-  roadmap: (spaceId: string) => ['roadmap', spaceId] as const,
+  roadmap: (spaceId: string, from: string, to: string) => ['roadmap', spaceId, from, to] as const,
   roadmapOverdue: (spaceId: string) => ['roadmapOverdue', spaceId] as const,
   roadmapSprints: (spaceId: string) => ['roadmapSprints', spaceId] as const,
   itemSearch: (spaceId: string, q: string) => ['itemSearch', spaceId, q] as const,
@@ -1938,11 +1941,16 @@ export function useRelations(spaceId: string, itemId: string, opts?: QueryOpts<R
   });
 }
 
-export function useRoadmap(spaceId: string, opts?: QueryOpts<RoadmapItem[]>) {
+export function useRoadmap(
+  spaceId: string,
+  from: string,
+  to: string,
+  opts?: QueryOpts<RoadmapItem[]>,
+) {
   return useQuery<RoadmapItem[], APIError>({
-    queryKey: queryKeys.roadmap(spaceId),
-    queryFn: () => fetchRoadmap(spaceId),
-    enabled: !!spaceId,
+    queryKey: queryKeys.roadmap(spaceId, from, to),
+    queryFn: () => fetchRoadmap(spaceId, from, to),
+    enabled: !!spaceId && !!from && !!to,
     ...opts,
   });
 }
