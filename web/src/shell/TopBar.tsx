@@ -357,11 +357,14 @@ export function TopBar() {
               </div>
 
               <MenuLink icon={User} label="Profile" onClick={() => { setAvatarOpen(false); navigate('/settings'); }} />
-              <MenuLink
-                icon={Settings}
-                label="Workspace settings"
-                onClick={() => { setAvatarOpen(false); navigate('/settings/organization'); }}
-              />
+              {/* Org settings now live in the admin panel (org admins only). */}
+              {org.data?.caller_is_admin && (
+                <MenuLink
+                  icon={Settings}
+                  label="Workspace settings"
+                  onClick={() => { setAvatarOpen(false); navigate('/admin/settings'); }}
+                />
+              )}
               {/* Administration (P2.5): shown to org admins only. The role
                   comes from the org response's caller_is_admin — resolved
                   server-side per request; the JWT role claim is the legacy

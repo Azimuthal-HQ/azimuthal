@@ -306,4 +306,25 @@ test.describe('Administration area', () => {
     await page.getByTestId('admin-space-delete-confirm').click()
     await expect(page.getByTestId(`admin-space-row-${slug}`)).toHaveCount(0, { timeout: 15000 })
   })
+
+  // S9: org settings live in the admin panel — one home for them, the old
+  // Home->Settings location redirects, and the slug is display-only.
+  test('org settings live in Admin; old path redirects; not under Home Settings', async ({ page }) => {
+    await createUserAndLogin(page) // an org admin
+
+    await page.goto('/admin/settings')
+    await expect(page.getByTestId('admin-org-settings')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('admin-org-name')).toBeVisible()
+    await expect(page.getByTestId('admin-org-slug')).toBeDisabled()
+    await expect(page.getByTestId('admin-tab-settings')).toBeVisible()
+
+    // The old location redirects into the admin panel.
+    await page.goto('/settings/organization')
+    await expect(page).toHaveURL(/\/admin\/settings/, { timeout: 15000 })
+
+    // The Home Settings page no longer offers an Organization tab.
+    await page.goto('/settings')
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByRole('button', { name: 'Organization' })).toHaveCount(0)
+  })
 })
