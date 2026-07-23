@@ -122,7 +122,8 @@ export function SidebarNavItem({ to, icon: Icon, label, count, end }: SidebarNav
       className={({ isActive }) =>
         cn(
           'flex items-center gap-[var(--space-3)] rounded-[var(--radius-md)] px-[var(--space-3)] py-[var(--space-2)]',
-          'text-[var(--text-sm)] font-medium transition-colors duration-150',
+          // 13px per the dashboards concept's sidebar (final-round density pass).
+          'text-[13px] font-medium transition-colors duration-150',
           isActive
             ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
             : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]',

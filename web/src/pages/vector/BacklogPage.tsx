@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+﻿import { useState, useMemo, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Plus, Search, AlertCircle, GripVertical } from 'lucide-react';
 import { Button } from '../../components/ui/button';
@@ -194,14 +194,14 @@ export function BacklogPage() {
           </h2>
 
           <div className="overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
-            <table className="w-full text-left text-[var(--text-sm)]">
+            <table className="w-full text-left text-[13px]">
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
                   <th className="w-8 px-2 py-2.5" />
-                  <th className="whitespace-nowrap px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">ID</th>
-                  <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Title</th>
-                  <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Priority</th>
-                  <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Status</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">ID</th>
+                  <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Title</th>
+                  <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Priority</th>
+                  <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -224,16 +224,16 @@ export function BacklogPage() {
                       <td className="px-2 py-3 text-[var(--color-text-muted)]">
                         <GripVertical className="h-4 w-4" />
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3">
+                      <td className="whitespace-nowrap px-3 py-3">
                         <Link to={itemPath} className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline" style={{ fontFamily: 'var(--font-mono)' }}>
                           {item.number ? `${space?.key ?? 'PROJ'}-${item.number}` : (item.id ?? '').slice(0, 8)}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 text-[var(--color-text)]">
+                      <td className="px-3 py-3 text-[var(--color-text)]">
                         <Link to={itemPath} className="hover:underline">{item.title}</Link>
                       </td>
-                      <td className="px-4 py-3"><PriorityPill priority={normalizePriority(item.priority)} /></td>
-                      <td className="px-4 py-3"><Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>{STATUS_LABEL[item.status] ?? item.status}</Badge></td>
+                      <td className="px-3 py-3"><PriorityPill priority={normalizePriority(item.priority)} /></td>
+                      <td className="px-3 py-3"><Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>{STATUS_LABEL[item.status] ?? item.status}</Badge></td>
                     </tr>
                   );
                 })}

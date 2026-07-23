@@ -225,7 +225,7 @@ function PageTree({
               className={({ isActive }) =>
                 cn(
                   'flex items-center gap-[var(--space-2)] rounded-[var(--radius-md)] py-[6px] pr-[var(--space-2)]',
-                  'text-[var(--text-sm)] transition-colors duration-150',
+                  'text-[13px] transition-colors duration-150',
                   isActive
                     ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
                     : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]',

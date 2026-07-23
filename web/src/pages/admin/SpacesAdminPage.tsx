@@ -97,7 +97,7 @@ function SpaceRow({ orgId, space, onEdit, onDelete }: {
   return (
     <div
       data-testid={`admin-space-row-${space.slug}`}
-      className="grid grid-cols-[minmax(200px,2fr)_auto_1fr_1fr_auto] items-center gap-x-[var(--space-3)] border-b border-[var(--color-border)] px-[var(--space-4)] py-[var(--space-2)] last:border-b-0 hover:bg-[var(--color-surface-hover)]"
+      className="grid grid-cols-[minmax(200px,2fr)_auto_1fr_1fr_auto] items-center gap-x-[var(--space-3)] border-b border-[var(--color-border)] px-[var(--space-4)] py-[var(--space-3)] last:border-b-0 hover:bg-[var(--color-surface-hover)]"
     >
       <span className="min-w-0">
         <span className="block truncate text-[var(--text-sm)] font-medium text-[var(--color-text)]">{space.name}</span>

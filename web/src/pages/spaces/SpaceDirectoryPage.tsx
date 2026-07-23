@@ -57,7 +57,7 @@ function ReadableRow({ space }: { space: Space }) {
       to={spacePath(space.type, space.id, def.defaultSubpath)}
       data-testid="directory-space-row"
       className={cn(
-        'flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5',
+        'flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-3',
         'text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-hover)]',
       )}
     >
@@ -88,7 +88,7 @@ function LockedRow({ space }: { space: Space }) {
     <div
       data-testid="locked-space-row"
       aria-disabled="true"
-      className="flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5 opacity-70"
+      className="flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-3 opacity-70"
     >
       <Lock className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
       <span className="min-w-0 flex-1 truncate text-[var(--text-sm)] text-[var(--color-text-muted)]">

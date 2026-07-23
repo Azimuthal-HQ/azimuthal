@@ -172,7 +172,7 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
   return (
     <div
       data-testid={`person-row-${person.email}`}
-      className="border-b border-[var(--color-border)] px-[var(--space-4)] py-[var(--space-2)] last:border-b-0 hover:bg-[var(--color-surface-hover)]"
+      className="border-b border-[var(--color-border)] px-[var(--space-4)] py-[var(--space-3)] last:border-b-0 hover:bg-[var(--color-surface-hover)]"
     >
       <div className="grid grid-cols-[minmax(220px,2fr)_1fr_1fr_1fr_1fr_auto] items-center gap-x-[var(--space-3)]">
         <span className="flex min-w-0 items-center gap-[var(--space-2)]">

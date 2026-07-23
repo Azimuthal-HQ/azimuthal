@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+﻿import { useState, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Plus, Search, AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
@@ -179,14 +179,14 @@ export function TicketListPage() {
       {/* Table */}
       {tickets && (
         <div className="overflow-x-auto rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)]">
-          <table className="w-full text-left text-[var(--text-sm)]">
+          <table className="w-full text-left text-[13px]">
             <thead>
               <tr className="border-b border-[var(--color-border)]">
-                <th className="whitespace-nowrap px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">ID</th>
-                <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Title</th>
-                <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Status</th>
-                <th className="px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Priority</th>
-                <th className="whitespace-nowrap px-4 py-2.5 text-[var(--text-xs)] font-medium uppercase tracking-[.04em] text-[var(--color-text-muted)]">Created</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">ID</th>
+                <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Title</th>
+                <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Status</th>
+                <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Priority</th>
+                <th className="whitespace-nowrap px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Created</th>
               </tr>
             </thead>
             <tbody>
@@ -197,7 +197,7 @@ export function TicketListPage() {
                     key={ticket.id}
                     className="border-b border-[var(--color-border)] transition-colors last:border-b-0 hover:bg-[var(--color-surface-hover)]"
                   >
-                    <td className="whitespace-nowrap px-4 py-3">
+                    <td className="whitespace-nowrap px-3 py-3">
                       <Link
                         to={ticketPath}
                         className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline"
@@ -206,20 +206,20 @@ export function TicketListPage() {
                         {ticket.number ? `${space?.key ?? 'SD'}-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-[var(--color-text)]">
+                    <td className="px-3 py-3 text-[var(--color-text)]">
                       <Link to={ticketPath} className="hover:underline">
                         {ticket.title}
                       </Link>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       <Badge variant={STATUS_VARIANT[ticket.status]}>
                         {STATUS_LABEL[ticket.status]}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       <PriorityPill priority={normalizePriority(ticket.priority)} />
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-[var(--color-text-muted)]">
+                    <td className="whitespace-nowrap px-3 py-3 text-[var(--color-text-muted)]">
                       {(ticket.created_at ?? '').slice(0, 10)}
                     </td>
                   </tr>

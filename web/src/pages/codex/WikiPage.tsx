@@ -240,16 +240,15 @@ export function WikiPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-var(--topnav-height)-2rem)] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)]">
+    // The dashboards concept renders the document directly on the content
+    // ground — no full card border. The actions bar keeps its own bottom
+    // delineation; the title lives once, as the document H1 in the body.
+    <div className="flex h-[calc(100vh-var(--topnav-height)-2rem)] flex-col overflow-hidden">
       {activePage ? (
         <>
-          {/* Top bar */}
-          <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-2.5">
-            <span
-              data-testid="wiki-page-title"
-              className="flex items-center gap-2 flex-1 truncate text-[var(--text-sm)] font-medium text-[var(--color-text)]"
-            >
-              <span className="truncate">{activePage.title}</span>
+          {/* Actions bar */}
+          <div className="flex items-center gap-3 border-b border-[var(--color-border)] px-1 py-2">
+            <span className="flex flex-1 items-center gap-2">
               <ShareBadge
                 shared={shareState.shared}
                 detail={shareState.viaCascade ? 'via a shared folder' : undefined}
@@ -361,13 +360,17 @@ export function WikiPage() {
               ) : (
                 <>
                   {/* Reading surface: a bounded measure — full-width prose
-                      is unreadable past ~75ch. */}
+                      is unreadable past ~75ch. Scale per the dashboards
+                      concept: 22px title, 1.78 body line-height. */}
                   <div className="mx-auto w-full max-w-[76ch]">
-                  <div className="mb-5">
-                    <h1 className="text-[21px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]">
+                  <div className="mb-6">
+                    <h1
+                      data-testid="wiki-page-title"
+                      className="text-[22px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]"
+                    >
                       {activePage.title}
                     </h1>
-                    <p className="mt-1 text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                    <p className="mt-1.5 text-[var(--text-sm)] text-[var(--color-text-muted)]">
                       Last edited {(activePage.updated_at ?? '').slice(0, 10)}
                       {activePage.version != null && (
                         <span className="ml-2 text-[var(--text-xs)]">· v{activePage.version}</span>
@@ -378,7 +381,7 @@ export function WikiPage() {
                   {activePage.content ? (
                     <article
                       className={cn(
-                        'prose prose-sm max-w-none leading-[1.7]',
+                        'prose prose-sm max-w-none leading-[1.78]',
                         'prose-headings:text-[var(--color-text)] prose-headings:font-semibold prose-headings:tracking-[-.01em]',
                         'prose-h1:text-[19px] prose-h2:text-[16px] prose-h3:text-[14px]',
                         'prose-p:text-[var(--color-text)]',
@@ -423,7 +426,7 @@ export function WikiPage() {
                   )}
 
                   {/* Comments */}
-                  <div className="mt-8 border-t border-[var(--color-border)] pt-6">
+                  <div className="mt-10 border-t border-[var(--color-border)] pt-8">
                     <h3 className="mb-4 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">Comments</h3>
                     <div className="mb-6 space-y-4">
                       {(comments ?? []).length === 0 ? (

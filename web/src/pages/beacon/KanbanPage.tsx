@@ -17,17 +17,20 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { AlertCircle } from 'lucide-react';
-import { Card, CardContent } from '../../components/ui/card';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import {
   useTickets,
   useSpace,
   useTicketStatusTransition,
+  useMe,
+  useMembers,
   friendlyErrorMessage,
   type Ticket,
   type TicketStatus,
 } from '../../lib/api';
+
+type MemberName = (id: string | null | undefined) => string | undefined;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,9 +63,10 @@ interface SortableTicketCardProps {
   overlay?: boolean;
   spaceId?: string;
   spaceKey?: string;
+  memberName?: MemberName;
 }
 
-function SortableTicketCard({ ticket, spaceId, spaceKey }: { ticket: Ticket; spaceId?: string; spaceKey?: string }) {
+function SortableTicketCard({ ticket, spaceId, spaceKey, memberName }: SortableTicketCardProps) {
   const {
     attributes,
     listeners,
@@ -82,36 +86,48 @@ function SortableTicketCard({ ticket, spaceId, spaceKey }: { ticket: Ticket; spa
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <TicketCard ticket={ticket} spaceId={spaceId} spaceKey={spaceKey} />
+      <TicketCard ticket={ticket} spaceId={spaceId} spaceKey={spaceKey} memberName={memberName} />
     </div>
   );
 }
 
-function TicketCard({ ticket, overlay, spaceId, spaceKey }: SortableTicketCardProps) {
+/** Board card per the dashboards prototype: mono key, title, pill + avatar. */
+function TicketCard({ ticket, overlay, spaceId, spaceKey, memberName }: SortableTicketCardProps) {
   const ticketPath = `/beacon/${spaceId}/tickets/${ticket.id}`;
+  const assignee = memberName?.(ticket.assignee_id);
   return (
-    <Card
+    <div
       className={cn(
-        'cursor-grab transition-shadow hover:shadow-[var(--shadow-md)]',
-        overlay && 'shadow-[var(--shadow-lg)] rotate-2',
+        'cursor-grab rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 transition-colors',
+        'hover:border-[var(--color-text-muted)]',
+        overlay && 'rotate-2 shadow-[var(--shadow-lg)]',
       )}
     >
-      <CardContent className="space-y-2 p-3">
-        <Link
-          to={ticketPath}
-          className="text-[var(--text-xs)] font-medium text-[var(--color-text-muted)] hover:underline"
-          style={{ fontFamily: 'var(--font-mono)' }}
+      <Link
+        to={ticketPath}
+        className="text-[11px] text-[var(--color-text-muted)] hover:underline"
+        style={{ fontFamily: 'var(--font-mono)' }}
+      >
+        {ticket.number ? `${spaceKey ?? 'SD'}-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
+      </Link>
+      <p className="mb-2.5 mt-1.5 text-[13px] leading-[1.4] text-[var(--color-text)]">
+        {ticket.title}
+      </p>
+      <div className="flex items-center">
+        <PriorityPill priority={normalizePriority(ticket.priority)} />
+        <span
+          className={cn(
+            'ml-auto flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[10px] font-medium',
+            assignee
+              ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
+              : 'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]',
+          )}
+          title={assignee ?? 'Unassigned'}
         >
-          {ticket.number ? `${spaceKey ?? 'SD'}-${ticket.number}` : (ticket.id ?? '').slice(0, 8)}
-        </Link>
-        <p className="text-[var(--text-sm)] leading-snug text-[var(--color-text)]">
-          {ticket.title}
-        </p>
-        <div className="flex items-center justify-between">
-          <PriorityPill priority={normalizePriority(ticket.priority)} />
-        </div>
-      </CardContent>
-    </Card>
+          {assignee?.[0]?.toUpperCase() ?? '–'}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -124,9 +140,15 @@ interface DroppableColumnProps {
   tickets: Ticket[];
   spaceId?: string;
   spaceKey?: string;
+  memberName?: MemberName;
 }
 
-function DroppableColumn({ column, tickets, spaceId, spaceKey }: DroppableColumnProps) {
+/**
+ * Contained column per the dashboards prototype: a bordered container with a
+ * quiet header (label + faint count), cards inside, and a contained empty
+ * state — never floating labels in open space.
+ */
+function DroppableColumn({ column, tickets, spaceId, spaceKey, memberName }: DroppableColumnProps) {
   // The column itself must be a droppable: sortable cards only cover the space
   // they occupy, so without this an empty column would reject every drop.
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
@@ -136,15 +158,15 @@ function DroppableColumn({ column, tickets, spaceId, spaceKey }: DroppableColumn
       ref={setNodeRef}
       data-column-id={column.id}
       className={cn(
-        'flex w-72 shrink-0 flex-col rounded-[var(--radius-lg)] bg-[var(--color-bg)] p-3',
+        'flex w-72 shrink-0 flex-col rounded-[11px] border border-[var(--color-border)] bg-[var(--color-bg)] p-2',
         isOver && 'ring-2 ring-[var(--color-primary)]',
       )}
     >
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
+      <div className="flex items-center gap-2 px-1.5 pb-2 pt-1">
+        <h3 className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
           {column.label}
         </h3>
-        <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[var(--color-surface-hover)] px-1.5 text-[var(--text-xs)] font-medium text-[var(--color-text-muted)]">
+        <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]" style={{ fontFamily: 'var(--font-mono)' }}>
           {tickets.length}
         </span>
       </div>
@@ -153,8 +175,13 @@ function DroppableColumn({ column, tickets, spaceId, spaceKey }: DroppableColumn
         strategy={verticalListSortingStrategy}
       >
         <div className="flex min-h-16 flex-1 flex-col gap-2">
+          {tickets.length === 0 && (
+            <p className="rounded-[10px] border border-dashed border-[var(--color-border)] px-3 py-4 text-center text-[var(--text-xs)] text-[var(--color-text-muted)]">
+              No tickets
+            </p>
+          )}
           {tickets.map((ticket) => (
-            <SortableTicketCard key={ticket.id} ticket={ticket} spaceId={spaceId} spaceKey={spaceKey} />
+            <SortableTicketCard key={ticket.id} ticket={ticket} spaceId={spaceId} spaceKey={spaceKey} memberName={memberName} />
           ))}
         </div>
       </SortableContext>
@@ -171,6 +198,15 @@ export function KanbanPage() {
   const { spaceId = '' } = useParams<{ spaceId: string }>();
   const { data: space } = useSpace(spaceId);
   const { data: tickets, isLoading, error } = useTickets(spaceId);
+
+  // Assignee avatars on the cards (dashboards prototype): resolve ids to
+  // display names through the existing members list — rendering only.
+  const { data: me } = useMe();
+  const { data: members } = useMembers(me?.org_id ?? '', spaceId);
+  const memberName = useCallback<MemberName>(
+    (id) => (id ? (members ?? []).find((m) => m.user_id === id)?.display_name : undefined),
+    [members],
+  );
   const [activeTicket, setActiveTicket] = useState<Ticket | null>(null);
   const [transitionError, setTransitionError] = useState<string | null>(null);
   const transitionMutation = useTicketStatusTransition(spaceId);
@@ -288,6 +324,7 @@ export function KanbanPage() {
               tickets={columns[col.id]}
               spaceId={spaceId}
               spaceKey={space?.key}
+              memberName={memberName}
             />
           ))}
         </div>
@@ -295,7 +332,7 @@ export function KanbanPage() {
         <DragOverlay>
           {activeTicket ? (
             <div className="w-72">
-              <TicketCard ticket={activeTicket} overlay spaceId={spaceId} spaceKey={space?.key} />
+              <TicketCard ticket={activeTicket} overlay spaceId={spaceId} spaceKey={space?.key} memberName={memberName} />
             </div>
           ) : null}
         </DragOverlay>
