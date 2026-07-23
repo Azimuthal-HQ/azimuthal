@@ -19,4 +19,6 @@ var (
 	ErrCannotChangeOwner = errors.New("the owner role cannot be changed here")
 	// ErrTeamNotFound means the team is not a live team of the org.
 	ErrTeamNotFound = errors.New("team not found in this organization")
+	// ErrInvalidDisplayName rejects an empty or over-long display name.
+	ErrInvalidDisplayName = errors.New("display name must be between 1 and 255 characters")
 )

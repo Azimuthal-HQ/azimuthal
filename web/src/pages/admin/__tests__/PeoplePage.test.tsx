@@ -18,17 +18,25 @@ const INVITE_B = {
   invited_by: 'u1', expires_at: '2026-08-01T00:00:00Z', created_at: '2026-07-01T00:00:00Z', expired: false,
 };
 
+const PERSON = {
+  user_id: 'u2', email: 'u2@example.com', display_name: 'Old Name', avatar_url: null,
+  org_role: 'member', status: 'active', joined_at: '2026-01-01T00:00:00Z', primary_team_id: null,
+};
+
 const resendMutate = vi.fn();
+const updatePersonMutate = vi.fn();
+const uploadAvatarMutate = vi.fn();
 
 vi.mock('../../../lib/api', () => ({
   friendlyErrorMessage: (_e: unknown, f: string) => f,
-  useOrgPeople: () => ({ data: [], isLoading: false, error: null }),
+  useOrgPeople: () => ({ data: [PERSON], isLoading: false, error: null }),
   useInvites: () => ({ data: [INVITE_A, INVITE_B], isLoading: false, error: null }),
   useTeams: () => ({ data: [] }),
   useCreateInvites: () => ({ mutate: vi.fn(), isPending: false }),
   usePersonLifecycle: () => ({ mutate: vi.fn(), isPending: false }),
   useRemovePerson: () => ({ mutate: vi.fn(), isPending: false }),
-  useUpdatePerson: () => ({ mutate: vi.fn(), isPending: false }),
+  useUpdatePerson: () => ({ mutate: updatePersonMutate, isPending: false }),
+  useUploadUserAvatar: () => ({ mutate: uploadAvatarMutate, isPending: false }),
   useRevokeInvite: () => ({ mutate: vi.fn(), isPending: false }),
   useResendInvite: () => ({ mutate: resendMutate, isPending: false }),
 }));
@@ -74,5 +82,43 @@ describe('PeoplePage pending invites — resend re-surfaces the link inline', ()
     const rowA = screen.getByTestId('invite-row-a@example.com');
     expect(within(rowA).queryByTestId('invite-link-a@example.com')).toBeNull();
     expect(within(rowA).queryByTestId('invite-link-b@example.com')).toBeNull();
+  });
+});
+
+describe('PeoplePage — admin edits another member (S8)', () => {
+  it('renames a member via the inline display-name editor', () => {
+    updatePersonMutate.mockReset();
+    render(
+      <MemoryRouter initialEntries={['/admin/people']}>
+        <PeoplePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByTestId('person-name-edit-u2@example.com'));
+    fireEvent.change(screen.getByTestId('person-name-input-u2@example.com'), {
+      target: { value: 'New Name' },
+    });
+    fireEvent.click(screen.getByTestId('person-name-save-u2@example.com'));
+
+    expect(updatePersonMutate).toHaveBeenCalledTimes(1);
+    expect(updatePersonMutate.mock.calls[0][0]).toEqual({ userId: 'u2', display_name: 'New Name' });
+  });
+
+  it('uploads an avatar for a member through the shared upload hook', () => {
+    uploadAvatarMutate.mockReset();
+    render(
+      <MemoryRouter initialEntries={['/admin/people']}>
+        <PeoplePage />
+      </MemoryRouter>,
+    );
+
+    const file = new File(['imgbytes'], 'a.png', { type: 'image/png' });
+    fireEvent.change(screen.getByTestId('person-avatar-input-u2@example.com'), {
+      target: { files: [file] },
+    });
+
+    expect(uploadAvatarMutate).toHaveBeenCalledTimes(1);
+    expect(uploadAvatarMutate.mock.calls[0][0].userId).toBe('u2');
+    expect(uploadAvatarMutate.mock.calls[0][0].file).toBe(file);
   });
 });

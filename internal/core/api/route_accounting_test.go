@@ -61,6 +61,7 @@ var routeAccounting = map[string]string{
 	// beyond the caller's own memberships.
 	"GET /api/v1/auth/me":                              "user-scoped",
 	"PATCH /api/v1/auth/me":                            "user-scoped",
+	"PUT /api/v1/auth/me/avatar":                       "user-scoped: self avatar upload",
 	"GET /api/v1/notifications/":                       "user-scoped",
 	"POST /api/v1/notifications/read-all":              "user-scoped",
 	"POST /api/v1/notifications/{notificationID}/read": "user-scoped",
@@ -93,6 +94,8 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/users/{userID}/deactivate":   "org-admin-404: always terminates sessions; last-admin protected in the store",
 	"POST /api/v1/orgs/{orgID}/users/{userID}/reactivate":   "org-admin-404",
 	"POST /api/v1/orgs/{orgID}/users/{userID}/force-logout": "org-admin-404: bumps token_generation only; user stays active",
+	"PUT /api/v1/orgs/{orgID}/users/{userID}/avatar":        "org-admin-404: admin sets another member's avatar",
+	"GET /api/v1/orgs/{orgID}/users/{userID}/avatar":        "org-member: avatars are shown org-wide; object key derived server-side",
 	"GET /api/v1/orgs/{orgID}/invites/":                     "org-admin-404",
 	"POST /api/v1/orgs/{orgID}/invites/":                    "org-admin-404: raw token returned once, hashed at rest",
 	"DELETE /api/v1/orgs/{orgID}/invites/{inviteID}":        "org-admin-404: revoke",

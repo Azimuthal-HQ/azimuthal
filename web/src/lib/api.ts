@@ -74,7 +74,9 @@ async function apiFetch<T>(
 ): Promise<T> {
   const headers = new Headers(options.headers);
 
-  if (!headers.has('Content-Type') && options.body) {
+  // Default to JSON, but never for FormData — the browser must set the
+  // multipart Content-Type with its boundary itself.
+  if (!headers.has('Content-Type') && options.body && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
@@ -856,6 +858,7 @@ async function resendInvite(orgId: string, inviteId: string): Promise<CreatedInv
 interface UpdatePersonRequest {
   org_role?: string;
   primary_team_id?: string;
+  display_name?: string;
 }
 
 async function updatePerson(orgId: string, userId: string, req: UpdatePersonRequest): Promise<void> {
@@ -863,6 +866,23 @@ async function updatePerson(orgId: string, userId: string, req: UpdatePersonRequ
     method: 'PATCH',
     body: JSON.stringify(req),
   });
+}
+
+/** AvatarUploadResult carries the serve URL of a freshly uploaded avatar. */
+export interface AvatarUploadResult {
+  avatar_url: string;
+}
+
+async function uploadOwnAvatar(file: File): Promise<AvatarUploadResult> {
+  const body = new FormData();
+  body.append('file', file);
+  return apiFetch<AvatarUploadResult>(`/auth/me/avatar`, { method: 'PUT', body });
+}
+
+async function uploadUserAvatar(orgId: string, userId: string, file: File): Promise<AvatarUploadResult> {
+  const body = new FormData();
+  body.append('file', file);
+  return apiFetch<AvatarUploadResult>(`/orgs/${orgId}/users/${userId}/avatar`, { method: 'PUT', body });
 }
 
 async function personLifecycle(orgId: string, userId: string, action: 'deactivate' | 'reactivate' | 'force-logout'): Promise<void> {
@@ -2332,6 +2352,22 @@ export function useResendInvite(orgId: string) {
     mutationFn: (inviteId) => resendInvite(orgId, inviteId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.invites(orgId) });
+    },
+  });
+}
+
+export function useUploadOwnAvatar() {
+  return useMutation<AvatarUploadResult, APIError, File>({
+    mutationFn: (file) => uploadOwnAvatar(file),
+  });
+}
+
+export function useUploadUserAvatar(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<AvatarUploadResult, APIError, { userId: string; file: File }>({
+    mutationFn: ({ userId, file }) => uploadUserAvatar(orgId, userId, file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) });
     },
   });
 }

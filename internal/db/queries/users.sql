@@ -35,6 +35,16 @@ SET display_name = $2, email = $3
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
+-- name: UpdateUserDisplayName :exec
+UPDATE users
+SET display_name = $2, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: UpdateUserAvatarURL :exec
+UPDATE users
+SET avatar_url = $2, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL;
+
 -- name: UpdateUserPasswordHash :exec
 -- The token_generation bump is built into the statement so no password
 -- change path can forget it: changing a password signs out every other

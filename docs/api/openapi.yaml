@@ -99,6 +99,11 @@ components:
           type: integer
         revokes:
           type: integer
+        ticket_ref:
+          description: |-
+            TicketRef echoes the operator's free-text reference recorded on every
+            audit event of this batch. Present on apply, absent on preview.
+          type: string
         updates:
           type: integer
       type: object
@@ -196,6 +201,8 @@ components:
       type: object
     admin.updatePersonRequest:
       properties:
+        display_name:
+          type: string
         org_role:
           type: string
         primary_team_id:
@@ -1019,6 +1026,8 @@ components:
         entity_id:
           type: string
         entity_kind:
+          type: string
+        entity_space_id:
           type: string
         id:
           type: string
@@ -2877,7 +2886,9 @@ paths:
       description: 'Creates a space in the organization. Type must be ''beacon'',
         ''codex'', or ''vector''. Slugs are unique per module: the same slug may exist
         in different modules of one organization. The owning team defaults to the
-        org default team. Authority: org admin, or a lead of the owning team.'
+        org default team. Authority: org admin, or a lead of the owning team. The
+        initial visibility is accepted from either authority — unlike later changes,
+        which require set_visibility (org admin only).'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -3037,7 +3048,8 @@ paths:
       - spaces
     put:
       description: Updates a space's name, description, icon, privacy, visibility,
-        and owning team. Requires manage_space. Changing owner_team_id or visibility
+        and owning team. Requires manage_space; changing visibility additionally requires
+        set_visibility, held only by org admins. Changing owner_team_id or visibility
         is audited.
       parameters:
       - description: Organization ID (UUID)
@@ -3088,7 +3100,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: manage_space required
+          description: manage_space required; or set_visibility (org admin) for a
+            visibility change
         "404":
           content:
             application/json:

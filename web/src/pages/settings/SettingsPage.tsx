@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState, type ChangeEvent } from 'react';
 import { Shield, Palette, User, Check } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { SegmentedControl } from '../../components/ui/segmented';
 import { useTheme } from '../../components/theme/ThemeProvider';
 import { useAuth } from '../../lib/auth';
-import { friendlyErrorMessage, useUpdateProfile } from '../../lib/api';
+import { friendlyErrorMessage, useUpdateProfile, useUploadOwnAvatar } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -48,6 +48,18 @@ export function SettingsPage() {
   const [email, setEmail] = useState(user?.email ?? '');
   const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
   const updateProfileMutation = useUpdateProfile();
+
+  // Self avatar upload.
+  const uploadAvatar = useUploadOwnAvatar();
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const avatarFileRef = useRef<HTMLInputElement>(null);
+
+  const onPickAvatar = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    uploadAvatar.mutate(file, { onSuccess: (res) => setAvatarUrl(res.avatar_url) });
+  };
 
   async function handleSaveProfile() {
     try {
@@ -108,13 +120,46 @@ export function SettingsPage() {
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-4">
-                  <div
-                    className={cn(
-                      'flex h-16 w-16 items-center justify-center rounded-full',
-                      'bg-[var(--color-primary-muted)] text-[var(--text-xl)] font-semibold text-[var(--color-primary)]',
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt="Your avatar"
+                      data-testid="settings-avatar-image"
+                      className="h-16 w-16 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div
+                      className={cn(
+                        'flex h-16 w-16 items-center justify-center rounded-full',
+                        'bg-[var(--color-primary-muted)] text-[var(--text-xl)] font-semibold text-[var(--color-primary)]',
+                      )}
+                    >
+                      {initials}
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="settings-avatar-upload"
+                      disabled={uploadAvatar.isPending}
+                      onClick={() => avatarFileRef.current?.click()}
+                    >
+                      {uploadAvatar.isPending ? 'Uploading...' : 'Change avatar'}
+                    </Button>
+                    <input
+                      ref={avatarFileRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="hidden"
+                      data-testid="settings-avatar-input"
+                      onChange={onPickAvatar}
+                    />
+                    {uploadAvatar.error && (
+                      <p className="text-[var(--text-xs)] text-[var(--color-danger)]">
+                        {friendlyErrorMessage(uploadAvatar.error, 'The avatar could not be uploaded.')}
+                      </p>
                     )}
-                  >
-                    {initials}
                   </div>
                 </div>
               </CardContent>

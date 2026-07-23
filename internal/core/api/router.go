@@ -9,6 +9,7 @@ import (
 	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
 	attachmentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/attachments"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
+	avatarapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/avatar"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
@@ -52,6 +53,10 @@ type RouterConfig struct {
 	// RequireOrgAdmin404 and the public token-authenticated acceptance
 	// routes. nil leaves both unmounted.
 	InviteHandler *invitesapi.Handler
+	// AvatarHandler serves user avatar upload (self + admin) and the
+	// org-member-readable serve endpoint. nil leaves the routes unmounted
+	// (e.g. when object storage is unavailable).
+	AvatarHandler *avatarapi.Handler
 	SPAHandler    http.Handler // serves the embedded frontend; nil disables SPA serving
 	// AllowedOrigins is the explicit CORS allow-list. nil falls back to the
 	// permissive wildcard for backwards compatibility with existing tests.
@@ -103,6 +108,9 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			r.Use(cfg.Authenticator.RequireAuth)
 			r.Get("/me", cfg.AuthHandler.Me)
 			r.Patch("/me", cfg.AuthHandler.UpdateMe)
+			if cfg.AvatarHandler != nil {
+				r.Put("/me/avatar", cfg.AvatarHandler.SelfUpload)
+			}
 		})
 	})
 
@@ -216,13 +224,20 @@ func mountAdminSurface(r chi.Router, cfg RouterConfig) {
 	if cfg.AdminHandler != nil {
 		admin404 := orgAdmin404Guard(cfg)
 		r.Route("/users", func(r chi.Router) {
-			r.Use(admin404)
-			r.Get("/", cfg.AdminHandler.ListPeople)
-			r.Patch("/{userID}", cfg.AdminHandler.UpdatePerson)
-			r.Delete("/{userID}", cfg.AdminHandler.RemovePerson)
-			r.Post("/{userID}/deactivate", cfg.AdminHandler.DeactivatePerson)
-			r.Post("/{userID}/reactivate", cfg.AdminHandler.ReactivatePerson)
-			r.Post("/{userID}/force-logout", cfg.AdminHandler.ForceLogoutPerson)
+			// admin404 is applied per-route (not r.Use) so the avatar serve
+			// route below can be org-member instead of org-admin.
+			r.With(admin404).Get("/", cfg.AdminHandler.ListPeople)
+			r.With(admin404).Patch("/{userID}", cfg.AdminHandler.UpdatePerson)
+			r.With(admin404).Delete("/{userID}", cfg.AdminHandler.RemovePerson)
+			r.With(admin404).Post("/{userID}/deactivate", cfg.AdminHandler.DeactivatePerson)
+			r.With(admin404).Post("/{userID}/reactivate", cfg.AdminHandler.ReactivatePerson)
+			r.With(admin404).Post("/{userID}/force-logout", cfg.AdminHandler.ForceLogoutPerson)
+			if cfg.AvatarHandler != nil {
+				// Admin sets another member's avatar (org-admin only)...
+				r.With(admin404).Put("/{userID}/avatar", cfg.AvatarHandler.AdminUpload)
+				// ...but any org member may read an avatar (shown org-wide).
+				r.Get("/{userID}/avatar", cfg.AvatarHandler.Serve)
+			}
 		})
 		r.With(admin404).Get("/access-matrix", cfg.AdminHandler.AccessMatrix)
 		r.Route("/grants", func(r chi.Router) {

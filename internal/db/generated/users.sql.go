@@ -845,6 +845,38 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 	return i, err
 }
 
+const updateUserAvatarURL = `-- name: UpdateUserAvatarURL :exec
+UPDATE users
+SET avatar_url = $2, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type UpdateUserAvatarURLParams struct {
+	ID        uuid.UUID `json:"id"`
+	AvatarUrl *string   `json:"avatar_url"`
+}
+
+func (q *Queries) UpdateUserAvatarURL(ctx context.Context, arg UpdateUserAvatarURLParams) error {
+	_, err := q.db.Exec(ctx, updateUserAvatarURL, arg.ID, arg.AvatarUrl)
+	return err
+}
+
+const updateUserDisplayName = `-- name: UpdateUserDisplayName :exec
+UPDATE users
+SET display_name = $2, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type UpdateUserDisplayNameParams struct {
+	ID          uuid.UUID `json:"id"`
+	DisplayName string    `json:"display_name"`
+}
+
+func (q *Queries) UpdateUserDisplayName(ctx context.Context, arg UpdateUserDisplayNameParams) error {
+	_, err := q.db.Exec(ctx, updateUserDisplayName, arg.ID, arg.DisplayName)
+	return err
+}
+
 const updateUserLastLogin = `-- name: UpdateUserLastLogin :exec
 UPDATE users SET last_login_at = now() WHERE id = $1
 `

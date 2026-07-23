@@ -16,6 +16,7 @@ package people
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -78,7 +79,16 @@ type Store interface {
 	// ChangePrimaryTeam enrols the user in the team if needed and marks it
 	// primary. ErrTeamNotFound when the team is not a live team of the org.
 	ChangePrimaryTeam(ctx context.Context, orgID, userID, teamID uuid.UUID) error
+	// UpdateProfile changes a member's display name. Org-scoped: the adapter
+	// verifies the target is a member of orgID before writing (ErrNotMember
+	// otherwise). It touches only display_name — never is_active or
+	// token_generation, so the deactivate-kills-sessions invariant is
+	// unaffected.
+	UpdateProfile(ctx context.Context, orgID, userID uuid.UUID, displayName string) error
 }
+
+// maxDisplayNameLen bounds a display name (matches the self-serve path).
+const maxDisplayNameLen = 255
 
 // Service wraps a Store with input validation.
 type Service struct {
@@ -155,6 +165,22 @@ func (s *Service) ChangeOrgRole(ctx context.Context, orgID, userID uuid.UUID, ro
 func (s *Service) ChangePrimaryTeam(ctx context.Context, orgID, userID, teamID uuid.UUID) error {
 	if err := s.store.ChangePrimaryTeam(ctx, orgID, userID, teamID); err != nil {
 		return fmt.Errorf("changing primary team: %w", err)
+	}
+	return nil
+}
+
+// UpdateProfile changes a member's display name after trimming and validating
+// it. The store scopes the write to the org.
+func (s *Service) UpdateProfile(ctx context.Context, orgID, userID uuid.UUID, displayName string) error {
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		return ErrInvalidDisplayName
+	}
+	if len(displayName) > maxDisplayNameLen {
+		return ErrInvalidDisplayName
+	}
+	if err := s.store.UpdateProfile(ctx, orgID, userID, displayName); err != nil {
+		return fmt.Errorf("updating profile: %w", err)
 	}
 	return nil
 }

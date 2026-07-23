@@ -22,6 +22,7 @@ import (
 	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
 	attachmentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/attachments"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
+	avatarapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/avatar"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
@@ -164,7 +165,9 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// P2.5 administration surface, wired as production. Registration is
 	// enabled here because several suites exercise the register flow; the
 	// disabled-by-default behaviour has its own dedicated tests.
-	peopleSvc := people.NewService(adapters.NewPeopleAdapter(pool))
+	peopleAdapter := adapters.NewPeopleAdapter(pool)
+	peopleSvc := people.NewService(peopleAdapter)
+	avatarHandler := avatarapi.NewHandler(people.NewAvatarService(peopleAdapter, storage.NewMemoryStore())).WithAuditLogger(auditLog)
 	inviteSvc := invites.NewService(adapters.NewInviteAdapter(pool), nil, invites.Config{
 		TTL:     7 * 24 * time.Hour,
 		BaseURL: "http://localhost:8082",
@@ -190,6 +193,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		AttachmentHandler:   attachmentHandler,
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
 		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
+		AvatarHandler:       avatarHandler,
 		SPAHandler:          nil,
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
