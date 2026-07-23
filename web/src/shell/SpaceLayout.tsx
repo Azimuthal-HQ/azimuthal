@@ -9,6 +9,7 @@ import { CodexSidebar } from './sidebars/CodexSidebar';
 import { VectorSidebar } from './sidebars/VectorSidebar';
 import { useRecentSpaces } from './hooks/useRecentSpaces';
 import { useSidebarCollapsed } from './hooks/useSidebarCollapsed';
+import { setActiveTeamContext } from './hooks/useActiveTeamContext';
 
 /**
  * SpaceLayout owns the space-scoped left panel (ADR-0005 points 2–3). It is
@@ -41,6 +42,13 @@ function ValidSpaceLayout({ module, spaceId }: { module: ModuleKey; spaceId: str
   useEffect(() => {
     recordVisit(spaceId);
   }, [spaceId, recordVisit]);
+
+  // Record the owning team as the active context so a module switch can land
+  // in this team's space in the target module.
+  const ownerTeamId = spaceQuery.data?.owner_team_id;
+  useEffect(() => {
+    if (ownerTeamId) setActiveTeamContext(ownerTeamId);
+  }, [ownerTeamId]);
 
   const sidebar =
     module === 'beacon' ? (
