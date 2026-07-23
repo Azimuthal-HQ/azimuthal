@@ -26,9 +26,9 @@ vi.mock('../../../lib/api', () => ({
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
-function renderList() {
+function renderList(entry = '/beacon/s1/tickets') {
   return render(
-    <MemoryRouter initialEntries={['/beacon/s1/tickets']}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/beacon/:spaceId/tickets" element={<TicketListPage />} />
       </Routes>
@@ -54,6 +54,14 @@ describe('TicketListPage Critical filter', () => {
     expect(
       screen.queryByText('No tickets match the current filters.'),
     ).not.toBeInTheDocument();
+  });
+
+  // S3: the top bar's contextual Create lands here as ?create=ticket and must
+  // open the New Ticket dialog.
+  it('opens the New Ticket dialog when arriving with ?create=ticket', () => {
+    expect(document.querySelector('#ticket-title')).toBeNull();
+    renderList('/beacon/s1/tickets?create=ticket');
+    expect(document.querySelector('#ticket-title')).not.toBeNull();
   });
 
   it('still excludes an urgent ticket when a different level (High) is selected', () => {

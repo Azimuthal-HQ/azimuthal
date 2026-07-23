@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { NavLink, useNavigate, useSearchParams } from 'react-router-dom';
 import { Clock, FileText, PenLine, Plus, Search, Star } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
@@ -157,6 +157,16 @@ function PageTree({
   const [formTitle, setFormTitle] = useState('');
   const [formParentId, setFormParentId] = useState('');
   const createMutation = useCreateWikiPage(spaceId);
+
+  // The top bar's contextual Create lands on the codex space index as
+  // ?create=page; the sidebar is always mounted there, so open the dialog.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('create') === 'page') {
+      setDialogOpen(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   async function handleCreatePage() {
     const title = formTitle.trim();

@@ -1,5 +1,5 @@
-﻿import { useState, useMemo } from 'react';
-import { Link, useParams } from 'react-router-dom';
+﻿import { useEffect, useState, useMemo } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Plus, Search, AlertCircle } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
@@ -75,6 +75,15 @@ export function TicketListPage() {
   const [formTitle, setFormTitle] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formPriority, setFormPriority] = useState<PriorityKey>('medium');
+
+  // The top bar's contextual Create lands here as ?create=ticket.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('create') === 'ticket') {
+      setDialogOpen(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   function resetForm() {
     setFormTitle('');

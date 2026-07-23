@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useMatch, useNavigate } from 'react-router-dom';
 import {
   Bell,
   Check,
+  ChevronDown,
   ChevronRight,
   Globe,
   LogOut,
@@ -13,6 +14,13 @@ import {
   Shield,
   User,
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '../components/ui/dropdown';
 import { cn } from '../lib/utils';
 import { useAuth } from '../lib/auth';
 import {
@@ -27,7 +35,14 @@ import { DarkModeToggle } from '../components/theme/DarkModeToggle';
 import { ProductTabs } from './ProductTabs';
 import { FocusChip } from './FocusChip';
 import { useShellUI } from './ShellUIContext';
-import { notificationRoute } from './modules';
+import { isModuleKey, notificationRoute, spacePath, type ModuleKey } from './modules';
+
+/** The primary create action for each module, keyed to the space in context. */
+const MODULE_CREATE: Record<ModuleKey, { label: string; subpath: string; param: string }> = {
+  beacon: { label: 'New ticket', subpath: 'tickets', param: 'ticket' },
+  codex: { label: 'New page', subpath: '', param: 'page' },
+  vector: { label: 'New item', subpath: 'backlog', param: 'item' },
+};
 
 /**
  * TopBar is the persistent application header (ADR-0005): logomark, product
@@ -38,6 +53,20 @@ import { notificationRoute } from './modules';
 export function TopBar() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+
+  // Contextual Create: when the URL is inside a module space, the primary
+  // create action is that module's entity (a ticket/page/item) in that space;
+  // otherwise it falls back to creating a space (the historical behaviour).
+  const spaceMatch = useMatch('/:module/:spaceId/*');
+  const contextModule = isModuleKey(spaceMatch?.params.module) ? spaceMatch!.params.module : undefined;
+  const contextSpaceId = contextModule ? (spaceMatch?.params.spaceId ?? undefined) : undefined;
+  const moduleCreate = contextModule && contextSpaceId ? MODULE_CREATE[contextModule] : null;
+  const moduleCreateTo =
+    moduleCreate && contextSpaceId
+      ? `${spacePath(contextModule!, contextSpaceId, moduleCreate.subpath)}?create=${moduleCreate.param}`
+      : null;
+  const newSpaceTo = '/?create=space';
+  const primaryCreateTo = moduleCreateTo ?? newSpaceTo;
   const { mobileNavOpen, setMobileNavOpen } = useShellUI();
 
   const org = useOrganization(user?.orgId ?? '');
@@ -131,18 +160,56 @@ export function TopBar() {
           <Search className="h-[18px] w-[18px]" />
         </button>
 
-        <button
-          type="button"
-          onClick={() => navigate('/?create=space')}
-          className={cn(
-            'flex h-8 items-center gap-[var(--space-1)] rounded-[var(--radius-md)] px-[var(--space-3)]',
-            'bg-[var(--color-primary)] text-[var(--text-sm)] font-medium text-white',
-            'hover:bg-[var(--color-primary-hover)] transition-colors duration-150',
-          )}
-        >
-          <Plus className="h-4 w-4" />
-          <span className="hidden sm:inline">Create</span>
-        </button>
+        <div className="flex items-center">
+          <button
+            type="button"
+            data-testid="topbar-create"
+            onClick={() => navigate(primaryCreateTo)}
+            className={cn(
+              'flex h-8 items-center gap-[var(--space-1)] rounded-l-[var(--radius-md)] px-[var(--space-3)]',
+              'bg-[var(--color-primary)] text-[var(--text-sm)] font-medium text-white',
+              'hover:bg-[var(--color-primary-hover)] transition-colors duration-150',
+            )}
+          >
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline">{moduleCreate?.label ?? 'Create'}</span>
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="topbar-create-menu"
+                aria-label="More create options"
+                className={cn(
+                  'flex h-8 items-center rounded-r-[var(--radius-md)] border-l border-white/20 px-1.5',
+                  'bg-[var(--color-primary)] text-white',
+                  'hover:bg-[var(--color-primary-hover)] transition-colors duration-150',
+                )}
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {moduleCreateTo && moduleCreate && (
+                <>
+                  <DropdownMenuItem
+                    data-testid="topbar-create-module"
+                    onSelect={() => navigate(moduleCreateTo)}
+                  >
+                    {moduleCreate.label}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem
+                data-testid="topbar-create-space"
+                onSelect={() => navigate(newSpaceTo)}
+              >
+                New space
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
 
         {/* Notification bell */}
         <div className="relative" ref={notifRef}>
