@@ -308,10 +308,15 @@ func seedTicketWorkflow(ctx context.Context, q *generated.Queries, orgID uuid.UU
 	}
 
 	open, inProgress, resolved, closed := ids[0], ids[1], ids[2], ids[3]
-	wfIDs := repeatUUID(wf.ID, 8)
-	from := []uuid.UUID{open, open, inProgress, inProgress, inProgress, resolved, resolved, closed}
-	to := []uuid.UUID{inProgress, closed, resolved, open, closed, closed, open, open}
-	names := []string{"Start Progress", "Close", "Resolve", "Reopen", "Close", "Close", "Reopen", "Reopen"}
+	// The last three are the one-step-back reverse edges (resolved -> in_progress,
+	// closed -> resolved, closed -> in_progress) so a ticket is never forced
+	// through `open` to move backward. Kept in lockstep with the hardcoded Go
+	// state machine (internal/core/tickets/status.go) and migration 029, which
+	// backfills the same edges into pre-existing installs.
+	wfIDs := repeatUUID(wf.ID, 11)
+	from := []uuid.UUID{open, open, inProgress, inProgress, inProgress, resolved, resolved, closed, resolved, closed, closed}
+	to := []uuid.UUID{inProgress, closed, resolved, open, closed, closed, open, open, inProgress, resolved, inProgress}
+	names := []string{"Start Progress", "Close", "Resolve", "Reopen", "Close", "Close", "Reopen", "Reopen", "Resume Progress", "Reopen", "Resume Progress"}
 
 	if err := q.BulkCreateWorkflowTransitions(ctx, generated.BulkCreateWorkflowTransitionsParams{
 		Column1: wfIDs,

@@ -40,8 +40,11 @@ const (
 var validTransitions = map[Status][]Status{
 	StatusOpen:       {StatusInProgress, StatusClosed},
 	StatusInProgress: {StatusResolved, StatusOpen, StatusClosed},
-	StatusResolved:   {StatusClosed, StatusOpen},
-	StatusClosed:     {StatusOpen},
+	// Reverse edges let a ticket step back one state without being forced
+	// through open: resolved can resume progress, and closed can reopen to
+	// any live state. Forward-only skips (e.g. open -> resolved) stay invalid.
+	StatusResolved: {StatusClosed, StatusOpen, StatusInProgress},
+	StatusClosed:   {StatusOpen, StatusResolved, StatusInProgress},
 }
 
 // allStatuses is the set of recognised statuses.
