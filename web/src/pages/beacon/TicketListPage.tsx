@@ -103,7 +103,7 @@ export function TicketListPage() {
     if (!tickets) return [];
     return tickets.filter((t) => {
       if (statusFilter !== 'all' && t.status !== statusFilter) return false;
-      if (priorityFilter !== 'all' && String(t.priority).toLowerCase() !== priorityFilter) return false;
+      if (priorityFilter !== 'all' && normalizePriority(t.priority) !== priorityFilter) return false;
       if (search && !t.title.toLowerCase().includes(search.toLowerCase()) && !t.id.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
