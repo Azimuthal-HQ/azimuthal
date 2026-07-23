@@ -815,6 +815,8 @@ components:
           $ref: '#/components/schemas/pgtype.Timestamptz'
         id:
           type: string
+        item_key:
+          type: string
         kind:
           type: string
         labels:
@@ -824,6 +826,8 @@ components:
           uniqueItems: false
         number:
           type: integer
+        org_id:
+          type: string
         parent_id:
           type: string
         priority:
@@ -2362,6 +2366,317 @@ paths:
       summary: Update organization
       tags:
       - spaces
+  /orgs/{orgID}/custom-fields:
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List custom fields
+      tags:
+      - projects
+    post:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+      security:
+      - BearerAuth: []
+      summary: Create a custom field
+      tags:
+      - projects
+  /orgs/{orgID}/custom-fields/{fieldID}:
+    delete:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Custom field ID (UUID)
+        in: path
+        name: fieldID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a custom field
+      tags:
+      - projects
+    patch:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Custom field ID (UUID)
+        in: path
+        name: fieldID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: Update a custom field
+      tags:
+      - projects
+  /orgs/{orgID}/item-types:
+    get:
+      description: Returns all item types for an organization (active and archived)
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List item types
+      tags:
+      - projects
+    post:
+      description: Defines a new item type for an organization (org admin only)
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create an item type
+      tags:
+      - projects
+  /orgs/{orgID}/item-types/{typeID}:
+    delete:
+      description: Hard-deletes an unreferenced item type (org admin only); a referenced
+        type returns 409
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Item type ID (UUID)
+        in: path
+        name: typeID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete an item type
+      tags:
+      - projects
+    patch:
+      description: Renames and/or archives an item type (org admin only)
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Item type ID (UUID)
+        in: path
+        name: typeID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update an item type
+      tags:
+      - projects
   /orgs/{orgID}/labels:
     get:
       description: Returns all labels for an organization
@@ -4341,6 +4656,86 @@ paths:
       summary: Create project item comment
       tags:
       - comments
+  /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields:
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: Get item custom fields
+      tags:
+      - projects
+  /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields/{slug}:
+    put:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      - description: Field slug
+        in: path
+        name: slug
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerMessageResponse'
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: Set an item custom field value
+      tags:
+      - projects
   /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/rank:
     post:
       description: Repositions a project item by specifying the item that should come
@@ -4749,6 +5144,66 @@ paths:
       security:
       - BearerAuth: []
       summary: Apply workflow transition (project item)
+      tags:
+      - projects
+  /orgs/{orgID}/spaces/{spaceID}/projects/items/resolve:
+    get:
+      description: Resolves a human-readable item key (e.g. VEC-123) to a project
+        item within the org
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item key (e.g. VEC-123)
+        in: query
+        name: key
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Resolve an item by key
       tags:
       - projects
   /orgs/{orgID}/spaces/{spaceID}/projects/items/search:

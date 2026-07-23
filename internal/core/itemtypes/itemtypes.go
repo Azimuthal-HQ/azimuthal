@@ -190,7 +190,7 @@ func (s *Service) SeedDefaults(ctx context.Context, orgID uuid.UUID) error {
 func (s *Service) getOwned(ctx context.Context, orgID, id uuid.UUID) (*ItemType, error) {
 	t, err := s.repo.GetByID(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("getting item type: %w", err)
 	}
 	if t.OrgID != orgID {
 		return nil, ErrNotFound

@@ -24,6 +24,7 @@ func NewItemTypeAdapter(q *generated.Queries) *ItemTypeAdapter {
 	return &ItemTypeAdapter{q: q}
 }
 
+// ListByOrg implements the repository interface.
 func (a *ItemTypeAdapter) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*itemtypes.ItemType, error) {
 	rows, err := a.q.ListItemTypesByOrg(ctx, orgID)
 	if err != nil {
@@ -32,6 +33,7 @@ func (a *ItemTypeAdapter) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*it
 	return dbItemTypesToTypes(rows), nil
 }
 
+// ListActiveByOrg implements the repository interface.
 func (a *ItemTypeAdapter) ListActiveByOrg(ctx context.Context, orgID uuid.UUID) ([]*itemtypes.ItemType, error) {
 	rows, err := a.q.ListActiveItemTypesByOrg(ctx, orgID)
 	if err != nil {
@@ -40,6 +42,7 @@ func (a *ItemTypeAdapter) ListActiveByOrg(ctx context.Context, orgID uuid.UUID) 
 	return dbItemTypesToTypes(rows), nil
 }
 
+// GetByID implements the repository interface.
 func (a *ItemTypeAdapter) GetByID(ctx context.Context, id uuid.UUID) (*itemtypes.ItemType, error) {
 	row, err := a.q.GetItemTypeByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -51,6 +54,7 @@ func (a *ItemTypeAdapter) GetByID(ctx context.Context, id uuid.UUID) (*itemtypes
 	return dbItemTypeToType(row), nil
 }
 
+// GetByOrgSlug implements the repository interface.
 func (a *ItemTypeAdapter) GetByOrgSlug(ctx context.Context, orgID uuid.UUID, slug string) (*itemtypes.ItemType, error) {
 	row, err := a.q.GetItemTypeByOrgSlug(ctx, generated.GetItemTypeByOrgSlugParams{OrgID: orgID, Slug: slug})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -62,6 +66,7 @@ func (a *ItemTypeAdapter) GetByOrgSlug(ctx context.Context, orgID uuid.UUID, slu
 	return dbItemTypeToType(row), nil
 }
 
+// Create implements the repository interface.
 func (a *ItemTypeAdapter) Create(ctx context.Context, t *itemtypes.ItemType) error {
 	_, err := a.q.CreateItemType(ctx, generated.CreateItemTypeParams{
 		ID:       t.ID,
@@ -76,6 +81,7 @@ func (a *ItemTypeAdapter) Create(ctx context.Context, t *itemtypes.ItemType) err
 	return nil
 }
 
+// Rename implements the repository interface.
 func (a *ItemTypeAdapter) Rename(ctx context.Context, id uuid.UUID, name string) (*itemtypes.ItemType, error) {
 	row, err := a.q.RenameItemType(ctx, generated.RenameItemTypeParams{ID: id, Name: name})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -87,6 +93,7 @@ func (a *ItemTypeAdapter) Rename(ctx context.Context, id uuid.UUID, name string)
 	return dbItemTypeToType(row), nil
 }
 
+// SetArchived implements the repository interface.
 func (a *ItemTypeAdapter) SetArchived(ctx context.Context, id uuid.UUID, archived bool) (*itemtypes.ItemType, error) {
 	var at pgtype.Timestamptz
 	if archived {
@@ -102,6 +109,7 @@ func (a *ItemTypeAdapter) SetArchived(ctx context.Context, id uuid.UUID, archive
 	return dbItemTypeToType(row), nil
 }
 
+// Delete implements the repository interface.
 func (a *ItemTypeAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := a.q.DeleteItemType(ctx, id); err != nil {
 		return fmt.Errorf("item type adapter delete: %w", err)
@@ -109,6 +117,7 @@ func (a *ItemTypeAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// CountItemsOfType implements the repository interface.
 func (a *ItemTypeAdapter) CountItemsOfType(ctx context.Context, orgID uuid.UUID, slug string) (int, error) {
 	n, err := a.q.CountItemsOfType(ctx, generated.CountItemsOfTypeParams{OrgID: orgID, Kind: slug})
 	if err != nil {
@@ -117,14 +126,16 @@ func (a *ItemTypeAdapter) CountItemsOfType(ctx context.Context, orgID uuid.UUID,
 	return int(n), nil
 }
 
+// NextPosition implements the repository interface.
 func (a *ItemTypeAdapter) NextPosition(ctx context.Context, orgID uuid.UUID) (int, error) {
-	max, err := a.q.MaxItemTypePosition(ctx, orgID)
+	maxPos, err := a.q.MaxItemTypePosition(ctx, orgID)
 	if err != nil {
 		return 0, fmt.Errorf("item type adapter next position: %w", err)
 	}
-	return int(max) + 1, nil
+	return int(maxPos) + 1, nil
 }
 
+// SeedDefaults implements the repository interface.
 func (a *ItemTypeAdapter) SeedDefaults(ctx context.Context, orgID uuid.UUID) error {
 	if err := a.q.SeedDefaultItemTypes(ctx, orgID); err != nil {
 		return fmt.Errorf("item type adapter seed defaults: %w", err)

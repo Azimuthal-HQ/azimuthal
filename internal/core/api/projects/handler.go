@@ -1716,6 +1716,8 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 // @Param        fieldID  path      string  true  "Custom field ID (UUID)"
 // @Success      200      {object}  map[string]interface{}
 // @Router       /orgs/{orgID}/custom-fields/{fieldID} [patch]
+//
+//nolint:cyclop // one PATCH updates name/options and/or archive state — each is a guarded branch
 func (h *Handler) UpdateCustomField(w http.ResponseWriter, r *http.Request) {
 	orgID, err := orgIDFromURL(r)
 	if err != nil {

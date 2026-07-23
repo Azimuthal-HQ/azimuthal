@@ -25,6 +25,7 @@ func NewCustomFieldDefAdapter(q *generated.Queries) *CustomFieldDefAdapter {
 	return &CustomFieldDefAdapter{q: q}
 }
 
+// ListByOrg implements the repository interface.
 func (a *CustomFieldDefAdapter) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*customfields.FieldDef, error) {
 	rows, err := a.q.ListCustomFieldDefsByOrg(ctx, orgID)
 	if err != nil {
@@ -33,6 +34,7 @@ func (a *CustomFieldDefAdapter) ListByOrg(ctx context.Context, orgID uuid.UUID) 
 	return dbFieldDefsToDefs(rows), nil
 }
 
+// ListActiveByOrg implements the repository interface.
 func (a *CustomFieldDefAdapter) ListActiveByOrg(ctx context.Context, orgID uuid.UUID) ([]*customfields.FieldDef, error) {
 	rows, err := a.q.ListActiveCustomFieldDefsByOrg(ctx, orgID)
 	if err != nil {
@@ -41,6 +43,7 @@ func (a *CustomFieldDefAdapter) ListActiveByOrg(ctx context.Context, orgID uuid.
 	return dbFieldDefsToDefs(rows), nil
 }
 
+// GetByID implements the repository interface.
 func (a *CustomFieldDefAdapter) GetByID(ctx context.Context, id uuid.UUID) (*customfields.FieldDef, error) {
 	row, err := a.q.GetCustomFieldDefByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -52,6 +55,7 @@ func (a *CustomFieldDefAdapter) GetByID(ctx context.Context, id uuid.UUID) (*cus
 	return dbFieldDefToDef(row), nil
 }
 
+// GetByOrgSlug implements the repository interface.
 func (a *CustomFieldDefAdapter) GetByOrgSlug(ctx context.Context, orgID uuid.UUID, slug string) (*customfields.FieldDef, error) {
 	row, err := a.q.GetCustomFieldDefByOrgSlug(ctx, generated.GetCustomFieldDefByOrgSlugParams{OrgID: orgID, Slug: slug})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -63,6 +67,7 @@ func (a *CustomFieldDefAdapter) GetByOrgSlug(ctx context.Context, orgID uuid.UUI
 	return dbFieldDefToDef(row), nil
 }
 
+// Create implements the repository interface.
 func (a *CustomFieldDefAdapter) Create(ctx context.Context, d *customfields.FieldDef) error {
 	opts, err := marshalOptions(d.Options)
 	if err != nil {
@@ -83,6 +88,7 @@ func (a *CustomFieldDefAdapter) Create(ctx context.Context, d *customfields.Fiel
 	return nil
 }
 
+// Update implements the repository interface.
 func (a *CustomFieldDefAdapter) Update(ctx context.Context, id uuid.UUID, name string, options []string) (*customfields.FieldDef, error) {
 	opts, err := marshalOptions(options)
 	if err != nil {
@@ -98,6 +104,7 @@ func (a *CustomFieldDefAdapter) Update(ctx context.Context, id uuid.UUID, name s
 	return dbFieldDefToDef(row), nil
 }
 
+// SetArchived implements the repository interface.
 func (a *CustomFieldDefAdapter) SetArchived(ctx context.Context, id uuid.UUID, archived bool) (*customfields.FieldDef, error) {
 	var at pgtype.Timestamptz
 	if archived {
@@ -113,6 +120,7 @@ func (a *CustomFieldDefAdapter) SetArchived(ctx context.Context, id uuid.UUID, a
 	return dbFieldDefToDef(row), nil
 }
 
+// Delete implements the repository interface.
 func (a *CustomFieldDefAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 	if err := a.q.DeleteCustomFieldDef(ctx, id); err != nil {
 		return fmt.Errorf("custom field def adapter delete: %w", err)
@@ -120,12 +128,13 @@ func (a *CustomFieldDefAdapter) Delete(ctx context.Context, id uuid.UUID) error 
 	return nil
 }
 
+// NextPosition implements the repository interface.
 func (a *CustomFieldDefAdapter) NextPosition(ctx context.Context, orgID uuid.UUID) (int, error) {
-	max, err := a.q.MaxCustomFieldDefPosition(ctx, orgID)
+	maxPos, err := a.q.MaxCustomFieldDefPosition(ctx, orgID)
 	if err != nil {
 		return 0, fmt.Errorf("custom field def adapter next position: %w", err)
 	}
-	return int(max) + 1, nil
+	return int(maxPos) + 1, nil
 }
 
 // CustomFieldValueAdapter implements customfields.ValueRepository.
@@ -138,6 +147,7 @@ func NewCustomFieldValueAdapter(q *generated.Queries) *CustomFieldValueAdapter {
 	return &CustomFieldValueAdapter{q: q}
 }
 
+// ListByItem implements the repository interface.
 func (a *CustomFieldValueAdapter) ListByItem(ctx context.Context, itemID uuid.UUID) ([]customfields.StoredValue, error) {
 	rows, err := a.q.ListItemFieldValues(ctx, itemID)
 	if err != nil {
@@ -150,6 +160,7 @@ func (a *CustomFieldValueAdapter) ListByItem(ctx context.Context, itemID uuid.UU
 	return out, nil
 }
 
+// Upsert implements the repository interface.
 func (a *CustomFieldValueAdapter) Upsert(ctx context.Context, itemID uuid.UUID, slug, value string) error {
 	_, err := a.q.UpsertItemFieldValue(ctx, generated.UpsertItemFieldValueParams{
 		ID:        uuid.New(),
@@ -163,6 +174,7 @@ func (a *CustomFieldValueAdapter) Upsert(ctx context.Context, itemID uuid.UUID, 
 	return nil
 }
 
+// Delete implements the repository interface.
 func (a *CustomFieldValueAdapter) Delete(ctx context.Context, itemID uuid.UUID, slug string) error {
 	if err := a.q.DeleteItemFieldValue(ctx, generated.DeleteItemFieldValueParams{ItemID: itemID, FieldSlug: slug}); err != nil {
 		return fmt.Errorf("custom field value adapter delete: %w", err)

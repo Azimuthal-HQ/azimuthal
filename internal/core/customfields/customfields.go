@@ -124,12 +124,9 @@ func (s *Service) CreateDef(ctx context.Context, orgID uuid.UUID, name, fieldTyp
 	if !validTypes[fieldType] {
 		return nil, ErrInvalidType
 	}
-	options = cleanOptions(options)
-	if fieldType == TypeSingleSelect && len(options) == 0 {
-		return nil, ErrOptionsRequired
-	}
-	if fieldType != TypeSingleSelect {
-		options = []string{}
+	options, err := normalizeOptions(fieldType, options)
+	if err != nil {
+		return nil, err
 	}
 	slug := itemtypes.Slugify(name)
 	if slug == "" {
@@ -162,12 +159,9 @@ func (s *Service) UpdateDef(ctx context.Context, orgID, id uuid.UUID, name strin
 	if err != nil {
 		return nil, err
 	}
-	options = cleanOptions(options)
-	if def.Type == TypeSingleSelect && len(options) == 0 {
-		return nil, ErrOptionsRequired
-	}
-	if def.Type != TypeSingleSelect {
-		options = []string{}
+	options, err = normalizeOptions(def.Type, options)
+	if err != nil {
+		return nil, err
 	}
 	updated, err := s.defs.Update(ctx, id, name, options)
 	if err != nil {
@@ -272,12 +266,26 @@ func (s *Service) SetValue(ctx context.Context, orgID, itemID uuid.UUID, slug, v
 func (s *Service) getOwned(ctx context.Context, orgID, id uuid.UUID) (*FieldDef, error) {
 	d, err := s.defs.GetByID(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("getting custom field: %w", err)
 	}
 	if d.OrgID != orgID {
 		return nil, ErrNotFound
 	}
 	return d, nil
+}
+
+// normalizeOptions cleans and validates a field's options for its type: only
+// single_select carries options and it requires at least one; other types have
+// none.
+func normalizeOptions(fieldType string, options []string) ([]string, error) {
+	options = cleanOptions(options)
+	if fieldType != TypeSingleSelect {
+		return []string{}, nil
+	}
+	if len(options) == 0 {
+		return nil, ErrOptionsRequired
+	}
+	return options, nil
 }
 
 func validateValue(def *FieldDef, value string) error {

@@ -641,3 +641,58 @@ record. It has now been wrong twice for the same reason — a phase that was not
 numbers first. **Read `migrations/` before assigning a number.** The same caution applies to
 constraint and index names: PostgreSQL generates names, and it does not rename a table's indexes
 when the table is renamed. Both facts have already produced defects here.
+
+---
+
+**Date:** 2026-07-23
+**Session:** Vector Completion Part 1 — schema package (item keys, item types, custom fields)
+
+## 1. Discrepancies found and corrected
+
+### D48 — `item_fields` storage did not exist (phase brief premise, not the spec)
+
+The phase brief for this work stated *"The `item_fields` storage already exists — build the UI
+and admin surface over it."* It does not. There is no `item_fields` table, nor any custom-field
+value or definition storage, anywhere in `migrations/` or `internal/` (grep for `item_field`,
+`custom_field`, `field_value` returns nothing before this phase). The spec (`v0.3-ia-spec.md`)
+does not mention `item_fields` at all, so there is no spec text to correct — the claim originated
+in the prompt. Per the standing rule (repository wins on existing structure), custom fields were
+built from scratch: migration 033 introduces **both** `custom_field_defs` (org-scoped
+definitions) and `item_field_values` (per-item values). The brief anticipated the definitions
+table ("if no definitions table exists, one is in scope") but assumed the value store already
+existed; both were needed. Values are keyed by field slug rather than a FK to the definition, so
+a value survives the archival or deletion of its definition and is surfaced read-only as a
+"legacy field" — the zero-silent-data-loss principle.
+
+### D49 — `project_items.kind` is the item-type identity; the CHECK is gone (§4 area, ADR-0003)
+
+The brief's V2 said to add a `type` column with existing items "backfilled to `task`".
+`project_items` already carries `kind TEXT` with a four-value CHECK (`task`/`story`/`epic`/`bug`)
+since migration 014. Blanket-backfilling every item to `task` would have discarded that real
+data. Repository wins: `kind` **is** the type discriminator (ADR-0003 keeps the type a column,
+not a joined entity), so migration 032 repurposes it as the immutable type *slug*, drops the
+fixed CHECK (types are now org-editable), and seeds `item_types` from the existing set — item
+rows are preserved, not reset. The wire field stays `kind` to avoid a rename across the whole
+API + frontend; the admin surface presents it as "Item types". Flagged, not a decision change:
+ADR-0003 explicitly sanctions the column approach.
+
+## 2. Decisions taken (justified in the phase report, recorded here)
+
+- **Item key counter:** a per-space `project_item_sequences` row bumped by an atomic `ON CONFLICT`
+  upsert inside the same `CreateProjectItem` statement, replacing the racy `MAX(number)+1`.
+- **Item-key org-uniqueness:** `org_id` was denormalised onto `project_items` (it had none) to
+  back a `UNIQUE (org_id, item_key)` index and give the future importer a single-lookup key map.
+- **Type / custom-field scope:** both are **org-scoped** (like labels and item_types), keeping the
+  admin surface in `/admin`. A future phase may make custom fields space-scoped if projects need
+  divergent field sets; noted, not built.
+- **Referential integrity for types** is enforced in the item-types service (a referenced type
+  cannot be hard-deleted → 409), not a DB FK, so ordinary item inserts are not coupled to per-org
+  type seeding — which would otherwise break every fixture that inserts an item after a raw org.
+
+## 3. Observed, out of scope
+
+- **Filters by type on the backlog/board were not added.** The type picker, chip, and admin CRUD
+  ship; a type *filter* control is a small follow-up, flagged for the next Vector phase.
+- **Custom-field values have no typed columns** — one `TEXT value`, interpreted by the
+  definition's `field_type`, validated on write. Sufficient for text/number/date/single_select;
+  a future phase adding richer types may want typed storage.
