@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
@@ -60,4 +61,37 @@ func TestItemTypeAdapter_SeedIdempotentAndActiveFilter(t *testing.T) {
 	n, err := adapter.CountItemsOfType(ctx, org.ID, "task")
 	require.NoError(t, err)
 	require.Equal(t, 0, n)
+}
+
+// TestItemTypeAdapter_CreateGetRenameDelete exercises the remaining adapter
+// methods against a real database.
+func TestItemTypeAdapter_CreateGetRenameDelete(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	org := testutil.CreateTestOrg(t, db.Pool)
+	adapter := adapters.NewItemTypeAdapter(generated.New(db.Pool))
+	ctx := context.Background()
+
+	tp := &itemtypes.ItemType{ID: uuid.New(), OrgID: org.ID, Slug: "spike", Name: "Spike", Position: 5}
+	require.NoError(t, adapter.Create(ctx, tp))
+
+	got, err := adapter.GetByID(ctx, tp.ID)
+	require.NoError(t, err)
+	require.Equal(t, "spike", got.Slug)
+
+	bySlug, err := adapter.GetByOrgSlug(ctx, org.ID, "spike")
+	require.NoError(t, err)
+	require.Equal(t, tp.ID, bySlug.ID)
+
+	renamed, err := adapter.Rename(ctx, tp.ID, "Investigation")
+	require.NoError(t, err)
+	require.Equal(t, "Investigation", renamed.Name)
+	require.Equal(t, "spike", renamed.Slug, "slug is immutable")
+
+	require.NoError(t, adapter.Delete(ctx, tp.ID))
+	_, err = adapter.GetByID(ctx, tp.ID)
+	require.ErrorIs(t, err, itemtypes.ErrNotFound)
+
+	// Not-found by slug maps to the sentinel.
+	_, err = adapter.GetByOrgSlug(ctx, org.ID, "gone")
+	require.ErrorIs(t, err, itemtypes.ErrNotFound)
 }

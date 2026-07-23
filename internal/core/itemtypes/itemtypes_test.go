@@ -27,7 +27,15 @@ func newStubRepo() *stubRepo {
 
 func key(orgID uuid.UUID, slug string) string { return orgID.String() + "|" + slug }
 
-func (r *stubRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*ItemType, error) { return nil, nil }
+func (r *stubRepo) ListByOrg(_ context.Context, orgID uuid.UUID) ([]*ItemType, error) {
+	var out []*ItemType
+	for _, t := range r.byID {
+		if t.OrgID == orgID {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
 func (r *stubRepo) ListActiveByOrg(_ context.Context, _ uuid.UUID) ([]*ItemType, error) {
 	return nil, nil
 }
@@ -218,5 +226,54 @@ func TestService_IsActiveType(t *testing.T) {
 	}
 	if ok, _ := svc.IsActiveType(context.Background(), org, "spike"); ok {
 		t.Error("archived type must be inactive")
+	}
+}
+
+func TestService_List(t *testing.T) {
+	repo := newStubRepo()
+	svc := NewService(repo)
+	org := uuid.New()
+	if _, err := svc.Create(context.Background(), org, "Spike"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), org, "Chore"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	list, err := svc.List(context.Background(), org)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("expected 2 types, got %d", len(list))
+	}
+}
+
+func TestService_Rename_EmptyName(t *testing.T) {
+	repo := newStubRepo()
+	svc := NewService(repo)
+	org := uuid.New()
+	tp, _ := svc.Create(context.Background(), org, "Spike")
+	if _, err := svc.Rename(context.Background(), org, tp.ID, "   "); !errors.Is(err, ErrNameRequired) {
+		t.Errorf("expected ErrNameRequired, got %v", err)
+	}
+}
+
+func TestService_SetArchived_Toggle(t *testing.T) {
+	repo := newStubRepo()
+	svc := NewService(repo)
+	org := uuid.New()
+	tp, _ := svc.Create(context.Background(), org, "Spike")
+
+	arch, err := svc.SetArchived(context.Background(), org, tp.ID, true)
+	if err != nil || arch.ArchivedAt == nil {
+		t.Fatalf("archive: err=%v archivedAt=%v", err, arch.ArchivedAt)
+	}
+	unarch, err := svc.SetArchived(context.Background(), org, tp.ID, false)
+	if err != nil || unarch.ArchivedAt != nil {
+		t.Fatalf("unarchive: err=%v archivedAt=%v", err, unarch.ArchivedAt)
+	}
+	// Cross-org archive is refused.
+	if _, err := svc.SetArchived(context.Background(), uuid.New(), tp.ID, true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("cross-org archive: expected ErrNotFound, got %v", err)
 	}
 }

@@ -76,15 +76,6 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]*ItemType, error
 	return out, nil
 }
 
-// ListActive returns only non-archived types — the set offered in pickers.
-func (s *Service) ListActive(ctx context.Context, orgID uuid.UUID) ([]*ItemType, error) {
-	out, err := s.repo.ListActiveByOrg(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("listing active item types: %w", err)
-	}
-	return out, nil
-}
-
 // Create defines a new type. The slug is derived from the name once and is
 // immutable; the name may later be changed without rewriting item rows.
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, name string) (*ItemType, error) {
@@ -175,14 +166,6 @@ func (s *Service) IsActiveType(ctx context.Context, orgID uuid.UUID, slug string
 		return false, fmt.Errorf("checking item type: %w", err)
 	}
 	return t.ArchivedAt == nil, nil
-}
-
-// SeedDefaults idempotently seeds the default type set for an org.
-func (s *Service) SeedDefaults(ctx context.Context, orgID uuid.UUID) error {
-	if err := s.repo.SeedDefaults(ctx, orgID); err != nil {
-		return fmt.Errorf("seeding default item types: %w", err)
-	}
-	return nil
 }
 
 // getOwned fetches a type and asserts it belongs to the org, mapping a
