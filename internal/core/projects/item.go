@@ -16,7 +16,9 @@ var ValidPriorities = map[string]bool{
 	"low":    true,
 }
 
-// ValidKinds contains all allowed item kind values.
+// ValidKinds is the default seeded item-type/kind vocabulary. Item types are
+// org-editable at runtime (see the itemtypes package), so this is the seed set
+// and the canonical list used by tests, not an exhaustive allow-list.
 var ValidKinds = map[string]bool{
 	"ticket": true,
 	"task":   true,
@@ -27,8 +29,13 @@ var ValidKinds = map[string]bool{
 
 // Item represents a project work item (task, story, epic, bug, or ticket).
 type Item struct {
-	ID          uuid.UUID  `json:"id"`
-	SpaceID     uuid.UUID  `json:"space_id"`
+	ID      uuid.UUID `json:"id"`
+	SpaceID uuid.UUID `json:"space_id"`
+	// Number is the per-space monotonic sequence value assigned at creation.
+	Number int `json:"number"`
+	// ItemKey is the permanent, org-unique human-readable key (<SPACE_KEY>-<n>),
+	// assigned at creation and immutable thereafter. Empty until persisted.
+	ItemKey     string     `json:"item_key"`
 	ParentID    *uuid.UUID `json:"parent_id"`
 	Kind        string     `json:"kind"`
 	Title       string     `json:"title"`
@@ -53,6 +60,9 @@ type ItemRepository interface {
 	Create(ctx context.Context, item *Item) error
 	// GetByID retrieves an item by primary key. Returns ErrNotFound if absent or soft-deleted.
 	GetByID(ctx context.Context, id uuid.UUID) (*Item, error)
+	// GetByOrgKey resolves a human-readable key (e.g. VEC-123) to an item
+	// within an org. Returns ErrNotFound if absent or soft-deleted.
+	GetByOrgKey(ctx context.Context, orgID uuid.UUID, key string) (*Item, error)
 	// Update persists changes to an existing item.
 	Update(ctx context.Context, item *Item) error
 	// UpdateStatus changes only the status field.
@@ -121,6 +131,21 @@ func (s *ItemService) GetItem(ctx context.Context, id uuid.UUID) (*Item, error) 
 	item, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("getting item: %w", err)
+	}
+	return item, nil
+}
+
+// ResolveKey resolves a human-readable item key (e.g. VEC-123) to an item
+// within an org. This is the callable service path the future Jira importer
+// uses to map external keys onto items — key resolution lives here, not in a
+// handler. The key is matched exactly (case-sensitive, as stored).
+func (s *ItemService) ResolveKey(ctx context.Context, orgID uuid.UUID, key string) (*Item, error) {
+	if key == "" {
+		return nil, ErrKeyRequired
+	}
+	item, err := s.repo.GetByOrgKey(ctx, orgID, key)
+	if err != nil {
+		return nil, fmt.Errorf("resolving item key: %w", err)
 	}
 	return item, nil
 }
@@ -215,12 +240,15 @@ func (s *ItemService) SearchItems(ctx context.Context, spaceID uuid.UUID, query 
 	return items, nil
 }
 
-// validateItem checks that an item has valid required fields.
+// validateItem checks that an item has valid required fields. Note the item
+// TYPE (Kind) vocabulary is org-defined (item_types) and validated by the API
+// handler, which has the org context; the service only requires a non-empty
+// kind so it cannot silently persist a typeless item.
 func validateItem(item *Item) error {
 	if item.Title == "" {
 		return ErrTitleRequired
 	}
-	if !ValidKinds[item.Kind] {
+	if item.Kind == "" {
 		return ErrInvalidKind
 	}
 	if !ValidPriorities[item.Priority] {

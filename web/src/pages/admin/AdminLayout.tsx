@@ -55,6 +55,8 @@ export function AdminLayout() {
         <AdminTab to="/admin/teams" label="Teams" testid="admin-tab-teams" />
         <AdminTab to="/admin/access" label="Access" testid="admin-tab-access" />
         <AdminTab to="/admin/spaces" label="Spaces" testid="admin-tab-spaces" />
+        <AdminTab to="/admin/item-types" label="Item types" testid="admin-tab-item-types" />
+        <AdminTab to="/admin/custom-fields" label="Custom fields" testid="admin-tab-custom-fields" />
         <AdminTab to="/admin/audit-log" label="Audit log" testid="admin-tab-audit" />
         <AdminTab to="/admin/settings" label="Organization" testid="admin-tab-settings" />
       </nav>

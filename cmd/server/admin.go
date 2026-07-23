@@ -166,6 +166,12 @@ func ensureOrgForUser(ctx context.Context, queries *generated.Queries, displayNa
 	if err := adapters.NewWorkflowAdapter(queries).SeedDefaultWorkflows(ctx, orgID); err != nil {
 		return uuid.Nil, "", fmt.Errorf("seeding default workflows: %w", err)
 	}
+	// Likewise every org needs its default Vector item types, no matter which
+	// path created it — without them item creation fails type validation. (The
+	// register endpoint seeds via OrgProvisionerAdapter.WithItemTypeSeeder.)
+	if err := adapters.NewItemTypeAdapter(queries).SeedDefaults(ctx, orgID); err != nil {
+		return uuid.Nil, "", fmt.Errorf("seeding default item types: %w", err)
+	}
 	return orgID, orgSlug, nil
 }
 

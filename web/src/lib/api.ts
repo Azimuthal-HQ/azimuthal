@@ -326,6 +326,13 @@ export interface ProjectItem {
   id: string;
   space_id: string;
   number: number | null;
+  /**
+   * Permanent, org-unique human-readable key (<SPACE_KEY>-<n>), assigned at
+   * creation and immutable — survives a move between spaces. Prefer this over
+   * deriving <spaceKey>-<number> client-side. Optional only for items fetched
+   * before the field existed.
+   */
+  item_key?: string;
   title: string;
   description: string;
   /** task | story | bug | epic — set at creation, carried on the wire. */
@@ -1214,6 +1221,124 @@ async function createLabel(orgId: string, req: CreateLabelRequest): Promise<Labe
 }
 
 // ---------------------------------------------------------------------------
+// Item type API functions
+// ---------------------------------------------------------------------------
+
+export interface ItemType {
+  id: string;
+  org_id: string;
+  slug: string;
+  name: string;
+  position: number;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CreateItemTypeRequest {
+  name: string;
+}
+
+interface UpdateItemTypeRequest {
+  name?: string;
+  archived?: boolean;
+}
+
+async function fetchItemTypes(orgId: string): Promise<ItemType[]> {
+  const data = await apiFetch<ItemType[] | null>(`/orgs/${orgId}/item-types`);
+  return Array.isArray(data) ? data : [];
+}
+
+async function createItemType(orgId: string, req: CreateItemTypeRequest): Promise<ItemType> {
+  return apiFetch<ItemType>(`/orgs/${orgId}/item-types`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function updateItemType(orgId: string, typeId: string, req: UpdateItemTypeRequest): Promise<ItemType> {
+  return apiFetch<ItemType>(`/orgs/${orgId}/item-types/${typeId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+async function deleteItemType(orgId: string, typeId: string): Promise<void> {
+  await apiFetch<void>(`/orgs/${orgId}/item-types/${typeId}`, { method: 'DELETE' });
+}
+
+// ---------------------------------------------------------------------------
+// Custom field API functions
+// ---------------------------------------------------------------------------
+
+export type CustomFieldType = 'text' | 'number' | 'date' | 'single_select';
+
+export interface CustomFieldDef {
+  id: string;
+  org_id: string;
+  slug: string;
+  name: string;
+  field_type: CustomFieldType;
+  options: string[];
+  position: number;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A custom field as rendered on an item: an active definition with its current
+ * value, or a legacy value whose definition is gone (read-only). */
+export interface ItemCustomField {
+  slug: string;
+  name: string;
+  field_type: CustomFieldType;
+  options: string[];
+  value: string;
+  legacy: boolean;
+}
+
+interface CreateCustomFieldRequest {
+  name: string;
+  field_type: CustomFieldType;
+  options?: string[];
+}
+
+interface UpdateCustomFieldRequest {
+  name?: string;
+  options?: string[];
+  archived?: boolean;
+}
+
+async function fetchCustomFields(orgId: string): Promise<CustomFieldDef[]> {
+  const data = await apiFetch<CustomFieldDef[] | null>(`/orgs/${orgId}/custom-fields`);
+  return Array.isArray(data) ? data : [];
+}
+
+async function createCustomField(orgId: string, req: CreateCustomFieldRequest): Promise<CustomFieldDef> {
+  return apiFetch<CustomFieldDef>(`/orgs/${orgId}/custom-fields`, { method: 'POST', body: JSON.stringify(req) });
+}
+
+async function updateCustomField(orgId: string, fieldId: string, req: UpdateCustomFieldRequest): Promise<CustomFieldDef> {
+  return apiFetch<CustomFieldDef>(`/orgs/${orgId}/custom-fields/${fieldId}`, { method: 'PATCH', body: JSON.stringify(req) });
+}
+
+async function deleteCustomField(orgId: string, fieldId: string): Promise<void> {
+  await apiFetch<void>(`/orgs/${orgId}/custom-fields/${fieldId}`, { method: 'DELETE' });
+}
+
+async function fetchItemFields(spaceId: string, itemId: string): Promise<ItemCustomField[]> {
+  const data = await apiFetch<ItemCustomField[] | null>(`${spaceBase(spaceId)}/projects/items/${itemId}/fields`);
+  return Array.isArray(data) ? data : [];
+}
+
+async function setItemField(spaceId: string, itemId: string, slug: string, value: string): Promise<void> {
+  await apiFetch<void>(`${spaceBase(spaceId)}/projects/items/${itemId}/fields/${slug}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Organization API functions
 // ---------------------------------------------------------------------------
 
@@ -1460,6 +1585,9 @@ export const queryKeys = {
   activeSprint: (spaceId: string) => ['sprints', spaceId, 'active'] as const,
   sprintItems: (spaceId: string, sprintId: string) => ['sprints', spaceId, sprintId, 'items'] as const,
   labels: (orgId: string) => ['labels', orgId] as const,
+  itemTypes: (orgId: string) => ['itemTypes', orgId] as const,
+  customFields: (orgId: string) => ['customFields', orgId] as const,
+  itemFields: (spaceId: string, itemId: string) => ['itemFields', spaceId, itemId] as const,
   members: (orgId: string, spaceId: string) => ['members', orgId, spaceId] as const,
   comments: (spaceId: string, entityType: string, entityId: string) => ['comments', spaceId, entityType, entityId] as const,
   notifications: () => ['notifications'] as const,
@@ -1642,6 +1770,95 @@ export function useLabels(orgId: string, opts?: QueryOpts<Label[]>) {
     queryFn: () => fetchLabels(orgId),
     enabled: !!orgId,
     ...opts,
+  });
+}
+
+export function useItemTypes(orgId: string, opts?: QueryOpts<ItemType[]>) {
+  return useQuery<ItemType[], APIError>({
+    queryKey: queryKeys.itemTypes(orgId),
+    queryFn: () => fetchItemTypes(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function useCreateItemType(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<ItemType, APIError, CreateItemTypeRequest>({
+    mutationFn: (req) => createItemType(orgId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.itemTypes(orgId) });
+    },
+  });
+}
+
+export function useUpdateItemType(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<ItemType, APIError, { typeId: string; req: UpdateItemTypeRequest }>({
+    mutationFn: ({ typeId, req }) => updateItemType(orgId, typeId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.itemTypes(orgId) });
+    },
+  });
+}
+
+export function useDeleteItemType(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (typeId) => deleteItemType(orgId, typeId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.itemTypes(orgId) });
+    },
+  });
+}
+
+export function useCustomFields(orgId: string, opts?: QueryOpts<CustomFieldDef[]>) {
+  return useQuery<CustomFieldDef[], APIError>({
+    queryKey: queryKeys.customFields(orgId),
+    queryFn: () => fetchCustomFields(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function useCreateCustomField(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<CustomFieldDef, APIError, CreateCustomFieldRequest>({
+    mutationFn: (req) => createCustomField(orgId, req),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.customFields(orgId) }),
+  });
+}
+
+export function useUpdateCustomField(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<CustomFieldDef, APIError, { fieldId: string; req: UpdateCustomFieldRequest }>({
+    mutationFn: ({ fieldId, req }) => updateCustomField(orgId, fieldId, req),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.customFields(orgId) }),
+  });
+}
+
+export function useDeleteCustomField(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (fieldId) => deleteCustomField(orgId, fieldId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.customFields(orgId) }),
+  });
+}
+
+export function useItemFields(spaceId: string, itemId: string, opts?: QueryOpts<ItemCustomField[]>) {
+  return useQuery<ItemCustomField[], APIError>({
+    queryKey: queryKeys.itemFields(spaceId, itemId),
+    queryFn: () => fetchItemFields(spaceId, itemId),
+    enabled: !!spaceId && !!itemId,
+    ...opts,
+  });
+}
+
+export function useSetItemField(spaceId: string, itemId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, { slug: string; value: string }>({
+    mutationFn: ({ slug, value }) => setItemField(spaceId, itemId, slug, value),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.itemFields(spaceId, itemId) }),
   });
 }
 

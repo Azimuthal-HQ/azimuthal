@@ -61,6 +61,19 @@ type Comment struct {
 	EntityID   uuid.UUID          `json:"entity_id"`
 }
 
+type CustomFieldDef struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	Slug       string             `json:"slug"`
+	Name       string             `json:"name"`
+	FieldType  string             `json:"field_type"`
+	Options    []byte             `json:"options"`
+	Position   int32              `json:"position"`
+	ArchivedAt pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type EntityRelation struct {
 	ID        uuid.UUID          `json:"id"`
 	FromID    uuid.UUID          `json:"from_id"`
@@ -100,6 +113,26 @@ type Invite struct {
 	AcceptedUserID pgtype.UUID        `json:"accepted_user_id"`
 	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type ItemFieldValue struct {
+	ID        uuid.UUID          `json:"id"`
+	ItemID    uuid.UUID          `json:"item_id"`
+	FieldSlug string             `json:"field_slug"`
+	Value     string             `json:"value"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ItemType struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	Slug       string             `json:"slug"`
+	Name       string             `json:"name"`
+	Position   int32              `json:"position"`
+	ArchivedAt pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ItemsArchive struct {
@@ -223,6 +256,13 @@ type ProjectItem struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
 	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	ItemKey         string             `json:"item_key"`
+}
+
+type ProjectItemSequence struct {
+	SpaceID    uuid.UUID `json:"space_id"`
+	LastNumber int64     `json:"last_number"`
 }
 
 type Session struct {

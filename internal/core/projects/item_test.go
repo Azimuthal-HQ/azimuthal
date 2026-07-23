@@ -48,6 +48,15 @@ func (r *stubItemRepo) GetByID(_ context.Context, id uuid.UUID) (*Item, error) {
 	return item, nil
 }
 
+func (r *stubItemRepo) GetByOrgKey(_ context.Context, _ uuid.UUID, key string) (*Item, error) {
+	for _, item := range r.items {
+		if item.ItemKey == key && item.DeletedAt == nil {
+			return item, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
 func (r *stubItemRepo) Update(_ context.Context, item *Item) error {
 	if _, ok := r.items[item.ID]; !ok {
 		return ErrNotFound
@@ -145,6 +154,38 @@ func makeItem(spaceID uuid.UUID) *Item {
 	}
 }
 
+func TestItemService_ResolveKey(t *testing.T) {
+	repo := newStubItemRepo()
+	orgID := uuid.New()
+	item := &Item{ID: uuid.New(), ItemKey: "VEC-42", Title: "Answer"}
+	repo.items[item.ID] = item
+	svc := NewItemService(repo, noopShareDeleter{})
+
+	got, err := svc.ResolveKey(context.Background(), orgID, "VEC-42")
+	if err != nil {
+		t.Fatalf("ResolveKey: unexpected error: %v", err)
+	}
+	if got.ID != item.ID {
+		t.Errorf("ResolveKey returned wrong item: got %v want %v", got.ID, item.ID)
+	}
+}
+
+func TestItemService_ResolveKey_EmptyKey(t *testing.T) {
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
+	_, err := svc.ResolveKey(context.Background(), uuid.New(), "")
+	if !errors.Is(err, ErrKeyRequired) {
+		t.Errorf("empty key: got %v, want ErrKeyRequired", err)
+	}
+}
+
+func TestItemService_ResolveKey_NotFound(t *testing.T) {
+	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
+	_, err := svc.ResolveKey(context.Background(), uuid.New(), "VEC-999")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing key: got %v, want ErrNotFound", err)
+	}
+}
+
 func TestItemService_CreateItem(t *testing.T) {
 	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	spaceID := uuid.New()
@@ -175,10 +216,14 @@ func TestItemService_CreateItem_TitleRequired(t *testing.T) {
 	}
 }
 
-func TestItemService_CreateItem_InvalidKind(t *testing.T) {
+// TestItemService_CreateItem_EmptyKind: the org-defined type vocabulary is
+// validated by the API handler (which has org context), so the service only
+// guards against a typeless item — an empty kind is rejected, a non-empty one
+// is accepted and left for the handler's item_types check.
+func TestItemService_CreateItem_EmptyKind(t *testing.T) {
 	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	item := makeItem(uuid.New())
-	item.Kind = "invalid"
+	item.Kind = ""
 
 	_, err := svc.CreateItem(context.Background(), item)
 	if !errors.Is(err, ErrInvalidKind) {

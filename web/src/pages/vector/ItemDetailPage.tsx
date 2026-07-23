@@ -14,6 +14,8 @@ import {
 } from '../../components/layout/DetailLayout';
 import { EntityShareControl } from '../../components/EntityShareControl';
 import { ModuleChip } from '../../shell/ModuleChip';
+import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
+import { CustomFieldsSection } from '../../components/CustomFieldsSection';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import {
@@ -29,6 +31,7 @@ import {
   useDeleteRelation,
   useItemSearch,
   useSpace,
+  useItemTypes,
   friendlyErrorMessage,
 } from '../../lib/api';
 
@@ -81,6 +84,7 @@ export function ItemDetailPage() {
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
   const { data: members } = useMembers(orgId, spaceId);
+  const { data: itemTypes } = useItemTypes(orgId);
   const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, 'project_item', itemId);
   const createCommentMutation = useCreateComment(orgId, spaceId, 'project_item', itemId);
 
@@ -180,9 +184,13 @@ export function ItemDetailPage() {
     );
   }
 
-  const itemKeyLabel = item.number
-    ? `${space?.key ?? 'PROJ'}-${item.number}`
-    : item.id.slice(0, 8);
+  const keyLabel = itemKeyLabel(item, space?.key);
+  // Resolve the item's type slug (item.kind) to its display name; fall back to
+  // a humanized slug if the type list hasn't loaded or the type was removed.
+  const typeName = item.kind
+    ? (itemTypes ?? []).find((t) => t.slug === item.kind)?.name ??
+      item.kind.charAt(0).toUpperCase() + item.kind.slice(1)
+    : '';
   const reporter = (members ?? []).find((m) => m.user_id === item.reporter_id);
 
   return (
@@ -195,17 +203,14 @@ export function ItemDetailPage() {
         </Link>
         <span>/</span>
         <span className="text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono)' }}>
-          {itemKeyLabel}
+          {keyLabel}
         </span>
       </div>
 
       <DetailLayout>
         <DetailMain>
-          <div
-            className="mb-2 text-[var(--text-xs)] text-[var(--color-text-muted)]"
-            style={{ fontFamily: 'var(--font-mono)' }}
-          >
-            {itemKeyLabel}
+          <div className="mb-2">
+            <ItemKeyChip item={item} spaceKey={space?.key} />
           </div>
 
           {isEditing ? (
@@ -249,8 +254,9 @@ export function ItemDetailPage() {
                 </div>
               </div>
 
-              {/* Meta row: status, priority, module — the one vocabulary. */}
+              {/* Meta row: type, status, priority, module — the one vocabulary. */}
               <div className="mb-5 flex flex-wrap items-center gap-2">
+                {typeName && <Badge variant="secondary" data-testid="item-type-chip">{typeName}</Badge>}
                 <Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>
                   {STATUS_LABEL[item.status] ?? item.status}
                 </Badge>
@@ -461,6 +467,9 @@ export function ItemDetailPage() {
               <Clock className="h-3 w-3" /> {item.updated_at.slice(0, 10)}
             </div>
           </DetailField>
+
+          <DetailDivider />
+          <CustomFieldsSection spaceId={spaceId} itemId={itemId} />
         </DetailSide>
       </DetailLayout>
     </div>

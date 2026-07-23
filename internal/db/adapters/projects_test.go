@@ -27,7 +27,8 @@ func TestDbProjectItemToItem(t *testing.T) {
 		ID:          id,
 		SpaceID:     spaceID,
 		ParentID:    pgtype.UUID{Bytes: parentID, Valid: true},
-		Number:      1,
+		Number:      7,
+		ItemKey:     "VEC-7",
 		Kind:        "story",
 		Title:       "Build feature X",
 		Description: "A project item",
@@ -58,6 +59,12 @@ func TestDbProjectItemToItem(t *testing.T) {
 	}
 	if got.Kind != "story" {
 		t.Errorf("Kind mismatch: got %v", got.Kind)
+	}
+	if got.Number != 7 {
+		t.Errorf("Number mismatch: got %v", got.Number)
+	}
+	if got.ItemKey != "VEC-7" {
+		t.Errorf("ItemKey mismatch: got %v", got.ItemKey)
 	}
 	if got.Title != "Build feature X" {
 		t.Errorf("Title mismatch")
@@ -269,7 +276,6 @@ func TestProjectItemCreateParamsValidation(t *testing.T) {
 		ID:          item.ID,
 		SpaceID:     item.SpaceID,
 		ParentID:    pgUUID(item.ParentID),
-		Number:      1,
 		Kind:        item.Kind,
 		Title:       item.Title,
 		Description: item.Description,
@@ -317,7 +323,6 @@ func TestProjectItemCreateParamsNilOptionals(t *testing.T) {
 		ID:          item.ID,
 		SpaceID:     item.SpaceID,
 		ParentID:    pgUUID(item.ParentID),
-		Number:      1,
 		Kind:        item.Kind,
 		Title:       item.Title,
 		Description: item.Description,

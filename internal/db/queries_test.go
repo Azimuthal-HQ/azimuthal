@@ -240,7 +240,7 @@ func TestItemListAndUpdate(t *testing.T) {
 	user := setupUser(t, q, org.ID, "item2@example.com")
 	space := setupSpace(t, q, org.ID, user.ID, "vector")
 	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "bug",
+		ID: uuid.New(), SpaceID: space.ID, Kind: "bug",
 		Title: "Fix regression", Description: "",
 		Status: "open", Priority: "medium", ReporterID: user.ID,
 		Labels: []string{}, Rank: "b",
@@ -308,7 +308,7 @@ func TestItemRelations(t *testing.T) {
 	user := setupUser(t, q, org.ID, "relations@example.com")
 	space := setupSpace(t, q, org.ID, user.ID, "vector")
 	from, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "task", Title: "From",
+		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "From",
 		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
 	})
 	if err != nil {
@@ -316,7 +316,7 @@ func TestItemRelations(t *testing.T) {
 	}
 	defer func() { _ = q.SoftDeleteProjectItem(ctx, from.ID) }()
 	to, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Number: 2, Kind: "task", Title: "To",
+		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "To",
 		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "b",
 	})
 	if err != nil {
@@ -428,7 +428,7 @@ func TestSprints(t *testing.T) {
 		t.Error("expected at least one sprint")
 	}
 	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "task", Title: "Sprint task",
+		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "Sprint task",
 		Description: "", Status: "open", Priority: "medium", ReporterID: user.ID, Labels: []string{}, Rank: "a",
 	})
 	if err != nil {
@@ -548,7 +548,7 @@ func TestComments(t *testing.T) {
 	user := setupUser(t, q, org.ID, "commenter@example.com")
 	space := setupSpace(t, q, org.ID, user.ID, "vector")
 	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
-		ID: uuid.New(), SpaceID: space.ID, Number: 1, Kind: "task", Title: "Comment target",
+		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "Comment target",
 		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
 	})
 	if err != nil {
