@@ -15,7 +15,7 @@ import (
 
 // makeSprintItem creates and persists an item assigned to sprintID with the
 // given status, returning the created item.
-func makeSprintItem(t *testing.T, ctx context.Context, ia *adapters.ItemAdapter, spaceID, reporterID uuid.UUID, sprintID *uuid.UUID, status string) *projects.Item {
+func makeSprintItem(ctx context.Context, t *testing.T, ia *adapters.ItemAdapter, spaceID, reporterID uuid.UUID, sprintID *uuid.UUID, status string) *projects.Item {
 	t.Helper()
 	item := &projects.Item{
 		ID: uuid.New(), SpaceID: spaceID,
@@ -28,7 +28,7 @@ func makeSprintItem(t *testing.T, ctx context.Context, ia *adapters.ItemAdapter,
 }
 
 // sprintIDOf returns the item's current sprint_id as read back from the DB.
-func sprintIDOf(t *testing.T, ctx context.Context, ia *adapters.ItemAdapter, id uuid.UUID) *uuid.UUID {
+func sprintIDOf(ctx context.Context, t *testing.T, ia *adapters.ItemAdapter, id uuid.UUID) *uuid.UUID {
 	t.Helper()
 	got, err := ia.GetByID(ctx, id)
 	require.NoError(t, err)
@@ -54,22 +54,22 @@ func TestSprintAdapter_CompleteWithDisposition_ToBacklog(t *testing.T) {
 	}
 	require.NoError(t, sprintAdapter.Create(ctx, sprint))
 
-	openItem := makeSprintItem(t, ctx, itemAdapter, space.ID, user.ID, &sprint.ID, "open")
-	inProgress := makeSprintItem(t, ctx, itemAdapter, space.ID, user.ID, &sprint.ID, "in_progress")
-	doneItem := makeSprintItem(t, ctx, itemAdapter, space.ID, user.ID, &sprint.ID, "done")
+	openItem := makeSprintItem(ctx, t, itemAdapter, space.ID, user.ID, &sprint.ID, "open")
+	inProgress := makeSprintItem(ctx, t, itemAdapter, space.ID, user.ID, &sprint.ID, "in_progress")
+	doneItem := makeSprintItem(ctx, t, itemAdapter, space.ID, user.ID, &sprint.ID, "done")
 
 	updated, err := sprintAdapter.CompleteWithDisposition(ctx, sprint.ID, nil, projects.DoneStatuses)
 	require.NoError(t, err)
 	require.Equal(t, projects.SprintStatusCompleted, updated.Status)
 
 	// The two incomplete items returned to the backlog.
-	require.Nil(t, sprintIDOf(t, ctx, itemAdapter, openItem.ID), "open item should be back in backlog")
-	require.Nil(t, sprintIDOf(t, ctx, itemAdapter, inProgress.ID), "in-progress item should be back in backlog")
+	require.Nil(t, sprintIDOf(ctx, t, itemAdapter, openItem.ID), "open item should be back in backlog")
+	require.Nil(t, sprintIDOf(ctx, t, itemAdapter, inProgress.ID), "in-progress item should be back in backlog")
 
 	// The done item stayed on the completed sprint — proves the done-status
 	// filter is applied (this assertion fails if the WHERE NOT(...) clause is
 	// dropped and every item is swept off the sprint).
-	got := sprintIDOf(t, ctx, itemAdapter, doneItem.ID)
+	got := sprintIDOf(ctx, t, itemAdapter, doneItem.ID)
 	require.NotNil(t, got, "done item must stay on the completed sprint")
 	require.Equal(t, sprint.ID, *got)
 }
@@ -98,19 +98,19 @@ func TestSprintAdapter_CompleteWithDisposition_ToNextSprint(t *testing.T) {
 	}
 	require.NoError(t, sprintAdapter.Create(ctx, next))
 
-	openItem := makeSprintItem(t, ctx, itemAdapter, space.ID, user.ID, &current.ID, "open")
-	doneItem := makeSprintItem(t, ctx, itemAdapter, space.ID, user.ID, &current.ID, "resolved")
+	openItem := makeSprintItem(ctx, t, itemAdapter, space.ID, user.ID, &current.ID, "open")
+	doneItem := makeSprintItem(ctx, t, itemAdapter, space.ID, user.ID, &current.ID, "resolved")
 
 	_, err := sprintAdapter.CompleteWithDisposition(ctx, current.ID, &next.ID, projects.DoneStatuses)
 	require.NoError(t, err)
 
 	// The incomplete item carried over to the next sprint.
-	got := sprintIDOf(t, ctx, itemAdapter, openItem.ID)
+	got := sprintIDOf(ctx, t, itemAdapter, openItem.ID)
 	require.NotNil(t, got)
 	require.Equal(t, next.ID, *got, "incomplete item should move to the next sprint")
 
 	// The done item stayed on the completed sprint.
-	stayed := sprintIDOf(t, ctx, itemAdapter, doneItem.ID)
+	stayed := sprintIDOf(ctx, t, itemAdapter, doneItem.ID)
 	require.NotNil(t, stayed)
 	require.Equal(t, current.ID, *stayed)
 

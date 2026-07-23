@@ -205,7 +205,7 @@ func (s *SprintService) validateNextSprint(ctx context.Context, completing *Spri
 		if errors.Is(err, ErrNotFound) {
 			return ErrInvalidNextSprint
 		}
-		return err
+		return fmt.Errorf("loading next sprint: %w", err)
 	}
 	if next.SpaceID != completing.SpaceID || next.Status == SprintStatusCompleted {
 		return ErrInvalidNextSprint
