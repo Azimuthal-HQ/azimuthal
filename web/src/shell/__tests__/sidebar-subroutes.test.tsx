@@ -22,6 +22,11 @@ vi.mock('../../lib/api', () => ({
   useSpaces: vi.fn(() => ({ data: [], isLoading: false })),
   useTeams: vi.fn(() => ({ data: [], isLoading: false })),
   useWikiPages: vi.fn(() => ({ data: [], isLoading: false })),
+  // The Codex sidebar owns the scoped page search and the create-page
+  // dialog since the navigation collapse (ADR-0005).
+  useWikiSearch: vi.fn(() => ({ data: [], isLoading: false })),
+  useCreateWikiPage: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false, error: null })),
+  friendlyErrorMessage: vi.fn((_err: unknown, fallback: string) => fallback),
 }));
 
 vi.mock('../../lib/auth', () => ({

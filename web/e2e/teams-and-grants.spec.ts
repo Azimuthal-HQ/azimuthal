@@ -107,8 +107,10 @@ test.describe('Grants on space settings', () => {
 
     // Add a grant to the org default team (name is deterministic: the seed
     // names it "Default" with slug "default", and an org has exactly one).
-    // The picker replaced the old user/team toggle + UUID field (P2.5 W5):
-    // type the team name, pick the option by its slug-derived testid.
+    // The interior restyle put the User/Team segmented toggle in front of the
+    // picker (defaulting to User) — flip it to Team, then search by name and
+    // pick the option by its slug-derived testid.
+    await page.getByTestId('grant-subject-kind').getByRole('radio', { name: 'Team' }).click()
     await page.getByTestId('grant-subject-picker-input').fill('Default')
     await page.getByTestId('grant-subject-picker-option-team-default').click()
     await expect(page.getByTestId('grant-subject-picker-selected')).toContainText('Default')

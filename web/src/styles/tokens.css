@@ -69,6 +69,19 @@
   --module-vector: #4A90D9;
   --module-chip-alpha: 0.30;
   --module-chip-fg: #A6AEBC;
+
+  /* ── Form input background ──────────────────────────
+     Inputs sit one layer below cards (interior prototype);
+     surface-on-surface loses the layering. */
+  --color-input: #FFFFFF;
+
+  /* ── Priority (theme-invariant state hues) ──────────
+     low/medium/critical reuse success/primary/danger; the
+     prototype's High is a hue of its own — warning-yellow
+     reads as caution, not severity-between-medium-and-
+     critical. Shares a hex with --module-beacon but is a
+     separate channel (state, matching fg), never a chip. */
+  --color-priority-high: #E0806A;
 }
 
 .dark {
@@ -79,6 +92,7 @@
   --color-text: #E8EAF0;
   --color-text-muted: #8B91A8;
   --color-text-inverse: #1A1D27;
+  --color-input: #0E1016;
 
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
   --shadow-md: 0 4px 6px rgb(0 0 0 / 0.4);

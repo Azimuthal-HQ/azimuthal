@@ -25,6 +25,8 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
+import { Field, FieldLabel } from '../../components/ui/field';
+import { RadioCardGroup } from '../../components/ui/radio-card';
 
 /**
  * SpacesAdminPage (P2.5 W8): org-wide space governance — rename,
@@ -95,7 +97,7 @@ function SpaceRow({ orgId, space, onEdit, onDelete }: {
   return (
     <div
       data-testid={`admin-space-row-${space.slug}`}
-      className="grid grid-cols-[minmax(200px,2fr)_auto_1fr_1fr_auto] items-center gap-x-[var(--space-3)] border-b border-[var(--color-border)] px-[var(--space-4)] py-[var(--space-2)] last:border-b-0 hover:bg-[var(--color-surface-hover)]"
+      className="grid grid-cols-[minmax(200px,2fr)_auto_1fr_1fr_auto] items-center gap-x-[var(--space-3)] border-b border-[var(--color-border)] px-[var(--space-4)] py-[var(--space-3)] last:border-b-0 hover:bg-[var(--color-surface-hover)]"
     >
       <span className="min-w-0">
         <span className="block truncate text-[var(--text-sm)] font-medium text-[var(--color-text)]">{space.name}</span>
@@ -138,52 +140,61 @@ function EditSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Spac
           <DialogTitle>Edit {space.name}</DialogTitle>
           <DialogDescription>Name, description, owner team, and visibility.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-[var(--space-3)]">
-          <label className="block text-[var(--text-sm)] text-[var(--color-text)]">
-            Name
-            <Input value={name} onChange={(e) => setName(e.target.value)} data-testid="admin-space-name" className="mt-1" />
-          </label>
-          <label className="block text-[var(--text-sm)] text-[var(--color-text)]">
-            Description
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} data-testid="admin-space-description" className="mt-1" />
-          </label>
-          <label className="block text-[var(--text-sm)] text-[var(--color-text)]">
-            Owner team
+        <div>
+          <Field>
+            <FieldLabel htmlFor="admin-space-name">Name</FieldLabel>
+            <Input id="admin-space-name" value={name} onChange={(e) => setName(e.target.value)} data-testid="admin-space-name" />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="admin-space-description" optional>Description</FieldLabel>
+            <Input id="admin-space-description" value={description} onChange={(e) => setDescription(e.target.value)} data-testid="admin-space-description" />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="admin-space-owner-team">Owner team</FieldLabel>
             <select
+              id="admin-space-owner-team"
               value={ownerTeamID}
               onChange={(e) => setOwnerTeamID(e.target.value)}
               data-testid="admin-space-owner-team"
               className={cn(
-                'mt-1 block h-9 w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                'bg-[var(--color-surface)] px-2 text-[var(--text-sm)] text-[var(--color-text)]',
+                'block h-9 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+                'bg-[var(--color-input)] px-2 text-[var(--text-sm)] text-[var(--color-text)]',
+                'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
               )}
             >
               {(teams.data ?? []).map((t) => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
-          </label>
-          <fieldset>
-            <legend className="text-[var(--text-sm)] text-[var(--color-text)]">Visibility</legend>
-            <div className="mt-1 flex gap-[var(--space-2)]">
-              {(['hidden', 'discoverable', 'org'] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  data-testid={`admin-space-visibility-${v}`}
-                  onClick={() => setVisibility(v)}
-                  className={cn(
-                    'rounded-[var(--radius-md)] border px-3 py-1.5 text-[var(--text-sm)]',
-                    visibility === v
-                      ? 'border-[var(--color-primary)] text-[var(--color-text)]'
-                      : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                  )}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
-          </fieldset>
+          </Field>
+          <Field>
+            {/* The one visibility edit surface: set_visibility is org-admin
+                only, so the card lives here and not in space settings. */}
+            <FieldLabel id="admin-space-visibility-label">Visibility</FieldLabel>
+            <RadioCardGroup
+              options={[
+                {
+                  value: 'hidden',
+                  title: 'Hidden',
+                  description: 'Invisible except to people with a grant. Does not appear in the directory.',
+                },
+                {
+                  value: 'discoverable',
+                  title: 'Discoverable',
+                  description: 'Listed in the directory for everyone in the org, but only people with a grant can open it. Others see a locked row.',
+                },
+                {
+                  value: 'org',
+                  title: 'Org',
+                  description: 'Everyone in the org can view this space as a viewer. Grants still control editing.',
+                },
+              ]}
+              value={visibility}
+              onChange={setVisibility}
+              aria-label="Visibility"
+              testId="admin-space-visibility"
+            />
+          </Field>
           {error && <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{error}</p>}
         </div>
         <DialogFooter>

@@ -4,9 +4,17 @@ import { ArrowLeft, Clock, AlertCircle, Trash2, Link2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import {
+  DetailLayout,
+  DetailMain,
+  DetailSide,
+  DetailField,
+  DetailDivider,
+} from '../../components/layout/DetailLayout';
 import { EntityShareControl } from '../../components/EntityShareControl';
+import { ModuleChip } from '../../shell/ModuleChip';
+import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import {
   useProjectItem,
@@ -21,18 +29,13 @@ import {
   useDeleteRelation,
   useItemSearch,
   useSpace,
+  friendlyErrorMessage,
 } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
-// Badge helpers
+// Status vocabulary
 // ---------------------------------------------------------------------------
 
-const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
-  critical: 'danger', urgent: 'danger', high: 'warning', medium: 'secondary', low: 'outline',
-};
-const PRIORITY_LABEL: Record<string, string> = {
-  critical: 'Critical', urgent: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
-};
 const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   open: 'default', todo: 'secondary', in_progress: 'warning', in_review: 'default', done: 'success', closed: 'secondary',
 };
@@ -41,6 +44,26 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const ALL_STATUSES = ['open', 'in_progress', 'in_review', 'done', 'closed'];
+
+const sideSelectClass = cn(
+  'h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+  'bg-[var(--color-input)] px-2 text-[var(--text-xs)] text-[var(--color-text)]',
+  'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
+);
+
+function InitialAvatar({ name, className }: { name?: string | null; className?: string }) {
+  return (
+    <span
+      className={cn(
+        'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full',
+        'bg-[var(--color-primary-muted)] text-[9px] font-medium text-[var(--color-primary)]',
+        className,
+      )}
+    >
+      {name?.[0]?.toUpperCase() ?? '?'}
+    </span>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -134,10 +157,12 @@ export function ItemDetailPage() {
           <ArrowLeft className="h-4 w-4" />
           Backlog
         </Link>
-        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4">
           <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
           <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-            {error.status === 404 ? 'Item not found.' : `Failed to load item: ${error.message}`}
+            {error.status === 404
+              ? 'Item not found.'
+              : friendlyErrorMessage(error, 'The item could not be loaded.')}
           </p>
         </div>
       </div>
@@ -155,11 +180,13 @@ export function ItemDetailPage() {
     );
   }
 
-  const priorityKey = String(item.priority ?? '').toLowerCase();
+  const itemKeyLabel = item.number
+    ? `${space?.key ?? 'PROJ'}-${item.number}`
+    : item.id.slice(0, 8);
   const reporter = (members ?? []).find((m) => m.user_id === item.reporter_id);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-text-muted)]">
         <Link to={backlogPath} className="flex items-center gap-1 hover:text-[var(--color-text)]">
@@ -168,20 +195,26 @@ export function ItemDetailPage() {
         </Link>
         <span>/</span>
         <span className="text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono)' }}>
-          {item.number ? `${space?.key ?? 'PROJ'}-${item.number}` : item.id.slice(0, 8)}
+          {itemKeyLabel}
         </span>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Main content */}
-        <div className="space-y-6 lg:col-span-2">
+      <DetailLayout>
+        <DetailMain>
+          <div
+            className="mb-2 text-[var(--text-xs)] text-[var(--color-text-muted)]"
+            style={{ fontFamily: 'var(--font-mono)' }}
+          >
+            {itemKeyLabel}
+          </div>
+
           {isEditing ? (
             <div className="space-y-3">
               <input
                 id="edit-item-title"
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
-                className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-2xl)] font-bold text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[19px] font-semibold text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
               />
               <textarea
                 id="edit-item-description"
@@ -189,7 +222,7 @@ export function ItemDetailPage() {
                 onChange={(e) => setEditDescription(e.target.value)}
                 rows={6}
                 placeholder="Description (markdown supported)"
-                className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
               />
               <div className="flex gap-2">
                 <Button onClick={handleSaveEdit} disabled={!editTitle.trim() || updateMutation.isPending}>
@@ -199,55 +232,72 @@ export function ItemDetailPage() {
               </div>
             </div>
           ) : (
-            <div className="flex items-start justify-between gap-3">
-              <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">{item.title}</h1>
-              <div className="flex items-center gap-2">
-                <EntityShareControl
-                  orgId={orgId}
-                  spaceId={spaceId}
-                  entityType="project_item"
-                  entityId={item.id}
-                  entityLabel={item.title}
-                />
-                <Button variant="secondary" onClick={startEditing}>Edit</Button>
-              </div>
-            </div>
-          )}
-
-          {!isEditing && (
-            <Card>
-              <CardHeader><CardTitle>Description</CardTitle></CardHeader>
-              <CardContent>
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  {item.description ? (
-                    <ReactMarkdown>{item.description}</ReactMarkdown>
-                  ) : (
-                    <span className="italic text-[var(--color-text-muted)] text-[var(--text-sm)]">
-                      No description provided.
-                    </span>
-                  )}
+            <>
+              <div className="flex items-start justify-between gap-3">
+                <h1 className="mb-3.5 text-[19px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]">
+                  {item.title}
+                </h1>
+                <div className="flex items-center gap-2">
+                  <EntityShareControl
+                    orgId={orgId}
+                    spaceId={spaceId}
+                    entityType="project_item"
+                    entityId={item.id}
+                    entityLabel={item.title}
+                  />
+                  <Button variant="secondary" onClick={startEditing}>Edit</Button>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+
+              {/* Meta row: status, priority, module — the one vocabulary. */}
+              <div className="mb-5 flex flex-wrap items-center gap-2">
+                <Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>
+                  {STATUS_LABEL[item.status] ?? item.status}
+                </Badge>
+                <PriorityPill priority={normalizePriority(item.priority)} />
+                <ModuleChip module="vector" />
+              </div>
+
+              {/* Prose colors pinned to the theme tokens — prose-invert keys
+                  off the OS media query, not the app's .dark class. */}
+              <div
+                className={cn(
+                  'prose prose-sm dark:prose-invert max-w-none leading-[1.7]',
+                  'prose-headings:text-[var(--color-text)] prose-headings:font-semibold',
+                  'prose-p:text-[var(--color-text)] prose-li:text-[var(--color-text)] prose-strong:text-[var(--color-text)]',
+                  'prose-a:text-[var(--color-primary)]',
+                  'prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5',
+                  'prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]',
+                )}
+              >
+                {item.description ? (
+                  <ReactMarkdown>{item.description}</ReactMarkdown>
+                ) : (
+                  <span className="italic text-[var(--color-text-muted)] text-[var(--text-sm)]">
+                    No description provided.
+                  </span>
+                )}
+              </div>
+            </>
           )}
 
           {/* Relations section */}
-          <div className="border-t border-[var(--color-border)] pt-6">
-            <h3 className="flex items-center gap-2 text-[var(--text-sm)] font-semibold mb-3 text-[var(--color-text)]">
+          <div className="mt-6 border-t border-[var(--color-border)] pt-5">
+            <h3 className="mb-3 flex items-center gap-2 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
               <Link2 className="h-4 w-4" />Relations
             </h3>
             {relations.length > 0 && (
-              <div className="space-y-1.5 mb-4">
+              <div className="mb-4 space-y-1.5">
                 {relations.map(rel => (
-                  <div key={rel.id} className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)]">
-                    <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[var(--text-xs)] text-[var(--color-text-muted)] capitalize shrink-0">
+                  <div key={rel.id} className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)]">
+                    <span className="shrink-0 rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[var(--text-xs)] capitalize text-[var(--color-text-muted)]">
                       {rel.kind.replace(/_/g, ' ')}
                     </span>
                     <span className="flex-1 truncate text-[var(--color-text)]">{rel.to_title}</span>
-                    <span className="text-[var(--text-xs)] text-[var(--color-text-muted)] shrink-0">{rel.to_status}</span>
+                    <span className="shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)]">{rel.to_status}</span>
                     <button
                       onClick={() => deleteRelationMutation.mutate(rel.id)}
-                      className="ml-1 rounded p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors"
+                      className="ml-1 rounded p-0.5 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-danger)]"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -259,7 +309,10 @@ export function ItemDetailPage() {
               <select
                 value={relKind}
                 onChange={e => setRelKind(e.target.value)}
-                className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-[var(--text-sm)] text-[var(--color-text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                className={cn(
+                  'rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-2 py-1.5 text-[var(--text-sm)] text-[var(--color-text)]',
+                  'focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]',
+                )}
               >
                 {['relates_to', 'blocks', 'is_blocked_by', 'duplicates'].map(k => (
                   <option key={k} value={k}>{k.replace(/_/g, ' ')}</option>
@@ -272,7 +325,7 @@ export function ItemDetailPage() {
                   onChange={e => handleRelSearchChange(e.target.value)}
                 />
                 {searchResults.length > 0 && relSearch && (
-                  <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+                  <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)]">
                     {searchResults.filter(r => r.id !== itemId).slice(0, 8).map(r => (
                       <button
                         key={r.id}
@@ -285,7 +338,7 @@ export function ItemDetailPage() {
                         }}
                       >
                         <span className="truncate">{r.title}</span>
-                        <span className="ml-auto text-[var(--text-xs)] text-[var(--color-text-muted)] shrink-0">{r.status}</span>
+                        <span className="ml-auto shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)]">{r.status}</span>
                       </button>
                     ))}
                   </div>
@@ -295,20 +348,18 @@ export function ItemDetailPage() {
           </div>
 
           {/* Comments section */}
-          <div className="border-t border-[var(--color-border)] pt-6">
-            <h3 className="text-[var(--text-sm)] font-semibold mb-4 text-[var(--color-text)]">Activity</h3>
+          <div className="mt-6 border-t border-[var(--color-border)] pt-5">
+            <h3 className="mb-4 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">Activity</h3>
 
-            <div className="space-y-4 mb-6">
+            <div className="mb-6 space-y-4">
               {(comments ?? []).length === 0 && (
                 <p className="text-[var(--text-sm)] italic text-[var(--color-text-muted)]">No comments yet.</p>
               )}
               {(comments ?? []).map((comment) => (
                 <div key={comment.id} className="flex gap-3">
-                  <div className="h-8 w-8 rounded-full bg-[var(--color-primary)] flex items-center justify-center text-[var(--text-sm)] text-white font-medium flex-shrink-0">
-                    {comment.author_name?.[0]?.toUpperCase() ?? '?'}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                  <InitialAvatar name={comment.author_name} className="h-8 w-8 text-[var(--text-sm)]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center gap-2">
                       <span className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
                         {comment.author_name ?? 'Unknown'}
                       </span>
@@ -316,7 +367,7 @@ export function ItemDetailPage() {
                         {new Date(comment.created_at).toLocaleDateString()}
                       </span>
                     </div>
-                    <p className="text-[var(--text-sm)] text-[var(--color-text-muted)] whitespace-pre-wrap">
+                    <p className="whitespace-pre-wrap text-[var(--text-sm)] text-[var(--color-text-muted)]">
                       {comment.content ?? comment.body}
                     </p>
                   </div>
@@ -325,123 +376,93 @@ export function ItemDetailPage() {
             </div>
 
             <div className="flex gap-3">
-              <div className="h-8 w-8 rounded-full bg-[var(--color-primary)] flex items-center justify-center text-[var(--text-sm)] text-white font-medium flex-shrink-0">
-                {me?.display_name?.[0]?.toUpperCase() ?? 'U'}
-              </div>
+              <InitialAvatar name={me?.display_name} className="h-8 w-8 text-[var(--text-sm)]" />
               <div className="flex-1">
                 <textarea
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
                   placeholder="Add a comment..."
                   className={cn(
-                    'w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] resize-none',
-                    'focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+                    'w-full resize-none rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
                     'placeholder:text-[var(--color-text-muted)]',
+                    'focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]',
                   )}
                   rows={3}
                 />
                 <button
                   onClick={handleAddComment}
                   disabled={!newComment.trim() || createCommentMutation.isPending}
-                  className="mt-2 px-4 py-1.5 bg-[var(--color-primary)] text-white rounded-[var(--radius-md)] text-[var(--text-sm)] font-medium disabled:opacity-50 hover:opacity-90 transition-colors"
+                  className="mt-2 rounded-[var(--radius-lg)] bg-[var(--color-primary)] px-4 py-1.5 text-[var(--text-sm)] font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
                 >
                   {createCommentMutation.isPending ? 'Posting...' : 'Comment'}
                 </button>
               </div>
             </div>
           </div>
-        </div>
+        </DetailMain>
 
-        {/* Sidebar */}
-        <div className="space-y-4">
-          <Card>
-            <CardContent className="space-y-4 p-4">
-              {/* Status */}
-              <div>
-                <label className="mb-1 block text-[var(--text-xs)] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Status
-                </label>
-                <div className="flex items-center gap-2">
-                  <Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>
-                    {STATUS_LABEL[item.status] ?? item.status}
-                  </Badge>
-                  <select
-                    aria-label="Status"
-                    value={item.status}
-                    onChange={(e) => handleStatusChange(e.target.value)}
-                    className={cn(
-                      'h-9 flex-1 rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                      'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
-                    )}
-                  >
-                    {ALL_STATUSES.map((s) => (
-                      <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+        <DetailSide>
+          <DetailField label="Status">
+            <div className="space-y-1.5">
+              <Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>
+                {STATUS_LABEL[item.status] ?? item.status}
+              </Badge>
+              <select
+                aria-label="Status"
+                value={item.status}
+                onChange={(e) => handleStatusChange(e.target.value)}
+                className={sideSelectClass}
+              >
+                {ALL_STATUSES.map((s) => (
+                  <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+                ))}
+              </select>
+            </div>
+          </DetailField>
 
-              {/* Priority */}
-              <div>
-                <label className="mb-1 block text-[var(--text-xs)] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Priority
-                </label>
-                <Badge variant={PRIORITY_VARIANT[priorityKey] ?? 'secondary'}>
-                  {PRIORITY_LABEL[priorityKey] ?? 'Medium'}
-                </Badge>
-              </div>
+          <DetailField label="Priority">
+            <PriorityPill priority={normalizePriority(item.priority)} />
+          </DetailField>
 
-              {/* Assignee */}
-              <div className="space-y-1">
-                <label className="text-[var(--text-xs)] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Assignee
-                </label>
-                <select
-                  aria-label="Assignee"
-                  value={item.assignee_id ?? ''}
-                  onChange={(e) => handleAssigneeChange(e.target.value)}
-                  className={cn(
-                    'w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                    'bg-[var(--color-surface)] px-2 py-1.5 text-[var(--text-sm)] text-[var(--color-text)]',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
-                  )}
-                >
-                  <option value="">Unassigned</option>
-                  {(members ?? []).map((m) => (
-                    <option key={m.user_id} value={m.user_id}>{m.display_name}</option>
-                  ))}
-                </select>
-              </div>
+          <DetailDivider />
 
-              {/* Reporter */}
-              <div className="space-y-1">
-                <label className="text-[var(--text-xs)] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Reporter
-                </label>
-                <div className="flex items-center gap-2">
-                  <div className="h-6 w-6 rounded-full bg-[var(--color-primary)] flex items-center justify-center text-[var(--text-xs)] text-white font-medium">
-                    {reporter?.display_name?.[0]?.toUpperCase() ?? '?'}
-                  </div>
-                  <span className="text-[var(--text-sm)] text-[var(--color-text)]">
-                    {reporter?.display_name ?? 'Unknown'}
-                  </span>
-                </div>
-              </div>
+          <DetailField label="Assignee">
+            <select
+              aria-label="Assignee"
+              value={item.assignee_id ?? ''}
+              onChange={(e) => handleAssigneeChange(e.target.value)}
+              className={sideSelectClass}
+            >
+              <option value="">Unassigned</option>
+              {(members ?? []).map((m) => (
+                <option key={m.user_id} value={m.user_id}>{m.display_name}</option>
+              ))}
+            </select>
+          </DetailField>
 
-              {/* Dates */}
-              <div className="border-t border-[var(--color-border)] pt-3 space-y-1">
-                <div className="flex items-center gap-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                  <Clock className="h-3 w-3" /> Created {item.created_at.slice(0, 10)}
-                </div>
-                <div className="flex items-center gap-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                  <Clock className="h-3 w-3" /> Updated {item.updated_at.slice(0, 10)}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+          <DetailField label="Reporter">
+            <div className="flex items-center gap-2" data-testid="item-reporter">
+              <InitialAvatar name={reporter?.display_name} />
+              <span className="text-[var(--text-sm)] text-[var(--color-text)]">
+                {reporter?.display_name ?? 'Unknown'}
+              </span>
+            </div>
+          </DetailField>
+
+          <DetailDivider />
+
+          <DetailField label="Created">
+            <div className="flex items-center gap-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">
+              <Clock className="h-3 w-3" /> {item.created_at.slice(0, 10)}
+            </div>
+          </DetailField>
+          <DetailField label="Updated">
+            <div className="flex items-center gap-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">
+              <Clock className="h-3 w-3" /> {item.updated_at.slice(0, 10)}
+            </div>
+          </DetailField>
+        </DetailSide>
+      </DetailLayout>
     </div>
   );
 }

@@ -4,7 +4,9 @@ import { Settings, ShieldOff, Trash2, UserPlus } from 'lucide-react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { SegmentedControl } from '../../components/ui/segmented';
 import { PersonTeamPicker, type PickedSubject } from '../../components/PersonTeamPicker';
+import { MODULES } from '../../shell/modules';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
 import {
@@ -14,10 +16,7 @@ import {
   useSpace,
   useSpaceGrants,
   useUpdateGrant,
-  useUpdateSpace,
   type GrantRole,
-  type Space,
-  type SpaceVisibility,
 } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
@@ -26,28 +25,10 @@ import {
 
 const GRANT_ROLES: GrantRole[] = ['viewer', 'contributor', 'agent', 'space_admin'];
 
-const VISIBILITY_OPTIONS: { value: SpaceVisibility; label: string; help: string }[] = [
-  {
-    value: 'hidden',
-    label: 'Hidden',
-    help: 'Invisible except to people with a grant. The space does not appear in the directory.',
-  },
-  {
-    value: 'discoverable',
-    label: 'Discoverable',
-    help: 'Listed in the directory for everyone in the org, but only people with a grant can open it. Others see a locked row.',
-  },
-  {
-    value: 'org',
-    label: 'Org',
-    help: 'Everyone in the org can view this space (implicit viewer). Grants still control editing.',
-  },
-];
-
 const selectClass = cn(
-  'h-8 rounded-[var(--radius-md)] border border-[var(--color-border)]',
-  'bg-[var(--color-surface)] px-2 text-[var(--text-sm)] text-[var(--color-text)]',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+  'h-8 rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+  'bg-[var(--color-input)] px-2 text-[var(--text-sm)] text-[var(--color-text)]',
+  'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
 );
 
 // ---------------------------------------------------------------------------
@@ -61,6 +42,7 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
   const revokeGrant = useRevokeGrant(orgId, spaceId);
 
   const [subject, setSubject] = useState<PickedSubject | null>(null);
+  const [subjectKind, setSubjectKind] = useState<'user' | 'team'>('user');
   const [newRole, setNewRole] = useState<GrantRole>('viewer');
 
   const forbidden = grantsQuery.error?.status === 403;
@@ -113,7 +95,7 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
               <div
                 key={grant.id}
                 data-testid="grant-row"
-                className="flex items-center gap-3 rounded-[var(--radius-md)] px-2 py-1.5 hover:bg-[var(--color-surface-hover)]"
+                className="flex items-center gap-3 border-b border-[var(--color-border)] px-1 py-2.5 last:border-b-0"
               >
                 <span className="min-w-0 flex-1 truncate text-[var(--text-sm)] text-[var(--color-text)]">
                   {grant.subject_name || grant.subject_id}
@@ -163,16 +145,33 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
               </p>
             )}
 
-            {/* Add grant */}
+            {/* Add grant — subject kind toggle, then search (interior prototype). */}
             <div className="border-t border-[var(--color-border)] pt-4">
               <p className="mb-2 flex items-center gap-2 text-[var(--text-sm)] font-medium text-[var(--color-text)]">
                 <UserPlus className="h-4 w-4 text-[var(--color-primary)]" />
                 Add a grant
               </p>
               <div className="flex flex-wrap items-center gap-2">
+                <SegmentedControl
+                  options={[
+                    { value: 'user', label: 'User' },
+                    { value: 'team', label: 'Team' },
+                  ]}
+                  value={subjectKind}
+                  onChange={(kind) => {
+                    setSubjectKind(kind);
+                    // A selection of the other kind must not survive the
+                    // toggle — the picker is controlled and would otherwise
+                    // submit a subject_type contradicting the visible toggle.
+                    setSubject(null);
+                  }}
+                  aria-label="Subject type"
+                  fullWidth={false}
+                  testId="grant-subject-kind"
+                />
                 <PersonTeamPicker
                   orgId={orgId}
-                  subjects="both"
+                  subjects={subjectKind}
                   value={subject}
                   onChange={setSubject}
                   testId="grant-subject-picker"
@@ -213,94 +212,13 @@ function GrantsSection({ orgId, spaceId }: { orgId: string; spaceId: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Visibility section
-// ---------------------------------------------------------------------------
-
-function VisibilitySection({
-  orgId,
-  spaceId,
-  space,
-}: {
-  orgId: string;
-  spaceId: string;
-  space: Space | undefined;
-}) {
-  const updateSpace = useUpdateSpace(orgId, spaceId);
-  const current = space?.visibility;
-
-  function handleSelect(visibility: SpaceVisibility) {
-    if (!space || visibility === current) return;
-    // The backend PUT is a full update for name/description/icon/is_private —
-    // echo the current values so a visibility change touches nothing else.
-    updateSpace.mutate({
-      name: space.name,
-      description: space.description ?? null,
-      icon: space.icon ?? null,
-      is_private: space.is_private ?? false,
-      visibility,
-    });
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Visibility</CardTitle>
-        <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
-          Controls how this space appears to org members without a grant.
-        </p>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2" role="radiogroup" aria-label="Space visibility">
-          {VISIBILITY_OPTIONS.map((opt) => {
-            const active = current === opt.value;
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                data-testid={`visibility-option-${opt.value}`}
-                disabled={!space || updateSpace.isPending}
-                onClick={() => handleSelect(opt.value)}
-                className={cn(
-                  'flex w-full flex-col items-start rounded-[var(--radius-lg)] border p-3 text-left transition-colors',
-                  active
-                    ? 'border-[var(--color-primary)] bg-[var(--color-primary-muted)]'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]',
-                  (!space || updateSpace.isPending) && 'cursor-not-allowed opacity-70',
-                )}
-              >
-                <span
-                  className={cn(
-                    'text-[var(--text-sm)] font-medium',
-                    active ? 'text-[var(--color-primary)]' : 'text-[var(--color-text)]',
-                  )}
-                >
-                  {opt.label}
-                </span>
-                <span className="mt-0.5 text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                  {opt.help}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        {updateSpace.error && (
-          <p className="mt-3 text-[var(--text-sm)] text-[var(--color-danger)]">
-            {friendlyErrorMessage(updateSpace.error, 'The visibility change could not be saved.')}
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // SpaceSettingsPage
 // ---------------------------------------------------------------------------
 
 /**
- * Per-space settings (P2): access grants and visibility. Space rename and
+ * Per-space settings (P2): access grants. Visibility moved to the admin
+ * panel's space management — it is an org-level concern (set_visibility,
+ * org admin only), so space settings no longer offers it. Space rename and
  * delete stay deferred per the v0.3 spec.
  */
 export function SpaceSettingsPage() {
@@ -308,25 +226,37 @@ export function SpaceSettingsPage() {
   const { user } = useAuth();
   const orgId = user?.orgId ?? '';
   const spaceQuery = useSpace(spaceId ?? '');
+  const moduleDef = spaceQuery.data ? MODULES[spaceQuery.data.type] : null;
 
   if (!spaceId) return null;
 
   return (
-    <div className="space-y-6" data-testid="space-settings-page">
+    <div className="space-y-4" data-testid="space-settings-page">
       <div className="flex items-center gap-3">
-        <Settings className="h-6 w-6 text-[var(--color-primary)]" />
+        <div
+          className="flex h-9 w-9 items-center justify-center rounded-[9px]"
+          style={
+            moduleDef
+              ? {
+                  backgroundColor: `color-mix(in srgb, var(${moduleDef.hueVar}) 16%, transparent)`,
+                  color: `var(${moduleDef.hueVar})`,
+                }
+              : undefined
+          }
+        >
+          <Settings className="h-[19px] w-[19px]" />
+        </div>
         <div>
-          <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
+          <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
             Space settings
           </h1>
           <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
-            {spaceQuery.data ? `Access and visibility for ${spaceQuery.data.name}.` : 'Access and visibility.'}
+            {spaceQuery.data ? `Access for ${spaceQuery.data.name}.` : 'Access.'}
           </p>
         </div>
       </div>
 
       <GrantsSection orgId={orgId} spaceId={spaceId} />
-      <VisibilitySection orgId={orgId} spaceId={spaceId} space={spaceQuery.data} />
     </div>
   );
 }

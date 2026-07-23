@@ -11,6 +11,7 @@ import {
   Input,
   Badge,
 } from './ui';
+import { SegmentedControl } from './ui/segmented';
 import { PersonTeamPicker, type PickedSubject } from './PersonTeamPicker';
 import {
   useEntityShares,
@@ -92,20 +93,16 @@ export function ShareDialog({ orgId, entityType, entityId, entityLabel, onClose 
           {/* Audience */}
           <div className="space-y-1.5">
             <label className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Audience</label>
-            <div className="flex gap-2" role="radiogroup" aria-label="Share audience">
-              <AudienceOption
-                label="Everyone in the org"
-                active={audience === 'org'}
-                onClick={() => setAudience('org')}
-                testId="share-audience-org"
-              />
-              <AudienceOption
-                label="A specific team"
-                active={audience === 'team'}
-                onClick={() => setAudience('team')}
-                testId="share-audience-team"
-              />
-            </div>
+            <SegmentedControl
+              options={[
+                { value: 'org', label: 'Everyone in the org' },
+                { value: 'team', label: 'A specific team' },
+              ]}
+              value={audience}
+              onChange={setAudience}
+              aria-label="Share audience"
+              testId="share-audience"
+            />
             {audience === 'team' && (
               <div className="pt-1">
                 <PersonTeamPicker
@@ -199,36 +196,6 @@ export function ShareDialog({ orgId, entityType, entityId, entityLabel, onClose 
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function AudienceOption({
-  label,
-  active,
-  onClick,
-  testId,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  testId: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      onClick={onClick}
-      data-testid={testId}
-      className={
-        'flex-1 rounded-[var(--radius-md)] border px-3 py-2 text-[var(--text-sm)] transition-colors ' +
-        (active
-          ? 'border-[var(--color-primary)] bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
-          : 'border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]')
-      }
-    >
-      {label}
-    </button>
   );
 }
 

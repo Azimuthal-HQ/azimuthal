@@ -15,9 +15,9 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { AlertCircle } from 'lucide-react';
-import { Badge, type BadgeProps } from '../../components/ui/badge';
-import { Card, CardContent } from '../../components/ui/card';
+import { AlertCircle, Bookmark, Bug, Flag, SquareCheck } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -25,11 +25,23 @@ import {
   useSprintItems,
   useWorkflowStates,
   useSpace,
+  useMe,
+  useMembers,
   queryKeys,
   transitionProjectItemStatus,
+  friendlyErrorMessage,
   type ProjectItem,
   type WorkflowState,
 } from '../../lib/api';
+
+// Kind icons per the dashboards prototype's board cards (bug / story / task /
+// epic). Unknown kinds fall back to the task check.
+const KIND_ICON: Record<string, LucideIcon> = {
+  bug: Bug,
+  story: Bookmark,
+  task: SquareCheck,
+  epic: Flag,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -45,12 +57,14 @@ interface ColumnDef {
 // Constants
 // ---------------------------------------------------------------------------
 
+// Fallback column hues come from the token set; workflow-derived columns
+// keep their API-provided colors.
 const FALLBACK_COLUMNS: ColumnDef[] = [
-  { id: 'open', label: 'Open', color: '#3b82f6' },
-  { id: 'todo', label: 'To Do', color: '#3b82f6' },
-  { id: 'in_progress', label: 'In Progress', color: '#f59e0b' },
-  { id: 'in_review', label: 'In Review', color: '#8b5cf6' },
-  { id: 'done', label: 'Done', color: '#10b981' },
+  { id: 'open', label: 'Open', color: 'var(--color-info)' },
+  { id: 'todo', label: 'To Do', color: 'var(--color-text-muted)' },
+  { id: 'in_progress', label: 'In Progress', color: 'var(--color-warning)' },
+  { id: 'in_review', label: 'In Review', color: 'var(--color-primary)' },
+  { id: 'done', label: 'Done', color: 'var(--color-success)' },
 ];
 
 function workflowStatesToColumns(states: WorkflowState[]): ColumnDef[] {
@@ -63,18 +77,11 @@ function workflowStatesToColumns(states: WorkflowState[]): ColumnDef[] {
     }));
 }
 
-const PRIORITY_VARIANT: Record<string, BadgeProps['variant']> = {
-  critical: 'danger', urgent: 'danger', high: 'warning', medium: 'secondary', low: 'outline',
-};
-const PRIORITY_LABEL: Record<string, string> = {
-  critical: 'Critical', urgent: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
-};
-
 // ---------------------------------------------------------------------------
 // Sortable item card
 // ---------------------------------------------------------------------------
 
-function SortableItemCard({ item, onItemClick, spaceKey }: { item: ProjectItem; onItemClick?: (id: string) => void; spaceKey?: string }) {
+function SortableItemCard({ item, onItemClick, spaceKey, memberName }: { item: ProjectItem; onItemClick?: (id: string) => void; spaceKey?: string; memberName?: (id: string | null | undefined) => string | undefined }) {
   const {
     attributes,
     listeners,
@@ -94,38 +101,53 @@ function SortableItemCard({ item, onItemClick, spaceKey }: { item: ProjectItem; 
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <ItemCard item={item} onItemClick={onItemClick} spaceKey={spaceKey} />
+      <ItemCard item={item} onItemClick={onItemClick} spaceKey={spaceKey} memberName={memberName} />
     </div>
   );
 }
 
-function ItemCard({ item, overlay, onItemClick, spaceKey }: { item: ProjectItem; overlay?: boolean; onItemClick?: (id: string) => void; spaceKey?: string }) {
-  const priorityKey = String(item.priority ?? '').toLowerCase();
+/**
+ * Board card per the dashboards prototype: kind icon + mono key on top, the
+ * title, then priority pill left and assignee avatar right. Rendering only —
+ * the card shows what the API already returns.
+ */
+function ItemCard({ item, overlay, onItemClick, spaceKey, memberName }: { item: ProjectItem; overlay?: boolean; onItemClick?: (id: string) => void; spaceKey?: string; memberName?: (id: string | null | undefined) => string | undefined }) {
+  const KindIcon = KIND_ICON[String(item.kind ?? '').toLowerCase()] ?? SquareCheck;
+  const assignee = memberName?.(item.assignee_id);
   return (
-    <Card
+    <div
       className={cn(
-        'cursor-grab transition-shadow hover:shadow-[var(--shadow-md)]',
-        overlay && 'shadow-[var(--shadow-lg)] rotate-2',
+        'cursor-grab rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 transition-colors',
+        'hover:border-[var(--color-text-muted)]',
+        overlay && 'rotate-2 shadow-[var(--shadow-lg)]',
       )}
       onClick={() => onItemClick?.(item.id)}
     >
-      <CardContent className="space-y-2 p-3">
+      <span
+        className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"
+        style={{ fontFamily: 'var(--font-mono)' }}
+      >
+        <KindIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        {item.number ? `${spaceKey ?? 'PROJ'}-${item.number}` : (item.id ?? '').slice(0, 8)}
+      </span>
+      <p className="mb-2.5 mt-1.5 text-[13px] leading-[1.4] text-[var(--color-text)]">
+        {item.title}
+      </p>
+      <div className="flex items-center">
+        <PriorityPill priority={normalizePriority(item.priority)} />
         <span
-          className="text-[var(--text-xs)] font-medium text-[var(--color-text-muted)]"
-          style={{ fontFamily: 'var(--font-mono)' }}
+          className={cn(
+            'ml-auto flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[10px] font-medium',
+            assignee
+              ? 'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
+              : 'bg-[var(--color-surface-hover)] text-[var(--color-text-muted)]',
+          )}
+          title={assignee ?? 'Unassigned'}
         >
-          {item.number ? `${spaceKey ?? 'PROJ'}-${item.number}` : (item.id ?? '').slice(0, 8)}
+          {assignee?.[0]?.toUpperCase() ?? '–'}
         </span>
-        <p className="text-[var(--text-sm)] leading-snug text-[var(--color-text)]">
-          {item.title}
-        </p>
-        <div className="flex items-center justify-between">
-          <Badge variant={PRIORITY_VARIANT[priorityKey] ?? 'secondary'}>
-            {PRIORITY_LABEL[priorityKey] ?? 'Medium'}
-          </Badge>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -133,17 +155,20 @@ function ItemCard({ item, overlay, onItemClick, spaceKey }: { item: ProjectItem;
 // Droppable column
 // ---------------------------------------------------------------------------
 
-function DroppableColumn({ column, items, onItemClick, spaceKey }: { column: ColumnDef; items: ProjectItem[]; onItemClick?: (id: string) => void; spaceKey?: string }) {
+/**
+ * Contained column per the dashboards prototype: a bordered container on the
+ * page ground with a quiet header (label + faint count, no bubble), cards
+ * inside, and a contained empty state — never floating labels in open space.
+ */
+function DroppableColumn({ column, items, onItemClick, spaceKey, memberName }: { column: ColumnDef; items: ProjectItem[]; onItemClick?: (id: string) => void; spaceKey?: string; memberName?: (id: string | null | undefined) => string | undefined }) {
   return (
-    <div className="flex w-72 shrink-0 flex-col rounded-[var(--radius-lg)] bg-[var(--color-bg)] p-3">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: column.color }} />
-          <h3 className="text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
-            {column.label}
-          </h3>
-        </div>
-        <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[var(--color-surface-hover)] px-1.5 text-[var(--text-xs)] font-medium text-[var(--color-text-muted)]">
+    <div className="flex w-72 shrink-0 flex-col rounded-[11px] border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
+      <div className="flex items-center gap-2 px-1.5 pb-2 pt-1">
+        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: column.color }} />
+        <h3 className="text-[var(--text-sm)] font-medium text-[var(--color-text-muted)]">
+          {column.label}
+        </h3>
+        <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]" style={{ fontFamily: 'var(--font-mono)' }}>
           {items.length}
         </span>
       </div>
@@ -151,9 +176,14 @@ function DroppableColumn({ column, items, onItemClick, spaceKey }: { column: Col
         items={items.map((i) => i.id)}
         strategy={verticalListSortingStrategy}
       >
-        <div className="flex flex-1 flex-col gap-2">
+        <div className="flex min-h-16 flex-1 flex-col gap-2">
+          {items.length === 0 && (
+            <p className="rounded-[10px] border border-dashed border-[var(--color-border)] px-3 py-4 text-center text-[var(--text-xs)] text-[var(--color-text-muted)]">
+              No items
+            </p>
+          )}
           {items.map((item) => (
-            <SortableItemCard key={item.id} item={item} onItemClick={onItemClick} spaceKey={spaceKey} />
+            <SortableItemCard key={item.id} item={item} onItemClick={onItemClick} spaceKey={spaceKey} memberName={memberName} />
           ))}
         </div>
       </SortableContext>
@@ -171,6 +201,16 @@ export function SprintBoardPage() {
   const { spaceId = '' } = useParams<{ spaceId: string }>();
 
   const { data: space } = useSpace(spaceId);
+
+  // Assignee avatars on the cards (dashboards prototype): resolve ids to
+  // display names through the existing members list — rendering only.
+  const { data: me } = useMe();
+  const { data: members } = useMembers(me?.org_id ?? '', spaceId);
+  const memberName = useCallback(
+    (id: string | null | undefined) =>
+      id ? (members ?? []).find((m) => m.user_id === id)?.display_name : undefined,
+    [members],
+  );
 
   // P2.5: load active sprint first, then its items
   const { data: activeSprint, isLoading: sprintLoading } = useActiveSprint(spaceId);
@@ -289,9 +329,9 @@ export function SprintBoardPage() {
   // P2.5: empty state when no active sprint
   if (!activeSprint) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
-          Sprint Board
+      <div className="space-y-5">
+        <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
+          Board
         </h1>
         <div className="flex min-h-[300px] items-center justify-center rounded-[var(--radius-lg)] border-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface)]">
           <div className="text-center space-y-2">
@@ -309,20 +349,20 @@ export function SprintBoardPage() {
 
   if (error) {
     return (
-      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4">
+      <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4">
         <AlertCircle className="h-5 w-5 text-[var(--color-danger)]" />
         <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
-          Failed to load items: {error.message}
+          {friendlyErrorMessage(error, 'Sprint items could not be loaded.')}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex items-baseline gap-3">
-        <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">
-          Sprint Board
+        <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
+          Board
         </h1>
         <span className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
           {activeSprint.name}
@@ -343,6 +383,7 @@ export function SprintBoardPage() {
               items={columns[col.id] ?? []}
               onItemClick={handleItemClick}
               spaceKey={space?.key}
+              memberName={memberName}
             />
           ))}
         </div>
@@ -350,7 +391,7 @@ export function SprintBoardPage() {
         <DragOverlay>
           {activeItem ? (
             <div className="w-72">
-              <ItemCard item={activeItem} overlay spaceKey={space?.key} />
+              <ItemCard item={activeItem} overlay spaceKey={space?.key} memberName={memberName} />
             </div>
           ) : null}
         </DragOverlay>

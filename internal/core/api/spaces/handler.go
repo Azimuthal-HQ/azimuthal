@@ -439,7 +439,7 @@ func directoryRowFor(s generated.Space, res *access.Resolution) (directoryRow, b
 // Create creates a new space.
 //
 // @Summary      Create space
-// @Description  Creates a space in the organization. Type must be 'beacon', 'codex', or 'vector'. Slugs are unique per module: the same slug may exist in different modules of one organization. The owning team defaults to the org default team. Authority: org admin, or a lead of the owning team.
+// @Description  Creates a space in the organization. Type must be 'beacon', 'codex', or 'vector'. Slugs are unique per module: the same slug may exist in different modules of one organization. The owning team defaults to the org default team. Authority: org admin, or a lead of the owning team. The initial visibility is accepted from either authority — unlike later changes, which require set_visibility (org admin only).
 // @Tags         spaces
 // @Accept       json
 // @Produce      json
@@ -676,7 +676,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // Update modifies an existing space.
 //
 // @Summary      Update space
-// @Description  Updates a space's name, description, icon, privacy, visibility, and owning team. Requires manage_space. Changing owner_team_id or visibility is audited.
+// @Description  Updates a space's name, description, icon, privacy, visibility, and owning team. Requires manage_space; changing visibility additionally requires set_visibility, held only by org admins. Changing owner_team_id or visibility is audited.
 // @Tags         spaces
 // @Accept       json
 // @Produce      json
@@ -687,7 +687,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // @Success      200      {object}  map[string]interface{}           "Updated space"
 // @Failure      400      {object}  api.SwaggerErrorResponse         "Validation error"
 // @Failure      401      {object}  api.SwaggerErrorResponse         "Not authenticated"
-// @Failure      403      {object}  api.SwaggerErrorResponse         "manage_space required"
+// @Failure      403      {object}  api.SwaggerErrorResponse         "manage_space required; or set_visibility (org admin) for a visibility change"
 // @Failure      404      {object}  api.SwaggerErrorResponse         "Not found"
 // @Failure      500      {object}  api.SwaggerErrorResponse         "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID} [put]
@@ -712,6 +712,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	current, err := h.queries.GetSpaceByID(r.Context(), id)
 	if err != nil {
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "space not found")
+		return
+	}
+
+	// Checked before any field is written so a denied request applies nothing.
+	if !requireVisibilityAuthority(w, r, current, req.Visibility) {
 		return
 	}
 	key := req.Key
@@ -765,6 +770,21 @@ func decodeSpaceUpdate(w http.ResponseWriter, r *http.Request) (updateSpaceReque
 		return req, false
 	}
 	return req, true
+}
+
+// requireVisibilityAuthority enforces set_visibility when the update asks for
+// an actual visibility change, writing the 403 itself. Visibility is an
+// org-level concern: the capability is held only by the org-admin bypass, not
+// by space_admin. An empty or unchanged value is not a change and passes.
+func requireVisibilityAuthority(w http.ResponseWriter, r *http.Request, current generated.Space, requested string) bool {
+	if requested == "" || requested == current.Visibility {
+		return true
+	}
+	if !access.Can(r.Context(), access.CapSetVisibility, current.ID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "set_visibility required")
+		return false
+	}
+	return true
 }
 
 // applyVisibilityChange persists a requested visibility change and writes

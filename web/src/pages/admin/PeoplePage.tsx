@@ -98,8 +98,9 @@ export function PeoplePage() {
           onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
           data-testid="people-status-filter"
           className={cn(
-            'h-9 rounded-[var(--radius-md)] border border-[var(--color-border)]',
-            'bg-[var(--color-surface)] px-2 text-[var(--text-sm)] text-[var(--color-text)]',
+            'h-9 rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+            'bg-[var(--color-input)] px-2 text-[var(--text-sm)] text-[var(--color-text)]',
+            'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
           )}
         >
           <option value="all">All statuses</option>
@@ -171,7 +172,7 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
   return (
     <div
       data-testid={`person-row-${person.email}`}
-      className="border-b border-[var(--color-border)] px-[var(--space-4)] py-[var(--space-2)] last:border-b-0 hover:bg-[var(--color-surface-hover)]"
+      className="border-b border-[var(--color-border)] px-[var(--space-4)] py-[var(--space-3)] last:border-b-0 hover:bg-[var(--color-surface-hover)]"
     >
       <div className="grid grid-cols-[minmax(220px,2fr)_1fr_1fr_1fr_1fr_auto] items-center gap-x-[var(--space-3)]">
         <span className="flex min-w-0 items-center gap-[var(--space-2)]">
@@ -202,7 +203,7 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
                   { onError: (err) => setError(friendlyErrorMessage(err, 'The role could not be changed.')) },
                 );
               }}
-              className="h-7 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[var(--text-sm)] text-[var(--color-text)]"
+              className="h-7 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-1 text-[var(--text-sm)] text-[var(--color-text)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]"
             >
               <option value="member">member</option>
               <option value="admin">admin</option>
@@ -223,7 +224,7 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
                 { onError: (err) => setError(friendlyErrorMessage(err, 'The primary team could not be changed.')) },
               );
             }}
-            className="h-7 max-w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[var(--text-sm)] text-[var(--color-text)]"
+            className="h-7 max-w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-1 text-[var(--text-sm)] text-[var(--color-text)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]"
           >
             {!person.primary_team_id && <option value="">—</option>}
             {(teams.data ?? []).map((t) => (
@@ -472,9 +473,9 @@ function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; 
               rows={4}
               data-testid="invite-emails"
               className={cn(
-                'w-full rounded-[var(--radius-md)] border border-[var(--color-border)]',
-                'bg-[var(--color-surface)] p-2 text-[var(--text-sm)] text-[var(--color-text)]',
-                'placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]',
+                'w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+                'bg-[var(--color-input)] p-2 text-[var(--text-sm)] text-[var(--color-text)]',
+                'placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]',
               )}
             />
             <div className="flex gap-[var(--space-3)]">
@@ -484,7 +485,7 @@ function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; 
                   value={orgRole}
                   onChange={(e) => setOrgRole(e.target.value)}
                   data-testid="invite-org-role"
-                  className="h-8 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[var(--text-sm)]"
+                  className="h-8 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-1 text-[var(--text-sm)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]"
                 >
                   <option value="member">member</option>
                   <option value="admin">admin</option>
@@ -496,7 +497,7 @@ function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; 
                   value={teamId}
                   onChange={(e) => setTeamId(e.target.value)}
                   data-testid="invite-team"
-                  className="h-8 max-w-48 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[var(--text-sm)]"
+                  className="h-8 max-w-48 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-1 text-[var(--text-sm)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]"
                 >
                   <option value="">Default team</option>
                   {(teams.data ?? []).filter((t) => !t.is_default).map((t) => (

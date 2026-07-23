@@ -9,12 +9,19 @@ import { HomeOverviewPage } from '../HomeOverviewPage';
 // failures through the real friendlyErrorMessage (P2.5 W5), so mocking it
 // would prove nothing.
 const useCreateSpaceMock = vi.fn();
+const useSpacesMock = vi.fn(
+  (): { data: unknown[]; isLoading: boolean; error: unknown } => ({
+    data: [],
+    isLoading: false,
+    error: null,
+  }),
+);
 
 vi.mock('../../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../lib/api')>();
   return {
     ...actual,
-    useSpaces: vi.fn(() => ({ data: [], isLoading: false, error: null })),
+    useSpaces: () => useSpacesMock(),
     useCreateSpace: (orgId: string) => useCreateSpaceMock(orgId),
   };
 });
@@ -47,9 +54,70 @@ function renderWithDialogOpen() {
   );
 }
 
+function space(id: string, type: 'beacon' | 'codex' | 'vector') {
+  return {
+    id,
+    name: `Space ${id}`,
+    slug: `space-${id}`,
+    type,
+    description: '',
+    readable: true,
+  };
+}
+
+function renderHome() {
+  return render(
+    <MemoryRouter initialEntries={['/']}>
+      <HomeOverviewPage />
+    </MemoryRouter>,
+  );
+}
+
+describe('HomeOverviewPage stat cards', () => {
+  beforeEach(() => {
+    useCreateSpaceMock.mockReset();
+    useCreateSpaceMock.mockReturnValue(mutationState(null));
+    useSpacesMock.mockReset();
+  });
+
+  // Regression: the stats row rendered Spaces / Beacon / Vector and simply
+  // omitted Codex — a whole module absent from the overview.
+  it('shows a Codex count card alongside the other modules — regression: missing Codex count', () => {
+    useSpacesMock.mockReturnValue({
+      data: [space('a', 'beacon'), space('b', 'codex'), space('c', 'codex'), space('d', 'vector')],
+      isLoading: false,
+      error: null,
+    });
+    renderHome();
+
+    const codexCard = screen.getByTestId('stat-codex');
+    expect(codexCard).toHaveTextContent('2');
+    expect(codexCard).toHaveTextContent(/codex spaces/i);
+  });
+
+  // Regression: count captions were hard-coded plural — "1 Vector spaces".
+  it('pluralises count captions — regression: "1 Vector spaces"', () => {
+    useSpacesMock.mockReturnValue({
+      data: [space('a', 'beacon'), space('b', 'beacon'), space('c', 'codex'), space('d', 'vector')],
+      isLoading: false,
+      error: null,
+    });
+    renderHome();
+
+    expect(screen.getByTestId('stat-vector')).toHaveTextContent('Vector space');
+    expect(screen.getByTestId('stat-vector')).not.toHaveTextContent('Vector spaces');
+    expect(screen.getByTestId('stat-codex')).toHaveTextContent('Codex space');
+    expect(screen.getByTestId('stat-codex')).not.toHaveTextContent('Codex spaces');
+    expect(screen.getByTestId('stat-beacon')).toHaveTextContent('Beacon spaces');
+    expect(screen.getByTestId('stat-all')).toHaveTextContent('Spaces');
+  });
+});
+
 describe('HomeOverviewPage create-space error surfacing', () => {
   beforeEach(() => {
     useCreateSpaceMock.mockReset();
+    useSpacesMock.mockReset();
+    useSpacesMock.mockReturnValue({ data: [], isLoading: false, error: null });
   });
 
   it('passes a CONFLICT message through verbatim — a slug taken in this module', () => {

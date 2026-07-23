@@ -195,9 +195,41 @@ func TestMatrix07_OrgAdminZeroGrantRows(t *testing.T) {
 	for _, c := range []access.Capability{
 		access.CapReadItems, access.CapCreateItems, access.CapEditAnyItem,
 		access.CapManageSpace, access.CapManageGrants, access.CapManageWorkflow,
+		access.CapSetVisibility,
 	} {
 		require.True(t, res.Can(c, f.space.ID), "org admin must hold %s", c)
 	}
+}
+
+// set_visibility is org-admin-only: no space role holds it, space_admin
+// included. Visibility changes what the whole organisation sees, so the
+// capability lives outside minRoleFor and only the bypass grants it.
+func TestMatrix_SetVisibilityOrgAdminOnly(t *testing.T) {
+	f := newMatrixFixture(t)
+	_, err := f.grants.Create(context.Background(), f.org.ID, f.space.ID,
+		access.SubjectUser, f.dev.ID, access.RoleSpaceAdmin, f.admin.ID)
+	require.NoError(t, err)
+
+	res := f.resolve(t, f.dev)
+	require.Equal(t, access.RoleSpaceAdmin, res.RoleOn(f.space.ID))
+	require.True(t, res.Can(access.CapManageSpace, f.space.ID),
+		"premise: the space_admin grant is live — the denial below is set_visibility, not a broken grant")
+	require.False(t, res.Can(access.CapSetVisibility, f.space.ID),
+		"space_admin must not hold set_visibility")
+	require.False(t, access.RoleSpaceAdmin.Grants(access.CapSetVisibility),
+		"no space role holds set_visibility — it must stay out of minRoleFor")
+
+	admin := f.resolve(t, f.admin)
+	require.True(t, admin.Can(access.CapSetVisibility, f.space.ID),
+		"org admin holds set_visibility via the bypass")
+
+	// The bypass reaches only spaces inside the org: a foreign space grants
+	// nothing, set_visibility included.
+	otherOrg := testutil.CreateTestOrg(t, f.db.Pool)
+	foreignAdmin := testutil.CreateTestUserWithRole(t, f.db.Pool, otherOrg.ID, "owner")
+	foreignSpace := testutil.CreateTestSpace(t, f.db.Pool, otherOrg.ID, foreignAdmin.ID, "vector")
+	require.False(t, admin.Can(access.CapSetVisibility, foreignSpace.ID),
+		"the bypass must not cross org boundaries")
 }
 
 // Case 8 — visibility = org: every org member reads with no grant rows.

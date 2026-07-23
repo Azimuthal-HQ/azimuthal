@@ -40,7 +40,7 @@ export function AdminLayout() {
           <Shield className="h-5 w-5" />
         </span>
         <div>
-          <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">Administration</h1>
+          <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">Administration</h1>
           <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
             People, access, and governance for {org.data.name}
           </p>

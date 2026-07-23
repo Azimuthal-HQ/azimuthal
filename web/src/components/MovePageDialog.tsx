@@ -39,10 +39,12 @@ export function MovePageDialog({ orgId, spaceId, pageId, pageTitle, onClose }: M
   const [target, setTarget] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Only spaces the caller can write into are valid destinations; the current
-  // space is excluded (moving to it is a no-op here).
+  // Only Codex spaces can hold pages — the backend rejects any other module,
+  // so offering Beacon/Vector here was a dead end dressed as a choice. The
+  // caller must also be able to read the space, and the current space is
+  // excluded (moving to it is a no-op here).
   const destinations = (spacesQuery.data ?? []).filter(
-    (s) => s.readable !== false && s.id !== spaceId,
+    (s) => s.type === 'codex' && s.readable !== false && s.id !== spaceId,
   );
 
   const activeShares = impact.data?.active_share_count ?? 0;
@@ -54,7 +56,13 @@ export function MovePageDialog({ orgId, spaceId, pageId, pageTitle, onClose }: M
       { parent_id: null, position: 0, target_space_id: target },
       {
         onSuccess: onClose,
-        onError: (err) => setError(friendlyErrorMessage(err, 'The page could not be moved.')),
+        onError: (err) =>
+          setError(
+            friendlyErrorMessage(
+              err,
+              'The page could not be moved — check that the destination is a wiki you can edit, then try again.',
+            ),
+          ),
       },
     );
   };
@@ -79,7 +87,7 @@ export function MovePageDialog({ orgId, spaceId, pageId, pageTitle, onClose }: M
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               data-testid="move-target-select"
-              className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]"
+              className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)] focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]"
             >
               <option value="">Choose a space…</option>
               {destinations.map((s) => (

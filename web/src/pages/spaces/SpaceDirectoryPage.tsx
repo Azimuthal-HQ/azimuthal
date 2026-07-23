@@ -5,7 +5,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
-import { useSpaces, useTeams, type Space, type Team } from '../../lib/api';
+import { friendlyErrorMessage, useSpaces, useTeams, type Space, type Team } from '../../lib/api';
 import { ModuleChip } from '../../shell/ModuleChip';
 import { MODULES, MODULE_KEYS, spacePath, type ModuleKey } from '../../shell/modules';
 import { useTeamFocus } from '../../shell/hooks/useTeamFocus';
@@ -57,7 +57,7 @@ function ReadableRow({ space }: { space: Space }) {
       to={spacePath(space.type, space.id, def.defaultSubpath)}
       data-testid="directory-space-row"
       className={cn(
-        'flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5',
+        'flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-3',
         'text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-hover)]',
       )}
     >
@@ -88,7 +88,7 @@ function LockedRow({ space }: { space: Space }) {
     <div
       data-testid="locked-space-row"
       aria-disabled="true"
-      className="flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5 opacity-70"
+      className="flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-3 opacity-70"
     >
       <Lock className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
       <span className="min-w-0 flex-1 truncate text-[var(--text-sm)] text-[var(--color-text-muted)]">
@@ -132,7 +132,7 @@ export function SpaceDirectoryPage() {
         <div className="flex items-center gap-3">
           <Grid2x2 className="h-6 w-6 text-[var(--color-primary)]" />
           <div>
-            <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">Spaces</h1>
+            <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">Spaces</h1>
             <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
               Every space in the org, grouped by owning team.
             </p>
@@ -144,9 +144,9 @@ export function SpaceDirectoryPage() {
           onChange={(e) => setModuleFilter(e.target.value as 'all' | ModuleKey)}
           aria-label="Filter by module"
           className={cn(
-            'h-9 rounded-[var(--radius-md)] border border-[var(--color-border)]',
-            'bg-[var(--color-surface)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]',
+            'h-9 rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+            'bg-[var(--color-input)] px-3 text-[var(--text-sm)] text-[var(--color-text)]',
+            'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
           )}
         >
           <option value="all">All modules</option>
@@ -165,8 +165,8 @@ export function SpaceDirectoryPage() {
       )}
 
       {spacesQuery.error && (
-        <div className="rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[var(--color-danger)]/10 p-4 text-[var(--text-sm)] text-[var(--color-danger)]">
-          Failed to load spaces: {spacesQuery.error.message}
+        <div className="rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-4 text-[var(--text-sm)] text-[var(--color-danger)]">
+          {friendlyErrorMessage(spacesQuery.error, 'The space directory could not be loaded.')}
         </div>
       )}
 

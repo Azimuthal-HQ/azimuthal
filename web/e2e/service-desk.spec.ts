@@ -384,16 +384,14 @@ test.describe('Service Desk', () => {
     // Wait for members to load and reporter to resolve
     await page.waitForTimeout(2000)
 
-    // Reporter label must be visible (rendered as uppercase "REPORTER" via CSS)
-    const reporterLabel = page.locator('label').filter({ hasText: /reporter/i }).first()
-    await expect(reporterLabel).toBeVisible({ timeout: 5000 })
-
-    // The reporter name span is the sibling element after the avatar circle.
-    // It must NOT show "Unknown" — should show the test user's display name.
-    const reporterName = reporterLabel.locator('..').locator('span').first()
-    await expect(reporterName).toBeVisible({ timeout: 5000 })
-    const nameText = await reporterName.textContent()
-    expect(nameText?.trim()).not.toBe('Unknown')
+    // The interior restyle replaced the label/parent-traversal chain (which
+    // needed .first(), against P1.5's exactness rules) with a stable testid
+    // on the reporter identity block in the detail properties panel. The
+    // assertion is unchanged: a real display name, never "Unknown".
+    const reporter = page.getByTestId('ticket-reporter')
+    await expect(reporter).toBeVisible({ timeout: 5000 })
+    const nameText = await reporter.textContent()
+    expect(nameText).not.toContain('Unknown')
     expect(nameText?.trim().length).toBeGreaterThan(0)
   })
 

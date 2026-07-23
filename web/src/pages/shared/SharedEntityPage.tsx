@@ -11,6 +11,7 @@ import {
 } from '../../lib/api';
 import { ShareBadge } from '../../components/ShareBadge';
 import { Badge } from '../../components/ui';
+import { PriorityPill, normalizePriority } from '../../components/priority';
 
 const VALID_TYPES: ShareEntityType[] = ['page', 'ticket', 'project_item'];
 
@@ -63,13 +64,13 @@ export function SharedEntityPage() {
           </nav>
 
           <div className="flex items-center gap-3">
-            <h1 className="text-[var(--text-2xl)] font-bold text-[var(--color-text)]">{entity.data.title}</h1>
+            <h1 className="text-[19px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]">{entity.data.title}</h1>
           </div>
 
           {(entity.data.status || entity.data.priority) && (
             <div className="flex gap-2">
               {entity.data.status && <Badge variant="secondary">{entity.data.status}</Badge>}
-              {entity.data.priority && <Badge variant="outline">{entity.data.priority}</Badge>}
+              {entity.data.priority && <PriorityPill priority={normalizePriority(entity.data.priority)} />}
             </div>
           )}
 
@@ -90,7 +91,10 @@ export function SharedEntityPage() {
             </div>
           )}
 
-          <div className="prose max-w-none text-[var(--color-text)]" data-testid="shared-body">
+          <div
+            className="prose prose-sm dark:prose-invert max-w-none leading-[1.7] prose-headings:text-[var(--color-text)] prose-headings:font-semibold prose-p:text-[var(--color-text)] prose-li:text-[var(--color-text)] prose-strong:text-[var(--color-text)] prose-a:text-[var(--color-primary)] prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5 prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]"
+            data-testid="shared-body"
+          >
             <ReactMarkdown>{entity.data.body || ''}</ReactMarkdown>
           </div>
 

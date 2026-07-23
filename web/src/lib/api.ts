@@ -326,6 +326,8 @@ export interface ProjectItem {
   number: number | null;
   title: string;
   description: string;
+  /** task | story | bug | epic — set at creation, carried on the wire. */
+  kind?: string;
   status: string;
   priority: string;
   assignee_id: string | null;
