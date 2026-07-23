@@ -15,6 +15,11 @@ var (
 	// sprint in the same space is already active.
 	ErrSprintActive = errors.New("another sprint is already active in this space")
 
+	// ErrInvalidNextSprint is returned when completing a sprint with a carry-over
+	// target that does not exist, is in another space, is the sprint being
+	// completed, or is already completed.
+	ErrInvalidNextSprint = errors.New("next sprint must be an open sprint in the same space")
+
 	// ErrTitleRequired is returned when creating or updating an item with an empty title.
 	ErrTitleRequired = errors.New("title is required")
 

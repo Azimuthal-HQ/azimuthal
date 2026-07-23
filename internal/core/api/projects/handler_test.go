@@ -63,6 +63,9 @@ func (m *mockSprintRepo) Update(_ context.Context, _ *projects.Sprint) error { r
 func (m *mockSprintRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ string) (*projects.Sprint, error) {
 	return nil, projects.ErrNotFound
 }
+func (m *mockSprintRepo) CompleteWithDisposition(_ context.Context, _ uuid.UUID, _ *uuid.UUID, _ []string) (*projects.Sprint, error) {
+	return nil, projects.ErrNotFound
+}
 func (m *mockSprintRepo) ListBySpace(_ context.Context, _ uuid.UUID) ([]*projects.Sprint, error) {
 	return nil, nil
 }

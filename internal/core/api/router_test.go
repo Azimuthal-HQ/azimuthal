@@ -570,6 +570,15 @@ func (m *mockSprintRepo) UpdateStatus(_ context.Context, id uuid.UUID, status st
 	return s, nil
 }
 
+func (m *mockSprintRepo) CompleteWithDisposition(_ context.Context, id uuid.UUID, _ *uuid.UUID, _ []string) (*projects.Sprint, error) {
+	s, ok := m.sprints[id]
+	if !ok {
+		return nil, projects.ErrNotFound
+	}
+	s.Status = projects.SprintStatusCompleted
+	return s, nil
+}
+
 func (m *mockSprintRepo) ListBySpace(_ context.Context, _ uuid.UUID) ([]*projects.Sprint, error) {
 	return nil, nil
 }

@@ -2,8 +2,10 @@
 package projects
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -172,6 +174,13 @@ type updateSprintRequest struct {
 	Goal     string     `json:"goal"`
 	StartsAt *time.Time `json:"starts_at,omitempty"`
 	EndsAt   *time.Time `json:"ends_at,omitempty"`
+}
+
+// completeSprintRequest carries the optional carry-over target for a sprint's
+// incomplete items. Omitted or null next_sprint_id returns them to the backlog;
+// a value moves them to that sprint. An empty request body is valid (backlog).
+type completeSprintRequest struct {
+	NextSprintID *uuid.UUID `json:"next_sprint_id,omitempty"`
 }
 
 type rankItemRequest struct {
@@ -1054,6 +1063,7 @@ func (h *Handler) StartSprint(w http.ResponseWriter, r *http.Request) {
 // @Param        orgID    path      string  true  "Organization ID (UUID)"
 // @Param        spaceID   path      string  true  "Space ID (UUID)"
 // @Param        sprintID  path      string  true  "Sprint ID (UUID)"
+// @Param        body      body      api.SwaggerCompleteSprintRequest  false  "Optional carry-over target for incomplete items"
 // @Success      200       {object}  map[string]interface{}
 // @Failure      400       {object}  api.SwaggerErrorResponse
 // @Failure      401       {object}  api.SwaggerErrorResponse
@@ -1077,7 +1087,18 @@ func (h *Handler) CompleteSprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sprint, err := h.sprints.CompleteSprint(r.Context(), id)
+	// The disposition body is optional: no body (or null next_sprint_id) sends
+	// incomplete items back to the backlog. A present body names a carry-over
+	// sprint. Tolerate an empty body — EOF is the default-backlog case.
+	var req completeSprintRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+			return
+		}
+	}
+
+	sprint, err := h.sprints.CompleteSprint(r.Context(), id, projects.CompleteOptions{NextSprintID: req.NextSprintID})
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -1956,6 +1977,7 @@ func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, projects.ErrInvalidPriority),
 		errors.Is(err, projects.ErrInvalidKind),
 		errors.Is(err, projects.ErrInvalidRelationKind),
+		errors.Is(err, projects.ErrInvalidNextSprint),
 		errors.Is(err, projects.ErrSelfRelation):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
 	case errors.Is(err, projects.ErrLabelDuplicate):

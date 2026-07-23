@@ -250,6 +250,12 @@ components:
           example: "2026-01-15T10:30:00Z"
           type: string
       type: object
+    api.SwaggerCompleteSprintRequest:
+      properties:
+        next_sprint_id:
+          example: c3d4e5f6-a7b8-9012-cdef-123456789012
+          type: string
+      type: object
     api.SwaggerCreateCommentRequest:
       properties:
         content:
@@ -5729,6 +5735,14 @@ paths:
         required: true
         schema:
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/api.SwaggerCompleteSprintRequest'
+              description: Optional carry-over target for incomplete items
+              summary: body
+        description: Optional carry-over target for incomplete items
       responses:
         "200":
           content:

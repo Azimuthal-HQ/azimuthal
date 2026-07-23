@@ -298,6 +298,13 @@ type SwaggerUpdateSprintRequest struct {
 	EndsAt   *time.Time `json:"ends_at,omitempty"`
 }
 
+// SwaggerCompleteSprintRequest matches completeSprintRequest in projects handler.
+// The body is optional; next_sprint_id names a carry-over sprint for incomplete
+// items, or is omitted to return them to the backlog.
+type SwaggerCompleteSprintRequest struct {
+	NextSprintID *uuid.UUID `json:"next_sprint_id,omitempty" example:"c3d4e5f6-a7b8-9012-cdef-123456789012"`
+}
+
 // SwaggerCreateRelationRequest matches createRelationRequest in projects handler.
 type SwaggerCreateRelationRequest struct {
 	ToID   uuid.UUID `json:"to_id"   example:"b2c3d4e5-f6a7-8901-bcde-f12345678901"`

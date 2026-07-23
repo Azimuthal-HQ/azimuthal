@@ -62,6 +62,19 @@ func (r *stubSprintRepo) UpdateStatus(_ context.Context, id uuid.UUID, status st
 	return sprint, nil
 }
 
+// CompleteWithDisposition flips status to completed. The stub holds no items,
+// so the item-disposition half of the contract (moving incomplete items to the
+// backlog or a next sprint) is exercised by the real-DB adapter integration
+// tests, not here — this in-memory repo only covers the lifecycle/state logic.
+func (r *stubSprintRepo) CompleteWithDisposition(_ context.Context, id uuid.UUID, _ *uuid.UUID, _ []string) (*Sprint, error) {
+	sprint, ok := r.sprints[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	sprint.Status = SprintStatusCompleted
+	return sprint, nil
+}
+
 func (r *stubSprintRepo) ListBySpace(_ context.Context, spaceID uuid.UUID) ([]*Sprint, error) {
 	result := make([]*Sprint, 0)
 	for _, sprint := range r.sprints {
@@ -194,7 +207,7 @@ func TestSprintService_StartSprint_InvalidTransition_FromCompleted(t *testing.T)
 	if _, err := svc.StartSprint(context.Background(), sprint.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CompleteSprint(context.Background(), sprint.ID); err != nil {
+	if _, err := svc.CompleteSprint(context.Background(), sprint.ID, CompleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,7 +225,7 @@ func TestSprintService_CompleteSprint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	completed, err := svc.CompleteSprint(context.Background(), created.ID)
+	completed, err := svc.CompleteSprint(context.Background(), created.ID, CompleteOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -225,9 +238,95 @@ func TestSprintService_CompleteSprint_InvalidTransition_FromPlanned(t *testing.T
 	svc := NewSprintService(newStubSprintRepo())
 	created, _ := svc.CreateSprint(context.Background(), makeSprint(uuid.New()))
 
-	_, err := svc.CompleteSprint(context.Background(), created.ID)
+	_, err := svc.CompleteSprint(context.Background(), created.ID, CompleteOptions{})
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition, got %v", err)
+	}
+}
+
+// startActiveSprint creates a sprint in spaceID and starts it, returning it.
+func startActiveSprint(t *testing.T, svc *SprintService, spaceID uuid.UUID) *Sprint {
+	t.Helper()
+	s, err := svc.CreateSprint(context.Background(), makeSprint(spaceID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartSprint(context.Background(), s.ID); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestSprintService_CompleteSprint_NextSprint_Valid(t *testing.T) {
+	repo := newStubSprintRepo()
+	svc := NewSprintService(repo)
+	spaceID := uuid.New()
+
+	current := startActiveSprint(t, svc, spaceID)
+	next, err := svc.CreateSprint(context.Background(), makeSprint(spaceID))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	completed, err := svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &next.ID})
+	if err != nil {
+		t.Fatalf("expected success carrying over to a planned sprint in the same space, got %v", err)
+	}
+	if completed.Status != SprintStatusCompleted {
+		t.Errorf("expected completed, got %s", completed.Status)
+	}
+}
+
+func TestSprintService_CompleteSprint_NextSprint_NotFound(t *testing.T) {
+	svc := NewSprintService(newStubSprintRepo())
+	current := startActiveSprint(t, svc, uuid.New())
+
+	missing := uuid.New()
+	_, err := svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &missing})
+	if !errors.Is(err, ErrInvalidNextSprint) {
+		t.Errorf("expected ErrInvalidNextSprint for a missing next sprint, got %v", err)
+	}
+}
+
+func TestSprintService_CompleteSprint_NextSprint_DifferentSpace(t *testing.T) {
+	svc := NewSprintService(newStubSprintRepo())
+	current := startActiveSprint(t, svc, uuid.New())
+
+	// A sprint in a different space is not a valid carry-over target.
+	other, err := svc.CreateSprint(context.Background(), makeSprint(uuid.New()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &other.ID})
+	if !errors.Is(err, ErrInvalidNextSprint) {
+		t.Errorf("expected ErrInvalidNextSprint for a cross-space next sprint, got %v", err)
+	}
+}
+
+func TestSprintService_CompleteSprint_NextSprint_Self(t *testing.T) {
+	svc := NewSprintService(newStubSprintRepo())
+	current := startActiveSprint(t, svc, uuid.New())
+
+	_, err := svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &current.ID})
+	if !errors.Is(err, ErrInvalidNextSprint) {
+		t.Errorf("expected ErrInvalidNextSprint when carrying over to the sprint being completed, got %v", err)
+	}
+}
+
+func TestSprintService_CompleteSprint_NextSprint_Completed(t *testing.T) {
+	svc := NewSprintService(newStubSprintRepo())
+	spaceID := uuid.New()
+
+	// A completed sprint cannot receive carried-over work.
+	done := startActiveSprint(t, svc, spaceID)
+	if _, err := svc.CompleteSprint(context.Background(), done.ID, CompleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	current := startActiveSprint(t, svc, spaceID)
+	_, err := svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &done.ID})
+	if !errors.Is(err, ErrInvalidNextSprint) {
+		t.Errorf("expected ErrInvalidNextSprint for an already-completed next sprint, got %v", err)
 	}
 }
 
@@ -254,7 +353,7 @@ func TestSprintService_FullLifecycle(t *testing.T) {
 	}
 
 	// Complete → completed.
-	sprint, err = svc.CompleteSprint(context.Background(), sprint.ID)
+	sprint, err = svc.CompleteSprint(context.Background(), sprint.ID, CompleteOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
