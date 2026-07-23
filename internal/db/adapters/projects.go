@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -221,13 +222,18 @@ func dbProjectItemsToItems(rows []generated.ProjectItem) []*projects.Item {
 }
 
 // SprintAdapter implements projects.SprintRepository using sqlc-generated queries.
+// It holds the pool as well as the queries because sprint completion is a
+// two-statement transaction (flip status, reassign incomplete items) that must
+// commit or roll back atomically.
 type SprintAdapter struct {
-	q *generated.Queries
+	pool *pgxpool.Pool
+	q    *generated.Queries
 }
 
-// NewSprintAdapter creates a SprintAdapter backed by the given queries.
-func NewSprintAdapter(q *generated.Queries) *SprintAdapter {
-	return &SprintAdapter{q: q}
+// NewSprintAdapter creates a SprintAdapter backed by the given pool. The
+// queries handle is derived from the pool.
+func NewSprintAdapter(pool *pgxpool.Pool) *SprintAdapter {
+	return &SprintAdapter{pool: pool, q: generated.New(pool)}
 }
 
 // Create persists a new sprint.
@@ -281,14 +287,56 @@ func (a *SprintAdapter) Update(ctx context.Context, sprint *projects.Sprint) err
 	return nil
 }
 
-// UpdateStatus changes the sprint status.
+// UpdateStatus changes the sprint status. A unique-violation on the
+// one-active-per-space partial index (migration 034) is mapped to
+// ErrSprintActive so a lost race to activate surfaces as 409, not 500 —
+// the same outcome as the service-level GetActiveBySpace guard.
 func (a *SprintAdapter) UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*projects.Sprint, error) {
 	row, err := a.q.UpdateSprintStatus(ctx, generated.UpdateSprintStatusParams{
 		ID:     id,
 		Status: status,
 	})
 	if err != nil {
+		if name, ok := uniqueViolation(err); ok && name == "idx_sprints_one_active_per_space" {
+			return nil, projects.ErrSprintActive
+		}
 		return nil, fmt.Errorf("sprint adapter update status: %w", err)
+	}
+	return dbSprintToProject(row), nil
+}
+
+// CompleteWithDisposition marks the sprint completed and, in the same
+// transaction, moves every not-yet-done item off it — to nextSprintID when
+// non-nil, otherwise back to the backlog (sprint_id = NULL). Items whose
+// status is in doneStatuses stay on the completed sprint. Returns the updated
+// sprint. The two writes are atomic: a crash between them can never leave a
+// completed sprint still holding unfinished work.
+func (a *SprintAdapter) CompleteWithDisposition(ctx context.Context, id uuid.UUID, nextSprintID *uuid.UUID, doneStatuses []string) (*projects.Sprint, error) {
+	tx, err := a.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sprint adapter complete: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := a.q.WithTx(tx)
+
+	if _, err := qtx.ReassignIncompleteSprintItems(ctx, generated.ReassignIncompleteSprintItemsParams{
+		NextSprintID: pgUUID(nextSprintID),
+		SprintID:     pgUUID(&id),
+		DoneStatuses: doneStatuses,
+	}); err != nil {
+		return nil, fmt.Errorf("sprint adapter complete: reassign items: %w", err)
+	}
+
+	row, err := qtx.UpdateSprintStatus(ctx, generated.UpdateSprintStatusParams{
+		ID:     id,
+		Status: projects.SprintStatusCompleted,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sprint adapter complete: update status: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("sprint adapter complete: commit: %w", err)
 	}
 	return dbSprintToProject(row), nil
 }

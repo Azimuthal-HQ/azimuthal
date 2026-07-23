@@ -226,7 +226,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	ticketSvc := tickets.NewTicketService(ticketAdapter, contentTx)
 
 	itemAdapter := adapters.NewItemAdapter(queries)
-	sprintAdapter := adapters.NewSprintAdapter(queries)
+	sprintAdapter := adapters.NewSprintAdapter(pool)
 	itemSvc := projects.NewItemService(itemAdapter, contentTx)
 	sprintSvc := projects.NewSprintService(sprintAdapter)
 	itemTypeSvc := itemtypes.NewService(adapters.NewItemTypeAdapter(queries))

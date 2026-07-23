@@ -333,6 +333,32 @@ func (q *Queries) ListSprintsBySpace(ctx context.Context, spaceID uuid.UUID) ([]
 	return items, nil
 }
 
+const reassignIncompleteSprintItems = `-- name: ReassignIncompleteSprintItems :execrows
+UPDATE project_items
+SET sprint_id = $1, updated_at = now()
+WHERE sprint_id = $2
+  AND deleted_at IS NULL
+  AND NOT (status = ANY($3::text[]))
+`
+
+type ReassignIncompleteSprintItemsParams struct {
+	NextSprintID pgtype.UUID `json:"next_sprint_id"`
+	SprintID     pgtype.UUID `json:"sprint_id"`
+	DoneStatuses []string    `json:"done_statuses"`
+}
+
+// Reassigns every not-yet-done item in a sprint to a target sprint, or to the
+// backlog when next_sprint_id is NULL. Items whose status is in the supplied
+// done set are left on the completing sprint (they belong to its record).
+// Used by sprint completion to empty the sprint of unfinished work.
+func (q *Queries) ReassignIncompleteSprintItems(ctx context.Context, arg ReassignIncompleteSprintItemsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reassignIncompleteSprintItems, arg.NextSprintID, arg.SprintID, arg.DoneStatuses)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateSprint = `-- name: UpdateSprint :one
 UPDATE sprints SET name = $2, goal = $3, starts_at = $4, ends_at = $5 WHERE id = $1 RETURNING id, space_id, name, goal, status, starts_at, ends_at, created_by, created_at, updated_at
 `

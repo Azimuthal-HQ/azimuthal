@@ -1540,8 +1540,16 @@ async function startSprint(spaceId: string, sprintId: string): Promise<Sprint> {
   return apiFetch<Sprint>(`${spaceBase(spaceId)}/projects/sprints/${sprintId}/start`, { method: 'POST' });
 }
 
-async function completeSprint(spaceId: string, sprintId: string): Promise<Sprint> {
-  return apiFetch<Sprint>(`${spaceBase(spaceId)}/projects/sprints/${sprintId}/complete`, { method: 'POST' });
+// completeSprint disposes of the sprint's incomplete items: passing a
+// nextSprintId carries them over to that sprint, otherwise they return to the
+// backlog. The body is omitted entirely for the backlog case so the endpoint's
+// empty-body path is exercised.
+async function completeSprint(spaceId: string, sprintId: string, nextSprintId?: string | null): Promise<Sprint> {
+  const init: RequestInit = { method: 'POST' };
+  if (nextSprintId) {
+    init.body = JSON.stringify({ next_sprint_id: nextSprintId });
+  }
+  return apiFetch<Sprint>(`${spaceBase(spaceId)}/projects/sprints/${sprintId}/complete`, init);
 }
 
 // ---------------------------------------------------------------------------
@@ -2290,13 +2298,22 @@ export function useStartSprint(spaceId: string) {
   });
 }
 
+export interface CompleteSprintVars {
+  sprintId: string;
+  // Carry-over target for incomplete items; omit/null to return them to the backlog.
+  nextSprintId?: string | null;
+}
+
 export function useCompleteSprint(spaceId: string) {
   const queryClient = useQueryClient();
-  return useMutation<Sprint, APIError, string>({
-    mutationFn: (sprintId) => completeSprint(spaceId, sprintId),
+  return useMutation<Sprint, APIError, CompleteSprintVars>({
+    mutationFn: ({ sprintId, nextSprintId }) => completeSprint(spaceId, sprintId, nextSprintId),
     onSuccess: () => {
+      // Completion moves items off the sprint, so the item lists (backlog,
+      // board, per-sprint) and the sprint lists all refresh. The 'sprints'
+      // prefix covers activeSprint and sprintItems too.
       queryClient.invalidateQueries({ queryKey: queryKeys.sprints(spaceId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.activeSprint(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
     },
   });
 }

@@ -7,6 +7,7 @@ import { Input } from '../../components/ui/input';
 import { Field, FieldLabel } from '../../components/ui/field';
 import { SegmentedControl } from '../../components/ui/segmented';
 import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
+import { TypeFilter } from '../../components/TypeFilter';
 import {
   Dialog,
   DialogContent,
@@ -78,6 +79,17 @@ export function BacklogPage() {
   const pickerTypes = typeOptions.length > 0 ? typeOptions : DEFAULT_TYPE_OPTIONS;
 
   const [search, setSearch] = useState('');
+  // Type filter: selected type slugs; empty means all types (W5).
+  const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set());
+
+  function toggleType(slug: string) {
+    setTypeFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  }
 
   // Drag-to-reorder state
   const dragId = useRef<string | null>(null);
@@ -143,9 +155,13 @@ export function BacklogPage() {
     if (!items) return [];
     return items.filter((item) => {
       if (search && !item.title.toLowerCase().includes(search.toLowerCase()) && !item.id.toLowerCase().includes(search.toLowerCase())) return false;
+      // Type filter composes with search: an empty selection admits every
+      // type, otherwise the item's kind must be one of the selected types.
+      // An item with no kind is excluded while a specific-type filter is active.
+      if (typeFilter.size > 0 && !(item.kind && typeFilter.has(item.kind))) return false;
       return true;
     });
-  }, [items, search]);
+  }, [items, search, typeFilter]);
 
   // Group by sprint
   const groups = useMemo(() => {
@@ -193,6 +209,11 @@ export function BacklogPage() {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
           <Input placeholder="Search items..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
+        <TypeFilter
+          options={pickerTypes.map((t) => ({ slug: t.slug, name: t.name }))}
+          selected={typeFilter}
+          onToggle={toggleType}
+        />
       </div>
 
       {/* Loading */}

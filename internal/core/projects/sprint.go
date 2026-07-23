@@ -2,6 +2,7 @@ package projects
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -24,6 +25,23 @@ var validSprintTransitions = map[string]map[string]bool{
 	SprintStatusActive: {
 		SprintStatusCompleted: true,
 	},
+}
+
+// DoneStatuses is the terminal ("done") item-status set: items in one of these
+// states are considered complete. Sprint completion leaves done items on the
+// completed sprint and returns everything else to the backlog (or a next
+// sprint). Board customization (a later phase) lets a space map statuses to
+// columns; this remains the definition of "finished" until then.
+var DoneStatuses = []string{"done", "closed", "resolved"}
+
+// IsDoneStatus reports whether status is one of the terminal DoneStatuses.
+func IsDoneStatus(status string) bool {
+	for _, s := range DoneStatuses {
+		if s == status {
+			return true
+		}
+	}
+	return false
 }
 
 // Sprint represents a time-boxed iteration within a project space.
@@ -53,6 +71,10 @@ type SprintRepository interface {
 	Update(ctx context.Context, sprint *Sprint) error
 	// UpdateStatus changes the sprint status.
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*Sprint, error)
+	// CompleteWithDisposition marks the sprint completed and, atomically, moves
+	// every item whose status is not in doneStatuses off it — to nextSprintID
+	// when non-nil, otherwise back to the backlog. Done items stay on the sprint.
+	CompleteWithDisposition(ctx context.Context, id uuid.UUID, nextSprintID *uuid.UUID, doneStatuses []string) (*Sprint, error)
 	// ListBySpace returns all sprints in a space, ordered by creation date descending.
 	ListBySpace(ctx context.Context, spaceID uuid.UUID) ([]*Sprint, error)
 }
@@ -133,9 +155,21 @@ func (s *SprintService) StartSprint(ctx context.Context, id uuid.UUID) (*Sprint,
 	return updated, nil
 }
 
-// CompleteSprint transitions a sprint from active to completed.
-// Returns ErrInvalidTransition if the sprint is not in active status.
-func (s *SprintService) CompleteSprint(ctx context.Context, id uuid.UUID) (*Sprint, error) {
+// CompleteOptions controls what happens to a sprint's incomplete items when it
+// is completed. NextSprintID nil returns them to the backlog; non-nil moves
+// them to that sprint (Jira's "move to next sprint" on completion).
+type CompleteOptions struct {
+	NextSprintID *uuid.UUID
+}
+
+// CompleteSprint transitions a sprint from active to completed and disposes of
+// its incomplete items per opts: to the backlog by default, or to a chosen next
+// sprint. Done items (DoneStatuses) stay on the completed sprint.
+//
+// Returns ErrInvalidTransition if the sprint is not active, and
+// ErrInvalidNextSprint if opts.NextSprintID names a sprint that does not exist,
+// is in another space, is the sprint being completed, or is already completed.
+func (s *SprintService) CompleteSprint(ctx context.Context, id uuid.UUID, opts CompleteOptions) (*Sprint, error) {
 	sprint, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("completing sprint: %w", err)
@@ -145,11 +179,38 @@ func (s *SprintService) CompleteSprint(ctx context.Context, id uuid.UUID) (*Spri
 		return nil, fmt.Errorf("completing sprint: %w", err)
 	}
 
-	updated, err := s.repo.UpdateStatus(ctx, id, SprintStatusCompleted)
+	if err := s.validateNextSprint(ctx, sprint, opts.NextSprintID); err != nil {
+		return nil, fmt.Errorf("completing sprint: %w", err)
+	}
+
+	updated, err := s.repo.CompleteWithDisposition(ctx, id, opts.NextSprintID, DoneStatuses)
 	if err != nil {
 		return nil, fmt.Errorf("completing sprint: %w", err)
 	}
 	return updated, nil
+}
+
+// validateNextSprint checks that a chosen carry-over sprint is a legitimate
+// destination: it must exist, live in the same space as the sprint being
+// completed, differ from it, and not itself be completed.
+func (s *SprintService) validateNextSprint(ctx context.Context, completing *Sprint, nextID *uuid.UUID) error {
+	if nextID == nil {
+		return nil
+	}
+	if *nextID == completing.ID {
+		return ErrInvalidNextSprint
+	}
+	next, err := s.repo.GetByID(ctx, *nextID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return ErrInvalidNextSprint
+		}
+		return fmt.Errorf("loading next sprint: %w", err)
+	}
+	if next.SpaceID != completing.SpaceID || next.Status == SprintStatusCompleted {
+		return ErrInvalidNextSprint
+	}
+	return nil
 }
 
 // ListSprintsBySpace returns all sprints in a space.

@@ -27,6 +27,17 @@ UPDATE sprints SET status = $2 WHERE id = $1 RETURNING *;
 -- name: UpdateSprint :one
 UPDATE sprints SET name = $2, goal = $3, starts_at = $4, ends_at = $5 WHERE id = $1 RETURNING *;
 
+-- name: ReassignIncompleteSprintItems :execrows
+-- Reassigns every not-yet-done item in a sprint to a target sprint, or to the
+-- backlog when next_sprint_id is NULL. Items whose status is in the supplied
+-- done set are left on the completing sprint (they belong to its record).
+-- Used by sprint completion to empty the sprint of unfinished work.
+UPDATE project_items
+SET sprint_id = sqlc.narg('next_sprint_id'), updated_at = now()
+WHERE sprint_id = @sprint_id
+  AND deleted_at IS NULL
+  AND NOT (status = ANY(@done_statuses::text[]));
+
 -- name: CreateEntityRelation :one
 INSERT INTO entity_relations (id, from_id, from_type, to_id, to_type, kind, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7)

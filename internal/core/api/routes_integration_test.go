@@ -128,7 +128,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	ticketSvc := tickets.NewTicketService(ticketAdapter, contentTx)
 
 	itemAdapter := adapters.NewItemAdapter(queries)
-	sprintAdapter := adapters.NewSprintAdapter(queries)
+	sprintAdapter := adapters.NewSprintAdapter(pool)
 	itemSvc := projects.NewItemService(itemAdapter, contentTx)
 	sprintSvc := projects.NewSprintService(sprintAdapter)
 	backlogSvc := projects.NewBacklogService(itemAdapter, sprintAdapter)

@@ -81,7 +81,7 @@ func TestItemAdapter_UpdateSprint(t *testing.T) {
 	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
 	queries := generated.New(db.Pool)
 	itemAdapter := adapters.NewItemAdapter(queries)
-	sprintAdapter := adapters.NewSprintAdapter(queries)
+	sprintAdapter := adapters.NewSprintAdapter(db.Pool)
 	ctx := context.Background()
 
 	sprint := &projects.Sprint{
@@ -142,8 +142,7 @@ func TestSprintAdapter_Update(t *testing.T) {
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
 	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
-	queries := generated.New(db.Pool)
-	adapter := adapters.NewSprintAdapter(queries)
+	adapter := adapters.NewSprintAdapter(db.Pool)
 	ctx := context.Background()
 
 	sprint := &projects.Sprint{
@@ -167,8 +166,7 @@ func TestSprintAdapter_UpdateStatus(t *testing.T) {
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
 	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
-	queries := generated.New(db.Pool)
-	adapter := adapters.NewSprintAdapter(queries)
+	adapter := adapters.NewSprintAdapter(db.Pool)
 	ctx := context.Background()
 
 	start := time.Now()

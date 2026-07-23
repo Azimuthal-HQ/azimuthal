@@ -477,8 +477,7 @@ func TestSprintAdapter_CreateAndRetrieve(t *testing.T) {
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
 	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
-	queries := generated.New(db.Pool)
-	adapter := adapters.NewSprintAdapter(queries)
+	adapter := adapters.NewSprintAdapter(db.Pool)
 
 	sprint := &projects.Sprint{
 		ID:        uuid.New(),

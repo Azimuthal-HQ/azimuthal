@@ -9,6 +9,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
   DialogDescription, DialogFooter, DialogClose,
 } from '../../components/ui/dialog';
+import { RadioCardGroup } from '../../components/ui/radio-card';
 import { formatUTCDate } from '../../lib/utils';
 import {
   useSprints, useActiveSprint, useCreateSprint, useStartSprint, useCompleteSprint,
@@ -30,10 +31,26 @@ const STATUS_LABEL: Record<string, string> = {
   completed: 'Completed',
 };
 
-function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: string; isActive: boolean }) {
+type Disposition = 'backlog' | 'next';
+
+function SprintRow({
+  sprint, spaceId, isActive, carryOverTargets,
+}: {
+  sprint: Sprint;
+  spaceId: string;
+  isActive: boolean;
+  // Sprints this one's incomplete items may carry over to on completion:
+  // every non-completed sprint in the space except this one.
+  carryOverTargets: Sprint[];
+}) {
   const startMutation = useStartSprint(spaceId);
   const completeMutation = useCompleteSprint(spaceId);
   const [startError, setStartError] = useState<string | null>(null);
+
+  const [completeOpen, setCompleteOpen] = useState(false);
+  const [disposition, setDisposition] = useState<Disposition>('backlog');
+  const [nextSprintId, setNextSprintId] = useState<string>('');
+  const [completeError, setCompleteError] = useState<string | null>(null);
 
   async function handleStart() {
     setStartError(null);
@@ -41,9 +58,41 @@ function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: str
     catch (e) { setStartError(friendlyErrorMessage(e, 'The sprint could not be started.')); }
   }
 
-  async function handleComplete() {
-    await completeMutation.mutateAsync(sprint.id);
+  function openComplete() {
+    // Default the carry-over target to the first candidate so choosing "next"
+    // is a single click when a destination exists.
+    setDisposition('backlog');
+    setNextSprintId(carryOverTargets[0]?.id ?? '');
+    setCompleteError(null);
+    setCompleteOpen(true);
   }
+
+  async function handleComplete() {
+    setCompleteError(null);
+    const target = disposition === 'next' ? nextSprintId : null;
+    try {
+      await completeMutation.mutateAsync({ sprintId: sprint.id, nextSprintId: target });
+      setCompleteOpen(false);
+    } catch (e) {
+      setCompleteError(friendlyErrorMessage(e, 'The sprint could not be completed.'));
+    }
+  }
+
+  const dispositionOptions = [
+    {
+      value: 'backlog' as const,
+      title: 'Return to backlog',
+      description: 'Incomplete items go back to the backlog.',
+    },
+    {
+      value: 'next' as const,
+      title: 'Move to another sprint',
+      description: carryOverTargets.length
+        ? 'Incomplete items carry over to the sprint you choose.'
+        : 'No other sprint is available to carry work over to.',
+      disabled: carryOverTargets.length === 0,
+    },
+  ];
 
   return (
     <div className="flex items-center gap-4 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
@@ -85,12 +134,59 @@ function SprintRow({ sprint, spaceId, isActive }: { sprint: Sprint; spaceId: str
           </Button>
         )}
         {sprint.status === 'active' && (
-          <Button size="sm" variant="outline" onClick={handleComplete} disabled={completeMutation.isPending}>
+          <Button size="sm" variant="outline" onClick={openComplete} disabled={completeMutation.isPending}>
             <CheckCircle className="mr-1.5 h-3.5 w-3.5" />
             {completeMutation.isPending ? 'Completing…' : 'Complete'}
           </Button>
         )}
       </div>
+
+      <Dialog open={completeOpen} onOpenChange={setCompleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Complete {sprint.name}</DialogTitle>
+            <DialogDescription>
+              Done items stay on this sprint. Choose where its unfinished items go.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <RadioCardGroup
+              aria-label="What happens to incomplete items"
+              testId="complete-disposition"
+              options={dispositionOptions}
+              value={disposition}
+              onChange={setDisposition}
+            />
+            {disposition === 'next' && carryOverTargets.length > 0 && (
+              <Field>
+                <FieldLabel htmlFor={`next-sprint-${sprint.id}`}>Carry over to</FieldLabel>
+                <select
+                  id={`next-sprint-${sprint.id}`}
+                  aria-label="Carry-over sprint"
+                  value={nextSprintId}
+                  onChange={e => setNextSprintId(e.target.value)}
+                  className="flex h-9 w-full items-center rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 text-[var(--text-sm)] text-[var(--color-text)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                >
+                  {carryOverTargets.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            {completeError && (
+              <p className="flex items-center gap-1 text-[var(--text-sm)] text-[var(--color-danger)]">
+                <AlertCircle className="h-3.5 w-3.5" />{completeError}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
+            <Button onClick={handleComplete} disabled={completeMutation.isPending}>
+              {completeMutation.isPending ? 'Completing…' : 'Complete Sprint'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -155,7 +251,13 @@ export function SprintsPage() {
       ) : (
         <div className="space-y-2">
           {sorted.map(s => (
-            <SprintRow key={s.id} sprint={s} spaceId={spaceId} isActive={activeSprint?.id === s.id} />
+            <SprintRow
+              key={s.id}
+              sprint={s}
+              spaceId={spaceId}
+              isActive={activeSprint?.id === s.id}
+              carryOverTargets={sprints.filter(t => t.id !== s.id && t.status !== 'completed')}
+            />
           ))}
         </div>
       )}
