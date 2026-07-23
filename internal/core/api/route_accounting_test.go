@@ -181,6 +181,7 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items":                          "space-read",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items":                         "space-write",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/search":                   "space-read",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/resolve":                  "space-read",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}":                 "space-read",
 	"PATCH /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}":               "space-write: edit_own/edit_any in-handler",
 	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}":              "space-write: edit_own/edit_any in-handler",

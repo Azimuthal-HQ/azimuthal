@@ -379,6 +379,15 @@ func (m *mockItemRepo) Create(_ context.Context, item *projects.Item) error {
 	return nil
 }
 
+func (m *mockItemRepo) GetByOrgKey(_ context.Context, _ uuid.UUID, key string) (*projects.Item, error) {
+	for _, item := range m.items {
+		if item.ItemKey == key {
+			return item, nil
+		}
+	}
+	return nil, projects.ErrNotFound
+}
+
 func (m *mockItemRepo) GetByID(_ context.Context, id uuid.UUID) (*projects.Item, error) {
 	item, ok := m.items[id]
 	if !ok {

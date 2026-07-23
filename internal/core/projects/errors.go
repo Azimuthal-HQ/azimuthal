@@ -40,4 +40,7 @@ var (
 	// ErrLabelDuplicate is returned when a label with the same name already
 	// exists in the organization.
 	ErrLabelDuplicate = errors.New("label with this name already exists")
+
+	// ErrKeyRequired is returned when resolving an item by key with an empty key.
+	ErrKeyRequired = errors.New("item key is required")
 )

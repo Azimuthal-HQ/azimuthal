@@ -22,19 +22,16 @@ func NewItemAdapter(q *generated.Queries) *ItemAdapter {
 	return &ItemAdapter{q: q}
 }
 
-// Create persists a new project item, auto-assigning the next available number.
+// Create persists a new project item. The number, item_key and org_id are
+// assigned atomically by the CreateProjectItem query (concurrency-safe per-space
+// counter, see internal/db/queries/project_items.sql); the returned row's
+// generated values are written back onto item so the caller — and the create
+// response — carry the assigned key.
 func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
-	maxNum, err := a.q.GetProjectItemMaxNumber(ctx, item.SpaceID)
-	if err != nil {
-		return fmt.Errorf("item adapter get max number: %w", err)
-	}
-	number := int32(maxNum) + 1 //nolint:gosec // G115 — item numbers are sequential and will never approach int32 max
-
-	_, err = a.q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
+	row, err := a.q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID:          item.ID,
 		SpaceID:     item.SpaceID,
 		ParentID:    pgUUID(item.ParentID),
-		Number:      number,
 		Kind:        item.Kind,
 		Title:       item.Title,
 		Description: item.Description,
@@ -50,7 +47,25 @@ func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
 	if err != nil {
 		return fmt.Errorf("item adapter create: %w", err)
 	}
+	item.Number = int(row.Number)
+	item.ItemKey = row.ItemKey
 	return nil
+}
+
+// GetByOrgKey resolves a human-readable key (e.g. VEC-123) to an item within an
+// org. Returns projects.ErrNotFound if absent or soft-deleted.
+func (a *ItemAdapter) GetByOrgKey(ctx context.Context, orgID uuid.UUID, key string) (*projects.Item, error) {
+	row, err := a.q.GetProjectItemByOrgKey(ctx, generated.GetProjectItemByOrgKeyParams{
+		OrgID:   orgID,
+		ItemKey: key,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("item adapter get by org key: %w", err)
+	}
+	return dbProjectItemToItem(row), nil
 }
 
 // GetByID retrieves an item by primary key. Returns projects.ErrNotFound if
@@ -176,6 +191,8 @@ func dbProjectItemToItem(i generated.ProjectItem) *projects.Item {
 	return &projects.Item{
 		ID:          i.ID,
 		SpaceID:     i.SpaceID,
+		Number:      int(i.Number),
+		ItemKey:     i.ItemKey,
 		ParentID:    goUUIDPtr(i.ParentID),
 		Kind:        i.Kind,
 		Title:       i.Title,

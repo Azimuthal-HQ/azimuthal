@@ -63,6 +63,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/items", h.ListItems)
 	r.Post("/items", h.CreateItem)
 	r.Get("/items/search", h.SearchItems)
+	r.Get("/items/resolve", h.ResolveItem)
 	r.Get("/items/{itemID}", h.GetItem)
 	r.Patch("/items/{itemID}", h.UpdateItem)
 	r.Delete("/items/{itemID}", h.DeleteItem)
@@ -610,6 +611,58 @@ func (h *Handler) SearchItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.JSON(w, http.StatusOK, items)
+}
+
+// ResolveItem resolves a human-readable item key (e.g. VEC-123) to an item.
+//
+// Routing stays by UUID everywhere else; this is the one key → item lookup,
+// scoped to the org that owns the space in the URL. It is the same resolution
+// path the importer will call.
+//
+// @Summary      Resolve an item by key
+// @Description  Resolves a human-readable item key (e.g. VEC-123) to a project item within the org
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        key      query     string  true  "Item key (e.g. VEC-123)"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      400      {object}  api.SwaggerErrorResponse
+// @Failure      401      {object}  api.SwaggerErrorResponse
+// @Failure      404      {object}  api.SwaggerErrorResponse
+// @Failure      500      {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/resolve [get]
+func (h *Handler) ResolveItem(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "query parameter 'key' is required")
+		return
+	}
+
+	item, err := h.items.ResolveKey(r.Context(), orgID, key)
+	if err != nil {
+		handleProjectError(w, r, err)
+		return
+	}
+
+	// Resolution is org-wide, but the space read-guard on this route only
+	// covers the space in the URL. The resolved item may live in a different
+	// space the caller cannot read — gate on that item's own space and return
+	// 404 (not 403) so the endpoint never reveals the existence of items in
+	// spaces the caller has no access to.
+	if !access.Can(r.Context(), access.CapReadItems, item.SpaceID) {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "not found")
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, item)
 }
 
 // --- Relation handlers ---
@@ -1417,6 +1470,7 @@ func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
 	case errors.Is(err, projects.ErrTitleRequired),
 		errors.Is(err, projects.ErrNameRequired),
+		errors.Is(err, projects.ErrKeyRequired),
 		errors.Is(err, projects.ErrInvalidPriority),
 		errors.Is(err, projects.ErrInvalidKind),
 		errors.Is(err, projects.ErrInvalidRelationKind),

@@ -223,6 +223,13 @@ type ProjectItem struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
 	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	ItemKey         string             `json:"item_key"`
+}
+
+type ProjectItemSequence struct {
+	SpaceID    uuid.UUID `json:"space_id"`
+	LastNumber int64     `json:"last_number"`
 }
 
 type Session struct {

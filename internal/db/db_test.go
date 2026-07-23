@@ -417,7 +417,6 @@ func TestItemStatusUpdateAndSoftDelete(t *testing.T) {
 	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID:          uuid.New(),
 		SpaceID:     space.ID,
-		Number:      1,
 		Kind:        "task",
 		Title:       "Implement data layer",
 		Description: "",
@@ -488,7 +487,6 @@ func TestCreateItemWithoutLabels(t *testing.T) {
 	withLabels, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID:          uuid.New(),
 		SpaceID:     space.ID,
-		Number:      1,
 		Kind:        "task",
 		Title:       "Labelled task",
 		Description: "",

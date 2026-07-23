@@ -23,6 +23,9 @@ func (m *mockItemRepo) Create(_ context.Context, _ *projects.Item) error { retur
 func (m *mockItemRepo) GetByID(_ context.Context, _ uuid.UUID) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
 }
+func (m *mockItemRepo) GetByOrgKey(_ context.Context, _ uuid.UUID, _ string) (*projects.Item, error) {
+	return nil, projects.ErrNotFound
+}
 func (m *mockItemRepo) Update(_ context.Context, _ *projects.Item) error { return nil }
 func (m *mockItemRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ string) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
