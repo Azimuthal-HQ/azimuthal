@@ -188,6 +188,15 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 				r.With(orgAdminGuard(cfg)).Delete("/{typeID}", cfg.ProjectHandler.DeleteItemType)
 			})
 
+			// Custom fields (org-scoped: any member reads definitions for item
+			// forms; org admins define, rename, archive, and delete).
+			r.Route("/custom-fields", func(r chi.Router) {
+				r.Get("/", cfg.ProjectHandler.ListCustomFields)
+				r.With(orgAdminGuard(cfg)).Post("/", cfg.ProjectHandler.CreateCustomField)
+				r.With(orgAdminGuard(cfg)).Patch("/{fieldID}", cfg.ProjectHandler.UpdateCustomField)
+				r.With(orgAdminGuard(cfg)).Delete("/{fieldID}", cfg.ProjectHandler.DeleteCustomField)
+			})
+
 			// Workflows (org-scoped: members read, org admins mutate).
 			if cfg.WorkflowHandler != nil {
 				r.Route("/workflows", func(r chi.Router) {

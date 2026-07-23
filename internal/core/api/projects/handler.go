@@ -15,20 +15,22 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 )
 
 // Handler holds the dependencies for project HTTP handlers.
 type Handler struct {
-	items     *projects.ItemService
-	sprints   *projects.SprintService
-	backlog   *projects.BacklogService
-	roadmap   *projects.RoadmapService
-	relations *projects.RelationService
-	labels    *projects.LabelService
-	itemTypes *itemtypes.Service
-	auditLog  audit.Logger
+	items        *projects.ItemService
+	sprints      *projects.SprintService
+	backlog      *projects.BacklogService
+	roadmap      *projects.RoadmapService
+	relations    *projects.RelationService
+	labels       *projects.LabelService
+	itemTypes    *itemtypes.Service
+	customFields *customfields.Service
+	auditLog     audit.Logger
 }
 
 // NewHandler creates a project Handler.
@@ -64,6 +66,13 @@ func (h *Handler) WithItemTypes(s *itemtypes.Service) *Handler {
 	return h
 }
 
+// WithCustomFields attaches the custom-fields service, enabling the custom-field
+// definition endpoints and per-item field values.
+func (h *Handler) WithCustomFields(s *customfields.Service) *Handler {
+	h.customFields = s
+	return h
+}
+
 // Routes returns a chi.Router with all project endpoints mounted.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
@@ -79,6 +88,10 @@ func (h *Handler) Routes() chi.Router {
 	r.Post("/items/{itemID}/status", h.UpdateItemStatus)
 	r.Post("/items/{itemID}/sprint", h.AssignToSprint)
 	r.Post("/items/{itemID}/rank", h.RankItem)
+
+	// Custom field values (per item)
+	r.Get("/items/{itemID}/fields", h.GetItemFields)
+	r.Put("/items/{itemID}/fields/{slug}", h.SetItemField)
 
 	// Relations
 	r.Get("/items/{itemID}/relations", h.ListRelations)
@@ -1621,6 +1634,264 @@ func handleItemTypeError(w http.ResponseWriter, r *http.Request, err error) {
 	default:
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
 			fmt.Sprintf("item type operation failed: %v", err))
+	}
+}
+
+// --- Custom field handlers ---
+
+type createCustomFieldRequest struct {
+	Name    string   `json:"name"`
+	Type    string   `json:"field_type"`
+	Options []string `json:"options"`
+}
+
+type updateCustomFieldRequest struct {
+	Name     *string  `json:"name,omitempty"`
+	Options  []string `json:"options,omitempty"`
+	Archived *bool    `json:"archived,omitempty"`
+}
+
+type setFieldValueRequest struct {
+	Value string `json:"value"`
+}
+
+// ListCustomFields returns all custom field definitions for an org.
+//
+// @Summary      List custom fields
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string  true  "Organization ID (UUID)"
+// @Success      200    {array}   map[string]interface{}
+// @Router       /orgs/{orgID}/custom-fields [get]
+func (h *Handler) ListCustomFields(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	defs, err := h.customFields.ListDefs(r.Context(), orgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list custom fields")
+		return
+	}
+	respond.JSON(w, http.StatusOK, defs)
+}
+
+// CreateCustomField defines a new custom field (org admin only).
+//
+// @Summary      Create a custom field
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string  true  "Organization ID (UUID)"
+// @Success      201    {object}  map[string]interface{}
+// @Router       /orgs/{orgID}/custom-fields [post]
+func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	var req createCustomFieldRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	created, err := h.customFields.CreateDef(r.Context(), orgID, req.Name, req.Type, req.Options)
+	if err != nil {
+		handleCustomFieldError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusCreated, created)
+}
+
+// UpdateCustomField renames, re-options, and/or archives a custom field.
+//
+// @Summary      Update a custom field
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        fieldID  path      string  true  "Custom field ID (UUID)"
+// @Success      200      {object}  map[string]interface{}
+// @Router       /orgs/{orgID}/custom-fields/{fieldID} [patch]
+func (h *Handler) UpdateCustomField(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	fieldID, err := uuid.Parse(chi.URLParam(r, "fieldID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid custom field ID")
+		return
+	}
+	var req updateCustomFieldRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == nil && req.Archived == nil && req.Options == nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "nothing to update")
+		return
+	}
+
+	var result *customfields.FieldDef
+	if req.Name != nil || req.Options != nil {
+		name := ""
+		if req.Name != nil {
+			name = *req.Name
+		}
+		result, err = h.customFields.UpdateDef(r.Context(), orgID, fieldID, name, req.Options)
+		if err != nil {
+			handleCustomFieldError(w, r, err)
+			return
+		}
+	}
+	if req.Archived != nil {
+		result, err = h.customFields.SetDefArchived(r.Context(), orgID, fieldID, *req.Archived)
+		if err != nil {
+			handleCustomFieldError(w, r, err)
+			return
+		}
+	}
+	respond.JSON(w, http.StatusOK, result)
+}
+
+// DeleteCustomField removes a custom field definition. Stored values remain as
+// legacy read-only data (no silent data loss).
+//
+// @Summary      Delete a custom field
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        fieldID  path      string  true  "Custom field ID (UUID)"
+// @Success      204      "No Content"
+// @Router       /orgs/{orgID}/custom-fields/{fieldID} [delete]
+func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	fieldID, err := uuid.Parse(chi.URLParam(r, "fieldID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid custom field ID")
+		return
+	}
+	if err := h.customFields.DeleteDef(r.Context(), orgID, fieldID); err != nil {
+		handleCustomFieldError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetItemFields returns an item's custom fields: active definitions with their
+// values, plus legacy read-only values whose definitions are gone.
+//
+// @Summary      Get item custom fields
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        itemID   path      string  true  "Item ID (UUID)"
+// @Success      200      {array}   map[string]interface{}
+// @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields [get]
+func (h *Handler) GetItemFields(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	itemID, err := itemIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
+		return
+	}
+	fields, err := h.customFields.RenderForItem(r.Context(), orgID, itemID)
+	if err != nil {
+		handleCustomFieldError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, fields)
+}
+
+// SetItemField writes an item's value for one active custom field. An empty
+// value clears it. Legacy (undefined/archived) fields are read-only.
+//
+// @Summary      Set an item custom field value
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        itemID   path      string  true  "Item ID (UUID)"
+// @Param        slug     path      string  true  "Field slug"
+// @Success      200      {object}  api.SwaggerMessageResponse
+// @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields/{slug} [put]
+func (h *Handler) SetItemField(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	itemID, err := itemIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
+		return
+	}
+	slug := chi.URLParam(r, "slug")
+
+	// Setting a field value is editing the item — gate exactly like UpdateItem
+	// (edit_own for the reporter, edit_any otherwise).
+	existing, err := h.items.GetItem(r.Context(), itemID)
+	if err != nil {
+		handleProjectError(w, r, err)
+		return
+	}
+	if !access.CanEditEntity(r.Context(), spaceID, existing.ReporterID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
+
+	var req setFieldValueRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	if err := h.customFields.SetValue(r.Context(), orgID, itemID, slug, req.Value); err != nil {
+		handleCustomFieldError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]string{"message": "field saved"})
+}
+
+func handleCustomFieldError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, customfields.ErrNotFound), errors.Is(err, customfields.ErrUndefinedField):
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
+	case errors.Is(err, customfields.ErrNameRequired),
+		errors.Is(err, customfields.ErrInvalidName),
+		errors.Is(err, customfields.ErrInvalidType),
+		errors.Is(err, customfields.ErrOptionsRequired),
+		errors.Is(err, customfields.ErrInvalidValue):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+	case errors.Is(err, customfields.ErrDuplicate):
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			fmt.Sprintf("custom field operation failed: %v", err))
 	}
 }
 
