@@ -7,18 +7,21 @@ import { EmptyState } from './EmptyState';
 import { NotFoundPage } from './NotFoundPage';
 import { isModuleKey, MODULES, spacePath } from './modules';
 import { useRecentSpaces } from './hooks/useRecentSpaces';
+import { useActiveTeamContext } from './hooks/useActiveTeamContext';
 
 /**
  * ModuleLandingRedirect handles a bare /:module URL (a product tab click):
- * it forwards to the most recently visited space of that module, falling
- * back to the first available one, or renders a branded empty state when
- * the org has no spaces of that module yet.
+ * it forwards to the target module's space for the team the user was last
+ * working in (module-switch context preservation), then the most recently
+ * visited space of that module, then the first available one — or a branded
+ * empty state when the org has no spaces of that module yet.
  */
 export function ModuleLandingRedirect() {
   const { module } = useParams<{ module: string }>();
   const { user } = useAuth();
   const spacesQuery = useSpaces(user?.orgId ?? '');
   const { recents } = useRecentSpaces(isModuleKey(module) ? module : 'beacon');
+  const activeTeamId = useActiveTeamContext();
 
   const target = useMemo(() => {
     if (!isModuleKey(module) || !spacesQuery.data) return null;
@@ -27,10 +30,14 @@ export function ModuleLandingRedirect() {
     const moduleSpaces = spacesQuery.data.filter(
       (s) => s.type === module && s.readable !== false,
     );
+    // Prefer the target module's space owned by the team the user was last in.
+    const contextSpace = activeTeamId
+      ? moduleSpaces.find((s) => s.owner_team_id === activeTeamId)
+      : undefined;
     const recent = recents.map((id) => moduleSpaces.find((s) => s.id === id)).find(Boolean);
-    const space = recent ?? moduleSpaces[0];
+    const space = contextSpace ?? recent ?? moduleSpaces[0];
     return space ? spacePath(module, space.id, MODULES[module].defaultSubpath) : null;
-  }, [module, spacesQuery.data, recents]);
+  }, [module, spacesQuery.data, recents, activeTeamId]);
 
   if (!isModuleKey(module)) {
     return (
