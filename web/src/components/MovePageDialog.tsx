@@ -39,10 +39,12 @@ export function MovePageDialog({ orgId, spaceId, pageId, pageTitle, onClose }: M
   const [target, setTarget] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Only spaces the caller can write into are valid destinations; the current
-  // space is excluded (moving to it is a no-op here).
+  // Only Codex spaces can hold pages — the backend rejects any other module,
+  // so offering Beacon/Vector here was a dead end dressed as a choice. The
+  // caller must also be able to read the space, and the current space is
+  // excluded (moving to it is a no-op here).
   const destinations = (spacesQuery.data ?? []).filter(
-    (s) => s.readable !== false && s.id !== spaceId,
+    (s) => s.type === 'codex' && s.readable !== false && s.id !== spaceId,
   );
 
   const activeShares = impact.data?.active_share_count ?? 0;
@@ -54,7 +56,13 @@ export function MovePageDialog({ orgId, spaceId, pageId, pageTitle, onClose }: M
       { parent_id: null, position: 0, target_space_id: target },
       {
         onSuccess: onClose,
-        onError: (err) => setError(friendlyErrorMessage(err, 'The page could not be moved.')),
+        onError: (err) =>
+          setError(
+            friendlyErrorMessage(
+              err,
+              'The page could not be moved — check that the destination is a wiki you can edit, then try again.',
+            ),
+          ),
       },
     );
   };
