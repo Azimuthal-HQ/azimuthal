@@ -59,6 +59,17 @@ func CreateTestOrg(t *testing.T, pool *pgxpool.Pool) Org {
 	if err != nil {
 		t.Fatalf("CreateTestOrg default team: %v", err)
 	}
+	// Seed the default Vector item types, mirroring production org provisioning
+	// (OrgProvisionerAdapter.WithItemTypeSeeder). Idempotent.
+	_, err = pool.Exec(context.Background(),
+		`INSERT INTO item_types (org_id, slug, name, position)
+		 VALUES ($1,'task','Task',1),($1,'story','Story',2),($1,'bug','Bug',3),($1,'epic','Epic',4)
+		 ON CONFLICT (org_id, slug) DO NOTHING`,
+		org.ID,
+	)
+	if err != nil {
+		t.Fatalf("CreateTestOrg default item types: %v", err)
+	}
 	return org
 }
 

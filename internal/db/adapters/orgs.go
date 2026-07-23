@@ -18,6 +18,7 @@ type OrgProvisionerAdapter struct {
 	q        *generated.Queries
 	wfSeed   *WorkflowAdapter
 	teamSeed *TeamAdapter
+	typeSeed *ItemTypeAdapter
 }
 
 // NewOrgProvisionerAdapter creates an OrgProvisionerAdapter.
@@ -35,6 +36,13 @@ func NewOrgProvisionerAdapterWithWorkflows(q *generated.Queries, wf *WorkflowAda
 // every new membership into it (ADR-0006 point 4 — never teamless).
 func (a *OrgProvisionerAdapter) WithTeamSeeder(t *TeamAdapter) *OrgProvisionerAdapter {
 	a.teamSeed = t
+	return a
+}
+
+// WithItemTypeSeeder makes org provisioning seed the default Vector item types
+// (task, story, bug, epic) so a new org's project spaces have a type vocabulary.
+func (a *OrgProvisionerAdapter) WithItemTypeSeeder(t *ItemTypeAdapter) *OrgProvisionerAdapter {
+	a.typeSeed = t
 	return a
 }
 
@@ -68,6 +76,11 @@ func (a *OrgProvisionerAdapter) ProvisionOrg(ctx context.Context, displayName st
 	if a.teamSeed != nil {
 		if err := a.teamSeed.SeedDefaultTeam(ctx, org.ID); err != nil {
 			return uuid.Nil, "", fmt.Errorf("seeding default team: %w", err)
+		}
+	}
+	if a.typeSeed != nil {
+		if err := a.typeSeed.SeedDefaults(ctx, org.ID); err != nil {
+			return uuid.Nil, "", fmt.Errorf("seeding default item types: %w", err)
 		}
 	}
 	return org.ID, slug, nil

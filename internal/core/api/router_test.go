@@ -23,6 +23,7 @@ import (
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
@@ -388,6 +389,39 @@ func (m *mockItemRepo) GetByOrgKey(_ context.Context, _ uuid.UUID, key string) (
 	return nil, projects.ErrNotFound
 }
 
+// mockItemTypeRepo is an empty itemtypes.Repository for the routing/permission
+// sweep — the routes exist and gate correctly; type CRUD behaviour is covered
+// by the itemtypes integration tests against a real database.
+type mockItemTypeRepo struct{}
+
+func (m *mockItemTypeRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*itemtypes.ItemType, error) {
+	return nil, nil
+}
+func (m *mockItemTypeRepo) ListActiveByOrg(_ context.Context, _ uuid.UUID) ([]*itemtypes.ItemType, error) {
+	return nil, nil
+}
+func (m *mockItemTypeRepo) GetByID(_ context.Context, _ uuid.UUID) (*itemtypes.ItemType, error) {
+	return nil, itemtypes.ErrNotFound
+}
+func (m *mockItemTypeRepo) GetByOrgSlug(_ context.Context, orgID uuid.UUID, slug string) (*itemtypes.ItemType, error) {
+	// Treat any slug as a defined, active type so item-create validation does
+	// not block the routing/permission sweep (which has no seeded DB).
+	return &itemtypes.ItemType{ID: uuid.New(), OrgID: orgID, Slug: slug, Name: slug}, nil
+}
+func (m *mockItemTypeRepo) Create(_ context.Context, _ *itemtypes.ItemType) error { return nil }
+func (m *mockItemTypeRepo) Rename(_ context.Context, _ uuid.UUID, _ string) (*itemtypes.ItemType, error) {
+	return nil, itemtypes.ErrNotFound
+}
+func (m *mockItemTypeRepo) SetArchived(_ context.Context, _ uuid.UUID, _ bool) (*itemtypes.ItemType, error) {
+	return nil, itemtypes.ErrNotFound
+}
+func (m *mockItemTypeRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockItemTypeRepo) CountItemsOfType(_ context.Context, _ uuid.UUID, _ string) (int, error) {
+	return 0, nil
+}
+func (m *mockItemTypeRepo) NextPosition(_ context.Context, _ uuid.UUID) (int, error) { return 1, nil }
+func (m *mockItemTypeRepo) SeedDefaults(_ context.Context, _ uuid.UUID) error        { return nil }
+
 func (m *mockItemRepo) GetByID(_ context.Context, id uuid.UUID) (*projects.Item, error) {
 	item, ok := m.items[id]
 	if !ok {
@@ -568,11 +602,12 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	roadmapSvc := projects.NewRoadmapService(itemRepo, sprintRepo)
 	relationSvc := projects.NewRelationService(&mockRelationRepo{})
 	labelSvc := projects.NewLabelService(&mockLabelRepo{})
+	itemTypeSvc := itemtypes.NewService(&mockItemTypeRepo{})
 
 	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
 	ticketHandler := ticketsapi.NewHandler(ticketSvc)
 	wikiHandler := wikiapi.NewHandler(wikiSvc, wiki.NewLockService(&mockLockStore{}))
-	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc)
+	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).WithItemTypes(itemTypeSvc)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
 	spaceHandler := spacesapi.NewHandler(nil)
 

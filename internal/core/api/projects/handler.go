@@ -15,6 +15,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 )
 
@@ -26,6 +27,7 @@ type Handler struct {
 	roadmap   *projects.RoadmapService
 	relations *projects.RelationService
 	labels    *projects.LabelService
+	itemTypes *itemtypes.Service
 	auditLog  audit.Logger
 }
 
@@ -52,6 +54,13 @@ func NewHandler(
 // WithAuditLogger attaches an audit logger to the handler.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithItemTypes attaches the item-types service, enabling the item-type
+// endpoints and item-create type validation.
+func (h *Handler) WithItemTypes(s *itemtypes.Service) *Handler {
+	h.itemTypes = s
 	return h
 }
 
@@ -232,6 +241,29 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	if err := respond.DecodeJSON(r, &req); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
 		return
+	}
+
+	// The type vocabulary is org-defined (item_types). Validate the chosen type
+	// against the org's active types — this is where org context lives, so it
+	// stays out of the space-scoped item service. A blank kind defaults to task.
+	if req.Kind == "" {
+		req.Kind = "task"
+	}
+	if h.itemTypes != nil {
+		orgID, oerr := orgIDFromURL(r)
+		if oerr != nil {
+			respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+			return
+		}
+		ok, err := h.itemTypes.IsActiveType(r.Context(), orgID, req.Kind)
+		if err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to validate item type")
+			return
+		}
+		if !ok {
+			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "unknown or archived item type")
+			return
+		}
 	}
 
 	item := &projects.Item{
@@ -1411,6 +1443,185 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Item type handlers ---
+
+type createItemTypeRequest struct {
+	Name string `json:"name"`
+}
+
+type updateItemTypeRequest struct {
+	Name     *string `json:"name,omitempty"`
+	Archived *bool   `json:"archived,omitempty"`
+}
+
+// ListItemTypes returns all item types for an org (active and archived),
+// ordered. Members read this to populate the creation type picker and filters.
+//
+// @Summary      List item types
+// @Description  Returns all item types for an organization (active and archived)
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string  true  "Organization ID (UUID)"
+// @Success      200    {array}   map[string]interface{}
+// @Failure      400    {object}  api.SwaggerErrorResponse
+// @Failure      401    {object}  api.SwaggerErrorResponse
+// @Failure      500    {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/item-types [get]
+func (h *Handler) ListItemTypes(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	types, err := h.itemTypes.List(r.Context(), orgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list item types")
+		return
+	}
+	respond.JSON(w, http.StatusOK, types)
+}
+
+// CreateItemType defines a new org item type.
+//
+// @Summary      Create an item type
+// @Description  Defines a new item type for an organization (org admin only)
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string  true  "Organization ID (UUID)"
+// @Success      201    {object}  map[string]interface{}
+// @Failure      400    {object}  api.SwaggerErrorResponse
+// @Failure      401    {object}  api.SwaggerErrorResponse
+// @Failure      409    {object}  api.SwaggerErrorResponse
+// @Failure      500    {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/item-types [post]
+func (h *Handler) CreateItemType(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	var req createItemTypeRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	created, err := h.itemTypes.Create(r.Context(), orgID, req.Name)
+	if err != nil {
+		handleItemTypeError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusCreated, created)
+}
+
+// UpdateItemType renames and/or archives an item type.
+//
+// @Summary      Update an item type
+// @Description  Renames and/or archives an item type (org admin only)
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID   path      string  true  "Organization ID (UUID)"
+// @Param        typeID  path      string  true  "Item type ID (UUID)"
+// @Success      200     {object}  map[string]interface{}
+// @Failure      400     {object}  api.SwaggerErrorResponse
+// @Failure      401     {object}  api.SwaggerErrorResponse
+// @Failure      404     {object}  api.SwaggerErrorResponse
+// @Failure      500     {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/item-types/{typeID} [patch]
+func (h *Handler) UpdateItemType(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	typeID, err := uuid.Parse(chi.URLParam(r, "typeID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item type ID")
+		return
+	}
+	var req updateItemTypeRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == nil && req.Archived == nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "nothing to update")
+		return
+	}
+
+	var result *itemtypes.ItemType
+	if req.Name != nil {
+		result, err = h.itemTypes.Rename(r.Context(), orgID, typeID, *req.Name)
+		if err != nil {
+			handleItemTypeError(w, r, err)
+			return
+		}
+	}
+	if req.Archived != nil {
+		result, err = h.itemTypes.SetArchived(r.Context(), orgID, typeID, *req.Archived)
+		if err != nil {
+			handleItemTypeError(w, r, err)
+			return
+		}
+	}
+	respond.JSON(w, http.StatusOK, result)
+}
+
+// DeleteItemType hard-deletes an unreferenced item type. A type in use returns
+// 409 — archive it instead.
+//
+// @Summary      Delete an item type
+// @Description  Hard-deletes an unreferenced item type (org admin only); a referenced type returns 409
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID   path      string  true  "Organization ID (UUID)"
+// @Param        typeID  path      string  true  "Item type ID (UUID)"
+// @Success      204     "No Content"
+// @Failure      400     {object}  api.SwaggerErrorResponse
+// @Failure      401     {object}  api.SwaggerErrorResponse
+// @Failure      404     {object}  api.SwaggerErrorResponse
+// @Failure      409     {object}  api.SwaggerErrorResponse
+// @Failure      500     {object}  api.SwaggerErrorResponse
+// @Router       /orgs/{orgID}/item-types/{typeID} [delete]
+func (h *Handler) DeleteItemType(w http.ResponseWriter, r *http.Request) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	typeID, err := uuid.Parse(chi.URLParam(r, "typeID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item type ID")
+		return
+	}
+	if err := h.itemTypes.Delete(r.Context(), orgID, typeID); err != nil {
+		handleItemTypeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleItemTypeError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, itemtypes.ErrNotFound):
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
+	case errors.Is(err, itemtypes.ErrNameRequired), errors.Is(err, itemtypes.ErrInvalidName):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+	case errors.Is(err, itemtypes.ErrDuplicate):
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
+	case errors.Is(err, itemtypes.ErrReferenced):
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			fmt.Sprintf("item type operation failed: %v", err))
+	}
 }
 
 // --- Helpers ---

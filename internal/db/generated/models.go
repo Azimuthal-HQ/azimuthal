@@ -102,6 +102,17 @@ type Invite struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type ItemType struct {
+	ID         uuid.UUID          `json:"id"`
+	OrgID      uuid.UUID          `json:"org_id"`
+	Slug       string             `json:"slug"`
+	Name       string             `json:"name"`
+	Position   int32              `json:"position"`
+	ArchivedAt pgtype.Timestamptz `json:"archived_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ItemsArchive struct {
 	ID           uuid.UUID          `json:"id"`
 	SpaceID      uuid.UUID          `json:"space_id"`

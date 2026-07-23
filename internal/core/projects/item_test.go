@@ -216,10 +216,14 @@ func TestItemService_CreateItem_TitleRequired(t *testing.T) {
 	}
 }
 
-func TestItemService_CreateItem_InvalidKind(t *testing.T) {
+// TestItemService_CreateItem_EmptyKind: the org-defined type vocabulary is
+// validated by the API handler (which has org context), so the service only
+// guards against a typeless item — an empty kind is rejected, a non-empty one
+// is accepted and left for the handler's item_types check.
+func TestItemService_CreateItem_EmptyKind(t *testing.T) {
 	svc := NewItemService(newStubItemRepo(), noopShareDeleter{})
 	item := makeItem(uuid.New())
-	item.Kind = "invalid"
+	item.Kind = ""
 
 	_, err := svc.CreateItem(context.Background(), item)
 	if !errors.Is(err, ErrInvalidKind) {

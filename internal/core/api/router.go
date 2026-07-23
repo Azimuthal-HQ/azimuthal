@@ -179,6 +179,15 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 				r.Delete("/{labelID}", cfg.ProjectHandler.DeleteLabel)
 			})
 
+			// Item types (org-scoped: any member reads for pickers/filters;
+			// org admins define, rename, archive, and delete).
+			r.Route("/item-types", func(r chi.Router) {
+				r.Get("/", cfg.ProjectHandler.ListItemTypes)
+				r.With(orgAdminGuard(cfg)).Post("/", cfg.ProjectHandler.CreateItemType)
+				r.With(orgAdminGuard(cfg)).Patch("/{typeID}", cfg.ProjectHandler.UpdateItemType)
+				r.With(orgAdminGuard(cfg)).Delete("/{typeID}", cfg.ProjectHandler.DeleteItemType)
+			})
+
 			// Workflows (org-scoped: members read, org admins mutate).
 			if cfg.WorkflowHandler != nil {
 				r.Route("/workflows", func(r chi.Router) {

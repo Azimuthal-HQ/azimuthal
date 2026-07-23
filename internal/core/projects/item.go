@@ -16,7 +16,9 @@ var ValidPriorities = map[string]bool{
 	"low":    true,
 }
 
-// ValidKinds contains all allowed item kind values.
+// ValidKinds is the default seeded item-type/kind vocabulary. Item types are
+// org-editable at runtime (see the itemtypes package), so this is the seed set
+// and the canonical list used by tests, not an exhaustive allow-list.
 var ValidKinds = map[string]bool{
 	"ticket": true,
 	"task":   true,
@@ -238,12 +240,15 @@ func (s *ItemService) SearchItems(ctx context.Context, spaceID uuid.UUID, query 
 	return items, nil
 }
 
-// validateItem checks that an item has valid required fields.
+// validateItem checks that an item has valid required fields. Note the item
+// TYPE (Kind) vocabulary is org-defined (item_types) and validated by the API
+// handler, which has the org context; the service only requires a non-empty
+// kind so it cannot silently persist a typeless item.
 func validateItem(item *Item) error {
 	if item.Title == "" {
 		return ErrTitleRequired
 	}
-	if !ValidKinds[item.Kind] {
+	if item.Kind == "" {
 		return ErrInvalidKind
 	}
 	if !ValidPriorities[item.Priority] {
