@@ -512,9 +512,12 @@ async function fetchSpaces(orgId: string): Promise<Space[]> {
 interface CreateSpaceRequest {
   name: string;
   slug: string;
-  key: string;
+  // Optional: when omitted (or empty) the backend derives a key from the name
+  // and dedupes it past the per-org key index. Auto-created spaces omit it.
+  key?: string;
   type: SpaceType;
   description?: string;
+  owner_team_id?: string;
 }
 
 async function createSpace(orgId: string, req: CreateSpaceRequest): Promise<Space> {
@@ -2172,6 +2175,49 @@ export function useCreateTeam(orgId: string) {
     mutationFn: (req) => createTeam(orgId, req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
+    },
+  });
+}
+
+/** The outcome of creating a team plus any opt-in per-module spaces. */
+export interface CreateTeamWithSpacesResult {
+  team: Team;
+  spaces: Space[];
+}
+
+/**
+ * Creates a team, then — for each opted-in module — a space named for the team
+ * owned by it, granting the team access via the existing space_grants path
+ * (subject_type=team). Reuses the single POST /spaces + POST /grants
+ * implementations rather than a second server-side space-creation loop.
+ * The space key is omitted so the backend derives and dedupes it (space keys
+ * are unique per org, unlike slugs which are per module).
+ */
+export function useCreateTeamWithSpaces(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<CreateTeamWithSpacesResult, APIError, CreateTeamRequest & { modules: SpaceType[] }>({
+    mutationFn: async ({ modules, ...teamReq }) => {
+      const team = await createTeam(orgId, teamReq);
+      const spaces: Space[] = [];
+      for (const module of modules) {
+        const space = await createSpace(orgId, {
+          name: team.name,
+          slug: team.slug,
+          type: module,
+          owner_team_id: team.id,
+        });
+        await createGrant(orgId, space.id, {
+          subject_type: 'team',
+          subject_id: team.id,
+          role: 'contributor',
+        });
+        spaces.push(space);
+      }
+      return { team, spaces };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaces(orgId) });
     },
   });
 }
