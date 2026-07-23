@@ -165,7 +165,7 @@ function DroppableColumn({ column, items, onItemClick, spaceKey, memberName }: {
     <div className="flex w-72 shrink-0 flex-col rounded-[11px] border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
       <div className="flex items-center gap-2 px-1.5 pb-2 pt-1">
         <span className="h-2 w-2 rounded-full" style={{ backgroundColor: column.color }} />
-        <h3 className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+        <h3 className="text-[var(--text-sm)] font-medium text-[var(--color-text-muted)]">
           {column.label}
         </h3>
         <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]" style={{ fontFamily: 'var(--font-mono)' }}>

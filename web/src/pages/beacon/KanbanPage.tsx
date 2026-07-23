@@ -163,7 +163,7 @@ function DroppableColumn({ column, tickets, spaceId, spaceKey, memberName }: Dro
       )}
     >
       <div className="flex items-center gap-2 px-1.5 pb-2 pt-1">
-        <h3 className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+        <h3 className="text-[var(--text-sm)] font-medium text-[var(--color-text-muted)]">
           {column.label}
         </h3>
         <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]" style={{ fontFamily: 'var(--font-mono)' }}>
