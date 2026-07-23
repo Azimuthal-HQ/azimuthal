@@ -172,7 +172,10 @@ export function TopBar() {
             )}
           >
             <Plus className="h-4 w-4" />
-            <span className="hidden sm:inline">{moduleCreate?.label ?? 'Create'}</span>
+            {/* Always "Create" — a module-specific label (e.g. "New page")
+                would collide with each module's own create button. The
+                contextual action is disclosed in the caret menu below. */}
+            <span className="hidden sm:inline">Create</span>
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

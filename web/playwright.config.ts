@@ -13,7 +13,7 @@ export default defineConfig({
   workers: process.env.CI ? 2 : 4,
   reporter: process.env.CI ? 'github' : 'html',
   use: {
-    baseURL: process.env.BASE_URL || 'http://localhost:8082',
+    baseURL: process.env.BASE_URL || `http://localhost:${process.env.E2E_PORT || '8082'}`,
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     trace: 'on-first-retry',
@@ -23,7 +23,7 @@ export default defineConfig({
   ],
   webServer: {
     command: `${process.env.AZIMUTHAL_BINARY || '/tmp/azimuthal-test'} serve`,
-    url: 'http://localhost:8082/health',
+    url: `http://localhost:${process.env.E2E_PORT || '8082'}/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 60000,
     env: {
@@ -32,7 +32,7 @@ export default defineConfig({
       STORAGE_ACCESS_KEY: process.env.STORAGE_ACCESS_KEY || '',
       STORAGE_SECRET_KEY: process.env.STORAGE_SECRET_KEY || '',
       STORAGE_BUCKET: process.env.STORAGE_BUCKET || '',
-      APP_PORT: '8082',
+      APP_PORT: process.env.E2E_PORT || '8082',
       APP_ENV: 'test',
     },
   },
