@@ -777,6 +777,7 @@ export interface BulkAction {
 
 export interface BulkResult {
   batch_id?: string;
+  ticket_ref?: string;
   creates: number;
   updates: number;
   revokes: number;
