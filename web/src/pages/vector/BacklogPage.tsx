@@ -6,6 +6,7 @@ import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
 import { Field, FieldLabel } from '../../components/ui/field';
 import { SegmentedControl } from '../../components/ui/segmented';
+import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
 import {
   Dialog,
   DialogContent,
@@ -235,8 +236,8 @@ export function BacklogPage() {
                         <GripVertical className="h-4 w-4" />
                       </td>
                       <td className="whitespace-nowrap px-3 py-3">
-                        <Link to={itemPath} className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline" style={{ fontFamily: 'var(--font-mono)' }}>
-                          {item.number ? `${space?.key ?? 'PROJ'}-${item.number}` : (item.id ?? '').slice(0, 8)}
+                        <Link to={itemPath} className="hover:opacity-80" aria-label={`Open ${itemKeyLabel(item, space?.key)}`}>
+                          <ItemKeyChip item={item} spaceKey={space?.key} />
                         </Link>
                       </td>
                       <td className="px-3 py-3 text-[var(--color-text)]">

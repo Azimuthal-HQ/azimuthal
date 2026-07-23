@@ -326,6 +326,13 @@ export interface ProjectItem {
   id: string;
   space_id: string;
   number: number | null;
+  /**
+   * Permanent, org-unique human-readable key (<SPACE_KEY>-<n>), assigned at
+   * creation and immutable — survives a move between spaces. Prefer this over
+   * deriving <spaceKey>-<number> client-side. Optional only for items fetched
+   * before the field existed.
+   */
+  item_key?: string;
   title: string;
   description: string;
   /** task | story | bug | epic — set at creation, carried on the wire. */

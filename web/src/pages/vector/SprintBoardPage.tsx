@@ -18,6 +18,7 @@ import {
 import { AlertCircle, Bookmark, Bug, Flag, SquareCheck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PriorityPill, normalizePriority } from '../../components/priority';
+import { ItemKeyChip } from '../../components/ItemKeyChip';
 import { cn } from '../../lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -123,12 +124,9 @@ function ItemCard({ item, overlay, onItemClick, spaceKey, memberName }: { item: 
       )}
       onClick={() => onItemClick?.(item.id)}
     >
-      <span
-        className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"
-        style={{ fontFamily: 'var(--font-mono)' }}
-      >
+      <span className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
         <KindIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        {item.number ? `${spaceKey ?? 'PROJ'}-${item.number}` : (item.id ?? '').slice(0, 8)}
+        <ItemKeyChip item={item} spaceKey={spaceKey} />
       </span>
       <p className="mb-2.5 mt-1.5 text-[13px] leading-[1.4] text-[var(--color-text)]">
         {item.title}

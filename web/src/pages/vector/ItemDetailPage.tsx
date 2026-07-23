@@ -14,6 +14,7 @@ import {
 } from '../../components/layout/DetailLayout';
 import { EntityShareControl } from '../../components/EntityShareControl';
 import { ModuleChip } from '../../shell/ModuleChip';
+import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import {
@@ -180,9 +181,7 @@ export function ItemDetailPage() {
     );
   }
 
-  const itemKeyLabel = item.number
-    ? `${space?.key ?? 'PROJ'}-${item.number}`
-    : item.id.slice(0, 8);
+  const keyLabel = itemKeyLabel(item, space?.key);
   const reporter = (members ?? []).find((m) => m.user_id === item.reporter_id);
 
   return (
@@ -195,17 +194,14 @@ export function ItemDetailPage() {
         </Link>
         <span>/</span>
         <span className="text-[var(--color-text)]" style={{ fontFamily: 'var(--font-mono)' }}>
-          {itemKeyLabel}
+          {keyLabel}
         </span>
       </div>
 
       <DetailLayout>
         <DetailMain>
-          <div
-            className="mb-2 text-[var(--text-xs)] text-[var(--color-text-muted)]"
-            style={{ fontFamily: 'var(--font-mono)' }}
-          >
-            {itemKeyLabel}
+          <div className="mb-2">
+            <ItemKeyChip item={item} spaceKey={space?.key} />
           </div>
 
           {isEditing ? (
