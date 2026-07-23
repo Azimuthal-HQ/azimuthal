@@ -5,7 +5,9 @@
 package avatar
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -127,7 +129,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", "inline")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	_, _ = io.Copy(w, bytes.NewReader(data))
 }
 
 func uuidParam(w http.ResponseWriter, r *http.Request, name, label string) (uuid.UUID, bool) {

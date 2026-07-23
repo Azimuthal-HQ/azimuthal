@@ -50,10 +50,10 @@ type bulkResult struct {
 	BatchID   *uuid.UUID `json:"batch_id"`
 	TicketRef *string    `json:"ticket_ref"`
 	Creates   int        `json:"creates"`
-	Updates int        `json:"updates"`
-	Revokes int        `json:"revokes"`
-	Noops   int        `json:"noops"`
-	Actions []struct {
+	Updates   int        `json:"updates"`
+	Revokes   int        `json:"revokes"`
+	Noops     int        `json:"noops"`
+	Actions   []struct {
 		TeamID   uuid.UUID `json:"team_id"`
 		SpaceID  uuid.UUID `json:"space_id"`
 		Action   string    `json:"action"`

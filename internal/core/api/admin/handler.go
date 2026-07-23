@@ -172,29 +172,38 @@ func (h *Handler) UpdatePerson(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "provide org_role, primary_team_id, or display_name")
 		return
 	}
+	if !h.applyPersonUpdates(w, r, orgID, userID, req) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
+// applyPersonUpdates applies each provided field in turn, auditing on success.
+// It returns false (having already written an error response) on the first
+// failure.
+func (h *Handler) applyPersonUpdates(w http.ResponseWriter, r *http.Request, orgID, userID uuid.UUID, req updatePersonRequest) bool {
 	if req.OrgRole != nil {
 		if err := h.people.ChangeOrgRole(r.Context(), orgID, userID, *req.OrgRole); err != nil {
 			h.mapPeopleError(w, r, err)
-			return
+			return false
 		}
 		h.logEvent(r, audit.EventTypeUserOrgRoleChanged, orgID, userID, map[string]string{"org_role": *req.OrgRole})
 	}
 	if req.DisplayName != nil {
 		if err := h.people.UpdateProfile(r.Context(), orgID, userID, *req.DisplayName); err != nil {
 			h.mapPeopleError(w, r, err)
-			return
+			return false
 		}
 		h.logEvent(r, audit.EventTypeUserProfileChanged, orgID, userID, map[string]string{"display_name": strings.TrimSpace(*req.DisplayName)})
 	}
 	if req.PrimaryTeamID != nil {
 		if err := h.people.ChangePrimaryTeam(r.Context(), orgID, userID, *req.PrimaryTeamID); err != nil {
 			h.mapPeopleError(w, r, err)
-			return
+			return false
 		}
 		h.logEvent(r, audit.EventTypeUserPrimaryTeamChanged, orgID, userID, map[string]string{"primary_team_id": req.PrimaryTeamID.String()})
 	}
-	w.WriteHeader(http.StatusNoContent)
+	return true
 }
 
 // DeactivatePerson blocks sign-in and always terminates the member's

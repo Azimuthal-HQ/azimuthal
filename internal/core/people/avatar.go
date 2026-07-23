@@ -88,7 +88,7 @@ func (s *AvatarService) SetAvatar(ctx context.Context, orgID, userID uuid.UUID, 
 	serveURL := fmt.Sprintf("/api/v1/orgs/%s/users/%s/avatar", orgID, userID)
 	if err := s.store.SetAvatarURL(ctx, orgID, userID, serveURL); err != nil {
 		_ = s.blobs.Delete(ctx, key)
-		return "", err
+		return "", fmt.Errorf("recording avatar reference: %w", err)
 	}
 	return serveURL, nil
 }
