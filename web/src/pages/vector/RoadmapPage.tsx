@@ -4,10 +4,13 @@ import { AlertTriangle } from 'lucide-react';
 import { SegmentedControl } from '../../components/ui/segmented';
 import { PriorityDot, normalizePriority } from '../../components/priority';
 import { formatUTCDate } from '../../lib/utils';
+import { ItemKeyChip } from '../../components/ItemKeyChip';
+import { SprintTimeline, ZOOM_OPTIONS, type ZoomKey } from './SprintTimeline';
 import {
   useRoadmap,
   useRoadmapSprints,
   useSprints,
+  useSpace,
   friendlyErrorMessage,
   type RoadmapItem,
   type RoadmapSprint,
@@ -62,10 +65,11 @@ function formatMonth(ym: string) {
   return new Date(Number(y), Number(m) - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
-function ItemRow({ ri }: { ri: RoadmapItem }) {
+function ItemRow({ ri, spaceKey }: { ri: RoadmapItem; spaceKey?: string }) {
   return (
     <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
       <PriorityDot priority={normalizePriority(ri.item.priority)} />
+      <ItemKeyChip item={ri.item} spaceKey={spaceKey} />
       <span className="flex-1 truncate text-[var(--text-sm)] text-[var(--color-text)]">{ri.item.title}</span>
       <span className="shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)]">{ri.item.status}</span>
       {ri.overdue && (
@@ -78,7 +82,7 @@ function ItemRow({ ri }: { ri: RoadmapItem }) {
   );
 }
 
-function SprintCard({ rs }: { rs: RoadmapSprint }) {
+function SprintCard({ rs, spaceKey }: { rs: RoadmapSprint; spaceKey?: string }) {
   return (
     <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
       <div className="flex items-center justify-between mb-3">
@@ -101,6 +105,7 @@ function SprintCard({ rs }: { rs: RoadmapSprint }) {
           {(rs.items ?? []).map(item => (
             <div key={item.id} className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-text)]">
               <PriorityDot priority={normalizePriority(item.priority)} className="h-1.5 w-1.5" />
+              <ItemKeyChip item={item} spaceKey={spaceKey} />
               <span className="truncate">{item.title}</span>
               <span className="ml-auto text-[var(--text-xs)] text-[var(--color-text-muted)] shrink-0">{item.status}</span>
             </div>
@@ -114,7 +119,9 @@ function SprintCard({ rs }: { rs: RoadmapSprint }) {
 export function RoadmapPage() {
   const { spaceId = '' } = useParams<{ spaceId: string }>();
   const [view, setView] = useState<ViewMode>('items');
+  const [zoom, setZoom] = useState<ZoomKey>('half');
 
+  const { data: space } = useSpace(spaceId);
   const { data: sprints = [] } = useSprints(spaceId);
   const { from, to } = useMemo(() => computeRoadmapWindow(sprints), [sprints]);
 
@@ -152,16 +159,29 @@ export function RoadmapPage() {
             </p>
           )}
         </div>
-        <SegmentedControl
-          options={[
-            { value: 'items', label: 'All Items' },
-            { value: 'sprints', label: 'Sprint Timeline' },
-          ]}
-          value={view}
-          onChange={setView}
-          aria-label="Roadmap view"
-          fullWidth={false}
-        />
+        <div className="flex items-center gap-2">
+          {/* Zoom applies to the timeline only; hidden in the item list so it
+              never reads as a filter on data it does not affect. */}
+          {view === 'sprints' && (
+            <SegmentedControl
+              options={ZOOM_OPTIONS}
+              value={zoom}
+              onChange={setZoom}
+              aria-label="Timeline range"
+              fullWidth={false}
+            />
+          )}
+          <SegmentedControl
+            options={[
+              { value: 'items', label: 'All Items' },
+              { value: 'sprints', label: 'Sprint Timeline' },
+            ]}
+            value={view}
+            onChange={setView}
+            aria-label="Roadmap view"
+            fullWidth={false}
+          />
+        </div>
       </div>
 
       {isLoading ? (
@@ -189,7 +209,7 @@ export function RoadmapPage() {
                   {formatMonth(month)}
                 </h2>
                 <div className="space-y-1.5">
-                  {grouped[month].map(ri => <ItemRow key={ri.item.id} ri={ri} />)}
+                  {grouped[month].map(ri => <ItemRow key={ri.item.id} ri={ri} spaceKey={space?.key} />)}
                 </div>
               </div>
             ))}
@@ -201,8 +221,13 @@ export function RoadmapPage() {
             <p className="text-[var(--color-text-muted)]">No sprints with items found.</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {sprintRoadmap.map(rs => <SprintCard key={rs.sprint.id} rs={rs} />)}
+          <div className="space-y-6">
+            <SprintTimeline sprints={sprintRoadmap} zoom={zoom} spaceKey={space?.key} />
+            {/* The per-sprint detail below the chart: the timeline answers
+                "when", these answer "what". */}
+            <div className="space-y-3">
+              {sprintRoadmap.map(rs => <SprintCard key={rs.sprint.id} rs={rs} spaceKey={space?.key} />)}
+            </div>
           </div>
         )
       )}
