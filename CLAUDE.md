@@ -53,6 +53,13 @@ roadmap. No agent-name file suffixes. (On git operations, see the flagged confli
 - Org admin is a middleware bypass, never grant rows.
 - Shares widen, never narrow (ADR-0008).
 - The audit log is append-only. Never UPDATE, never DELETE.
+- **Every route carries an explicit guard classification, and the classification is checked
+  against the router, not taken on trust.** Since #64 moved the administration surface from
+  group-level `r.Use(admin404)` to per-route `r.With(admin404)`, a route added to a guarded
+  group inherits *nothing* — a forgotten guard leaves it open to any org member.
+  `TestReadPathSweep_GuardClassMatchesMiddleware` reads each route's real middleware chain and
+  fails when it disagrees with the accounting row. A route that is deliberately member-visible
+  inside an admin subtree goes in `deliberateNonAdminRoutes` **with its reason**.
 
 **Product.** No pricing, hosting-tier, or paywall language anywhere in code or documentation.
 Azimuthal is Apache 2.0, fully featured for every user, with no enterprise tier — permanently.
@@ -99,6 +106,28 @@ because it reads as coverage.
 
 **Regression tests.** Every fixed defect gets a test that fails before the fix and passes after.
 State that you verified both directions. Name it for the defect, not the function.
+
+**No dark harness.** Handlers take optional collaborators through `With*` builders, and a
+handler missing one does not fail — it reports the feature disabled and answers 404. In
+production that is correct. In the test harness it is silent: every test against those routes
+gets a tidy 404, every assertion still passes, and the endpoints read as covered while never
+having been reached. That is exactly how the board-config endpoints (W4) sat at zero real
+coverage — `newTestServerOn` never called `WithBoardConfig`, and nothing announced it.
+
+So the rule is structural, not a convention to remember: **`newTestServerOn` must pass every
+`With*` that `cmd/server/main.go` passes.** `TestHarness_NoDarkDependencies` walks the built
+router config and fails by name on any nil collaborator; `TestHarness_AuditLoggersAreLive`
+catches the softer version, a handler left on the discarding no-op logger. A dependency that is
+legitimately absent goes in `intentionallyAbsent` **with its reason**.
+
+**A capability gate needs a subject who is past the write floor and short of the capability.**
+A "viewer is refused" test proves nothing about a handler's own `access.Can` check: viewers are
+already refused upstream by `RequireWriteFloor(CapCreateItems)`, so the test passes with the
+in-handler gate deleted. It asserts the middleware, not the gate. Use a **contributor** — or
+whatever role clears the floor but lacks the capability under test — and mutation-test it both
+ways where practical: gate intact → 403, gate removed → the test fails. If a capability is
+org-level (`set_visibility` holds no space role at all), the persona that must be refused is a
+**team lead**, not a viewer.
 
 **Test debt is not permitted.** No PR merges with "tests to follow." There is no follow-up PR.
 
