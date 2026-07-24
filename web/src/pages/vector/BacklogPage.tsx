@@ -32,9 +32,12 @@ import {
   useRankItem,
   useSpace,
   useItemTypes,
+  useSprints,
+  useAssignItemSprint,
   friendlyErrorMessage,
   type ProjectItem,
   type ItemType,
+  type Sprint,
 } from '../../lib/api';
 
 // The default type set, shown in the create picker until the org's item types
@@ -61,6 +64,31 @@ const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
 };
 
 // ---------------------------------------------------------------------------
+// Sprint grouping
+// ---------------------------------------------------------------------------
+
+// Sentinel group key for items on no sprint. A literal that cannot collide with
+// a UUID, so it can never be confused with a real sprint id.
+const BACKLOG_KEY = '__backlog__';
+
+// Group ordering for sprint sections, matching the Sprints page.
+const SPRINT_GROUP_ORDER: Record<string, number> = { active: 0, planned: 1, completed: 2 };
+
+const sprintSelectClass = cn(
+  'h-8 rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+  'bg-[var(--color-input)] px-2 text-[var(--text-xs)] text-[var(--color-text)]',
+  'focus-visible:outline-none focus-visible:border-[var(--color-primary)] focus-visible:ring-1 focus-visible:ring-[var(--color-primary)]',
+);
+
+interface SprintGroup {
+  key: string;
+  label: string;
+  /** Undefined for the backlog group and for ids with no matching sprint. */
+  sprint?: Sprint;
+  items: ProjectItem[];
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -78,9 +106,59 @@ export function BacklogPage() {
   const typeOptions = (itemTypes ?? []).filter((t) => !t.archived_at);
   const pickerTypes = typeOptions.length > 0 ? typeOptions : DEFAULT_TYPE_OPTIONS;
 
+  // Sprints power the group headings and the assign controls. Completed
+  // sprints stay in the lookup (so their groups keep a real name) but are not
+  // offered as assignment targets.
+  const { data: sprints = [] } = useSprints(spaceId);
+  const sprintById = useMemo(() => new Map(sprints.map((s) => [s.id, s])), [sprints]);
+  const assignableSprints = useMemo(
+    () => sprints.filter((s) => s.status !== 'completed'),
+    [sprints],
+  );
+  const assignMutation = useAssignItemSprint(spaceId);
+  const [assignError, setAssignError] = useState<string | null>(null);
+
   const [search, setSearch] = useState('');
   // Type filter: selected type slugs; empty means all types (W5).
   const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set());
+
+  // Multi-select for bulk sprint assignment.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Assign one item. Errors surface in the filter bar rather than throwing:
+  // a failed re-sprint must not blank the list the user is working in.
+  async function assignOne(itemId: string, sprintId: string | null) {
+    setAssignError(null);
+    try {
+      await assignMutation.mutateAsync({ itemId, sprintId });
+    } catch (e) {
+      setAssignError(friendlyErrorMessage(e, 'The item could not be moved.'));
+    }
+  }
+
+  // Bulk assign every selected item. Sequential rather than concurrent: the
+  // rank/sprint writes touch the same rows and the item count here is small.
+  async function assignSelected(sprintId: string | null) {
+    setAssignError(null);
+    const ids = Array.from(selected);
+    try {
+      for (const id of ids) {
+        await assignMutation.mutateAsync({ itemId: id, sprintId });
+      }
+      setSelected(new Set());
+    } catch (e) {
+      setAssignError(friendlyErrorMessage(e, 'The items could not be moved.'));
+    }
+  }
 
   function toggleType(slug: string) {
     setTypeFilter((prev) => {
@@ -163,24 +241,41 @@ export function BacklogPage() {
     });
   }, [items, search, typeFilter]);
 
-  // Group by sprint
+  // Group by sprint. The group key is the sprint id (or BACKLOG_KEY), but the
+  // heading shows the sprint's *name* — this page previously rendered the raw
+  // sprint UUID as the group title, which is unreadable and leaks an internal
+  // identifier into the UI.
   const groups = useMemo(() => {
     const map = new Map<string, ProjectItem[]>();
     for (const item of filtered) {
-      const group = item.sprint_id ?? 'Backlog';
+      const group = item.sprint_id ?? BACKLOG_KEY;
       const arr = map.get(group) ?? [];
       arr.push(item);
       map.set(group, arr);
     }
-    const entries = Array.from(map.entries());
+
+    const entries: SprintGroup[] = Array.from(map.entries()).map(([key, groupItems]) => ({
+      key,
+      // A sprint the list hasn't loaded (or one from outside this space) falls
+      // back to a neutral label rather than exposing the id.
+      label: key === BACKLOG_KEY ? 'Backlog' : (sprintById.get(key)?.name ?? 'Unknown sprint'),
+      sprint: key === BACKLOG_KEY ? undefined : sprintById.get(key),
+      items: groupItems,
+    }));
+
+    // Backlog stays last; sprints lead with the active one, then planned, then
+    // completed, mirroring the Sprints page ordering.
     entries.sort((a, b) => {
-      if (a[0] === 'Backlog') return 1;
-      if (b[0] === 'Backlog') return -1;
-      return a[0].localeCompare(b[0]);
+      if (a.key === BACKLOG_KEY) return 1;
+      if (b.key === BACKLOG_KEY) return -1;
+      const rank = (s?: Sprint) => SPRINT_GROUP_ORDER[s?.status ?? ''] ?? 3;
+      const byStatus = rank(a.sprint) - rank(b.sprint);
+      return byStatus !== 0 ? byStatus : a.label.localeCompare(b.label);
     });
+
     // Sort items within each group by rank (lexicographic string ordering)
-    for (const [, groupItems] of entries) {
-      groupItems.sort((a, b) => {
+    for (const group of entries) {
+      group.items.sort((a, b) => {
         if (!a.rank && !b.rank) return 0;
         if (!a.rank) return 1;
         if (!b.rank) return -1;
@@ -188,7 +283,7 @@ export function BacklogPage() {
       });
     }
     return entries;
-  }, [filtered]);
+  }, [filtered, sprintById]);
 
   return (
     <div className="space-y-6">
@@ -216,6 +311,46 @@ export function BacklogPage() {
         />
       </div>
 
+      {/* Bulk sprint assignment — appears only with a selection. */}
+      {selected.size > 0 && (
+        <div
+          data-testid="backlog-bulk-bar"
+          className="flex flex-wrap items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
+        >
+          <span className="text-[var(--text-sm)] text-[var(--color-text)]">
+            {selected.size} selected
+          </span>
+          <select
+            aria-label="Move selected to sprint"
+            value=""
+            disabled={assignMutation.isPending}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) return;
+              void assignSelected(v === BACKLOG_KEY ? null : v);
+              e.target.value = '';
+            }}
+            className={sprintSelectClass}
+          >
+            <option value="">Move to…</option>
+            <option value={BACKLOG_KEY}>Backlog</option>
+            {assignableSprints.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          <Button size="sm" variant="outline" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
+
+      {assignError && (
+        <div className="flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-3">
+          <AlertCircle className="h-4 w-4 text-[var(--color-danger)]" />
+          <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{assignError}</p>
+        </div>
+      )}
+
       {/* Loading */}
       {isLoading && (
         <div className="flex h-32 items-center justify-center text-[var(--color-text-muted)]">
@@ -234,10 +369,10 @@ export function BacklogPage() {
       )}
 
       {/* Grouped table */}
-      {items && groups.map(([groupName, groupItems]) => (
-        <div key={groupName} className="space-y-2">
+      {items && groups.map(({ key: groupKey, label: groupLabel, items: groupItems }) => (
+        <div key={groupKey} className="space-y-2">
           <h2 className="text-[var(--text-sm)] font-semibold text-[var(--color-text-muted)]">
-            {groupName}
+            {groupLabel}
             <span className="ml-2 text-[var(--text-xs)] font-normal">
               ({groupItems.length} items)
             </span>
@@ -248,10 +383,12 @@ export function BacklogPage() {
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
                   <th className="w-8 px-2 py-2.5" />
+                  <th className="w-8 px-2 py-2.5" />
                   <th className="whitespace-nowrap px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">ID</th>
                   <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Title</th>
                   <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Priority</th>
                   <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Status</th>
+                  <th className="px-3 py-2.5 text-[11px] font-normal uppercase tracking-[.04em] text-[var(--color-text-muted)]">Sprint</th>
                 </tr>
               </thead>
               <tbody>
@@ -274,6 +411,15 @@ export function BacklogPage() {
                       <td className="px-2 py-3 text-[var(--color-text-muted)]">
                         <GripVertical className="h-4 w-4" />
                       </td>
+                      <td className="px-2 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${itemKeyLabel(item, space?.key)}`}
+                          checked={selected.has(item.id)}
+                          onChange={() => toggleSelected(item.id)}
+                          className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-primary)]"
+                        />
+                      </td>
                       <td className="whitespace-nowrap px-3 py-3">
                         <Link to={itemPath} className="hover:opacity-80" aria-label={`Open ${itemKeyLabel(item, space?.key)}`}>
                           <ItemKeyChip item={item} spaceKey={space?.key} />
@@ -284,6 +430,36 @@ export function BacklogPage() {
                       </td>
                       <td className="px-3 py-3"><PriorityPill priority={normalizePriority(item.priority)} /></td>
                       <td className="px-3 py-3"><Badge variant={STATUS_VARIANT[item.status] ?? 'secondary'}>{STATUS_LABEL[item.status] ?? item.status}</Badge></td>
+                      <td className="px-3 py-3">
+                        {/* Row action: re-sprint one item. Draggable rows swallow
+                            pointer events, so stop propagation on the control. */}
+                        <select
+                          aria-label={`Sprint for ${itemKeyLabel(item, space?.key)}`}
+                          value={item.sprint_id ?? BACKLOG_KEY}
+                          disabled={assignMutation.isPending}
+                          draggable={false}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            void assignOne(item.id, v === BACKLOG_KEY ? null : v);
+                          }}
+                          className={sprintSelectClass}
+                        >
+                          <option value={BACKLOG_KEY}>Backlog</option>
+                          {/* A completed sprint stays listed while it owns this
+                              item, so the control shows the truth rather than
+                              silently reading as "Backlog". */}
+                          {assignableSprints.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                          {item.sprint_id && !assignableSprints.some((s) => s.id === item.sprint_id) && (
+                            <option value={item.sprint_id}>
+                              {sprintById.get(item.sprint_id)?.name ?? 'Unknown sprint'}
+                            </option>
+                          )}
+                        </select>
+                      </td>
                     </tr>
                   );
                 })}
