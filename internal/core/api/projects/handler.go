@@ -151,10 +151,24 @@ type createItemRequest struct {
 	DueAt       *time.Time `json:"due_at,omitempty"`
 }
 
+// updateItemRequest is a PATCH body: every field is optional and only the
+// fields present in the JSON are applied.
+//
+// Title, Description and Priority are pointers for exactly that reason. As
+// plain strings, an omitted title decoded as "" and was assigned over the
+// stored one, so a request that meant "just change the assignee" blanked the
+// title and was then rejected by the service's own title-required rule. That
+// made the assignee control on item detail — which sends assignee_id alone —
+// fail with 400 every time.
+//
+// AssigneeID and DueAt stay single pointers: for them, null is a meaningful
+// value (unassign, clear the date) and absent is indistinguishable from null
+// in this shape. Clearing them is the more useful of the two readings, and it
+// is what the existing clients rely on.
 type updateItemRequest struct {
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Priority    string     `json:"priority"`
+	Title       *string    `json:"title"`
+	Description *string    `json:"description"`
+	Priority    *string    `json:"priority"`
 	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
 	Labels      []string   `json:"labels,omitempty"`
 	DueAt       *time.Time `json:"due_at,omitempty"`
@@ -357,6 +371,26 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, item)
 }
 
+// applyItemPatch copies only the fields the request body actually carried onto
+// the stored item. An absent field keeps its stored value; AssigneeID and DueAt
+// are the exceptions, where absent and null both mean "clear it".
+func applyItemPatch(existing *projects.Item, req updateItemRequest) {
+	if req.Title != nil {
+		existing.Title = *req.Title
+	}
+	if req.Description != nil {
+		existing.Description = *req.Description
+	}
+	if req.Priority != nil {
+		existing.Priority = *req.Priority
+	}
+	if req.Labels != nil {
+		existing.Labels = req.Labels
+	}
+	existing.AssigneeID = req.AssigneeID
+	existing.DueAt = req.DueAt
+}
+
 // UpdateItem modifies an existing item.
 //
 // @Summary      Update a project item
@@ -403,12 +437,7 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing.Title = req.Title
-	existing.Description = req.Description
-	existing.Priority = req.Priority
-	existing.AssigneeID = req.AssigneeID
-	existing.Labels = req.Labels
-	existing.DueAt = req.DueAt
+	applyItemPatch(existing, req)
 
 	updated, err := h.items.UpdateItem(r.Context(), existing)
 	if err != nil {
