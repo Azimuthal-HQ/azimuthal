@@ -2368,6 +2368,7 @@ export function useRankItem(spaceId: string) {
   });
 }
 
+
 // --- Board configuration hooks (W4) ---
 
 export function useBoardConfig(spaceId: string, opts?: QueryOpts<BoardConfig>) {
