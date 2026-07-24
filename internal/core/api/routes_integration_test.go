@@ -184,9 +184,18 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithRegistrationPolicy(true),
 		TicketHandler: ticketsapi.NewHandler(ticketSvc),
 		WikiHandler:   wikiapi.NewHandler(wikiSvc, wikiLocks).WithShareQueries(shareAdapter),
+		// Mirrors cmd/server/main.go. Any With* the production wiring passes
+		// must be passed here too: the handler treats a missing dependency as
+		// "feature not enabled" and answers 404, so an omission here does not
+		// fail loudly — it silently makes those routes untestable. That is
+		// exactly how the board-config endpoints reached zero coverage.
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).
-			WithCustomFields(customfields.NewService(adapters.NewCustomFieldDefAdapter(queries), adapters.NewCustomFieldValueAdapter(queries))),
+			WithCustomFields(customfields.NewService(adapters.NewCustomFieldDefAdapter(queries), adapters.NewCustomFieldValueAdapter(queries))).
+			WithBoardConfig(projects.NewBoardConfigService(
+				adapters.NewBoardConfigAdapter(pool),
+				adapters.NewWorkflowStatusAdapter(pool),
+			)),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries),
 		NotificationHandler: notificationsapi.NewHandler(queries),
