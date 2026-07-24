@@ -223,6 +223,58 @@ components:
           example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
           type: string
       type: object
+    api.SwaggerBoardColumn:
+      properties:
+        created_at:
+          example: "2026-01-15T10:30:00Z"
+          type: string
+        id:
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+          type: string
+        name:
+          example: In Progress
+          type: string
+        position:
+          example: 2
+          type: integer
+        space_id:
+          example: b2c3d4e5-f6a7-8901-bcde-f12345678901
+          type: string
+        statuses:
+          example:
+          - in_progress
+          - in_review
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        updated_at:
+          example: "2026-01-15T10:30:00Z"
+          type: string
+        wip_limit:
+          description: |-
+            WIPLimit is null when the column has no limit. Limits are advisory: the
+            API never refuses a transition because a column is over its limit.
+          example: 3
+          type: integer
+      type: object
+    api.SwaggerBoardConfig:
+      properties:
+        columns:
+          items:
+            $ref: '#/components/schemas/api.SwaggerBoardColumn'
+          type: array
+          uniqueItems: false
+        customized:
+          description: |-
+            Customized is false when the space has no stored configuration and these
+            columns were derived from its workflow states.
+          example: false
+          type: boolean
+        space_id:
+          example: b2c3d4e5-f6a7-8901-bcde-f12345678901
+          type: string
+      type: object
     api.SwaggerCommentResponse:
       properties:
         author_id:
@@ -1067,12 +1119,47 @@ components:
         valid:
           type: boolean
       type: object
+    projects.boardColumnRequest:
+      properties:
+        id:
+          description: |-
+            ID is optional: omit it for a new column, supply it to keep an existing
+            column's identity across a save.
+          type: string
+        name:
+          type: string
+        statuses:
+          items:
+            type: string
+          type: array
+          uniqueItems: false
+        wip_limit:
+          type: integer
+      type: object
+    projects.deleteBoardColumnRequest:
+      properties:
+        remap_to:
+          description: |-
+            RemapTo names the column that adopts this one's statuses. Required —
+            every status must stay mapped somewhere.
+          type: string
+      type: object
     projects.rankItemRequest:
       properties:
         after_id:
           type: string
         before_id:
           type: string
+      type: object
+    projects.saveBoardConfigRequest:
+      properties:
+        columns:
+          description: Columns in the order they appear on the board; position is
+            the index.
+          items:
+            $ref: '#/components/schemas/projects.boardColumnRequest'
+          type: array
+          uniqueItems: false
       type: object
     workflow.State:
       properties:
@@ -4259,6 +4346,254 @@ paths:
       security:
       - BearerAuth: []
       summary: Move item to sprint
+      tags:
+      - projects
+  /orgs/{orgID}/spaces/{spaceID}/projects/board/config:
+    get:
+      description: Returns the space's board columns, their status mappings and WIP
+        limits. A space that has never been customised gets a configuration derived
+        from its workflow states, flagged with customized=false.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerBoardConfig'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get board configuration
+      tags:
+      - projects
+    put:
+      description: Replaces the space's board columns. Column order is the array order.
+        Every status in the space's vocabulary must be mapped to exactly one column;
+        a configuration that would orphan a status is rejected with 400.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/projects.saveBoardConfigRequest'
+                description: Board columns
+                summary: body
+        description: Board columns
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerBoardConfig'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Save board configuration
+      tags:
+      - projects
+  /orgs/{orgID}/spaces/{spaceID}/projects/board/config/columns/{columnID}:
+    delete:
+      description: Removes a board column after moving every status it owns onto the
+        column named by remap_to. There is no variant that drops the statuses — every
+        status must remain mapped.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Column ID (UUID)
+        in: path
+        name: columnID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/projects.deleteBoardColumnRequest'
+                description: Re-mapping target
+                summary: body
+        description: Re-mapping target
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerBoardConfig'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a board column
+      tags:
+      - projects
+  /orgs/{orgID}/spaces/{spaceID}/projects/board/config/reset:
+    post:
+      description: Removes the space's stored board configuration so the board falls
+        back to the default derived from its workflow states.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerBoardConfig'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Reset board configuration
       tags:
       - projects
   /orgs/{orgID}/spaces/{spaceID}/projects/items:

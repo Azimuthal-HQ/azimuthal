@@ -219,6 +219,14 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/roadmap/overdue":                "space-read",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/roadmap/sprints":                "space-read",
 
+	// Board configuration (W4). Reading the board's shape follows ordinary
+	// space read access; every write follows space admin through the existing
+	// manage_space capability, checked in-handler. No new capability.
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/board/config":                       "space-read: read_items in-handler",
+	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/board/config":                       "space-write: manage_space in-handler",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/board/config/reset":                "space-write: manage_space in-handler",
+	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/board/config/columns/{columnID}": "space-write: manage_space in-handler",
+
 	// Space workflow reads.
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/":       "space-read",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/states": "space-read",

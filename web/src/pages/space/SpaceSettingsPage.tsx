@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { SegmentedControl } from '../../components/ui/segmented';
 import { PersonTeamPicker, type PickedSubject } from '../../components/PersonTeamPicker';
+import { BoardConfigSection } from './BoardConfigSection';
 import { MODULES } from '../../shell/modules';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
@@ -257,6 +258,9 @@ export function SpaceSettingsPage() {
       </div>
 
       <GrantsSection orgId={orgId} spaceId={spaceId} />
+
+      {/* Board customization is Vector-only: Beacon's kanban is untouched. */}
+      {spaceQuery.data?.type === 'vector' && <BoardConfigSection spaceId={spaceId} />}
     </div>
   );
 }
