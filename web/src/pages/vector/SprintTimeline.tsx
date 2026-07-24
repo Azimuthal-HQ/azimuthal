@@ -261,22 +261,26 @@ export function SprintTimeline({ sprints, zoom, spaceKey, now = Date.now() }: Sp
                   ) : (
                     items.map(item => (
                       <div key={item.id} className="flex items-center gap-3">
-                        <div className="w-44 shrink-0" />
+                        {/* The label lives in the gutter, not in the bar: at a
+                            wide zoom a sprint's span is a few percent of the
+                            track, and text inside it collapses to nothing. */}
+                        <div className="flex w-44 min-w-0 shrink-0 items-center gap-1.5 pl-5">
+                          <PriorityDot priority={normalizePriority(item.priority)} className="h-1.5 w-1.5 shrink-0" />
+                          <ItemKeyChip item={item} spaceKey={spaceKey} />
+                          <span className="truncate text-[var(--text-xs)] text-[var(--color-text)]">
+                            {item.title}
+                          </span>
+                        </div>
                         <div className="relative h-6 flex-1">
                           <div
+                            data-testid="timeline-item-bar"
+                            title={item.title}
                             className={cn(
-                              'absolute top-1/2 flex h-5 min-w-0 -translate-y-1/2 items-center gap-1.5',
-                              'overflow-hidden rounded-[5px] border border-[var(--color-border)]',
-                              'bg-[var(--color-surface)] px-1.5',
+                              'absolute top-1/2 h-3 -translate-y-1/2 rounded-[3px]',
+                              'border border-[var(--color-border)] bg-[var(--color-surface-hover)]',
                             )}
-                            style={{ left: pct(left), width: pct(width) }}
-                          >
-                            <PriorityDot priority={normalizePriority(item.priority)} className="h-1.5 w-1.5 shrink-0" />
-                            <ItemKeyChip item={item} spaceKey={spaceKey} />
-                            <span className="truncate text-[var(--text-xs)] text-[var(--color-text)]">
-                              {item.title}
-                            </span>
-                          </div>
+                            style={{ left: pct(left), width: pct(width), minWidth: '4px' }}
+                          />
                         </div>
                       </div>
                     ))

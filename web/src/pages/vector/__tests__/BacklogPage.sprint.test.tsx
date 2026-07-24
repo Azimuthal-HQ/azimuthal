@@ -22,7 +22,7 @@ function item(id: string, title: string, sprintId: string | null): ProjectItem {
 function sprint(id: string, name: string, status: Sprint['status']): Sprint {
   return {
     id, space_id: 's1', name, goal: '', status,
-    starts_at: null, ends_at: null, created_by: 'u1',
+    starts_at: null, ends_at: null,
     created_at: '', updated_at: '',
   };
 }

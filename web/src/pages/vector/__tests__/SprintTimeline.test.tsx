@@ -11,7 +11,7 @@ const DAY = 86_400_000;
 function sprint(id: string, name: string, status: Sprint['status'], starts: string | null, ends: string | null): Sprint {
   return {
     id, space_id: 's1', name, goal: '', status,
-    starts_at: starts, ends_at: ends, created_by: 'u1',
+    starts_at: starts, ends_at: ends,
     created_at: '', updated_at: '',
   };
 }
@@ -140,6 +140,21 @@ describe('SprintTimeline', () => {
     expect(screen.getByText('Ship the thing')).toBeInTheDocument();
     // Items carry their key as a provenance chip.
     expect(screen.getByText('VEC-1')).toBeInTheDocument();
+  });
+
+  it('keeps an item label out of its placed bar so a narrow span stays legible', () => {
+    // A sprint's span is a few percent of the track at a wide zoom. Text
+    // rendered inside the bar collapses to zero width and disappears —
+    // Playwright reported exactly that as "hidden". The label belongs in the
+    // gutter; the bar carries position only.
+    render(<SprintTimeline sprints={[inWindow]} zoom="year" spaceKey="VEC" now={NOW} />);
+    fireEvent.click(screen.getByRole('button', { name: /Toggle items for Current Sprint/i }));
+
+    const bar = screen.getByTestId('timeline-item-bar');
+    expect(bar).toBeEmptyDOMElement();
+    expect(bar).toHaveTextContent('');
+    // The label is still on the page, just not inside the bar.
+    expect(screen.getByText('Ship the thing')).toBeInTheDocument();
   });
 
   it('collapses again on a second click', () => {
