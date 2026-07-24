@@ -47,6 +47,22 @@ type AuthSigningKey struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type BoardColumn struct {
+	ID        uuid.UUID          `json:"id"`
+	SpaceID   uuid.UUID          `json:"space_id"`
+	Name      string             `json:"name"`
+	Position  int32              `json:"position"`
+	WipLimit  *int32             `json:"wip_limit"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type BoardColumnStatus struct {
+	SpaceID  uuid.UUID `json:"space_id"`
+	Status   string    `json:"status"`
+	ColumnID uuid.UUID `json:"column_id"`
+}
+
 type Comment struct {
 	ID         uuid.UUID          `json:"id"`
 	ItemID     pgtype.UUID        `json:"item_id"`

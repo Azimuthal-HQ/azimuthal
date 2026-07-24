@@ -4,6 +4,7 @@ import {
   DndContext,
   closestCorners,
   DragOverlay,
+  useDroppable,
   type DragStartEvent,
   type DragEndEvent,
   PointerSensor,
@@ -15,10 +16,13 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { AlertCircle, Bookmark, Bug, Flag, SquareCheck } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Bookmark, Bug, Flag, SquareCheck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { ItemKeyChip } from '../../components/ItemKeyChip';
+import { TypeFilter } from '../../components/TypeFilter';
+import { SegmentedControl } from '../../components/ui/segmented';
+import { getCurrentOrgId } from '../../lib/auth';
 import { cn } from '../../lib/utils';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -28,11 +32,15 @@ import {
   useSpace,
   useMe,
   useMembers,
+  useItemTypes,
+  useBoardConfig,
+  useUpdateProjectItem,
   queryKeys,
   transitionProjectItemStatus,
   friendlyErrorMessage,
   type ProjectItem,
   type WorkflowState,
+  type BoardColumn as BoardColumnConfig,
 } from '../../lib/api';
 
 // Kind icons per the dashboards prototype's board cards (bug / story / task /
@@ -52,7 +60,38 @@ interface ColumnDef {
   id: string;
   label: string;
   color: string;
+  /** Statuses this column collects. A default column collects exactly one. */
+  statuses: string[];
+  /** The status a drop into this column sets — the first mapped status. */
+  dropStatus: string;
+  /** null means no limit. Limits are soft: over-limit warns, never blocks. */
+  wipLimit: number | null;
 }
+
+// Swimlane grouping. No epic lanes — hierarchy does not exist yet (fenced).
+type LaneMode = 'none' | 'assignee' | 'type';
+
+const LANE_OPTIONS: { value: LaneMode; label: string }[] = [
+  { value: 'none', label: 'No lanes' },
+  { value: 'assignee', label: 'By assignee' },
+  { value: 'type', label: 'By type' },
+];
+
+interface Lane {
+  id: string;
+  label: string;
+  items: ProjectItem[];
+  /**
+   * The attribute value a cross-lane drop into this lane sets. null is a real
+   * value (unassign / clear type); undefined marks the catch-all lane in
+   * 'none' mode, where there is no attribute to set.
+   */
+  laneValue?: string | null;
+}
+
+// Explicit catch-all lanes — unassigned and typeless work is visible, never
+// hidden. The sentinel cannot collide with a UUID or a type slug.
+const NO_LANE = '__none__';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -60,22 +99,49 @@ interface ColumnDef {
 
 // Fallback column hues come from the token set; workflow-derived columns
 // keep their API-provided colors.
+function statusColumn(id: string, label: string, color: string): ColumnDef {
+  return { id, label, color, statuses: [id], dropStatus: id, wipLimit: null };
+}
+
 const FALLBACK_COLUMNS: ColumnDef[] = [
-  { id: 'open', label: 'Open', color: 'var(--color-info)' },
-  { id: 'todo', label: 'To Do', color: 'var(--color-text-muted)' },
-  { id: 'in_progress', label: 'In Progress', color: 'var(--color-warning)' },
-  { id: 'in_review', label: 'In Review', color: 'var(--color-primary)' },
-  { id: 'done', label: 'Done', color: 'var(--color-success)' },
+  statusColumn('open', 'Open', 'var(--color-info)'),
+  statusColumn('todo', 'To Do', 'var(--color-text-muted)'),
+  statusColumn('in_progress', 'In Progress', 'var(--color-warning)'),
+  statusColumn('in_review', 'In Review', 'var(--color-primary)'),
+  statusColumn('done', 'Done', 'var(--color-success)'),
 ];
+
+function titleCase(s: string) {
+  return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 function workflowStatesToColumns(states: WorkflowState[]): ColumnDef[] {
   return [...states]
     .sort((a, b) => a.position - b.position)
-    .map((s) => ({
-      id: s.name,
-      label: s.name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-      color: s.color,
-    }));
+    .map((s) => statusColumn(s.name, titleCase(s.name), s.color));
+}
+
+/**
+ * Turns a saved board configuration into columns. Colours come from the
+ * workflow state of the column's first status where one exists, so a
+ * customised board keeps the hues the space already uses.
+ */
+function configToColumns(config: BoardColumnConfig[], states: WorkflowState[]): ColumnDef[] {
+  const colorFor = new Map(states.map((s) => [s.name, s.color]));
+  return [...config]
+    .sort((a, b) => a.position - b.position)
+    .map((c) => ({
+      id: c.id,
+      label: c.name,
+      color: colorFor.get(c.statuses[0]) ?? 'var(--color-text-muted)',
+      statuses: c.statuses,
+      // A drop sets the column's first status. With one status mapped this is
+      // exactly today's behaviour; with several, the first is the column's
+      // canonical state.
+      dropStatus: c.statuses[0] ?? '',
+      wipLimit: c.wip_limit,
+    }))
+    .filter((c) => c.dropStatus !== '');
 }
 
 // ---------------------------------------------------------------------------
@@ -158,17 +224,73 @@ function ItemCard({ item, overlay, onItemClick, spaceKey, memberName }: { item: 
  * page ground with a quiet header (label + faint count, no bubble), cards
  * inside, and a contained empty state — never floating labels in open space.
  */
-function DroppableColumn({ column, items, onItemClick, spaceKey, memberName }: { column: ColumnDef; items: ProjectItem[]; onItemClick?: (id: string) => void; spaceKey?: string; memberName?: (id: string | null | undefined) => string | undefined }) {
+function DroppableColumn({
+  column, items, onItemClick, spaceKey, memberName, laneId, wipCount,
+}: {
+  column: ColumnDef;
+  items: ProjectItem[];
+  onItemClick?: (id: string) => void;
+  spaceKey?: string;
+  memberName?: (id: string | null | undefined) => string | undefined;
+  /** Present when the board is laned; the droppable id encodes both axes. */
+  laneId?: string;
+  /**
+   * The count a WIP limit is judged against — the whole column across every
+   * lane, not this lane's slice. A limit of 3 means three items in progress,
+   * however they are grouped.
+   */
+  wipCount: number;
+}) {
+  const droppableId = laneId ? `${column.id}::${laneId}` : column.id;
+  const { setNodeRef } = useDroppable({ id: droppableId });
+
+  const overLimit = column.wipLimit !== null && wipCount > column.wipLimit;
+  const atLimit = column.wipLimit !== null && wipCount === column.wipLimit;
+
   return (
-    <div className="flex w-72 shrink-0 flex-col rounded-[11px] border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
+    <div
+      ref={setNodeRef}
+      data-testid="board-column"
+      data-column-id={column.id}
+      data-over-limit={overLimit || undefined}
+      className={cn(
+        'flex w-72 shrink-0 flex-col rounded-[11px] border bg-[var(--color-bg)] p-2',
+        overLimit ? 'border-[var(--color-warning)]' : 'border-[var(--color-border)]',
+      )}
+    >
       <div className="flex items-center gap-2 px-1.5 pb-2 pt-1">
         <span className="h-2 w-2 rounded-full" style={{ backgroundColor: column.color }} />
         <h3 className="text-[var(--text-sm)] font-medium text-[var(--color-text-muted)]">
           {column.label}
         </h3>
-        <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]" style={{ fontFamily: 'var(--font-mono)' }}>
+        {/* The count carries the WIP state: it turns warning-coloured when the
+            column is over its limit. Soft — nothing here blocks a drop. */}
+        <span
+          data-testid="column-count"
+          className={cn(
+            'text-[var(--text-xs)]',
+            overLimit ? 'font-semibold text-[var(--color-warning)]' : 'text-[var(--color-text-muted)]',
+          )}
+          style={{ fontFamily: 'var(--font-mono)' }}
+        >
           {items.length}
+          {column.wipLimit !== null && <span className="opacity-70">/{column.wipLimit}</span>}
         </span>
+        {overLimit && (
+          <span
+            data-testid="wip-overflow"
+            title={`Over the WIP limit of ${column.wipLimit}`}
+            className="ml-auto flex items-center gap-1 text-[var(--text-xs)] font-medium text-[var(--color-warning)]"
+          >
+            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+            Over limit
+          </span>
+        )}
+        {atLimit && !overLimit && (
+          <span data-testid="wip-at-limit" className="ml-auto text-[var(--text-xs)] text-[var(--color-text-muted)]">
+            At limit
+          </span>
+        )}
       </div>
       <SortableContext
         items={items.map((i) => i.id)}
@@ -187,6 +309,94 @@ function DroppableColumn({ column, items, onItemClick, spaceKey, memberName }: {
       </SortableContext>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Drop resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves what a drop landed on. dnd-kit reports either a droppable id — a
+ * column, or "column::lane" on a laned board — or another card's id, which
+ * means "where that card lives".
+ */
+export function resolveDropTarget(
+  overId: string,
+  items: ProjectItem[],
+  columns: ColumnDef[],
+  columnIdFor: (status: string) => string,
+  laneMode: LaneMode,
+): { columnId: string; laneId?: string } | null {
+  const [columnPart, lanePart] = overId.split('::');
+  if (columns.some((c) => c.id === columnPart)) {
+    return { columnId: columnPart, laneId: lanePart };
+  }
+
+  const overItem = items.find((i) => i.id === overId);
+  if (!overItem) return null;
+  // Dropped onto another card: inherit both that card's column and its lane,
+  // so a drop onto a card in another lane re-lanes as a drop onto that lane's
+  // empty space would.
+  return {
+    columnId: columnIdFor(overItem.status),
+    laneId: laneMode === 'none' ? undefined : laneKeyOf(overItem, laneMode),
+  };
+}
+
+/** The lane an item belongs to under a given grouping. */
+export function laneKeyOf(item: ProjectItem, mode: LaneMode): string {
+  if (mode === 'none') return NO_LANE;
+  return (mode === 'assignee' ? item.assignee_id : item.kind) || NO_LANE;
+}
+
+// ---------------------------------------------------------------------------
+// Swimlanes
+// ---------------------------------------------------------------------------
+
+/**
+ * Groups items into lanes. Unassigned and typeless work gets an explicit
+ * catch-all lane rather than being hidden — a lane layout that quietly drops
+ * items reads as "there is no such work".
+ */
+export function buildLanes(
+  items: ProjectItem[],
+  mode: LaneMode,
+  memberName: (id: string | null | undefined) => string | undefined,
+  typeOptions: { slug: string; name: string }[],
+): Lane[] {
+  if (mode === 'none') {
+    return [{ id: NO_LANE, label: '', items }];
+  }
+
+  const buckets = new Map<string, ProjectItem[]>();
+  for (const item of items) {
+    const key = laneKeyOf(item, mode);
+    const arr = buckets.get(key) ?? [];
+    arr.push(item);
+    buckets.set(key, arr);
+  }
+
+  const typeName = new Map(typeOptions.map((t) => [t.slug, t.name]));
+  const label = (key: string) => {
+    if (key === NO_LANE) return mode === 'assignee' ? 'Unassigned' : 'No type';
+    if (mode === 'assignee') return memberName(key) ?? 'Unknown member';
+    return typeName.get(key) ?? key;
+  };
+
+  const lanes = Array.from(buckets.entries()).map(([key, laneItems]) => ({
+    id: key,
+    label: label(key),
+    items: laneItems,
+    laneValue: key === NO_LANE ? null : key,
+  }));
+
+  // Named lanes alphabetically, catch-all last — it is the residue, not a peer.
+  lanes.sort((a, b) => {
+    if (a.id === NO_LANE) return 1;
+    if (b.id === NO_LANE) return -1;
+    return a.label.localeCompare(b.label);
+  });
+  return lanes;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,45 +425,110 @@ export function SprintBoardPage() {
   const sprintId = activeSprint?.id ?? '';
   const { data: items, isLoading: itemsLoading, error } = useSprintItems(spaceId, sprintId);
 
-  // P6: derive columns from the space's workflow states
+  // P6: derive columns from the space's workflow states. W4: a saved board
+  // configuration wins; with none saved the derivation is unchanged, so an
+  // uncustomised space renders exactly as it always did.
   const { data: workflowStates } = useWorkflowStates(spaceId);
-  const columnDefs: ColumnDef[] = useMemo(
-    () => workflowStates && workflowStates.length > 0
+  const { data: boardConfig } = useBoardConfig(spaceId);
+  const columnDefs: ColumnDef[] = useMemo(() => {
+    if (boardConfig?.customized && boardConfig.columns.length > 0) {
+      return configToColumns(boardConfig.columns, workflowStates ?? []);
+    }
+    return workflowStates && workflowStates.length > 0
       ? workflowStatesToColumns(workflowStates)
-      : FALLBACK_COLUMNS,
-    [workflowStates],
+      : FALLBACK_COLUMNS;
+  }, [boardConfig, workflowStates]);
+
+  // W5: the shared TypeFilter, reused here rather than reimplemented.
+  const orgId = getCurrentOrgId() ?? '';
+  const { data: itemTypes } = useItemTypes(orgId);
+  const typeOptions = useMemo(
+    () => (itemTypes ?? []).filter((t) => !t.archived_at).map((t) => ({ slug: t.slug, name: t.name })),
+    [itemTypes],
   );
+  const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set());
+  const toggleType = useCallback((slug: string) => {
+    setTypeFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  }, []);
+
+  const [laneMode, setLaneMode] = useState<LaneMode>('none');
 
   const [activeItem, setActiveItem] = useState<ProjectItem | null>(null);
   // Optimistic local status overrides while a drag transition is in-flight
   const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({});
+  // Optimistic lane-attribute overrides for a cross-lane drag
+  const [pendingLane, setPendingLane] = useState<Record<string, Partial<ProjectItem>>>({});
 
   const queryClient = useQueryClient();
+  const updateItem = useUpdateProjectItem(spaceId, activeItem?.id ?? '');
 
   const effectiveItems = useMemo(() => {
     if (!items) return [];
     return items.map((i) => ({
       ...i,
       status: pendingStatus[i.id] ?? i.status,
+      ...pendingLane[i.id],
     }));
-  }, [items, pendingStatus]);
+  }, [items, pendingStatus, pendingLane]);
 
-  const columns = useMemo(() => {
-    const map: Record<string, ProjectItem[]> = {};
+  // The type filter narrows before lanes and columns are built, so both see
+  // the same set — filtering afterwards double-counts in WIP totals.
+  const visibleItems = useMemo(
+    () => (typeFilter.size === 0
+      ? effectiveItems
+      : effectiveItems.filter((i) => i.kind && typeFilter.has(i.kind))),
+    [effectiveItems, typeFilter],
+  );
+
+  // statusToColumn maps every mapped status to its column. A status no column
+  // claims falls back to the first column, which is what the board has always
+  // done with an unrecognised status.
+  const statusToColumn = useMemo(() => {
+    const map = new Map<string, string>();
     for (const col of columnDefs) {
-      map[col.id] = [];
-    }
-    // initial state name used as fallback bucket
-    const fallbackKey = columnDefs[0]?.id ?? 'open';
-    for (const item of effectiveItems) {
-      if (map[item.status] !== undefined) {
-        map[item.status].push(item);
-      } else {
-        map[fallbackKey].push(item);
-      }
+      for (const st of col.statuses) map.set(st, col.id);
     }
     return map;
-  }, [effectiveItems, columnDefs]);
+  }, [columnDefs]);
+
+  const columnIdFor = useCallback(
+    (status: string) => statusToColumn.get(status) ?? columnDefs[0]?.id ?? '',
+    [statusToColumn, columnDefs],
+  );
+
+  // Column totals across every lane — what a WIP limit is judged against.
+  const columnTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const col of columnDefs) totals[col.id] = 0;
+    for (const item of visibleItems) {
+      const id = columnIdFor(item.status);
+      if (id) totals[id] = (totals[id] ?? 0) + 1;
+    }
+    return totals;
+  }, [visibleItems, columnDefs, columnIdFor]);
+
+  const lanes: Lane[] = useMemo(
+    () => buildLanes(visibleItems, laneMode, memberName, typeOptions),
+    [visibleItems, laneMode, memberName, typeOptions],
+  );
+
+  const columnsForLane = useCallback(
+    (laneItems: ProjectItem[]) => {
+      const map: Record<string, ProjectItem[]> = {};
+      for (const col of columnDefs) map[col.id] = [];
+      for (const item of laneItems) {
+        const id = columnIdFor(item.status);
+        if (map[id]) map[id].push(item);
+      }
+      return map;
+    },
+    [columnDefs, columnIdFor],
+  );
 
   const handleItemClick = useCallback((id: string) => {
     navigate(`/vector/${spaceId}/backlog/${id}`);
@@ -272,7 +547,10 @@ export function SprintBoardPage() {
     [effectiveItems],
   );
 
-  // P2.6: persist drag-and-drop via status transition endpoint
+  // P2.6: persist drag-and-drop via status transition endpoint.
+  // W4: a drop now carries two axes — the column (status, as before) and, when
+  // the board is laned, the lane (assignee or type). Either, both, or neither
+  // may change in one drop.
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       setActiveItem(null);
@@ -283,35 +561,66 @@ export function SprintBoardPage() {
       const draggedItem = effectiveItems.find((i) => i.id === draggedId);
       if (!draggedItem) return;
 
-      // Determine target column: over.id is either a column id or an item id
-      let targetStatus = over.id as string;
-      if (!columnDefs.find((c) => c.id === targetStatus)) {
-        // over.id is an item — use that item's current column
-        const overItem = effectiveItems.find((i) => i.id === targetStatus);
-        targetStatus = overItem?.status ?? draggedItem.status;
+      const target = resolveDropTarget(String(over.id), effectiveItems, columnDefs, columnIdFor, laneMode);
+      if (!target) return;
+
+      const column = columnDefs.find((c) => c.id === target.columnId);
+      const currentColumn = columnIdFor(draggedItem.status);
+      // A column whose statuses already include this item's status is not a
+      // move: dropping a "resolved" item into a column that collects both
+      // "done" and "resolved" must not silently rewrite it to "done".
+      const statusChanged = target.columnId !== currentColumn;
+      const targetStatus = column?.dropStatus ?? draggedItem.status;
+
+      const currentLane = laneKeyOf(draggedItem, laneMode);
+      const laneChanged = laneMode !== 'none'
+        && target.laneId !== undefined
+        && target.laneId !== currentLane;
+
+      if (!statusChanged && !laneChanged) return;
+
+      if (statusChanged) setPendingStatus((prev) => ({ ...prev, [draggedId]: targetStatus }));
+      const laneValue = target.laneId === NO_LANE ? null : (target.laneId ?? null);
+      if (laneChanged) {
+        setPendingLane((prev) => ({
+          ...prev,
+          [draggedId]: laneMode === 'assignee' ? { assignee_id: laneValue } : { kind: laneValue ?? '' },
+        }));
       }
 
-      if (targetStatus === draggedItem.status) return;
-
-      // Optimistic update
-      setPendingStatus((prev) => ({ ...prev, [draggedId]: targetStatus }));
-
       try {
-        // Always through the canonical API client — a raw fetch here once
-        // bypassed auth/refresh handling and failed silently on error.
-        await transitionProjectItemStatus(spaceId, draggedId, targetStatus);
-        // Invalidate to sync server state
+        if (statusChanged) {
+          // Always through the canonical API client — a raw fetch here once
+          // bypassed auth/refresh handling and failed silently on error.
+          await transitionProjectItemStatus(spaceId, draggedId, targetStatus);
+        }
+        if (laneChanged) {
+          // Type is not editable through the item PATCH contract, so a
+          // cross-lane drag under "by type" is a verified no-op: the card
+          // returns to its lane rather than half-applying. Flagged in the PR.
+          if (laneMode === 'assignee') {
+            await updateItem.mutateAsync({ assignee_id: laneValue });
+          }
+        }
         queryClient.invalidateQueries({ queryKey: queryKeys.sprintItems(spaceId, sprintId) });
       } catch {
-        // Revert optimistic update on error
         setPendingStatus((prev) => {
+          const next = { ...prev };
+          delete next[draggedId];
+          return next;
+        });
+      } finally {
+        // The lane override always clears: on success the refetch carries the
+        // truth, and on the type no-op the card must snap back rather than
+        // showing a change that never reached the server.
+        setPendingLane((prev) => {
           const next = { ...prev };
           delete next[draggedId];
           return next;
         });
       }
     },
-    [effectiveItems, columnDefs, spaceId, sprintId, queryClient],
+    [effectiveItems, columnDefs, columnIdFor, laneMode, spaceId, sprintId, queryClient, updateItem],
   );
 
   const isLoading = sprintLoading || (!!sprintId && itemsLoading);
@@ -358,13 +667,28 @@ export function SprintBoardPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-baseline gap-3">
-        <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
-          Board
-        </h1>
-        <span className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
-          {activeSprint.name}
-        </span>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
+            Board
+          </h1>
+          <span className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+            {activeSprint.name}
+          </span>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          {/* W5's TypeFilter, reused — never a second implementation. */}
+          {typeOptions.length > 0 && (
+            <TypeFilter options={typeOptions} selected={typeFilter} onToggle={toggleType} />
+          )}
+          <SegmentedControl
+            options={LANE_OPTIONS}
+            value={laneMode}
+            onChange={setLaneMode}
+            aria-label="Group into swimlanes"
+            fullWidth={false}
+          />
+        </div>
       </div>
 
       <DndContext
@@ -373,17 +697,41 @@ export function SprintBoardPage() {
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {columnDefs.map((col) => (
-            <DroppableColumn
-              key={col.id}
-              column={col}
-              items={columns[col.id] ?? []}
-              onItemClick={handleItemClick}
-              spaceKey={space?.key}
-              memberName={memberName}
-            />
-          ))}
+        <div className="space-y-4">
+          {lanes.map((lane) => {
+            const laneColumns = columnsForLane(lane.items);
+            return (
+              <div key={lane.id} data-testid="board-lane" data-lane-id={lane.id}>
+                {laneMode !== 'none' && (
+                  <div className="mb-2 flex items-center gap-2">
+                    <h2 className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                      {lane.label}
+                    </h2>
+                    <span
+                      className="text-[var(--text-xs)] text-[var(--color-text-muted)]"
+                      style={{ fontFamily: 'var(--font-mono)' }}
+                    >
+                      {lane.items.length}
+                    </span>
+                  </div>
+                )}
+                <div className="flex gap-4 overflow-x-auto pb-4">
+                  {columnDefs.map((col) => (
+                    <DroppableColumn
+                      key={col.id}
+                      column={col}
+                      items={laneColumns[col.id] ?? []}
+                      onItemClick={handleItemClick}
+                      spaceKey={space?.key}
+                      memberName={memberName}
+                      laneId={laneMode === 'none' ? undefined : lane.id}
+                      wipCount={columnTotals[col.id] ?? 0}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         <DragOverlay>

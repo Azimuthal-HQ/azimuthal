@@ -360,6 +360,32 @@ export interface Sprint {
   updated_at: string;
 }
 
+// ---------------------------------------------------------------------------
+// Board configuration (W4)
+// ---------------------------------------------------------------------------
+
+export interface BoardColumn {
+  id: string;
+  space_id: string;
+  name: string;
+  position: number;
+  /** null means no limit. Limits are soft — never a hard block on a drop. */
+  wip_limit: number | null;
+  statuses: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface BoardConfig {
+  space_id: string;
+  columns: BoardColumn[];
+  /**
+   * false when the space has no stored configuration and these columns were
+   * derived from its workflow states — i.e. the board it has always had.
+   */
+  customized: boolean;
+}
+
 export interface Label {
   id: string;
   org_id: string;
@@ -1174,6 +1200,46 @@ export async function assignItemToSprint(
 }
 
 // ---------------------------------------------------------------------------
+// Board configuration API functions (W4)
+// ---------------------------------------------------------------------------
+
+async function fetchBoardConfig(spaceId: string): Promise<BoardConfig> {
+  return apiFetch<BoardConfig>(`${spaceBase(spaceId)}/projects/board/config`);
+}
+
+export interface SaveBoardConfigRequest {
+  columns: {
+    /** Omit for a new column; supply to keep an existing column's identity. */
+    id?: string;
+    name: string;
+    wip_limit: number | null;
+    statuses: string[];
+  }[];
+}
+
+async function saveBoardConfig(spaceId: string, req: SaveBoardConfigRequest): Promise<BoardConfig> {
+  return apiFetch<BoardConfig>(`${spaceBase(spaceId)}/projects/board/config`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+}
+
+async function resetBoardConfig(spaceId: string): Promise<BoardConfig> {
+  return apiFetch<BoardConfig>(`${spaceBase(spaceId)}/projects/board/config/reset`, {
+    method: 'POST',
+  });
+}
+
+// deleteBoardColumn requires a re-mapping target: a removed column's statuses
+// must go somewhere, so there is no variant that simply drops them.
+async function deleteBoardColumn(spaceId: string, columnId: string, remapTo: string): Promise<BoardConfig> {
+  return apiFetch<BoardConfig>(`${spaceBase(spaceId)}/projects/board/config/columns/${columnId}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ remap_to: remapTo }),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Sprint API functions
 // ---------------------------------------------------------------------------
 
@@ -1623,6 +1689,7 @@ export const queryKeys = {
   roadmap: (spaceId: string, from: string, to: string) => ['roadmap', spaceId, from, to] as const,
   roadmapOverdue: (spaceId: string) => ['roadmapOverdue', spaceId] as const,
   roadmapSprints: (spaceId: string) => ['roadmapSprints', spaceId] as const,
+  boardConfig: (spaceId: string) => ['boardConfig', spaceId] as const,
   itemSearch: (spaceId: string, q: string) => ['itemSearch', spaceId, q] as const,
   workflowStates: (spaceId: string) => ['workflowStates', spaceId] as const,
   orgWorkflows: (orgId: string) => ['orgWorkflows', orgId] as const,
@@ -2297,6 +2364,53 @@ export function useRankItem(spaceId: string) {
     mutationFn: ({ itemId, ...req }) => rankItem(spaceId, itemId, req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
+    },
+  });
+}
+
+
+// --- Board configuration hooks (W4) ---
+
+export function useBoardConfig(spaceId: string, opts?: QueryOpts<BoardConfig>) {
+  return useQuery<BoardConfig, APIError>({
+    queryKey: queryKeys.boardConfig(spaceId),
+    queryFn: () => fetchBoardConfig(spaceId),
+    enabled: !!spaceId && (opts?.enabled ?? true),
+  });
+}
+
+export function useSaveBoardConfig(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<BoardConfig, APIError, SaveBoardConfigRequest>({
+    mutationFn: (req) => saveBoardConfig(spaceId, req),
+    onSuccess: (cfg) => {
+      // Write through rather than only invalidating: the settings surface
+      // re-renders from this immediately, and the board picks it up on its
+      // next read.
+      queryClient.setQueryData(queryKeys.boardConfig(spaceId), cfg);
+      queryClient.invalidateQueries({ queryKey: queryKeys.boardConfig(spaceId) });
+    },
+  });
+}
+
+export function useResetBoardConfig(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<BoardConfig, APIError, void>({
+    mutationFn: () => resetBoardConfig(spaceId),
+    onSuccess: (cfg) => {
+      queryClient.setQueryData(queryKeys.boardConfig(spaceId), cfg);
+      queryClient.invalidateQueries({ queryKey: queryKeys.boardConfig(spaceId) });
+    },
+  });
+}
+
+export function useDeleteBoardColumn(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<BoardConfig, APIError, { columnId: string; remapTo: string }>({
+    mutationFn: ({ columnId, remapTo }) => deleteBoardColumn(spaceId, columnId, remapTo),
+    onSuccess: (cfg) => {
+      queryClient.setQueryData(queryKeys.boardConfig(spaceId), cfg);
+      queryClient.invalidateQueries({ queryKey: queryKeys.boardConfig(spaceId) });
     },
   });
 }

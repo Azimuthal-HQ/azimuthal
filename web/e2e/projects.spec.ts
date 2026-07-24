@@ -183,7 +183,17 @@ test.describe('Projects', () => {
     // Find status dropdown and change it
     const statusSelect = page.getByLabel('Status')
     await expect(statusSelect).toBeVisible({ timeout: 5000 })
+
+    // selectOption resolves on the DOM change, not on the write. Reloading
+    // straight after aborts the in-flight POST and the status never lands — a
+    // latent race that surfaced under parallel workers. Wait for the write
+    // itself; the assertion after the reload is unchanged.
+    const written = page.waitForResponse(
+      r => /\/projects\/items\/[0-9a-f-]+\/status$/.test(new URL(r.url()).pathname)
+        && r.request().method() === 'POST',
+    )
     await statusSelect.selectOption('in_progress')
+    expect((await written).status()).toBe(200)
 
     // Reload and verify status persisted — use Badge element to avoid matching dropdown option
     await page.reload()
@@ -203,10 +213,15 @@ test.describe('Projects', () => {
     // Change status to In Progress
     const statusSelect = page.getByLabel('Status')
     await expect(statusSelect).toBeVisible({ timeout: 5000 })
-    await statusSelect.selectOption('in_progress')
 
-    // Wait for save
-    await page.waitForTimeout(1000)
+    // Wait for the write rather than a fixed second — same race as above, and
+    // a timeout that is "usually enough" is the thing that made it flaky.
+    const written = page.waitForResponse(
+      r => /\/projects\/items\/[0-9a-f-]+\/status$/.test(new URL(r.url()).pathname)
+        && r.request().method() === 'POST',
+    )
+    await statusSelect.selectOption('in_progress')
+    expect((await written).status()).toBe(200)
 
     // Reload and verify status persisted — this is the critical check
     await page.reload()
