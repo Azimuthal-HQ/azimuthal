@@ -356,6 +356,12 @@ export interface Sprint {
   status: SprintStatus;
   starts_at: string | null;
   ends_at: string | null;
+  /**
+   * The user who created the sprint. Always present and never null: the Go
+   * serializer sends it as a bare uuid.UUID with no omitempty. Its absence
+   * from this interface was noted in #68.
+   */
+  created_by: string;
   created_at: string;
   updated_at: string;
 }

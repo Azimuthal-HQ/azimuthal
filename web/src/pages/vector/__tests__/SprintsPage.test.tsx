@@ -13,12 +13,12 @@ import type { Sprint } from '../../../lib/api';
 const activeSprint: Sprint = {
   id: 'sprint-active', space_id: 's1', name: 'Sprint A', goal: '',
   status: 'active', starts_at: null, ends_at: null,
-  created_at: '', updated_at: '',
+  created_by: 'u1', created_at: '', updated_at: '',
 };
 const plannedSprint: Sprint = {
   id: 'sprint-planned', space_id: 's1', name: 'Sprint B', goal: '',
   status: 'planned', starts_at: null, ends_at: null,
-  created_at: '', updated_at: '',
+  created_by: 'u1', created_at: '', updated_at: '',
 };
 
 const completeMutate = vi.fn(async () => activeSprint);
