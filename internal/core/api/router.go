@@ -172,6 +172,17 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			// mountSpaceResources.
 			mountShareResources(r, cfg)
 
+			// Ticket-reference typeahead (A1). Org-scoped rather than
+			// space-scoped: the ticket_ref field it fills names a ticket
+			// anywhere in the organisation, not one in whichever space the
+			// operator happens to be looking at. Deliberately outside the
+			// admin guard, for the same reason the person picker is — the
+			// panels that carry a ticket_ref are operated by space admins
+			// who need not be org admins. The handler cuts results to the
+			// caller's own resolved readable set, so this reveals nothing an
+			// ordinary ticket list would not.
+			r.Get("/tickets/suggest", cfg.TicketHandler.SuggestRefs)
+
 			// Labels (org-scoped metadata; any member).
 			r.Route("/labels", func(r chi.Router) {
 				r.Get("/", cfg.ProjectHandler.ListLabels)

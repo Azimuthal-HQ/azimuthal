@@ -22,6 +22,7 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
@@ -101,6 +102,10 @@ type Handler struct {
 	teamSvc  *teams.Service
 	grantSvc GrantCreator
 	auditLog audit.Logger
+	// ticketRef is the boot-time ticket-reference requirement. The zero value
+	// is the permissive default, so a handler that was never given a policy
+	// behaves exactly as it did before the flag existed.
+	ticketRef ticketref.Policy
 }
 
 // NewHandler creates a space Handler.
@@ -131,6 +136,13 @@ func (h *Handler) WithGrantService(svc GrantCreator) *Handler {
 // WithAuditLogger attaches an audit logger to the handler.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithTicketRefPolicy attaches the ticket-reference policy, which governs
+// whether space create/update/delete must carry a ticket_ref.
+func (h *Handler) WithTicketRefPolicy(p ticketref.Policy) *Handler {
+	h.ticketRef = p
 	return h
 }
 
@@ -439,17 +451,18 @@ func directoryRowFor(s generated.Space, res *access.Resolution) (directoryRow, b
 // Create creates a new space.
 //
 // @Summary      Create space
-// @Description  Creates a space in the organization. Type must be 'beacon', 'codex', or 'vector'. Slugs are unique per module: the same slug may exist in different modules of one organization. The owning team defaults to the org default team. Authority: org admin, or a lead of the owning team. The initial visibility is accepted from either authority — unlike later changes, which require set_visibility (org admin only).
+// @Description  Creates a space in the organization. Type must be 'beacon', 'codex', or 'vector'. Slugs are unique per module: the same slug may exist in different modules of one organization. The owning team defaults to the org default team. Authority: org admin, or a lead of the owning team. Visibility defaults to 'discoverable'; requesting any other initial visibility additionally requires set_visibility (org admin only), as later changes do. Every create is audited with the visibility it received.
 // @Tags         spaces
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        orgID  path      string                         true  "Organization ID (UUID)"
-// @Param        body   body      api.SwaggerCreateSpaceRequest  true  "Space details"
+// @Param        orgID       path      string                         true   "Organization ID (UUID)"
+// @Param        ticket_ref  query     string                         false  "Operator ticket reference recorded on the audit event (max 200 chars; required when the deployment mandates it)"
+// @Param        body        body      api.SwaggerCreateSpaceRequest  true   "Space details"
 // @Success      201    {object}  map[string]interface{}          "Created space"
-// @Failure      400    {object}  api.SwaggerErrorResponse        "Validation error"
+// @Failure      400    {object}  api.SwaggerErrorResponse        "Validation error, or a missing/over-long ticket_ref"
 // @Failure      401    {object}  api.SwaggerErrorResponse        "Not authenticated"
-// @Failure      403    {object}  api.SwaggerErrorResponse        "Not org admin or lead of the owning team"
+// @Failure      403    {object}  api.SwaggerErrorResponse        "Not org admin or lead of the owning team; or set_visibility (org admin) for a non-default initial visibility"
 // @Failure      409    {object}  api.SwaggerErrorResponse        "Duplicate key in the organization, or duplicate slug within the module"
 // @Failure      500    {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /orgs/{orgID}/spaces [post]
@@ -491,17 +504,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 		return
 	}
 
-	// Resolve the owning team: explicit owner_team_id, else the org default.
-	ownerTeam, ok := h.resolveOwnerTeam(w, r, orgID, req.OwnerTeamID)
+	ownerTeam, ticketRef, ok := h.createPreconditions(w, r, orgID, claims.UserID, req.OwnerTeamID, visibility)
 	if !ok {
-		return
-	}
-
-	// Authority (ADR-0007 administrative authority): org admin, or a lead of
-	// the owning team. This consults the team metadata role — the single
-	// sanctioned administrative use; capability checks never do.
-	if !h.canCreateSpace(r.Context(), ownerTeam, claims.UserID) {
-		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "space creation requires an org admin or a lead of the owning team")
 		return
 	}
 
@@ -566,6 +570,16 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 		}
 	}
 
+	// Audited as soon as the row exists, not on the 201: the steps below run
+	// outside any enclosing transaction, so a failure in one of them leaves
+	// the space created and returns 500. The event follows the row, which is
+	// what an audit log is for; the initial visibility is recorded whether or
+	// not it was the default, so "created discoverable, never changed" is a
+	// visible fact rather than an absence.
+	h.logSpaceEvent(r, audit.EventTypeSpaceCreated, space.ID, ticketRef, map[string]string{
+		"visibility": space.Visibility, "type": space.Type, "owner_team_id": space.OwnerTeamID.String(),
+	})
+
 	// Auto-add the creator as an admin member of the new space (legacy
 	// space_members metadata, kept for continuity).
 	if _, err := h.queries.AddSpaceMember(r.Context(), generated.AddSpaceMemberParams{
@@ -598,6 +612,51 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 	}
 
 	respond.JSON(w, http.StatusCreated, space)
+}
+
+// createPreconditions settles everything that must hold before a space row is
+// written: the owning team, who may create a space at all, who may choose its
+// initial visibility, and the ticket reference. Grouped so the ordering is
+// visible in one place — every rejection here happens before the first write,
+// so a 400 or 403 means nothing was created. It writes the error response
+// itself; ok=false means stop.
+func (h *Handler) createPreconditions(w http.ResponseWriter, r *http.Request, orgID, userID uuid.UUID, ownerTeamRaw *string, visibility string) (teams.Team, string, bool) {
+	// Resolve the owning team: explicit owner_team_id, else the org default.
+	ownerTeam, ok := h.resolveOwnerTeam(w, r, orgID, ownerTeamRaw)
+	if !ok {
+		return teams.Team{}, "", false
+	}
+
+	// Authority (ADR-0007 administrative authority): org admin, or a lead of
+	// the owning team. This consults the team metadata role — the single
+	// sanctioned administrative use; capability checks never do.
+	if !h.canCreateSpace(r.Context(), ownerTeam, userID) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "space creation requires an org admin or a lead of the owning team")
+		return teams.Team{}, "", false
+	}
+
+	// A non-default initial visibility is a visibility decision and takes the
+	// same authority as changing one later. The comparison is against the
+	// EFFECTIVE visibility, so omitting the field and sending "discoverable"
+	// explicitly stay indistinguishable — which is what keeps team creation's
+	// auto-created spaces working for a lead who is not an org admin.
+	//
+	// CanOrgWide, not Can: the space has no id yet, and Can answers the
+	// org-admin bypass out of the set of spaces that already exist, so it
+	// would refuse precisely the callers who hold the capability. Checked
+	// after creation authority so a caller who may not create a space at all
+	// is told that, rather than being told about visibility.
+	if visibility != access.VisibilityDiscoverable && !access.CanOrgWide(r.Context(), access.CapSetVisibility) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden,
+			"set_visibility required to create a space with a non-default visibility")
+		return teams.Team{}, "", false
+	}
+
+	ticketRef, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
+		return teams.Team{}, "", false
+	}
+	return ownerTeam, ticketRef, true
 }
 
 // resolveOwnerTeam maps the request's owner_team_id (or the org default) to
@@ -681,11 +740,12 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        orgID    path      string                          true  "Organization ID (UUID)"
-// @Param        spaceID  path      string                          true  "Space ID (UUID)"
-// @Param        body     body      api.SwaggerUpdateSpaceRequest   true  "Updated fields"
+// @Param        orgID       path      string                          true   "Organization ID (UUID)"
+// @Param        spaceID     path      string                          true   "Space ID (UUID)"
+// @Param        ticket_ref  query     string                          false  "Operator ticket reference recorded on the audit event (max 200 chars; required when the deployment mandates it)"
+// @Param        body        body      api.SwaggerUpdateSpaceRequest   true   "Updated fields"
 // @Success      200      {object}  map[string]interface{}           "Updated space"
-// @Failure      400      {object}  api.SwaggerErrorResponse         "Validation error"
+// @Failure      400      {object}  api.SwaggerErrorResponse         "Validation error, or a missing/over-long ticket_ref"
 // @Failure      401      {object}  api.SwaggerErrorResponse         "Not authenticated"
 // @Failure      403      {object}  api.SwaggerErrorResponse         "manage_space required; or set_visibility (org admin) for a visibility change"
 // @Failure      404      {object}  api.SwaggerErrorResponse         "Not found"
@@ -715,8 +775,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Checked before any field is written so a denied request applies nothing.
-	if !requireVisibilityAuthority(w, r, current, req.Visibility) {
+	ticketRef, ok := h.updatePreconditions(w, r, current, req.Visibility)
+	if !ok {
 		return
 	}
 	key := req.Key
@@ -737,11 +797,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	space, ok = h.applyVisibilityChange(w, r, current, req.Visibility, space)
+	space, ok = h.applyVisibilityChange(w, r, current, req.Visibility, ticketRef, space)
 	if !ok {
 		return
 	}
-	space, ok = h.applyOwnerTeamChange(w, r, current, req.OwnerTeamID, space)
+	space, ok = h.applyOwnerTeamChange(w, r, current, req.OwnerTeamID, ticketRef, space)
 	if !ok {
 		return
 	}
@@ -772,6 +832,17 @@ func decodeSpaceUpdate(w http.ResponseWriter, r *http.Request) (updateSpaceReque
 	return req, true
 }
 
+// updatePreconditions enforces the visibility authority and resolves the
+// ticket reference. Both run before any field is written, so a denied
+// request — 403 for authority, 400 for a missing or over-long reference —
+// applies nothing at all. ok=false means the response is already written.
+func (h *Handler) updatePreconditions(w http.ResponseWriter, r *http.Request, current generated.Space, requestedVisibility string) (string, bool) {
+	if !requireVisibilityAuthority(w, r, current, requestedVisibility) {
+		return "", false
+	}
+	return h.ticketRef.Resolve(w, r)
+}
+
 // requireVisibilityAuthority enforces set_visibility when the update asks for
 // an actual visibility change, writing the 403 itself. Visibility is an
 // org-level concern: the capability is held only by the org-admin bypass, not
@@ -790,7 +861,7 @@ func requireVisibilityAuthority(w http.ResponseWriter, r *http.Request, current 
 // applyVisibilityChange persists a requested visibility change and writes
 // the space.visibility_changed audit event. No-ops (empty or unchanged
 // values) write nothing. Returns ok=false after writing an error response.
-func (h *Handler) applyVisibilityChange(w http.ResponseWriter, r *http.Request, current generated.Space, visibility string, space generated.Space) (generated.Space, bool) {
+func (h *Handler) applyVisibilityChange(w http.ResponseWriter, r *http.Request, current generated.Space, visibility, ticketRef string, space generated.Space) (generated.Space, bool) {
 	if visibility == "" || visibility == current.Visibility {
 		return space, true
 	}
@@ -801,7 +872,7 @@ func (h *Handler) applyVisibilityChange(w http.ResponseWriter, r *http.Request, 
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to change visibility")
 		return space, false
 	}
-	h.logSpaceEvent(r, audit.EventTypeSpaceVisibilityChanged, current.ID, map[string]string{
+	h.logSpaceEvent(r, audit.EventTypeSpaceVisibilityChanged, current.ID, ticketRef, map[string]string{
 		"from": current.Visibility, "to": visibility,
 	})
 	return updated, true
@@ -810,7 +881,7 @@ func (h *Handler) applyVisibilityChange(w http.ResponseWriter, r *http.Request, 
 // applyOwnerTeamChange persists a requested owner-team change (validating
 // the team lives in the same org) and writes the space.owner_team_changed
 // audit event. Returns ok=false after writing an error response.
-func (h *Handler) applyOwnerTeamChange(w http.ResponseWriter, r *http.Request, current generated.Space, ownerTeamID *string, space generated.Space) (generated.Space, bool) {
+func (h *Handler) applyOwnerTeamChange(w http.ResponseWriter, r *http.Request, current generated.Space, ownerTeamID *string, ticketRef string, space generated.Space) (generated.Space, bool) {
 	if ownerTeamID == nil || *ownerTeamID == "" {
 		return space, true
 	}
@@ -838,7 +909,7 @@ func (h *Handler) applyOwnerTeamChange(w http.ResponseWriter, r *http.Request, c
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to change owner team")
 		return space, false
 	}
-	h.logSpaceEvent(r, audit.EventTypeSpaceOwnerTeamChanged, current.ID, map[string]string{
+	h.logSpaceEvent(r, audit.EventTypeSpaceOwnerTeamChanged, current.ID, ticketRef, map[string]string{
 		"from": current.OwnerTeamID.String(), "to": newOwner.String(),
 	})
 	return updated, true
@@ -850,10 +921,11 @@ func (h *Handler) applyOwnerTeamChange(w http.ResponseWriter, r *http.Request, c
 // @Description  Soft-deletes a space by ID. Requires manage_space.
 // @Tags         spaces
 // @Security     BearerAuth
-// @Param        orgID    path  string  true  "Organization ID (UUID)"
-// @Param        spaceID  path  string  true  "Space ID (UUID)"
+// @Param        orgID       path   string  true   "Organization ID (UUID)"
+// @Param        spaceID     path   string  true   "Space ID (UUID)"
+// @Param        ticket_ref  query  string  false  "Operator ticket reference (max 200 chars; required when the deployment mandates it)"
 // @Success      204  "Deleted"
-// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID, or a missing/over-long ticket_ref"
 // @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      403  {object}  api.SwaggerErrorResponse  "manage_space required"
 // @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
@@ -867,6 +939,14 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	if !access.Can(r.Context(), access.CapManageSpace, id) {
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "manage_space required")
+		return
+	}
+
+	// Validated before the delete so a required-mode 400 means nothing
+	// happened. The value is discarded because this handler writes no audit
+	// event at all — a space.deleted event is a real gap, tracked separately;
+	// adding one here is out of this change's scope.
+	if _, ok := h.ticketRef.Resolve(w, r); !ok {
 		return
 	}
 
@@ -1003,7 +1083,9 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 }
 
 // logSpaceEvent writes an audit event for a space governance mutation.
-func (h *Handler) logSpaceEvent(r *http.Request, t audit.EventType, spaceID uuid.UUID, meta map[string]string) {
+// ticketRef is the operator-supplied reference resolved before the mutation;
+// it is empty when the caller supplied none and the policy did not demand one.
+func (h *Handler) logSpaceEvent(r *http.Request, t audit.EventType, spaceID uuid.UUID, ticketRef string, meta map[string]string) {
 	claims := auth.ClaimsFromContext(r.Context())
 	actor := ""
 	if claims != nil {
@@ -1012,6 +1094,7 @@ func (h *Handler) logSpaceEvent(r *http.Request, t audit.EventType, spaceID uuid
 	_ = h.auditLog.Log(r.Context(), audit.Event{
 		Type: t, ActorID: actor, OrgID: chi.URLParam(r, "orgID"),
 		ResourceType: "space", ResourceID: spaceID.String(), Metadata: meta,
+		TicketRef: ticketRef,
 	})
 }
 

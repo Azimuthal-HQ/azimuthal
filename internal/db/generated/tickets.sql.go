@@ -322,6 +322,85 @@ func (q *Queries) SoftDeleteTicket(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const suggestTicketRefs = `-- name: SuggestTicketRefs :many
+SELECT t.id, t.number, t.title, t.space_id, t.status,
+       s.key AS space_key,
+       COALESCE(t.assignee_id = $1::uuid, false)::boolean AS assigned_to_me
+FROM tickets t
+JOIN spaces s ON s.id = t.space_id AND s.deleted_at IS NULL
+WHERE t.deleted_at IS NULL
+  AND t.space_id = ANY($2::uuid[])
+  AND ($3::text = ''
+       OR t.title ILIKE '%' || $3::text || '%'
+       OR (s.key || '-' || t.number::text) ILIKE '%' || $3::text || '%')
+ORDER BY COALESCE(t.assignee_id = $1::uuid, false) DESC,
+         t.updated_at DESC
+LIMIT 20
+`
+
+type SuggestTicketRefsParams struct {
+	CallerID         uuid.UUID   `json:"caller_id"`
+	ReadableSpaceIds []uuid.UUID `json:"readable_space_ids"`
+	Query            string      `json:"query"`
+}
+
+type SuggestTicketRefsRow struct {
+	ID           uuid.UUID `json:"id"`
+	Number       int32     `json:"number"`
+	Title        string    `json:"title"`
+	SpaceID      uuid.UUID `json:"space_id"`
+	Status       string    `json:"status"`
+	SpaceKey     string    `json:"space_key"`
+	AssignedToMe bool      `json:"assigned_to_me"`
+}
+
+// Backs the ticket_ref typeahead. The readable_space_ids filter IS the access
+// control: for an org admin the resolver fills that set with every live space
+// in the org, for everyone else with exactly their granted set, so one ANY()
+// serves both personas and no ticket outside the caller's read access can
+// appear. The caller never runs this with an empty set — the service
+// short-circuits first.
+//
+// Matching is ILIKE, deliberately not the search_vector GIN index: a typeahead
+// needs substring behaviour on partial words ("BEA-4", "logi") and tsvector
+// matching gives neither prefix nor infix. Tickets have no key column of their
+// own, so the human-readable reference is composed here from the space key and
+// the ticket number; matching that composed string is what lets an operator
+// type "BEA-42", "bea-42" or just "42".
+//
+// COALESCE around the assignment test is load-bearing twice over. In the
+// select list it keeps assigned_to_me a plain bool rather than a tri-state,
+// and in ORDER BY it makes an unassigned ticket (assignee_id NULL, so the
+// comparison is NULL) sort *after* the caller's own — DESC defaults to
+// NULLS FIRST, which would otherwise float every unassigned ticket to the top.
+func (q *Queries) SuggestTicketRefs(ctx context.Context, arg SuggestTicketRefsParams) ([]SuggestTicketRefsRow, error) {
+	rows, err := q.db.Query(ctx, suggestTicketRefs, arg.CallerID, arg.ReadableSpaceIds, arg.Query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SuggestTicketRefsRow{}
+	for rows.Next() {
+		var i SuggestTicketRefsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.Title,
+			&i.SpaceID,
+			&i.Status,
+			&i.SpaceKey,
+			&i.AssignedToMe,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateTicket = `-- name: UpdateTicket :one
 UPDATE tickets
 SET title = $2, description = $3, status = $4, priority = $5,

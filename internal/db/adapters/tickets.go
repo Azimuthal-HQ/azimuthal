@@ -149,6 +149,35 @@ func (a *TicketAdapter) Search(ctx context.Context, spaceID uuid.UUID, query str
 	return dbTicketsToTickets(rows), nil
 }
 
+// SuggestRefs backs the ticket_ref typeahead. The readable space set is
+// passed straight through to the query's ANY() filter — this method has no
+// unfiltered path, so a caller cannot reach a ticket outside its read scope
+// by any argument it supplies here.
+func (a *TicketAdapter) SuggestRefs(ctx context.Context, params tickets.SuggestParams) ([]tickets.Suggestion, error) {
+	rows, err := a.q.SuggestTicketRefs(ctx, generated.SuggestTicketRefsParams{
+		CallerID:         params.CallerID,
+		ReadableSpaceIds: params.ReadableSpaceIDs,
+		Query:            params.Query,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ticket adapter suggest refs: %w", err)
+	}
+	out := make([]tickets.Suggestion, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, tickets.Suggestion{
+			Ref:          tickets.ComposeRef(r.SpaceKey, r.Number),
+			TicketID:     r.ID,
+			Number:       r.Number,
+			Title:        r.Title,
+			SpaceID:      r.SpaceID,
+			SpaceKey:     r.SpaceKey,
+			Status:       tickets.Status(r.Status),
+			AssignedToMe: r.AssignedToMe,
+		})
+	}
+	return out, nil
+}
+
 func dbTicketToTicket(t generated.Ticket) *tickets.Ticket {
 	return &tickets.Ticket{
 		ID:          t.ID,

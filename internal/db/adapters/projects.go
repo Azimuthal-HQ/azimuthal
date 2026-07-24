@@ -94,6 +94,10 @@ func (a *ItemAdapter) Update(ctx context.Context, item *projects.Item) error {
 		Labels:      coalesceLabels(item.Labels),
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
+		// Safe for a PATCH that omitted "kind": applyItemPatch leaves the
+		// stored slug on the item it loaded, so this rewrites the same value
+		// rather than blanking it.
+		Kind: item.Kind,
 	})
 	if err != nil {
 		return fmt.Errorf("item adapter update: %w", err)

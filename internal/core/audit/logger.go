@@ -89,6 +89,9 @@ const (
 	EventTypeGrantUpdated EventType = "grant.updated"
 	// EventTypeGrantRevoked records a space grant being revoked.
 	EventTypeGrantRevoked EventType = "grant.revoked"
+	// EventTypeSpaceCreated records a space being created, with its initial
+	// visibility — the create-time counterpart of space.visibility_changed.
+	EventTypeSpaceCreated EventType = "space.created"
 	// EventTypeSpaceVisibilityChanged records a space visibility change.
 	EventTypeSpaceVisibilityChanged EventType = "space.visibility_changed"
 	// EventTypeSpaceOwnerTeamChanged records a space owner-team change.
