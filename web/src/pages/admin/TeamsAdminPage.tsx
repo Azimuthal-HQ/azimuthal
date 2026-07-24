@@ -27,13 +27,14 @@ import { cn } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
 import {
   friendlyErrorMessage,
-  useCreateTeam,
+  useCreateTeamWithSpaces,
   useDeleteTeam,
   usePutTeamMember,
   useRemoveTeamMember,
   useTeamMembers,
   useTeams,
   useUpdateTeam,
+  type SpaceType,
   type Team,
   type TeamRole,
 } from '../../lib/api';
@@ -361,7 +362,7 @@ export function TeamsAdminPage() {
   const orgId = user?.orgId ?? '';
 
   const teamsQuery = useTeams(orgId);
-  const createTeam = useCreateTeam(orgId);
+  const createTeam = useCreateTeamWithSpaces(orgId);
   const updateTeam = useUpdateTeam(orgId);
   const deleteTeam = useDeleteTeam(orgId);
 
@@ -375,6 +376,12 @@ export function TeamsAdminPage() {
   const [createSlug, setCreateSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
   const [createParent, setCreateParent] = useState('');
+  // Opt-in per-module spaces for the new team (default unchecked).
+  const [createSpaces, setCreateSpaces] = useState<Record<SpaceType, boolean>>({
+    beacon: false,
+    codex: false,
+    vector: false,
+  });
 
   // Edit dialog state (rename + reparent).
   const [editing, setEditing] = useState<Team | null>(null);
@@ -387,6 +394,7 @@ export function TeamsAdminPage() {
     setCreateSlug('');
     setSlugTouched(false);
     setCreateParent('');
+    setCreateSpaces({ beacon: false, codex: false, vector: false });
     setCreateOpen(true);
   }
 
@@ -394,8 +402,9 @@ export function TeamsAdminPage() {
     const name = createName.trim();
     const slug = createSlug.trim();
     if (!name || !slug) return;
+    const modules = (['beacon', 'codex', 'vector'] as SpaceType[]).filter((m) => createSpaces[m]);
     createTeam.mutate(
-      { name, slug, ...(createParent ? { parent_id: createParent } : {}) },
+      { name, slug, modules, ...(createParent ? { parent_id: createParent } : {}) },
       { onSuccess: () => setCreateOpen(false) },
     );
   }
@@ -543,6 +552,28 @@ export function TeamsAdminPage() {
                 <ParentOptions teams={teams} />
               </select>
             </div>
+            <fieldset className="space-y-[var(--space-2)]">
+              <legend className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                Create spaces for this team (optional)
+              </legend>
+              {(['beacon', 'codex', 'vector'] as SpaceType[]).map((module) => (
+                <label
+                  key={module}
+                  className="flex items-center gap-[var(--space-2)] text-[var(--text-sm)] text-[var(--color-text)]"
+                >
+                  <input
+                    type="checkbox"
+                    data-testid={`team-create-space-${module}`}
+                    checked={createSpaces[module]}
+                    onChange={(e) => setCreateSpaces((s) => ({ ...s, [module]: e.target.checked }))}
+                  />
+                  <span className="capitalize">{module}</span>
+                </label>
+              ))}
+              <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
+                Each checked module gets a space named for the team, with the team granted access.
+              </p>
+            </fieldset>
             {createTeam.error && (
               <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
                 {friendlyErrorMessage(createTeam.error, 'The team could not be created.')}
