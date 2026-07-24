@@ -31,6 +31,8 @@ vi.mock('../../../lib/api', () => ({
   useRoadmap: (...args: unknown[]) => useRoadmapMock(...args),
   useRoadmapSprints: () => ({ data: [], isLoading: false, isError: false, error: null }),
   useSprints: () => ({ data: [] }),
+  // W3 renders item keys as provenance chips, which needs the space's key.
+  useSpace: () => ({ data: { id: 's1', key: 'VEC' } }),
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 

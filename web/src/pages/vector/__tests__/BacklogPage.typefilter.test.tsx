@@ -27,6 +27,11 @@ vi.mock('../../../lib/api', async (importOriginal) => {
     useProjectItems: () => ({ data: items, isLoading: false, error: null }),
     useCreateProjectItem: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
     useRankItem: () => ({ mutate: vi.fn() }),
+    // W2 added sprint grouping/assignment to this page. These items carry no
+    // sprint, so the page renders a single Backlog group either way — the
+    // stubs exist so the hooks resolve outside a QueryClientProvider.
+    useSprints: () => ({ data: [] }),
+    useAssignItemSprint: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useSpace: () => ({ data: { id: 's1', key: 'VEC' } }),
     useItemTypes: () => ({
       data: [

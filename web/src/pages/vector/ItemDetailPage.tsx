@@ -32,8 +32,13 @@ import {
   useItemSearch,
   useSpace,
   useItemTypes,
+  useSprints,
+  useAssignItemSprint,
   friendlyErrorMessage,
 } from '../../lib/api';
+
+// Sentinel option value for "no sprint" — a <select> option cannot carry null.
+const NO_SPRINT = '__backlog__';
 
 // ---------------------------------------------------------------------------
 // Status vocabulary
@@ -88,6 +93,12 @@ export function ItemDetailPage() {
   const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, 'project_item', itemId);
   const createCommentMutation = useCreateComment(orgId, spaceId, 'project_item', itemId);
 
+  // Sprint membership (W2): completed sprints are not offered as targets, but
+  // one stays listed while it owns this item so the control shows the truth.
+  const { data: sprints = [] } = useSprints(spaceId);
+  const assignSprintMutation = useAssignItemSprint(spaceId);
+  const [sprintError, setSprintError] = useState<string | null>(null);
+
   const [newComment, setNewComment] = useState('');
 
   // Edit mode for title + description
@@ -120,6 +131,19 @@ export function ItemDetailPage() {
   async function handleAssigneeChange(assigneeId: string) {
     await updateMutation.mutateAsync({ assignee_id: assigneeId || null });
     refetchItem();
+  }
+
+  async function handleSprintChange(value: string) {
+    setSprintError(null);
+    try {
+      await assignSprintMutation.mutateAsync({
+        itemId,
+        sprintId: value === NO_SPRINT ? null : value,
+      });
+      refetchItem();
+    } catch (e) {
+      setSprintError(friendlyErrorMessage(e, 'The sprint could not be changed.'));
+    }
   }
 
   async function handleAddComment() {
@@ -444,6 +468,29 @@ export function ItemDetailPage() {
                 <option key={m.user_id} value={m.user_id}>{m.display_name}</option>
               ))}
             </select>
+          </DetailField>
+
+          <DetailField label="Sprint">
+            <select
+              aria-label="Sprint"
+              value={item.sprint_id ?? NO_SPRINT}
+              disabled={assignSprintMutation.isPending}
+              onChange={(e) => handleSprintChange(e.target.value)}
+              className={sideSelectClass}
+            >
+              <option value={NO_SPRINT}>Backlog</option>
+              {sprints.filter((s) => s.status !== 'completed').map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+              {item.sprint_id && !sprints.some((s) => s.id === item.sprint_id && s.status !== 'completed') && (
+                <option value={item.sprint_id}>
+                  {sprints.find((s) => s.id === item.sprint_id)?.name ?? 'Unknown sprint'}
+                </option>
+              )}
+            </select>
+            {sprintError && (
+              <p className="mt-1 text-[var(--text-xs)] text-[var(--color-danger)]">{sprintError}</p>
+            )}
           </DetailField>
 
           <DetailField label="Reporter">

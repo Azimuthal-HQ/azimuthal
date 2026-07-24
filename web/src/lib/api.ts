@@ -1159,6 +1159,20 @@ export async function transitionProjectItemStatus(
   });
 }
 
+// assignItemToSprint moves an item onto a sprint, or off every sprint back to
+// the backlog when sprintId is null. The endpoint takes a nullable sprint_id
+// rather than the /backlog/move-to-* pair so one call covers both directions.
+export async function assignItemToSprint(
+  spaceId: string,
+  itemId: string,
+  sprintId: string | null,
+): Promise<void> {
+  await apiFetch<{ message: string }>(`${spaceBase(spaceId)}/projects/items/${itemId}/sprint`, {
+    method: 'POST',
+    body: JSON.stringify({ sprint_id: sprintId }),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Sprint API functions
 // ---------------------------------------------------------------------------
@@ -2283,6 +2297,30 @@ export function useRankItem(spaceId: string) {
     mutationFn: ({ itemId, ...req }) => rankItem(spaceId, itemId, req),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
+    },
+  });
+}
+
+export interface AssignSprintVars {
+  itemId: string;
+  /** null returns the item to the backlog. */
+  sprintId: string | null;
+}
+
+// useAssignItemSprint re-sprints one item. Re-sprinting changes which sprint
+// owns the item, so every list keyed on sprint membership is stale afterwards:
+// the backlog grouping, the board's active-sprint items, the per-sprint lists,
+// and the roadmap's sprint spans.
+export function useAssignItemSprint(spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, AssignSprintVars>({
+    mutationFn: ({ itemId, sprintId }) => assignItemToSprint(spaceId, itemId, sprintId),
+    onSuccess: () => {
+      // projectItems is a key prefix of projectItem, so this one invalidation
+      // covers the list and the single-item detail query together.
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.sprints(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.roadmapSprints(spaceId) });
     },
   });
 }
