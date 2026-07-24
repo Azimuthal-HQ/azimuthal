@@ -48,4 +48,30 @@ var (
 
 	// ErrKeyRequired is returned when resolving an item by key with an empty key.
 	ErrKeyRequired = errors.New("item key is required")
+
+	// ErrColumnNameRequired is returned when creating or renaming a board
+	// column with an empty name.
+	ErrColumnNameRequired = errors.New("column name is required")
+
+	// ErrColumnNameDuplicate is returned when a board column name is already
+	// taken in the same space.
+	ErrColumnNameDuplicate = errors.New("a column with this name already exists")
+
+	// ErrInvalidWIPLimit is returned when a WIP limit is zero or negative. A
+	// limit of zero would close the column rather than limit it; no limit is
+	// expressed by omitting the value.
+	ErrInvalidWIPLimit = errors.New("wip limit must be greater than zero")
+
+	// ErrStatusUnmapped is returned when a board configuration would leave an
+	// item status with no column to appear in.
+	ErrStatusUnmapped = errors.New("every status must be mapped to a column")
+
+	// ErrLastColumn is returned when deleting the only remaining board column,
+	// which would leave its statuses nowhere to go.
+	ErrLastColumn = errors.New("cannot remove the last column")
+
+	// ErrInvalidRemapTarget is returned when a column deletion names a
+	// re-mapping target that does not exist, is in another space, or is the
+	// column being deleted.
+	ErrInvalidRemapTarget = errors.New("remap target must be another column in the same space")
 )

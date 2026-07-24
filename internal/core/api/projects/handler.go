@@ -32,6 +32,7 @@ type Handler struct {
 	labels       *projects.LabelService
 	itemTypes    *itemtypes.Service
 	customFields *customfields.Service
+	boardConfig  *projects.BoardConfigService
 	auditLog     audit.Logger
 }
 
@@ -72,6 +73,13 @@ func (h *Handler) WithItemTypes(s *itemtypes.Service) *Handler {
 // definition endpoints and per-item field values.
 func (h *Handler) WithCustomFields(s *customfields.Service) *Handler {
 	h.customFields = s
+	return h
+}
+
+// WithBoardConfig attaches the board-configuration service, enabling the
+// per-space board configuration endpoints.
+func (h *Handler) WithBoardConfig(s *projects.BoardConfigService) *Handler {
+	h.boardConfig = s
 	return h
 }
 
@@ -119,6 +127,13 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/roadmap", h.GetRoadmap)
 	r.Get("/roadmap/overdue", h.GetOverdueItems)
 	r.Get("/roadmap/sprints", h.GetSprintRoadmap)
+
+	// Board configuration. Reading follows space read access; every write
+	// follows space admin via CapManageSpace — no new capability.
+	r.Get("/board/config", h.GetBoardConfig)
+	r.Put("/board/config", h.SaveBoardConfig)
+	r.Post("/board/config/reset", h.ResetBoardConfig)
+	r.Delete("/board/config/columns/{columnID}", h.DeleteBoardColumn)
 
 	return r
 }

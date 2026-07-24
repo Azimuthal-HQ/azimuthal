@@ -352,3 +352,28 @@ type SwaggerCommentResponse struct {
 type SwaggerMessageResponse struct {
 	Message string `json:"message" example:"operation completed"`
 }
+
+// --- Board configuration ---
+
+// SwaggerBoardColumn matches projects.BoardColumn.
+type SwaggerBoardColumn struct {
+	ID       uuid.UUID `json:"id" example:"a1b2c3d4-e5f6-7890-abcd-ef1234567890"`
+	SpaceID  uuid.UUID `json:"space_id" example:"b2c3d4e5-f6a7-8901-bcde-f12345678901"`
+	Name     string    `json:"name" example:"In Progress"`
+	Position int       `json:"position" example:"2"`
+	// WIPLimit is null when the column has no limit. Limits are advisory: the
+	// API never refuses a transition because a column is over its limit.
+	WIPLimit  *int     `json:"wip_limit" example:"3"`
+	Statuses  []string `json:"statuses" example:"in_progress,in_review"`
+	CreatedAt string   `json:"created_at" example:"2026-01-15T10:30:00Z"`
+	UpdatedAt string   `json:"updated_at" example:"2026-01-15T10:30:00Z"`
+}
+
+// SwaggerBoardConfig matches projects.BoardConfig.
+type SwaggerBoardConfig struct {
+	SpaceID uuid.UUID            `json:"space_id" example:"b2c3d4e5-f6a7-8901-bcde-f12345678901"`
+	Columns []SwaggerBoardColumn `json:"columns"`
+	// Customized is false when the space has no stored configuration and these
+	// columns were derived from its workflow states.
+	Customized bool `json:"customized" example:"false"`
+}
