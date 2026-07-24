@@ -52,6 +52,14 @@ type Config struct {
 	InviteDelivery    string
 	InviteTTL         time.Duration
 
+	// TicketRefRequired makes the operator-supplied ticket reference
+	// mandatory on every administrative mutation that accepts one. Boot-time
+	// only, and deliberately not a runtime settings row: an organisation
+	// turns this on once, at a production cutover, and a restart is the
+	// honest cost of a change that alters what every admin action requires.
+	// Default false — behaviour is unchanged until an operator opts in.
+	TicketRefRequired bool
+
 	// App
 	AppEnv     string
 	AppPort    int
@@ -91,6 +99,7 @@ func Load() (*Config, error) {
 	v.SetDefault("AZIMUTHAL_ALLOW_REGISTRATION", false)
 	v.SetDefault("AZIMUTHAL_INVITE_DELIVERY", InviteDeliveryLink)
 	v.SetDefault("AZIMUTHAL_INVITE_TTL", "168h")
+	v.SetDefault("AZIMUTHAL_TICKET_REF_REQUIRED", false)
 
 	cfg := &Config{
 		DatabaseURL:       v.GetString("DATABASE_URL"),
@@ -103,6 +112,7 @@ func Load() (*Config, error) {
 		QueueEnabled:      v.GetBool("AZIMUTHAL_QUEUE_ENABLED"),
 		AllowRegistration: v.GetBool("AZIMUTHAL_ALLOW_REGISTRATION"),
 		InviteDelivery:    v.GetString("AZIMUTHAL_INVITE_DELIVERY"),
+		TicketRefRequired: v.GetBool("AZIMUTHAL_TICKET_REF_REQUIRED"),
 		AllowedOrigins:    parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS"), v.GetString("APP_ENV")),
 		SMTPHost:          v.GetString("SMTP_HOST"),
 		SMTPPort:          v.GetInt("SMTP_PORT"),
