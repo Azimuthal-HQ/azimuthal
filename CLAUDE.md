@@ -127,7 +127,42 @@ make test-db-down
 All three of `make test-live`, `make verify-api` and `make e2e-test` exit 0, or the PR is
 **DRAFT** with a per-item reason.
 
-### Two environment facts that have cost time in every phase
+### Where the working copy lives, and where you should work
+
+The maintainer's working copy is **inside OneDrive**, at
+`C:\Users\Kitsune\OneDrive\Documents\Claude\azimuthal`. That is sanctioned and current — if a
+prompt or an older note tells you the checkout is, or must be moved, outside OneDrive, that note
+is obsolete and this line supersedes it.
+
+Two consequences worth knowing rather than rediscovering:
+
+- **The primary checkout is sometimes shared by concurrent sessions.** Uncommitted work in it is
+  not safe from another session's housekeeping — a `git stash` in a sibling session has silently
+  reverted edits here before, and it read exactly like a OneDrive sync rollback. If work
+  disappears, check `git stash list` before blaming sync. Commit in small batches; see §4.
+- **Work in a sibling worktree**, not in the primary checkout: `git worktree add ../azimuthal-<topic>`
+  beside it, or a harness container. Run `git worktree prune` at the start and end of a session.
+  Pruning can fail with `Permission denied` on a stale worktree directory under OneDrive; that
+  error is noise, not a failure of your change.
+
+### Phases that carry E2E work need Docker Compose and Playwright
+
+`make e2e-test` is not a pure-Go gate. It needs a working Docker Compose (it calls `make test-db-up`
+for postgres on `:5433` and MinIO on `:9001`), an `npm ci && npm run build` of the frontend, a
+built server binary, and Playwright's browsers already installed. **Verify all of that before
+starting a phase that has to run E2E** — discovering it at the gate is how a phase loses an evening.
+
+The port is env-gated. `web/playwright.config.ts` reads **`E2E_PORT`** (default `8082`) in three
+places — `use.baseURL`, the `webServer` `/health` readiness probe, and the spawned server's
+`APP_PORT` — so overriding that one variable moves the whole harness when `8082` is contended.
+Note that `.env.test` sets `APP_PORT=8081`; `webServer.env` overrides it, so the E2E server binds
+the `E2E_PORT` value rather than the `.env.test` one.
+
+One trap: `webServer.env` forwards an **explicit allow-list** of variables to the spawned server.
+A new `AZIMUTHAL_*` setting will not reach an E2E server unless it is added to that list, and the
+symptom is a feature behaving as though its flag were never set.
+
+### Two more environment facts that have cost time in every phase
 
 **`-race` cannot run locally on Windows without cgo and a C compiler.** The race detector requires
 `CGO_ENABLED=1` and GCC. `make test`, `make test-live` and `make test-live-verbose` all pass
