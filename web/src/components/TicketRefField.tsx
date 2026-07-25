@@ -81,6 +81,11 @@ export function TicketRefField({
   const [open, setOpen] = useState(false);
   // -1 = "the text as typed"; Enter only accepts a suggestion above that.
   const [active, setActive] = useState(-1);
+  // The panel is absolutely positioned, so wherever it opens it covers
+  // something. Opening downward covered the confirm button of every dialog
+  // that hosts this field — the bulk-grants Apply click was swallowed outright
+  // — so it flips above the input when there is not room below.
+  const [dropUp, setDropUp] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const reactId = useId();
   const inputId = `${testId}-${reactId}`;
@@ -98,6 +103,19 @@ export function TicketRefField({
     document.addEventListener('mousedown', onClickOutside);
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, []);
+
+  // Measured when the list is about to show, against the panel's own max
+  // height. jsdom reports zeroes for every rect, which resolves to "room
+  // below" — the same downward default the component had before, so unit
+  // tests see stable behaviour rather than a layout-dependent one.
+  useEffect(() => {
+    if (!open) return;
+    const el = rootRef.current;
+    if (!el) return;
+    const PANEL_MAX_PX = 256; // matches max-h-64
+    const below = window.innerHeight - el.getBoundingClientRect().bottom;
+    setDropUp(below < PANEL_MAX_PX && el.getBoundingClientRect().top > below);
+  }, [open, value]);
 
   const options: TicketRefSuggestion[] = open && q ? (suggestions.data ?? []) : [];
   const searching = open && q.length > 0 && suggestions.isLoading;
@@ -190,8 +208,9 @@ export function TicketRefField({
             aria-label="Ticket suggestions"
             data-testid={`${testId}-suggestions`}
             className={cn(
-              'absolute z-30 mt-1 max-h-64 w-full min-w-[18rem] overflow-auto rounded-[var(--radius-md)]',
+              'absolute z-30 max-h-64 w-full min-w-[18rem] overflow-auto rounded-[var(--radius-md)]',
               'border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-lg)]',
+              dropUp ? 'bottom-full mb-1' : 'mt-1',
             )}
           >
             {options.map((s, i) => (

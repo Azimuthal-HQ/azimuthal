@@ -167,18 +167,53 @@ type createItemRequest struct {
 // never mentioned kind into a 400, because "" is not an active type. Absent has
 // to stay distinguishable from "the client asked for this type".
 //
-// AssigneeID and DueAt stay single pointers: for them, null is a meaningful
-// value (unassign, clear the date) and absent is indistinguishable from null
-// in this shape. Clearing them is the more useful of the two readings, and it
-// is what the existing clients rely on.
+// AssigneeID and DueAt need three states, not two: absent (leave it alone),
+// explicit null (clear it), and a value. A single pointer collapses the first
+// two, and this used to resolve them as "clear" — which quietly destroyed
+// data. Any PATCH that did not mention due_at wiped the stored due date, and
+// since no frontend surface has ever sent due_at, *every* item edit cleared
+// it: renaming an item removed it from the roadmap. The same shape meant a
+// board drag sending only {"kind": …} unassigned the item as a side effect.
+// optionalField keeps the three states apart, so absent now means absent.
 type updateItemRequest struct {
-	Title       *string    `json:"title"`
-	Description *string    `json:"description"`
-	Kind        *string    `json:"kind"`
-	Priority    *string    `json:"priority"`
-	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
-	DueAt       *time.Time `json:"due_at,omitempty"`
+	Title       *string                  `json:"title"`
+	Description *string                  `json:"description"`
+	Kind        *string                  `json:"kind"`
+	Priority    *string                  `json:"priority"`
+	AssigneeID  optionalField[uuid.UUID] `json:"assignee_id"`
+	Labels      []string                 `json:"labels,omitempty"`
+	DueAt       optionalField[time.Time] `json:"due_at"`
+}
+
+// optionalField distinguishes "the client did not mention this field" from
+// "the client explicitly sent null". encoding/json only calls UnmarshalJSON
+// when the key is present, so Set is false for an absent key and true for
+// both a null and a real value.
+//
+// Note the json tags above must NOT carry omitempty: it has no effect on
+// decoding, but it would wrongly suggest these fields round-trip, and this
+// type is decode-only.
+type optionalField[T any] struct {
+	// Set reports whether the key appeared in the request body at all.
+	Set bool
+	// Value is nil when the key appeared as null, or when it never appeared.
+	Value *T
+}
+
+// UnmarshalJSON records that the key was present, then decodes null as an
+// explicit clear and anything else as a value.
+func (o *optionalField[T]) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var v T
+	if err := json.Unmarshal(b, &v); err != nil {
+		return fmt.Errorf("decoding optional field: %w", err)
+	}
+	o.Value = &v
+	return nil
 }
 
 type statusRequest struct {
@@ -426,8 +461,15 @@ func applyItemPatch(existing *projects.Item, req updateItemRequest) {
 	if req.Labels != nil {
 		existing.Labels = req.Labels
 	}
-	existing.AssigneeID = req.AssigneeID
-	existing.DueAt = req.DueAt
+	// Only when the key was actually present. A nil Value with Set true is an
+	// explicit null and does mean "clear it" — that is how item detail
+	// unassigns, and it still works.
+	if req.AssigneeID.Set {
+		existing.AssigneeID = req.AssigneeID.Value
+	}
+	if req.DueAt.Set {
+		existing.DueAt = req.DueAt.Value
+	}
 }
 
 // UpdateItem modifies an existing item.

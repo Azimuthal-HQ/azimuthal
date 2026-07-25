@@ -638,6 +638,13 @@ export function SprintBoardPage() {
         // one — only the server knows which half took. Rolling back locally
         // cannot express that; re-reading can.
         queryClient.invalidateQueries({ queryKey: queryKeys.sprintItems(spaceId, sprintId) });
+        // The item lists too, not just this sprint's. `updateProjectItem` is a
+        // bare fetcher with no onSuccess of its own, and `projectItems` keys a
+        // different root, so prefix matching never reaches it. Without this the
+        // backlog and item detail serve the pre-drag type or assignee from cache
+        // for the whole 5-minute staleTime — long enough to look like the drag
+        // silently failed.
+        queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
       }
     },
     [effectiveItems, columnDefs, columnIdFor, laneMode, spaceId, sprintId, queryClient],

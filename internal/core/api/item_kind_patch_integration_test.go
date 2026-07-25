@@ -325,3 +325,73 @@ func TestItemKindPatch_PermissionsUnchangedOnKindPatch(t *testing.T) {
 	require.Equal(t, http.StatusOK, r.StatusCode, "agent retypes the contributor's item: %s", r.Body)
 	require.Equal(t, "story", itemKindPatchStoredKind(t, f.ts.DB.Pool, contribItem))
 }
+
+// TestItemPatch_AbsentAssigneeAndDueDateAreNotCleared is the counterpart of the
+// absent-kind case above, for the two fields that used to behave differently.
+//
+// updateItemRequest once modelled assignee_id and due_at as plain pointers, so
+// "absent" and "null" decoded identically and the handler resolved both as
+// "clear it". The damage was not theoretical:
+//
+//   - No frontend surface has ever sent due_at, so EVERY item edit silently
+//     wiped the stored due date. Renaming an item removed it from the roadmap,
+//     which is built entirely on that column.
+//   - T1 then added a caller that sends only {"kind": …} — the board's
+//     cross-lane type drag — so retyping a card also unassigned it.
+//
+// optionalField now keeps absent, null and a value apart. This test pins all
+// three readings, because a fix that made absent work by making explicit null
+// stop working would be no fix at all: item detail unassigns with an explicit
+// null and must keep doing so.
+func TestItemPatch_AbsentAssigneeAndDueDateAreNotCleared(t *testing.T) {
+	f := newItemKindPatchFixture(t)
+	itemID := itemKindPatchCreateItem(t, f, "Item with an owner and a deadline", itemKindPatchOriginalKind)
+
+	// Give it both an assignee and a due date to lose.
+	due := "2027-03-01T00:00:00Z"
+	r := f.ts.patch(t, f.itemsBase+"/"+itemID, map[string]any{
+		"assignee_id": f.ts.UserID.String(),
+		"due_at":      due,
+	}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "seed assignee and due date: %s", r.Body)
+
+	seeded := itemKindPatchFetchItem(t, f, itemID)
+	require.Equal(t, f.ts.UserID.String(), seeded["assignee_id"], "premise: the item must start assigned")
+	require.NotNil(t, seeded["due_at"], "premise: the item must start with a due date")
+
+	// The failing shape: a PATCH that mentions neither field. Before the fix
+	// this cleared both.
+	r = f.ts.patch(t, f.itemsBase+"/"+itemID, map[string]any{"title": "Renamed, nothing else"}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "title-only patch: %s", r.Body)
+
+	after := itemKindPatchFetchItem(t, f, itemID)
+	require.Equal(t, "Renamed, nothing else", after["title"], "the title must have changed")
+	require.Equal(t, f.ts.UserID.String(), after["assignee_id"],
+		"a PATCH that never mentioned assignee_id must not unassign the item")
+	require.NotNil(t, after["due_at"],
+		"a PATCH that never mentioned due_at must not clear the due date — the roadmap is built on this column")
+
+	// The board's cross-lane type drag sends exactly this and nothing else.
+	r = f.ts.patch(t, f.itemsBase+"/"+itemID, map[string]any{"kind": "bug"}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "kind-only patch: %s", r.Body)
+
+	afterKind := itemKindPatchFetchItem(t, f, itemID)
+	require.Equal(t, "bug", afterKind["kind"], "the type must have changed")
+	require.Equal(t, f.ts.UserID.String(), afterKind["assignee_id"],
+		"retyping a card on the board must not unassign it")
+	require.NotNil(t, afterKind["due_at"], "retyping a card on the board must not clear its due date")
+
+	// Explicit null still clears — this is how item detail unassigns, and a
+	// fix that broke it would have traded one defect for another.
+	r = f.ts.patch(t, f.itemsBase+"/"+itemID, map[string]any{"assignee_id": nil}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "explicit null patch: %s", r.Body)
+
+	cleared := itemKindPatchFetchItem(t, f, itemID)
+	require.Nil(t, cleared["assignee_id"], "an explicit null assignee_id must still unassign")
+	require.NotNil(t, cleared["due_at"], "clearing the assignee must not also clear the due date")
+
+	r = f.ts.patch(t, f.itemsBase+"/"+itemID, map[string]any{"due_at": nil}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "explicit null due_at: %s", r.Body)
+	require.Nil(t, itemKindPatchFetchItem(t, f, itemID)["due_at"],
+		"an explicit null due_at must still clear the due date")
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -372,4 +373,54 @@ func TestBulkGrants_DuplicateCellRejected(t *testing.T) {
 	}, "")
 	require.Equal(t, http.StatusBadRequest, r.StatusCode, "duplicate cell must 400: %s", r.Body)
 	require.Zero(t, f.grantCount(t))
+}
+
+// TestBulkGrants_TicketRefPolicyIsShared pins the bulk-apply half of the
+// ticket-reference policy.
+//
+// Bulk-apply is the one surface that keeps a JSON body field rather than the
+// query parameter every other administrative mutation uses — it is a shipped
+// contract with clients already sending it. The whole reason both routes run
+// through one ticketref.Policy is so the two transports cannot enforce
+// different rules; nothing else stops them drifting, so this asserts the
+// shared rules actually apply here.
+func TestBulkGrants_TicketRefPolicyIsShared(t *testing.T) {
+	f := newBulkFixture(t)
+
+	t.Run("over-length is rejected and writes nothing", func(t *testing.T) {
+		before := f.grantCount(t)
+		_, r := f.apply(t, []map[string]any{
+			cell(f.child.ID, f.spaceA, "viewer"),
+		}, strings.Repeat("X", 201))
+		requireErrorCode(t, r, http.StatusBadRequest, "VALIDATION_ERROR")
+		require.Equal(t, before, f.grantCount(t),
+			"an over-length reference must be refused before the transaction, not after it")
+	})
+
+	t.Run("the 200-character boundary is accepted", func(t *testing.T) {
+		res, r := f.apply(t, []map[string]any{
+			cell(f.child.ID, f.spaceA, "viewer"),
+		}, strings.Repeat("Y", 200))
+		require.Equal(t, http.StatusOK, r.StatusCode, "exactly 200 characters must be accepted: %s", r.Body)
+		require.NotNil(t, res.TicketRef)
+		require.Len(t, *res.TicketRef, 200)
+	})
+
+	t.Run("whitespace is trimmed, so both transports store the same value", func(t *testing.T) {
+		res, r := f.apply(t, []map[string]any{
+			cell(f.child.ID, f.spaceA, "contributor"),
+		}, "   OPS-TRIM   ")
+		require.Equal(t, http.StatusOK, r.StatusCode, "apply: %s", r.Body)
+		require.NotNil(t, res.TicketRef)
+		require.Equal(t, "OPS-TRIM", *res.TicketRef,
+			"the body field must be trimmed exactly as the query parameter is — otherwise a "+
+				"whitespace-only reference would satisfy required mode on one transport and not the other")
+
+		var stored *string
+		require.NoError(t, f.ts.DB.Pool.QueryRow(t.Context(),
+			`SELECT ticket_ref FROM audit_log WHERE org_id = $1 AND ticket_ref IS NOT NULL
+			 ORDER BY created_at DESC LIMIT 1`, f.ts.OrgID).Scan(&stored))
+		require.NotNil(t, stored)
+		require.Equal(t, "OPS-TRIM", *stored, "the trimmed value is what reaches the column")
+	})
 }

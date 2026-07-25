@@ -26,6 +26,7 @@ package ticketref
 import (
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 )
@@ -72,6 +73,20 @@ func (p Policy) Check(w http.ResponseWriter, r *http.Request, ref string) bool {
 	if len(ref) > MaxLen {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
 			"ticket_ref must be 200 characters or fewer")
+		return false
+	}
+	// Rejected here or PostgreSQL rejects it later, and "later" is far worse.
+	// A query parameter carries raw percent-decoded bytes, so `?ticket_ref=%FF`
+	// or `%00` reaches this point as a perfectly ordinary non-empty Go string.
+	// It only fails at the audit INSERT, where the column is `text` — and by
+	// then the mutation has committed, the response has been decided, and
+	// audit.Logger's contract is to swallow the error rather than interrupt
+	// the request. The result would be a completed administrative change with
+	// no audit row: one query parameter, and the record disappears. That
+	// inverts the entire point of requiring a reference.
+	if !utf8.ValidString(ref) || strings.ContainsRune(ref, 0) {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
+			"ticket_ref must be valid UTF-8 and contain no NUL bytes")
 		return false
 	}
 	if p.Required && ref == "" {

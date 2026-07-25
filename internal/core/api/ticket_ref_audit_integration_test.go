@@ -728,3 +728,49 @@ func TestTicketRefAudit_DefaultPolicy_MissingReferenceStillSucceeds(t *testing.T
 		require.Nil(t, rows[0].Ref, "%s must store NULL when no reference was sent", event)
 	}
 }
+
+// TestTicketRefAudit_MalformedReferenceIsRefusedNotSilentlyDropped closes a
+// hole that turns the audit guarantee inside out.
+//
+// A query parameter carries raw percent-decoded bytes, so ?ticket_ref=%FF
+// arrives as an ordinary non-empty Go string: it passes a length check, and it
+// even satisfies required mode. It only fails at the audit INSERT, because
+// audit_log.ticket_ref is `text` and PostgreSQL rejects invalid UTF-8. By then
+// the mutation has committed, and audit.Logger's contract is to swallow the
+// error rather than interrupt the request — so the administrative change lands
+// with no audit row at all. One query parameter, and the record disappears.
+//
+// The fix rejects it up front, which is why this test asserts the 400 AND that
+// the mutation did not happen. Asserting only the status code would pass even
+// if the request were refused after the write.
+func TestTicketRefAudit_MalformedReferenceIsRefusedNotSilentlyDropped(t *testing.T) {
+	ts := newTestServer(t)
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"invalid utf-8", "%FF"},
+		{"nul byte", "%00"},
+		{"invalid utf-8 inside an otherwise sane reference", "OPS-%FF-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := ticketRefAuditOrgRowCount(t, ts)
+
+			slug := fmt.Sprintf("malformed-%s", strings.ReplaceAll(tc.name, " ", "-"))
+			r := ticketRefAuditCreateTeam(t, ts, slug, "?ticket_ref="+tc.raw)
+			require.Equal(t, http.StatusBadRequest, r.StatusCode,
+				"a malformed ticket_ref must be refused up front: %s", r.Body)
+
+			// The team must not exist. This is the assertion that distinguishes
+			// "refused" from "committed, then the audit row was lost".
+			var teams int
+			require.NoError(t, ts.DB.Pool.QueryRow(t.Context(),
+				`SELECT count(*) FROM teams WHERE org_id = $1 AND slug = $2`, ts.OrgID, slug).Scan(&teams))
+			require.Zero(t, teams, "the mutation must not have committed")
+
+			require.Equal(t, before, ticketRefAuditOrgRowCount(t, ts),
+				"no audit row should have been written either")
+		})
+	}
+}
