@@ -32,13 +32,22 @@ type ShareQueries interface {
 type Handler struct {
 	svc      *wiki.Service
 	locks    *wiki.LockService
+	docs     *wiki.DocumentService
 	auditLog audit.Logger
 	shares   ShareQueries
 }
 
 // NewHandler creates a wiki Handler.
-func NewHandler(svc *wiki.Service, locks *wiki.LockService) *Handler {
-	return &Handler{svc: svc, locks: locks, auditLog: audit.NewLogger()}
+//
+// docs is a required argument rather than a With* option, and deliberately so.
+// An optional collaborator that is missing does not fail — the surface reports
+// itself disabled and answers 404, which is right in production and silent in a
+// test harness: every assertion against the document routes would pass against a
+// tidy 404 and the endpoints would read as covered (CLAUDE.md section 2, "No dark
+// harness"). A required argument does not compile when it is forgotten, which is
+// a stronger guarantee than a guard test.
+func NewHandler(svc *wiki.Service, locks *wiki.LockService, docs *wiki.DocumentService) *Handler {
+	return &Handler{svc: svc, locks: locks, docs: docs, auditLog: audit.NewLogger()}
 }
 
 // WithAuditLogger attaches an audit logger to the handler.
@@ -75,6 +84,15 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/{pageID}/lock", h.GetLock)
 	r.Post("/{pageID}/lock", h.AcquireLock)
 	r.Delete("/{pageID}/lock", h.ReleaseLock)
+	// The document surface (issue #15, ADR-0012). /drafts is registered before
+	// /{pageID} paths for readability only — chi matches static segments ahead of
+	// parameters regardless.
+	r.Get("/drafts", h.ListDrafts)
+	r.Get("/{pageID}/document", h.GetDocument)
+	r.Put("/{pageID}/draft", h.SaveDraft)
+	r.Delete("/{pageID}/draft", h.DiscardDraft)
+	r.Post("/{pageID}/publish", h.Publish)
+	r.Post("/{pageID}/images", h.UploadImage)
 	return r
 }
 
@@ -786,6 +804,17 @@ func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "spaceID"))
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("parsing space ID: %w", err)
+	}
+	return id, nil
+}
+
+// orgIDFromURL reads the org from the path rather than from the JWT. The URL is
+// the scoping convention every space-scoped route follows, and the middleware has
+// already established that the space belongs to it.
+func orgIDFromURL(r *http.Request) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing org ID: %w", err)
 	}
 	return id, nil
 }

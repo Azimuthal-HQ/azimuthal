@@ -312,6 +312,66 @@ func (m *mockPageStore) ListPageRevisions(_ context.Context, _ uuid.UUID) ([]gen
 	return nil, nil
 }
 
+// ---- Mock document store ----
+//
+// This harness has no database, so the document routes are exercised for routing
+// and guard behaviour only. Capture, restore, conflict and draft isolation are
+// asserted against real PostgreSQL in wiki_document_integration_test.go.
+
+type mockDocumentStore struct {
+	*mockPageStore
+	drafts map[string]generated.PageDraft
+}
+
+func newMockDocumentStore(pages *mockPageStore) *mockDocumentStore {
+	return &mockDocumentStore{mockPageStore: pages, drafts: make(map[string]generated.PageDraft)}
+}
+
+func draftKey(pageID, authorID uuid.UUID) string { return pageID.String() + "/" + authorID.String() }
+
+func (m *mockDocumentStore) GetPageRevisionDocument(_ context.Context, _ generated.GetPageRevisionDocumentParams) (generated.GetPageRevisionDocumentRow, error) {
+	return generated.GetPageRevisionDocumentRow{}, pgx.ErrNoRows
+}
+
+func (m *mockDocumentStore) UpsertPageDraft(_ context.Context, arg generated.UpsertPageDraftParams) (generated.PageDraft, error) {
+	draft := generated.PageDraft{
+		PageID: arg.PageID, AuthorID: arg.AuthorID, Title: arg.Title,
+		Doc: arg.Doc, BaseVersion: arg.BaseVersion,
+	}
+	m.drafts[draftKey(arg.PageID, arg.AuthorID)] = draft
+	return draft, nil
+}
+
+func (m *mockDocumentStore) GetPageDraft(_ context.Context, arg generated.GetPageDraftParams) (generated.PageDraft, error) {
+	draft, ok := m.drafts[draftKey(arg.PageID, arg.AuthorID)]
+	if !ok {
+		return generated.PageDraft{}, pgx.ErrNoRows
+	}
+	return draft, nil
+}
+
+func (m *mockDocumentStore) DeletePageDraft(_ context.Context, arg generated.DeletePageDraftParams) (int64, error) {
+	key := draftKey(arg.PageID, arg.AuthorID)
+	if _, ok := m.drafts[key]; !ok {
+		return 0, nil
+	}
+	delete(m.drafts, key)
+	return 1, nil
+}
+
+func (m *mockDocumentStore) ListPageDraftsForAuthorInSpace(_ context.Context, _ generated.ListPageDraftsForAuthorInSpaceParams) ([]generated.ListPageDraftsForAuthorInSpaceRow, error) {
+	return []generated.ListPageDraftsForAuthorInSpaceRow{}, nil
+}
+
+type mockDocumentTx struct{}
+
+func (m *mockDocumentTx) PublishPageTx(_ context.Context, in wiki.PublishPageTxInput) (generated.Page, error) {
+	return generated.Page{
+		ID: in.PageID, Title: in.Title, Content: in.Content,
+		Doc: in.Doc, Version: in.BaseVersion + 1,
+	}, nil
+}
+
 func (m *mockPageStore) SearchPages(_ context.Context, _ generated.SearchPagesParams) ([]generated.SearchPagesRow, error) {
 	return nil, nil
 }
@@ -658,7 +718,14 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 
 	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
 	ticketHandler := ticketsapi.NewHandler(ticketSvc)
-	wikiHandler := wikiapi.NewHandler(wikiSvc, wiki.NewLockService(&mockLockStore{}))
+	wikiDocs := wiki.NewDocumentService(
+		newMockDocumentStore(mockPages),
+		&mockDocumentTx{},
+		// The refusing image store is what a deployment without object storage
+		// really gets, so the routes behave here as they would there.
+		wiki.UnavailableImageStore{},
+	)
+	wikiHandler := wikiapi.NewHandler(wikiSvc, wiki.NewLockService(&mockLockStore{}), wikiDocs)
 	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
 	spaceHandler := spacesapi.NewHandler(nil)

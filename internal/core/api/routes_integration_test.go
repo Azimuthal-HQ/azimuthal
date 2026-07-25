@@ -172,6 +172,13 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	attachmentSvc := attachments.NewService(adapters.NewAttachmentAdapter(pool), storage.NewMemoryStore())
 	attachmentHandler := attachmentsapi.NewHandler(attachmentSvc, shareSvc)
 
+	// The Codex document surface (issue #15), wired as production: the real
+	// queries, the real publish transaction, and the real attachment service as
+	// its image store. Deliberately NOT wiki.UnavailableImageStore — the image
+	// paths have to be reachable here or the tests that upload one would pass
+	// against a refusal, which is the dark-harness failure in a new disguise.
+	wikiDocs := wiki.NewDocumentService(queries, contentTx, attachmentSvc)
+
 	// P2.5 administration surface, wired as production. Registration is
 	// enabled here because several suites exercise the register flow; the
 	// disabled-by-default behaviour has its own dedicated tests.
@@ -201,7 +208,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithAuditLogger(auditLog).
 			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
 			WithSuggestions(tickets.NewSuggestionService(ticketAdapter)),
-		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiLocks).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
+		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiLocks, wikiDocs).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
 			WithAuditLogger(auditLog).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).

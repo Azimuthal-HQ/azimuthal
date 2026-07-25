@@ -180,6 +180,24 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/comments":            "space-read",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/comments":           "space-write: comment capability",
 
+	// The Codex document surface (issue #15, ADR-0012). Reading a page's document
+	// is a read of the page, so space-read is the whole guard — the write floor
+	// lets GET through untouched. Everything that writes carries the same
+	// in-handler edit_own/edit_any check as the markdown save path: drafting and
+	// publishing are the same permission as editing, and this phase adds no
+	// capability.
+	//
+	// The author scoping on the two reads is a separate property from the guard
+	// class. A draft is visible only to the person who wrote it because the query
+	// is keyed on the caller, not because a wider result is filtered afterwards;
+	// the integration tests assert that directly.
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/drafts":            "space-read: the caller's own drafts in this space, author-scoped in-handler",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/document": "space-read: includes the caller's own draft, author-scoped in-handler",
+	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/draft":    "space-write: edit_own/edit_any in-handler",
+	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/draft": "space-write: edit_own/edit_any in-handler",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/publish": "space-write: edit_own/edit_any in-handler",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/images":  "space-write: edit_own/edit_any in-handler; the entity comes from the URL, never a form field",
+
 	// Projects.
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items":                          "space-read",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items":                         "space-write",

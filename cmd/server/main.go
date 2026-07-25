@@ -281,13 +281,19 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	// breaks — exactly the pre-P3 behaviour.
 	var attachmentHandler *attachmentsapi.Handler
 	var blobStore storage.ObjectStore
+	// The Codex document surface needs an image store as a REQUIRED dependency,
+	// so a deployment without object storage gets one that refuses loudly rather
+	// than a nil that would disable the whole editor, text included.
+	var pageImages wiki.ImageStore = wiki.UnavailableImageStore{}
 	if bs, err := newObjectStore(context.Background(), cfg); err != nil {
-		slog.Warn("object storage disabled: attachments and avatars unavailable", "error", err)
+		slog.Warn("object storage disabled: attachments, avatars and page images unavailable", "error", err)
 	} else {
 		blobStore = bs
 		attachmentSvc := attachments.NewService(adapters.NewAttachmentAdapter(pool), blobStore)
 		attachmentHandler = attachmentsapi.NewHandler(attachmentSvc, shareSvc)
+		pageImages = attachmentSvc
 	}
+	wikiDocs := wiki.NewDocumentService(queries, contentTx, pageImages)
 
 	// The shared-entity reader projects each module entity into a
 	// container-free view (no space, tree, siblings, or comments).
@@ -331,7 +337,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc),
-		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks, wikiDocs).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
