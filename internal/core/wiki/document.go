@@ -21,13 +21,6 @@ var (
 	// ErrDraftNotFound is returned when the caller holds no draft on a page.
 	ErrDraftNotFound = errors.New("no draft on this page")
 
-	// ErrPreservedContentLost is returned when a publish would drop content that
-	// was preserved for the author, without the author having said so. This is
-	// the ADR-0012 catastrophe caught in the act: an editor that silently failed
-	// to round-trip a macro produces exactly this, and the write is refused
-	// rather than committed.
-	ErrPreservedContentLost = errors.New("this edit would remove preserved content")
-
 	// ErrUnknownPreservedContent is returned when a document carries a
 	// preservation placeholder with no original behind it. The document was
 	// prepared against a different version of the page than the one being
@@ -440,8 +433,6 @@ type PublishResult struct {
 // Publish replaces a page's published content with the given document, bumps
 // the version, records a revision, and clears the caller's draft — all in one
 // transaction.
-//
-//nolint:cyclop // the sequence of refusals IS the contract; splitting it hides the order
 func (s *DocumentService) Publish(ctx context.Context, in PublishInput) (PublishResult, error) {
 	if strings.TrimSpace(in.Title) == "" {
 		return PublishResult{}, ErrEmptyTitle
@@ -462,52 +453,40 @@ func (s *DocumentService) Publish(ctx context.Context, in PublishInput) (Publish
 		return PublishResult{Conflict: conflictFor(in.PageID, in.BaseVersion, page)}, nil
 	}
 
-	base, err := s.baseDocument(ctx, page, in.BaseVersion)
+	document, lost, err := s.resolvePreservedContent(ctx, page, in)
 	if err != nil {
 		return PublishResult{}, err
 	}
-	shielded, err := doc.Shield(base)
-	if err != nil {
-		return PublishResult{}, fmt.Errorf("re-deriving the document being edited: %w", err)
-	}
-	restored, err := doc.Restore(in.Doc, shielded)
-	if err != nil {
-		return PublishResult{}, fmt.Errorf("restoring preserved content: %w", err)
+	if lost != nil {
+		return PublishResult{LostContent: lost}, nil
 	}
 
-	// Refusal 2: a placeholder with nothing behind it. Storing it verbatim would
-	// turn a display stand-in into the content itself.
-	if len(restored.Unresolved) > 0 {
-		return PublishResult{}, fmt.Errorf("%w: %s", ErrUnknownPreservedContent, strings.Join(restored.Unresolved, ", "))
-	}
-
-	// Refusal 3: preserved content is gone and nobody said to remove it. This is
-	// the ADR-0012 failure caught before it commits.
-	if lost := unacknowledged(restored.Dropped, in.AcknowledgedLostIDs); len(lost) > 0 {
-		return PublishResult{LostContent: lostContentFor(in.PageID, lost, shielded)}, nil
-	}
-
-	// Refusal 4: an image node pointing somewhere it should not.
-	if err := s.checkImages(ctx, in.PageID, restored.Document); err != nil {
-		return PublishResult{}, err
-	}
-
-	content, err := doc.ToMarkdown(restored.Document)
+	content, err := doc.ToMarkdown(document)
 	if err != nil {
 		return PublishResult{}, fmt.Errorf("projecting the document for search: %w", err)
 	}
 
+	return s.commit(ctx, in, document, content)
+}
+
+// commit runs the publish transaction and turns a lost race into the same
+// conflict the pre-check would have reported.
+//
+// The race is real and the reason the version guard lives in the UPDATE: two
+// publishes can both pass the check in [DocumentService.Publish] and then both
+// try to write, and the second one has to be told it conflicted rather than
+// silently overwriting.
+func (s *DocumentService) commit(ctx context.Context, in PublishInput, document json.RawMessage, content string) (PublishResult, error) {
 	published, err := s.tx.PublishPageTx(ctx, PublishPageTxInput{
 		PageID:      in.PageID,
 		AuthorID:    in.AuthorID,
 		Title:       in.Title,
 		Content:     content,
-		Doc:         restored.Document,
+		Doc:         document,
 		BaseVersion: in.BaseVersion,
 		Overwrite:   in.Overwrite,
 	})
 	if errors.Is(err, ErrVersionConflict) {
-		// Lost the race between the check above and the guarded UPDATE.
 		current, getErr := s.page(ctx, in.PageID)
 		if getErr != nil {
 			return PublishResult{}, getErr
@@ -518,6 +497,48 @@ func (s *DocumentService) Publish(ctx context.Context, in PublishInput) (Publish
 		return PublishResult{}, fmt.Errorf("publishing page: %w", err)
 	}
 	return PublishResult{Page: published}, nil
+}
+
+// resolvePreservedContent puts the preserved originals back into the incoming
+// document and applies the three refusals that stand between an edit and stored
+// content. It returns the document to store, or a non-nil report of preserved
+// content that would be lost.
+//
+// The order of these refusals is the contract, so they stay in one place: an
+// unresolvable placeholder is a client or session defect and must be answered
+// before anything is judged "lost", and nothing is written at all until every
+// image reference has been confirmed.
+func (s *DocumentService) resolvePreservedContent(ctx context.Context, page generated.Page, in PublishInput) (json.RawMessage, *LostContentDetail, error) {
+	base, err := s.baseDocument(ctx, page, in.BaseVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	shielded, err := doc.Shield(base)
+	if err != nil {
+		return nil, nil, fmt.Errorf("re-deriving the document being edited: %w", err)
+	}
+	restored, err := doc.Restore(in.Doc, shielded)
+	if err != nil {
+		return nil, nil, fmt.Errorf("restoring preserved content: %w", err)
+	}
+
+	// Refusal 2: a placeholder with nothing behind it. Storing it verbatim would
+	// turn a display stand-in into the content itself.
+	if len(restored.Unresolved) > 0 {
+		return nil, nil, fmt.Errorf("%w: %s", ErrUnknownPreservedContent, strings.Join(restored.Unresolved, ", "))
+	}
+
+	// Refusal 3: preserved content is gone and nobody said to remove it. This is
+	// the ADR-0012 failure caught before it commits.
+	if lost := unacknowledged(restored.Dropped, in.AcknowledgedLostIDs); len(lost) > 0 {
+		return nil, lostContentFor(in.PageID, lost, shielded), nil
+	}
+
+	// Refusal 4: an image node pointing somewhere it should not.
+	if err := s.checkImages(ctx, in.PageID, restored.Document); err != nil {
+		return nil, nil, err
+	}
+	return restored.Document, nil, nil
 }
 
 // page loads a live page, mapping absence to ErrPageNotFound.

@@ -79,18 +79,29 @@ func collectImageIDs(raw json.RawMessage, seen map[string]bool, out *[]string, d
 	if err != nil {
 		return err
 	}
+
 	if nodeType == "image" {
-		if id, ok := obj.attrString("attachment_id"); ok && id != "" && !seen[id] {
-			seen[id] = true
-			*out = append(*out, id)
-		}
+		recordImageID(obj, seen, out)
 	}
-	// Preserved content is not descended into: its bytes are opaque by design,
-	// and an attachment reference inside one is not something this document model
-	// is claiming to render.
+	// Preserved content is not descended into: its bytes are opaque by design, and
+	// an attachment reference inside one is not something this document model is
+	// claiming to render.
 	if nodeType == NodeUnknownContent || nodeType == NodeUnknownInline {
 		return nil
 	}
+	return descendForImageIDs(obj, seen, out, depth)
+}
+
+func recordImageID(obj object, seen map[string]bool, out *[]string) {
+	id, ok := obj.attrString("attachment_id")
+	if !ok || id == "" || seen[id] {
+		return
+	}
+	seen[id] = true
+	*out = append(*out, id)
+}
+
+func descendForImageIDs(obj object, seen map[string]bool, out *[]string, depth int) error {
 	for _, member := range [...]string{"content", "marks"} {
 		items, _, err := obj.array(member)
 		if err != nil {

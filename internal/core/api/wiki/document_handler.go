@@ -21,6 +21,13 @@ import (
 // larger parts spill to temp files. The hard ceiling is the attachment service's.
 const maxImageUploadMemory = 8 << 20 // 8 MiB
 
+// maxImageRequestBytes bounds the whole multipart request body, so a client
+// cannot exhaust memory before the per-object ceiling is ever reached: the object
+// ceiling plus 1 MiB of multipart framing headroom. Same value and same reason as
+// the generic attachment upload (internal/core/api/attachments/handler.go);
+// omitting it here is what gosec's G120 exists to catch.
+const maxImageRequestBytes = attachments.MaxSizeBytes + (1 << 20)
+
 type saveDraftRequest struct {
 	Title       string          `json:"title"`
 	Doc         json.RawMessage `json:"doc"`
@@ -261,6 +268,8 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
 		return
 	}
+	// Bound the whole body before the multipart parser touches it (gosec G120).
+	r.Body = http.MaxBytesReader(w, r.Body, maxImageRequestBytes)
 	if err := r.ParseMultipartForm(maxImageUploadMemory); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid multipart form")
 		return
@@ -350,19 +359,42 @@ func handleDocumentError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, wiki.ErrUnknownPreservedContent), errors.Is(err, wiki.ErrBaseVersionUnavailable):
 		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation,
 			"This edit could not be matched to the version of the page it started from. Reload the page and re-apply your changes.")
+	case errors.Is(err, doc.ErrTooDeep):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
+			"This page is nested more deeply than the editor supports.")
+	case handleImageError(w, r, err):
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "the page could not be saved")
+	}
+}
+
+// handleImageError answers the image-related failures, reporting whether it
+// recognised one.
+//
+// The upload and publish refusals for "not an image" are deliberately different
+// statuses. At upload the request itself is wrong and the person is holding the
+// file: 400. At publish the request is well formed but the document does not add
+// up, because a node names something that is not an image: 422, like the
+// document's other unprocessable states.
+func handleImageError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
 	case errors.Is(err, wiki.ErrImageNotOnPage):
 		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation,
 			"An image in this page refers to a file that is not attached to it.")
-	case errors.Is(err, wiki.ErrImageNotAnImage), errors.Is(err, attachments.ErrUnsupportedImage):
+	case errors.Is(err, wiki.ErrImageNotAnImage):
+		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation,
+			"An image in this page refers to a file that is not a PNG, JPEG, WebP or GIF image.")
+	case errors.Is(err, attachments.ErrUnsupportedImage):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
 			"That file is not a PNG, JPEG, WebP or GIF image.")
 	case errors.Is(err, attachments.ErrTooLarge):
 		respond.Error(w, r, http.StatusRequestEntityTooLarge, respond.CodeValidation,
 			"That image is larger than the 25 MB limit.")
-	case errors.Is(err, doc.ErrTooDeep):
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
-			"This page is nested more deeply than the editor supports.")
+	case errors.Is(err, wiki.ErrImageStorageUnavailable):
+		respond.Error(w, r, http.StatusServiceUnavailable, respond.CodeInternal,
+			"Image storage is not available on this deployment, so images cannot be added.")
 	default:
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "the page could not be saved")
+		return false
 	}
+	return true
 }
