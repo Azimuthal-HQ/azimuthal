@@ -179,32 +179,8 @@ const maxBulkInviteEmails = 200
 // @Failure      404     {object}  api.SwaggerErrorResponse      "Not found (also returned to non-admins)"
 // @Router       /orgs/{org_id}/invites [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
-	orgID, ok := orgIDFromRequest(w, r)
+	orgID, req, ticketRef, ok := h.createPreconditions(w, r)
 	if !ok {
-		return
-	}
-	claims := auth.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
-		return
-	}
-	// Resolved before anything is created: in required mode a 400 must mean
-	// no invite was issued, not that the first few went out unreferenced.
-	ticketRef, ok := h.ticketRef.Resolve(w, r)
-	if !ok {
-		return
-	}
-	var req createInvitesRequest
-	if err := respond.DecodeJSON(r, &req); err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
-		return
-	}
-	if len(req.Emails) == 0 {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "emails must not be empty")
-		return
-	}
-	if len(req.Emails) > maxBulkInviteEmails {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "too many emails in one request")
 		return
 	}
 
@@ -230,6 +206,42 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	respond.JSON(w, status, results)
+}
+
+// createPreconditions settles everything that must hold before the first
+// invite is issued: the org, the caller, the ticket reference and the shape
+// of the request. Grouped so the ordering is visible in one place — every
+// rejection here happens before any invite exists, which is what makes a 400
+// in required mode mean "nothing went out" rather than "the first few went
+// out unreferenced". Writes the error response itself; ok=false means stop.
+func (h *Handler) createPreconditions(w http.ResponseWriter, r *http.Request) (uuid.UUID, createInvitesRequest, string, bool) {
+	var req createInvitesRequest
+
+	orgID, ok := orgIDFromRequest(w, r)
+	if !ok {
+		return uuid.Nil, req, "", false
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return uuid.Nil, req, "", false
+	}
+	ticketRef, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
+		return uuid.Nil, req, "", false
+	}
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return uuid.Nil, req, "", false
+	}
+	if len(req.Emails) == 0 {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "emails must not be empty")
+		return uuid.Nil, req, "", false
+	}
+	if len(req.Emails) > maxBulkInviteEmails {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "too many emails in one request")
+		return uuid.Nil, req, "", false
+	}
+	return orgID, req, ticketRef, true
 }
 
 // createOneInvite creates one invite and classifies the outcome. A non-empty

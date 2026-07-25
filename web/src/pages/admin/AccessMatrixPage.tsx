@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
+import { TicketRefField } from '../../components/TicketRefField';
 
 const ROLES: GrantRole[] = ['viewer', 'contributor', 'agent', 'space_admin'];
 const ROLE_SHORT: Record<GrantRole, string> = {
@@ -571,25 +572,17 @@ function PreviewDialog({ orgId, changes, teams, spaces, onClose, onApplied }: {
         )}
 
         {previewData && interesting.length > 0 && (
-          <label className="block text-[var(--text-sm)] text-[var(--color-text)]">
-            Ticket reference (optional)
-            <Input
-              value={ticketRef}
-              onChange={(e) => setTicketRef(e.target.value)}
-              placeholder="e.g. BEA-42"
-              maxLength={200}
-              data-testid="matrix-ticket-ref"
-              className="mt-1"
-            />
-            <span
-              data-testid="matrix-ticket-ref-hint"
-              className="mt-0.5 block text-[var(--text-xs)] text-[var(--color-text-muted)]"
-            >
-              {ticketRef.trim()
+          <TicketRefField
+            orgId={orgId}
+            value={ticketRef}
+            onChange={setTicketRef}
+            testId="matrix-ticket-ref"
+            hint={
+              ticketRef.trim()
                 ? `Will be recorded as "${ticketRef.trim()}" on every audit event of this batch.`
-                : 'Recorded on every audit event of this batch.'}
-            </span>
-          </label>
+                : 'Recorded on every audit event of this batch.'
+            }
+          />
         )}
 
         {error && (

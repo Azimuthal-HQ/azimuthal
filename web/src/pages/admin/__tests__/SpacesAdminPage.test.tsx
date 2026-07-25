@@ -9,6 +9,7 @@ import { SpacesAdminPage } from '../SpacesAdminPage';
 // or its selection stops reaching the update payload.
 
 const updateMutate = vi.fn();
+const deleteMutate = vi.fn();
 
 const SPACE = {
   id: 'space-1',
@@ -30,9 +31,11 @@ vi.mock('../../../lib/api', () => ({
   useSpaces: vi.fn(() => ({ data: [SPACE], isLoading: false, error: null })),
   useTeams: vi.fn(() => ({ data: [{ id: 't1', name: 'Default', slug: 'default', is_default: true }], isLoading: false })),
   useUpdateSpace: vi.fn(() => ({ mutate: updateMutate, isPending: false, error: null })),
-  useDeleteSpace: vi.fn(() => ({ mutate: vi.fn(), isPending: false, error: null })),
+  useDeleteSpace: vi.fn(() => ({ mutate: deleteMutate, isPending: false, error: null })),
   useSpaceContentsSummary: vi.fn(() => ({ data: { tickets: 0, pages: 0, items: 0 }, isLoading: false })),
   friendlyErrorMessage: vi.fn((_err: unknown, fallback: string) => fallback),
+  // A3: the edit and delete dialogs now carry a TicketRefField.
+  useTicketRefSuggestions: vi.fn(() => ({ data: [], isLoading: false, error: null })),
 }));
 
 vi.mock('../../../lib/auth', () => ({
@@ -47,6 +50,7 @@ vi.mock('../../../lib/auth', () => ({
 describe('SpacesAdminPage edit dialog — the visibility edit surface', () => {
   beforeEach(() => {
     updateMutate.mockReset();
+    deleteMutate.mockReset();
   });
 
   function openEditDialog() {
@@ -80,5 +84,44 @@ describe('SpacesAdminPage edit dialog — the visibility edit surface', () => {
     // PUT semantics: fields the dialog does not edit are echoed, not dropped.
     expect(payload.name).toBe('Support');
     expect(payload.key).toBe('SUP');
+  });
+
+  // A3: the space edit and delete surfaces can carry the operator's ticket
+  // reference. Before A3 both sent none. The shapes differ and both matter:
+  // update takes it inside the request object, delete takes { id, ticketRef }.
+  it('sends a typed reference with the space update', () => {
+    openEditDialog();
+
+    fireEvent.change(screen.getByTestId('admin-space-ticket-ref'), { target: { value: 'OPS-21' } });
+    fireEvent.click(screen.getByTestId('admin-space-save'));
+
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0].ticketRef).toBe('OPS-21');
+  });
+
+  // The negative half: nothing typed means nothing sent.
+  it('sends no reference when the operator types none', () => {
+    openEditDialog();
+
+    expect(screen.getByTestId('admin-space-save')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('admin-space-save'));
+
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0].ticketRef).toBeUndefined();
+  });
+
+  it('sends a typed reference with the space deletion as { id, ticketRef }', () => {
+    render(<SpacesAdminPage />);
+    fireEvent.click(screen.getByTestId('admin-space-delete-support'));
+
+    fireEvent.change(screen.getByTestId('admin-space-delete-ticket-ref'), {
+      target: { value: 'OPS-22' },
+    });
+    // Never a gate on the destructive confirmation.
+    expect(screen.getByTestId('admin-space-delete-confirm')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('admin-space-delete-confirm'));
+
+    expect(deleteMutate).toHaveBeenCalledTimes(1);
+    expect(deleteMutate.mock.calls[0][0]).toEqual({ id: 'space-1', ticketRef: 'OPS-22' });
   });
 });

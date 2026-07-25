@@ -23,6 +23,7 @@ import {
 } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
 import { PersonTeamPicker, type PickedSubject } from '../../components/PersonTeamPicker';
+import { TicketRefField } from '../../components/TicketRefField';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
 import {
@@ -262,7 +263,7 @@ interface TeamRowProps {
   orgId: string;
   node: TeamNode;
   onEdit: (team: Team) => void;
-  onDelete: (team: Team) => void;
+  onDelete: (team: Team, ticketRef: string) => void;
   deletePending: boolean;
 }
 
@@ -270,6 +271,7 @@ function TeamRow({ orgId, node, onEdit, onDelete, deletePending }: TeamRowProps)
   const { team, depth } = node;
   const [expanded, setExpanded] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteTicketRef, setDeleteTicketRef] = useState('');
 
   return (
     <div data-testid="team-row" style={{ paddingLeft: depth * 24 }}>
@@ -322,7 +324,7 @@ function TeamRow({ orgId, node, onEdit, onDelete, deletePending }: TeamRowProps)
               disabled={deletePending}
               onClick={() => {
                 setConfirmingDelete(false);
-                onDelete(team);
+                onDelete(team, deleteTicketRef);
               }}
             >
               Confirm delete
@@ -339,13 +341,27 @@ function TeamRow({ orgId, node, onEdit, onDelete, deletePending }: TeamRowProps)
             aria-label={`Delete ${team.name}`}
             disabled={team.is_default || deletePending}
             title={team.is_default ? 'The org default team cannot be deleted' : undefined}
-            onClick={() => setConfirmingDelete(true)}
+            onClick={() => { setDeleteTicketRef(''); setConfirmingDelete(true); }}
             className="text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         )}
       </div>
+
+      {/* The delete confirmation is an inline two-step, not a dialog, so the
+          optional reference appears with the second step and disappears with
+          it. Confirm delete never waits on it. */}
+      {confirmingDelete && (
+        <TicketRefField
+          orgId={orgId}
+          value={deleteTicketRef}
+          onChange={setDeleteTicketRef}
+          testId="team-delete-ticket-ref"
+          className="ml-6 max-w-sm"
+          hint={`Recorded on the audit event for deleting ${team.name}.`}
+        />
+      )}
 
       {expanded && <TeamMemberPanel orgId={orgId} team={team} />}
     </div>
@@ -376,6 +392,7 @@ export function TeamsAdminPage() {
   const [createSlug, setCreateSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
   const [createParent, setCreateParent] = useState('');
+  const [createTicketRef, setCreateTicketRef] = useState('');
   // Opt-in per-module spaces for the new team (default unchecked).
   const [createSpaces, setCreateSpaces] = useState<Record<SpaceType, boolean>>({
     beacon: false,
@@ -387,6 +404,7 @@ export function TeamsAdminPage() {
   const [editing, setEditing] = useState<Team | null>(null);
   const [editName, setEditName] = useState('');
   const [editParent, setEditParent] = useState('');
+  const [editTicketRef, setEditTicketRef] = useState('');
 
   function openCreate() {
     createTeam.reset();
@@ -394,6 +412,7 @@ export function TeamsAdminPage() {
     setCreateSlug('');
     setSlugTouched(false);
     setCreateParent('');
+    setCreateTicketRef('');
     setCreateSpaces({ beacon: false, codex: false, vector: false });
     setCreateOpen(true);
   }
@@ -404,7 +423,13 @@ export function TeamsAdminPage() {
     if (!name || !slug) return;
     const modules = (['beacon', 'codex', 'vector'] as SpaceType[]).filter((m) => createSpaces[m]);
     createTeam.mutate(
-      { name, slug, modules, ...(createParent ? { parent_id: createParent } : {}) },
+      {
+        name,
+        slug,
+        modules,
+        ticketRef: createTicketRef.trim() || undefined,
+        ...(createParent ? { parent_id: createParent } : {}),
+      },
       { onSuccess: () => setCreateOpen(false) },
     );
   }
@@ -414,14 +439,16 @@ export function TeamsAdminPage() {
     setEditing(team);
     setEditName(team.name);
     setEditParent(team.parent_id ?? '');
+    setEditTicketRef('');
   }
 
   function handleEditSave() {
     if (!editing) return;
     const name = editName.trim();
     if (!name) return;
-    const req: { teamId: string; name?: string; parent_id?: string | null } = {
+    const req: { teamId: string; ticketRef?: string; name?: string; parent_id?: string | null } = {
       teamId: editing.id,
+      ticketRef: editTicketRef.trim() || undefined,
     };
     if (name !== editing.name) req.name = name;
     const currentParent = editing.parent_id ?? '';
@@ -488,7 +515,9 @@ export function TeamsAdminPage() {
                 orgId={orgId}
                 node={node}
                 onEdit={openEdit}
-                onDelete={(team) => deleteTeam.mutate(team.id)}
+                onDelete={(team, ticketRef) =>
+                  deleteTeam.mutate({ id: team.id, ticketRef: ticketRef.trim() || undefined })
+                }
                 deletePending={deleteTeam.isPending}
               />
             ))}
@@ -574,6 +603,13 @@ export function TeamsAdminPage() {
                 Each checked module gets a space named for the team, with the team granted access.
               </p>
             </fieldset>
+            <TicketRefField
+              orgId={orgId}
+              value={createTicketRef}
+              onChange={setCreateTicketRef}
+              testId="team-create-ticket-ref"
+              hint="Recorded on the audit event for creating this team."
+            />
             {createTeam.error && (
               <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
                 {friendlyErrorMessage(createTeam.error, 'The team could not be created.')}
@@ -640,6 +676,13 @@ export function TeamsAdminPage() {
                   </p>
                 )}
               </div>
+              <TicketRefField
+                orgId={orgId}
+                value={editTicketRef}
+                onChange={setEditTicketRef}
+                testId="team-edit-ticket-ref"
+                hint="Recorded on the audit event for this change."
+              />
               {updateTeam.error && (
                 <p className="text-[var(--text-sm)] text-[var(--color-danger)]">
                   {friendlyErrorMessage(updateTeam.error, 'The change could not be saved.')}

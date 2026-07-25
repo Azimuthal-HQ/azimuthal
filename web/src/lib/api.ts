@@ -64,6 +64,35 @@ function spaceBase(spaceId: string): string {
   return `/orgs/${getCurrentOrgId()}/spaces/${spaceId}`;
 }
 
+/**
+ * ticketRefQuery builds the `?ticket_ref=…` suffix administrative mutations
+ * carry. The reference travels in the query string rather than the body
+ * because the mutations that most need it have no body at all — team delete,
+ * space delete, member removal and person removal are all DELETE. (Bulk-apply
+ * is the one exception: it keeps its shipped body field.) A blank or absent
+ * reference yields '', so a call site that collects none produces exactly the
+ * URL it always did. The trim mirrors the server's `ticketref.FromRequest`,
+ * which trims before deciding a reference was supplied. Assumes the path it
+ * is appended to carries no query string of its own — none of these do.
+ */
+function ticketRefQuery(ticketRef?: string): string {
+  const ref = ticketRef?.trim() ?? '';
+  return ref ? `?ticket_ref=${encodeURIComponent(ref)}` : '';
+}
+
+/**
+ * IdWithTicketRef is the mutation variable of an administrative mutation that
+ * names its target with a single id. The bare id stays valid — that is what
+ * every call site passed before references existed — and the object form adds
+ * the operator's reference without churning the surfaces that collect none.
+ */
+export type IdWithTicketRef = string | { id: string; ticketRef?: string };
+
+/** Normalises both spellings of IdWithTicketRef into { id, ticketRef }. */
+function splitIdRef(v: IdWithTicketRef): { id: string; ticketRef?: string } {
+  return typeof v === 'string' ? { id: v } : v;
+}
+
 // ---------------------------------------------------------------------------
 // Base fetch helper
 // ---------------------------------------------------------------------------
@@ -559,8 +588,12 @@ interface CreateSpaceRequest {
   owner_team_id?: string;
 }
 
-async function createSpace(orgId: string, req: CreateSpaceRequest): Promise<Space> {
-  return apiFetch<Space>(`/orgs/${orgId}/spaces`, {
+async function createSpace(
+  orgId: string,
+  req: CreateSpaceRequest,
+  ticketRef?: string,
+): Promise<Space> {
+  return apiFetch<Space>(`/orgs/${orgId}/spaces${ticketRefQuery(ticketRef)}`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -586,8 +619,9 @@ async function updateSpace(
   orgId: string,
   spaceId: string,
   req: UpdateSpaceRequest,
+  ticketRef?: string,
 ): Promise<Space> {
-  return apiFetch<Space>(`/orgs/${orgId}/spaces/${spaceId}`, {
+  return apiFetch<Space>(`/orgs/${orgId}/spaces/${spaceId}${ticketRefQuery(ticketRef)}`, {
     method: 'PUT',
     body: JSON.stringify(req),
   });
@@ -615,8 +649,12 @@ interface CreateTeamRequest {
   parent_id?: string;
 }
 
-async function createTeam(orgId: string, req: CreateTeamRequest): Promise<Team> {
-  return apiFetch<Team>(`/orgs/${orgId}/teams`, {
+async function createTeam(
+  orgId: string,
+  req: CreateTeamRequest,
+  ticketRef?: string,
+): Promise<Team> {
+  return apiFetch<Team>(`/orgs/${orgId}/teams${ticketRefQuery(ticketRef)}`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -634,15 +672,22 @@ interface UpdateTeamRequest {
   parent_id?: string | null;
 }
 
-async function updateTeam(orgId: string, teamId: string, req: UpdateTeamRequest): Promise<Team> {
-  return apiFetch<Team>(`/orgs/${orgId}/teams/${teamId}`, {
+async function updateTeam(
+  orgId: string,
+  teamId: string,
+  req: UpdateTeamRequest,
+  ticketRef?: string,
+): Promise<Team> {
+  return apiFetch<Team>(`/orgs/${orgId}/teams/${teamId}${ticketRefQuery(ticketRef)}`, {
     method: 'PATCH',
     body: JSON.stringify(req),
   });
 }
 
-async function deleteTeam(orgId: string, teamId: string): Promise<void> {
-  return apiFetch<void>(`/orgs/${orgId}/teams/${teamId}`, { method: 'DELETE' });
+async function deleteTeam(orgId: string, teamId: string, ticketRef?: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/teams/${teamId}${ticketRefQuery(ticketRef)}`, {
+    method: 'DELETE',
+  });
 }
 
 interface PutTeamMemberRequest {
@@ -655,17 +700,29 @@ async function putTeamMember(
   teamId: string,
   userId: string,
   req: PutTeamMemberRequest,
+  ticketRef?: string,
 ): Promise<TeamMember> {
-  return apiFetch<TeamMember>(`/orgs/${orgId}/teams/${teamId}/members/${userId}`, {
-    method: 'PUT',
-    body: JSON.stringify(req),
-  });
+  return apiFetch<TeamMember>(
+    `/orgs/${orgId}/teams/${teamId}/members/${userId}${ticketRefQuery(ticketRef)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    },
+  );
 }
 
-async function removeTeamMember(orgId: string, teamId: string, userId: string): Promise<void> {
-  return apiFetch<void>(`/orgs/${orgId}/teams/${teamId}/members/${userId}`, {
-    method: 'DELETE',
-  });
+async function removeTeamMember(
+  orgId: string,
+  teamId: string,
+  userId: string,
+  ticketRef?: string,
+): Promise<void> {
+  return apiFetch<void>(
+    `/orgs/${orgId}/teams/${teamId}/members/${userId}${ticketRefQuery(ticketRef)}`,
+    {
+      method: 'DELETE',
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -747,6 +804,27 @@ export interface PersonRef {
   email: string;
   display_name: string;
   avatar_url?: string | null;
+}
+
+/**
+ * One typeahead result for the ticket_ref field
+ * (GET /orgs/{o}/tickets/suggest).
+ *
+ * `ref` is the string the picker writes into ticket_ref; everything else is
+ * context for choosing between rows, since two spaces can each hold a ticket
+ * numbered 42. The endpoint is org-member scoped and already cut to the
+ * caller's readable spaces server-side. Free text stays valid in ticket_ref —
+ * this only assists.
+ */
+export interface TicketRefSuggestion {
+  ref: string;
+  ticket_id: string;
+  number: number;
+  title: string;
+  space_id: string;
+  space_key: string;
+  status: string;
+  assigned_to_me: boolean;
 }
 
 export interface Invite {
@@ -870,6 +948,13 @@ async function searchOrgMembers(orgId: string, q: string): Promise<PersonRef[]> 
   return data ?? [];
 }
 
+async function suggestTicketRefs(orgId: string, q: string): Promise<TicketRefSuggestion[]> {
+  const data = await apiFetch<TicketRefSuggestion[] | null>(
+    `/orgs/${orgId}/tickets/suggest?q=${encodeURIComponent(q)}`,
+  );
+  return data ?? [];
+}
+
 async function fetchInvites(orgId: string): Promise<Invite[]> {
   const data = await apiFetch<Invite[] | null>(`/orgs/${orgId}/invites`);
   return data ?? [];
@@ -881,20 +966,36 @@ interface CreateInvitesRequest {
   team_id?: string | null;
 }
 
-async function createInvites(orgId: string, req: CreateInvitesRequest): Promise<InviteOutcome[]> {
-  const data = await apiFetch<InviteOutcome[] | null>(`/orgs/${orgId}/invites`, {
-    method: 'POST',
-    body: JSON.stringify(req),
-  });
+async function createInvites(
+  orgId: string,
+  req: CreateInvitesRequest,
+  ticketRef?: string,
+): Promise<InviteOutcome[]> {
+  const data = await apiFetch<InviteOutcome[] | null>(
+    `/orgs/${orgId}/invites${ticketRefQuery(ticketRef)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(req),
+    },
+  );
   return data ?? [];
 }
 
-async function revokeInvite(orgId: string, inviteId: string): Promise<void> {
-  return apiFetch<void>(`/orgs/${orgId}/invites/${inviteId}`, { method: 'DELETE' });
+async function revokeInvite(orgId: string, inviteId: string, ticketRef?: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/invites/${inviteId}${ticketRefQuery(ticketRef)}`, {
+    method: 'DELETE',
+  });
 }
 
-async function resendInvite(orgId: string, inviteId: string): Promise<CreatedInvite> {
-  return apiFetch<CreatedInvite>(`/orgs/${orgId}/invites/${inviteId}/resend`, { method: 'POST' });
+async function resendInvite(
+  orgId: string,
+  inviteId: string,
+  ticketRef?: string,
+): Promise<CreatedInvite> {
+  return apiFetch<CreatedInvite>(
+    `/orgs/${orgId}/invites/${inviteId}/resend${ticketRefQuery(ticketRef)}`,
+    { method: 'POST' },
+  );
 }
 
 interface UpdatePersonRequest {
@@ -903,8 +1004,13 @@ interface UpdatePersonRequest {
   display_name?: string;
 }
 
-async function updatePerson(orgId: string, userId: string, req: UpdatePersonRequest): Promise<void> {
-  return apiFetch<void>(`/orgs/${orgId}/users/${userId}`, {
+async function updatePerson(
+  orgId: string,
+  userId: string,
+  req: UpdatePersonRequest,
+  ticketRef?: string,
+): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/users/${userId}${ticketRefQuery(ticketRef)}`, {
     method: 'PATCH',
     body: JSON.stringify(req),
   });
@@ -927,12 +1033,16 @@ async function uploadUserAvatar(orgId: string, userId: string, file: File): Prom
   return apiFetch<AvatarUploadResult>(`/orgs/${orgId}/users/${userId}/avatar`, { method: 'PUT', body });
 }
 
-async function personLifecycle(orgId: string, userId: string, action: 'deactivate' | 'reactivate' | 'force-logout'): Promise<void> {
-  return apiFetch<void>(`/orgs/${orgId}/users/${userId}/${action}`, { method: 'POST' });
+async function personLifecycle(orgId: string, userId: string, action: 'deactivate' | 'reactivate' | 'force-logout', ticketRef?: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/users/${userId}/${action}${ticketRefQuery(ticketRef)}`, {
+    method: 'POST',
+  });
 }
 
-async function removePersonFromOrg(orgId: string, userId: string): Promise<void> {
-  return apiFetch<void>(`/orgs/${orgId}/users/${userId}`, { method: 'DELETE' });
+async function removePersonFromOrg(orgId: string, userId: string, ticketRef?: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/users/${userId}${ticketRefQuery(ticketRef)}`, {
+    method: 'DELETE',
+  });
 }
 
 async function fetchAccessMatrix(orgId: string): Promise<AccessMatrix> {
@@ -982,8 +1092,10 @@ async function fetchSpaceContentsSummary(orgId: string, spaceId: string): Promis
   return apiFetch<SpaceContentsSummary>(`/orgs/${orgId}/spaces/${spaceId}/summary`);
 }
 
-async function deleteSpace(orgId: string, spaceId: string): Promise<void> {
-  return apiFetch<void>(`/orgs/${orgId}/spaces/${spaceId}`, { method: 'DELETE' });
+async function deleteSpace(orgId: string, spaceId: string, ticketRef?: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/spaces/${spaceId}${ticketRefQuery(ticketRef)}`, {
+    method: 'DELETE',
+  });
 }
 
 /** The acceptance page's pre-submit view of an invite (public endpoint). */
@@ -1170,9 +1282,28 @@ interface UpdateProjectItemRequest {
   priority?: string;
   assignee_id?: string | null;
   labels?: string[];
+  /**
+   * The item's type slug. Optional in the strict sense the Go contract
+   * requires (`kind *string`): omitting the key leaves the kind unchanged,
+   * which is why JSON.stringify dropping undefined is the right encoding.
+   * Sending it changes the type of an existing item in place.
+   */
+  kind?: string;
 }
 
-async function updateProjectItem(
+/**
+ * Exported alongside the hook because a drag handler cannot use the hook.
+ * `useUpdateProjectItem` binds its itemId at render time, and the board's drag
+ * handler clears the active item on its first line; react-query then re-binds
+ * the observer with an empty id, so the PATCH goes to
+ * `.../projects/items/` — no id at all — and 404s. `transitionProjectItemStatus`
+ * has always taken the id explicitly, which is exactly why the status half of a
+ * drop persisted while the lane half silently did not.
+ *
+ * Callers holding an id should use this; callers rendering a form bound to one
+ * item should use the hook.
+ */
+export async function updateProjectItem(
   spaceId: string,
   itemId: string,
   req: UpdateProjectItemRequest,
@@ -1714,6 +1845,8 @@ export const queryKeys = {
   // P2.5 administration.
   orgPeople: (orgId: string) => ['orgPeople', orgId] as const,
   memberSearch: (orgId: string, q: string) => ['memberSearch', orgId, q] as const,
+  ticketRefSuggestions: (orgId: string, q: string) =>
+    ['ticketRefSuggestions', orgId, q] as const,
   invites: (orgId: string) => ['invites', orgId] as const,
   accessMatrix: (orgId: string) => ['accessMatrix', orgId] as const,
   auditLog: (orgId: string, filter: AuditFilter) => ['auditLog', orgId, filter] as const,
@@ -2033,8 +2166,8 @@ export function useUpdateOrganization(orgId: string) {
 
 export function useCreateSpace(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<Space, APIError, CreateSpaceRequest>({
-    mutationFn: (req) => createSpace(orgId, req),
+  return useMutation<Space, APIError, CreateSpaceRequest & { ticketRef?: string }>({
+    mutationFn: ({ ticketRef, ...req }) => createSpace(orgId, req, ticketRef),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.spaces(orgId) });
     },
@@ -2563,8 +2696,8 @@ export function useTeamMembers(orgId: string, teamId: string, opts?: QueryOpts<T
 
 export function useCreateTeam(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<Team, APIError, CreateTeamRequest>({
-    mutationFn: (req) => createTeam(orgId, req),
+  return useMutation<Team, APIError, CreateTeamRequest & { ticketRef?: string }>({
+    mutationFn: ({ ticketRef, ...req }) => createTeam(orgId, req, ticketRef),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
     },
@@ -2587,9 +2720,16 @@ export interface CreateTeamWithSpacesResult {
  */
 export function useCreateTeamWithSpaces(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<CreateTeamWithSpacesResult, APIError, CreateTeamRequest & { modules: SpaceType[] }>({
-    mutationFn: async ({ modules, ...teamReq }) => {
-      const team = await createTeam(orgId, teamReq);
+  return useMutation<
+    CreateTeamWithSpacesResult,
+    APIError,
+    CreateTeamRequest & { modules: SpaceType[]; ticketRef?: string }
+  >({
+    // One operator action, so one reference: it rides every mutation the
+    // composite performs. The grant creation takes none — POST /grants has
+    // no ticket_ref parameter — so it is left as it was.
+    mutationFn: async ({ modules, ticketRef, ...teamReq }) => {
+      const team = await createTeam(orgId, teamReq, ticketRef);
       const spaces: Space[] = [];
       for (const module of modules) {
         const space = await createSpace(orgId, {
@@ -2597,7 +2737,7 @@ export function useCreateTeamWithSpaces(orgId: string) {
           slug: team.slug,
           type: module,
           owner_team_id: team.id,
-        });
+        }, ticketRef);
         await createGrant(orgId, space.id, {
           subject_type: 'team',
           subject_id: team.id,
@@ -2616,8 +2756,8 @@ export function useCreateTeamWithSpaces(orgId: string) {
 
 export function useUpdateTeam(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<Team, APIError, { teamId: string } & UpdateTeamRequest>({
-    mutationFn: ({ teamId, ...req }) => updateTeam(orgId, teamId, req),
+  return useMutation<Team, APIError, { teamId: string; ticketRef?: string } & UpdateTeamRequest>({
+    mutationFn: ({ teamId, ticketRef, ...req }) => updateTeam(orgId, teamId, req, ticketRef),
     onSuccess: () => {
       // Reparenting rewrites the paths of the whole subtree — refetch all.
       queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
@@ -2627,8 +2767,12 @@ export function useUpdateTeam(orgId: string) {
 
 export function useDeleteTeam(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<void, APIError, string>({
-    mutationFn: (teamId) => deleteTeam(orgId, teamId),
+  // The variable is the team id, or { id, ticketRef } — see IdWithTicketRef.
+  return useMutation<void, APIError, IdWithTicketRef>({
+    mutationFn: (v) => {
+      const { id, ticketRef } = splitIdRef(v);
+      return deleteTeam(orgId, id, ticketRef);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
     },
@@ -2637,8 +2781,13 @@ export function useDeleteTeam(orgId: string) {
 
 export function usePutTeamMember(orgId: string, teamId: string) {
   const queryClient = useQueryClient();
-  return useMutation<TeamMember, APIError, { userId: string } & PutTeamMemberRequest>({
-    mutationFn: ({ userId, ...req }) => putTeamMember(orgId, teamId, userId, req),
+  return useMutation<
+    TeamMember,
+    APIError,
+    { userId: string; ticketRef?: string } & PutTeamMemberRequest
+  >({
+    mutationFn: ({ userId, ticketRef, ...req }) =>
+      putTeamMember(orgId, teamId, userId, req, ticketRef),
     onSuccess: () => {
       // is_primary: true clears the user's primary flag elsewhere — the
       // ['teams', orgId] prefix reaches every team's member list.
@@ -2649,8 +2798,12 @@ export function usePutTeamMember(orgId: string, teamId: string) {
 
 export function useRemoveTeamMember(orgId: string, teamId: string) {
   const queryClient = useQueryClient();
-  return useMutation<void, APIError, string>({
-    mutationFn: (userId) => removeTeamMember(orgId, teamId, userId),
+  // The variable is the user id, or { id, ticketRef } — see IdWithTicketRef.
+  return useMutation<void, APIError, IdWithTicketRef>({
+    mutationFn: (v) => {
+      const { id, ticketRef } = splitIdRef(v);
+      return removeTeamMember(orgId, teamId, id, ticketRef);
+    },
     onSuccess: () => {
       // A user removed from their last team is re-added to the org default
       // team — another team's member list just changed too.
@@ -2723,8 +2876,8 @@ export function useEffectiveAccess(
 
 export function useUpdateSpace(orgId: string, spaceId: string) {
   const queryClient = useQueryClient();
-  return useMutation<Space, APIError, UpdateSpaceRequest>({
-    mutationFn: (req) => updateSpace(orgId, spaceId, req),
+  return useMutation<Space, APIError, UpdateSpaceRequest & { ticketRef?: string }>({
+    mutationFn: ({ ticketRef, ...req }) => updateSpace(orgId, spaceId, req, ticketRef),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.space(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.spaces(orgId) });
@@ -2755,6 +2908,27 @@ export function useMemberSearch(orgId: string, q: string, opts?: QueryOpts<Perso
   });
 }
 
+/**
+ * ticket_ref picker typeahead. Same shape as useMemberSearch, deliberately:
+ * an empty orgId disables it (that is how a picker turns itself off), the
+ * query is disabled until q has content, and debouncing is the caller's job.
+ * The endpoint would answer an empty q with a default ordering; this hook
+ * does not ask, so the two pickers behave identically from the operator's
+ * side.
+ */
+export function useTicketRefSuggestions(
+  orgId: string,
+  q: string,
+  opts?: QueryOpts<TicketRefSuggestion[]>,
+) {
+  return useQuery<TicketRefSuggestion[], APIError>({
+    queryKey: queryKeys.ticketRefSuggestions(orgId, q),
+    queryFn: () => suggestTicketRefs(orgId, q),
+    enabled: !!orgId && q.trim().length > 0,
+    ...opts,
+  });
+}
+
 export function useInvites(orgId: string, opts?: QueryOpts<Invite[]>) {
   return useQuery<Invite[], APIError>({
     queryKey: queryKeys.invites(orgId),
@@ -2766,8 +2940,8 @@ export function useInvites(orgId: string, opts?: QueryOpts<Invite[]>) {
 
 export function useCreateInvites(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<InviteOutcome[], APIError, CreateInvitesRequest>({
-    mutationFn: (req) => createInvites(orgId, req),
+  return useMutation<InviteOutcome[], APIError, CreateInvitesRequest & { ticketRef?: string }>({
+    mutationFn: ({ ticketRef, ...req }) => createInvites(orgId, req, ticketRef),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.invites(orgId) });
     },
@@ -2776,8 +2950,12 @@ export function useCreateInvites(orgId: string) {
 
 export function useRevokeInvite(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<void, APIError, string>({
-    mutationFn: (inviteId) => revokeInvite(orgId, inviteId),
+  // The variable is the invite id, or { id, ticketRef } — see IdWithTicketRef.
+  return useMutation<void, APIError, IdWithTicketRef>({
+    mutationFn: (v) => {
+      const { id, ticketRef } = splitIdRef(v);
+      return revokeInvite(orgId, id, ticketRef);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.invites(orgId) });
     },
@@ -2786,8 +2964,12 @@ export function useRevokeInvite(orgId: string) {
 
 export function useResendInvite(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<CreatedInvite, APIError, string>({
-    mutationFn: (inviteId) => resendInvite(orgId, inviteId),
+  // The variable is the invite id, or { id, ticketRef } — see IdWithTicketRef.
+  return useMutation<CreatedInvite, APIError, IdWithTicketRef>({
+    mutationFn: (v) => {
+      const { id, ticketRef } = splitIdRef(v);
+      return resendInvite(orgId, id, ticketRef);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.invites(orgId) });
     },
@@ -2812,8 +2994,8 @@ export function useUploadUserAvatar(orgId: string) {
 
 export function useUpdatePerson(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<void, APIError, { userId: string } & UpdatePersonRequest>({
-    mutationFn: ({ userId, ...req }) => updatePerson(orgId, userId, req),
+  return useMutation<void, APIError, { userId: string; ticketRef?: string } & UpdatePersonRequest>({
+    mutationFn: ({ userId, ticketRef, ...req }) => updatePerson(orgId, userId, req, ticketRef),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
@@ -2823,8 +3005,8 @@ export function useUpdatePerson(orgId: string) {
 
 export function usePersonLifecycle(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<void, APIError, { userId: string; action: 'deactivate' | 'reactivate' | 'force-logout' }>({
-    mutationFn: ({ userId, action }) => personLifecycle(orgId, userId, action),
+  return useMutation<void, APIError, { userId: string; action: 'deactivate' | 'reactivate' | 'force-logout'; ticketRef?: string }>({
+    mutationFn: ({ userId, action, ticketRef }) => personLifecycle(orgId, userId, action, ticketRef),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) });
     },
@@ -2833,8 +3015,12 @@ export function usePersonLifecycle(orgId: string) {
 
 export function useRemovePerson(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<void, APIError, string>({
-    mutationFn: (userId) => removePersonFromOrg(orgId, userId),
+  // The variable is the user id, or { id, ticketRef } — see IdWithTicketRef.
+  return useMutation<void, APIError, IdWithTicketRef>({
+    mutationFn: (v) => {
+      const { id, ticketRef } = splitIdRef(v);
+      return removePersonFromOrg(orgId, id, ticketRef);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.teams(orgId) });
@@ -2898,8 +3084,12 @@ export function useSpaceContentsSummary(orgId: string, spaceId: string, opts?: Q
 
 export function useDeleteSpace(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<void, APIError, string>({
-    mutationFn: (spaceId) => deleteSpace(orgId, spaceId),
+  // The variable is the space id, or { id, ticketRef } — see IdWithTicketRef.
+  return useMutation<void, APIError, IdWithTicketRef>({
+    mutationFn: (v) => {
+      const { id, ticketRef } = splitIdRef(v);
+      return deleteSpace(orgId, id, ticketRef);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.spaces(orgId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.accessMatrix(orgId) });

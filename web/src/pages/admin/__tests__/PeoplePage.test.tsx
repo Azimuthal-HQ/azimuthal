@@ -26,19 +26,24 @@ const PERSON = {
 const resendMutate = vi.fn();
 const updatePersonMutate = vi.fn();
 const uploadAvatarMutate = vi.fn();
+const lifecycleMutate = vi.fn();
+const removePersonMutate = vi.fn();
+const createInvitesMutate = vi.fn();
 
 vi.mock('../../../lib/api', () => ({
   friendlyErrorMessage: (_e: unknown, f: string) => f,
   useOrgPeople: () => ({ data: [PERSON], isLoading: false, error: null }),
   useInvites: () => ({ data: [INVITE_A, INVITE_B], isLoading: false, error: null }),
   useTeams: () => ({ data: [] }),
-  useCreateInvites: () => ({ mutate: vi.fn(), isPending: false }),
-  usePersonLifecycle: () => ({ mutate: vi.fn(), isPending: false }),
-  useRemovePerson: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateInvites: () => ({ mutate: createInvitesMutate, isPending: false }),
+  usePersonLifecycle: () => ({ mutate: lifecycleMutate, isPending: false }),
+  useRemovePerson: () => ({ mutate: removePersonMutate, isPending: false }),
   useUpdatePerson: () => ({ mutate: updatePersonMutate, isPending: false }),
   useUploadUserAvatar: () => ({ mutate: uploadAvatarMutate, isPending: false }),
   useRevokeInvite: () => ({ mutate: vi.fn(), isPending: false }),
   useResendInvite: () => ({ mutate: resendMutate, isPending: false }),
+  // A3: the invite and confirm dialogs now carry a TicketRefField.
+  useTicketRefSuggestions: () => ({ data: [], isLoading: false, error: null }),
 }));
 
 vi.mock('../../../lib/auth', () => ({
@@ -120,5 +125,80 @@ describe('PeoplePage — admin edits another member (S8)', () => {
     expect(uploadAvatarMutate).toHaveBeenCalledTimes(1);
     expect(uploadAvatarMutate.mock.calls[0][0].userId).toBe('u2');
     expect(uploadAvatarMutate.mock.calls[0][0].file).toBe(file);
+  });
+});
+
+// A3: the audited people mutations can now carry the operator's ticket
+// reference. Before A3 these call sites sent none and the audit events had
+// nothing to join a change-management record on. Each test pins the mutation
+// variable, because the shape is the contract with lib/api — a lifecycle call
+// takes it as a named field, a removal takes { id, ticketRef }.
+describe('PeoplePage — the optional ticket reference (A3)', () => {
+  function openConfirm(action: 'deactivate' | 'remove') {
+    render(
+      <MemoryRouter initialEntries={['/admin/people']}>
+        <PeoplePage />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByTestId('person-actions-u2@example.com'));
+    fireEvent.click(screen.getByTestId(`person-${action}-u2@example.com`));
+  }
+
+  it('sends a typed reference with a deactivation', () => {
+    lifecycleMutate.mockReset();
+    openConfirm('deactivate');
+
+    fireEvent.change(screen.getByTestId('person-ticket-ref'), { target: { value: 'SEC-88' } });
+    fireEvent.click(screen.getByTestId('person-confirm-action'));
+
+    expect(lifecycleMutate).toHaveBeenCalledTimes(1);
+    expect(lifecycleMutate.mock.calls[0][0]).toEqual({
+      userId: 'u2', action: 'deactivate', ticketRef: 'SEC-88',
+    });
+  });
+
+  // The negative half: a surface that collects no reference must send none —
+  // lib/api turns an absent ticketRef into exactly the URL it always built.
+  // A blank string here would append `?ticket_ref=`, a different request.
+  it('sends no reference when the operator types nothing, and never blocks on it', () => {
+    lifecycleMutate.mockReset();
+    openConfirm('deactivate');
+
+    // The field is present and optional — confirming is not gated on it.
+    expect(screen.getByTestId('person-ticket-ref')).toHaveValue('');
+    expect(screen.getByTestId('person-confirm-action')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('person-confirm-action'));
+
+    expect(lifecycleMutate).toHaveBeenCalledTimes(1);
+    expect(lifecycleMutate.mock.calls[0][0].ticketRef).toBeUndefined();
+  });
+
+  it('sends a typed reference with a removal as { id, ticketRef }', () => {
+    removePersonMutate.mockReset();
+    openConfirm('remove');
+
+    fireEvent.change(screen.getByTestId('person-ticket-ref'), { target: { value: 'HR-12' } });
+    fireEvent.click(screen.getByTestId('person-confirm-action'));
+
+    expect(removePersonMutate).toHaveBeenCalledTimes(1);
+    expect(removePersonMutate.mock.calls[0][0]).toEqual({ id: 'u2', ticketRef: 'HR-12' });
+  });
+
+  it('sends a typed reference with an invite batch', () => {
+    createInvitesMutate.mockReset();
+    render(
+      <MemoryRouter initialEntries={['/admin/people']}>
+        <PeoplePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByTestId('people-invite-button'));
+    fireEvent.change(screen.getByTestId('invite-emails'), { target: { value: 'new@example.com' } });
+    fireEvent.change(screen.getByTestId('invite-ticket-ref'), { target: { value: 'ONB-5' } });
+    fireEvent.click(screen.getByTestId('invite-submit'));
+
+    expect(createInvitesMutate).toHaveBeenCalledTimes(1);
+    expect(createInvitesMutate.mock.calls[0][0].ticketRef).toBe('ONB-5');
+    expect(createInvitesMutate.mock.calls[0][0].emails).toEqual(['new@example.com']);
   });
 });
