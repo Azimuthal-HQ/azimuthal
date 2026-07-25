@@ -72,10 +72,43 @@ WHERE space_id = $1
 ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC
 LIMIT $3;
 
+-- name: PublishPageDocument :one
+-- Optimistic publish of the document model (issue #15). Same version guard as
+-- UpdatePageContent — zero rows means the page moved on under the author, which
+-- the caller turns into the reload-or-overwrite conflict.
+UPDATE pages
+SET title = $3, content = $4, doc = $5, version = version + 1
+WHERE id = $1 AND version = $2 AND deleted_at IS NULL
+RETURNING *;
+
+-- name: OverwritePageDocument :one
+-- The explicit overwrite arm of the conflict dialogue: no version guard, so it
+-- lands on whatever is current. Reachable only from a caller that has already
+-- reported the conflict and been told, in those words, to overwrite it.
+UPDATE pages
+SET title = $2, content = $3, doc = $4, version = version + 1
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
 -- name: CreatePageRevision :one
 INSERT INTO page_revisions (id, page_id, version, title, content, author_id)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
+
+-- name: CreatePageRevisionWithDoc :one
+-- History for a document-model publish. A revision without its `doc` would
+-- make the base-version lookup that resolves preserved unknown content fall
+-- back to markdown, which is exactly the lossy direction ADR-0012 forbids.
+INSERT INTO page_revisions (id, page_id, version, title, content, doc, author_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING *;
+
+-- name: GetPageRevisionDocument :one
+-- The document as of one specific version. Publish uses it to resolve a
+-- draft's preserved-unknown references against the version the draft was
+-- started from, which is not necessarily the current one.
+SELECT version, title, content, doc
+FROM page_revisions WHERE page_id = $1 AND version = $2;
 
 -- name: GetPageRevision :one
 SELECT * FROM page_revisions WHERE page_id = $1 AND version = $2;

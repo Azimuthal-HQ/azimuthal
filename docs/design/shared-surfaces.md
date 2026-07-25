@@ -9,7 +9,7 @@ or a transactional write with an audit trail, look here first. If something clos
 already exists, extend it. A second implementation of anything on this page is a defect, not a
 convenience.
 
-Verified against `main` at migration 028.
+Verified against `main` at migration 028; sections 9 and 10 added at migration 036.
 
 ---
 
@@ -255,6 +255,76 @@ tokens carry no claim and decode as `0`, so the upgrade itself disrupted no sess
 > restore the hole.
 
 ---
+
+---
+
+## 9. `wiki/doc` — the only rich-text document model
+
+**Where:** `internal/core/wiki/doc/`, with its vocabulary in `internal/core/wiki/doc/schema.json`.
+
+```go
+func Shield(document json.RawMessage) (Shielded, error)
+func Restore(document json.RawMessage, base Shielded) (Restored, error)
+func FromMarkdown(markdown string) (json.RawMessage, error)  // the legacy on-ramp
+func ToMarkdown(document json.RawMessage) (string, error)    // the search projection
+func Validate(document json.RawMessage) error
+```
+
+Built for issue #15 under ADR-0012. `Shield` rewrites every node and mark type outside
+`schema.json` into a placeholder the editor's schema *does* define, and hands back the verbatim
+originals keyed by placeholder id; `Restore` splices those exact byte slices back. The guarantee is
+one sentence: **the bytes written back are the bytes that were read, and they never pass through the
+client.** A placeholder carries a display copy of its original in `az_raw` so the editor can label
+the block; `Restore` resolves from the captured map and ignores it.
+
+> **The rule: there is one document model, and content outside its schema is preserved, never
+> dropped.** ProseMirror silently discards content that does not match its schema, so a rich-text
+> surface built without this loses data quietly — one page at a time, months after the import that
+> introduced it. ADR-0012 exists specifically to reach issue #15 before that was built. Any later
+> surface that wants rich text — a Beacon ticket description, a Vector item body — extends this
+> package and this schema. A second document model, or a schema that "just" drops what it does not
+> recognise, is the defect ADR-0012 was written to prevent.
+
+Three things about it that are easy to get wrong twice:
+
+- **`encoding/json` must not serialise a document node.** `json.Marshal` compacts a
+  `json.RawMessage` and escapes `<`, `>` and `&` inside it. Both are value-preserving and
+  byte-mangling, and a preserved Confluence macro is mostly angle brackets. The package assembles
+  nodes by splicing member bytes itself, and `marshalPlain` is its non-escaping encoder.
+- **Placeholder ids are positional and therefore stable**, which is what lets a read and a later
+  write agree on them with no server-side session state: publish re-derives the base document at
+  `base_version` and re-shields it. `FromMarkdown` is deterministic for the same reason — a legacy
+  page's ids come from converting the same markdown twice.
+- **The storage column is `json`, not `jsonb`.** See migration 036, and the test that fails if
+  anybody changes it.
+
+**Current consumers** — `internal/core/wiki` (`DocumentService`), `internal/core/attachments`
+(image sniffing, via `doc.SniffImageType` / `doc.SupportedImageType`).
+
+---
+
+## 10. `PublishPageTx` — content, history and draft in one transaction
+
+**Where:** `internal/db/adapters/publish_tx.go`, on the existing `ContentTxAdapter` (section 3).
+
+Publishing a Codex page is three writes that have to be one: the page row, the `page_revisions` row
+for the version just created, and the removal of the draft that was published. It is reached through
+`wiki.DocumentTxStore`, a one-method per-domain interface, exactly as `wiki.ContentTxStore` reaches
+the move and delete transactions.
+
+> **The rule: the version guard belongs in the UPDATE, not in a SELECT before it.** Two simultaneous
+> publishes can both pass a pre-check and then both write. `PublishPageDocument` carries
+> `WHERE version = $2`, so the loser gets zero rows and is told it conflicted.
+> `OverwritePageDocument` is the guard-free counterpart, and is reachable only from a caller that has
+> already reported the conflict and been told, in those words, to overwrite it.
+
+The same reasoning that put share revocation in a transaction (ADR-0008 rules 9 and 10) applies
+here: a page whose history skips a version, or a draft that reappears as unpublished work the author
+already published, is not fixable by retrying.
+
+**Note the asymmetry with the older path.** `wiki.Service.UpdatePage` — the markdown save — still
+updates the page and inserts its revision as two separate pool calls. That is recorded as a defect
+in `spec-repo-reconciliation.md`, not as a second convention.
 
 ## Related
 

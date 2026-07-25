@@ -1,0 +1,80 @@
+{
+  "_comment": [
+    "The Codex document schema vocabulary — the single list of node and mark",
+    "types the editor understands. ADR-0012 turns this list into a safety",
+    "boundary: ProseMirror silently drops content that does not match its",
+    "schema, so anything NOT named here must be captured and preserved rather",
+    "than parsed. The Go layer reads this file to decide what to capture; the",
+    "editor reads its TypeScript mirror to decide what to register.",
+    "",
+    "The two must not drift, and the direction of drift is not symmetric:",
+    "a type the editor registers but Go omits is merely captured when it did",
+    "not need to be (annoying, safe), while a type Go omits from capture",
+    "because it believes the editor handles it, when the editor does not, is",
+    "silent data loss. web/src/lib/codex/schema.test.ts reads this file and",
+    "fails on any difference in either direction."
+  ],
+
+  "_nodeGroups": {
+    "core": "The rich-text set (issue #15 E2).",
+    "macro": "ADR-0012 section 4 first-class macros.",
+    "preservation": "ADR-0012's zero-silent-data-loss machinery."
+  },
+
+  "nodes": {
+    "doc": "core",
+    "paragraph": "core",
+    "text": "core",
+    "hardBreak": "core",
+    "heading": "core",
+    "bulletList": "core",
+    "orderedList": "core",
+    "listItem": "core",
+    "taskList": "core",
+    "taskItem": "core",
+    "blockquote": "core",
+    "codeBlock": "core",
+    "horizontalRule": "core",
+    "table": "core",
+    "tableRow": "core",
+    "tableHeader": "core",
+    "tableCell": "core",
+    "image": "core",
+
+    "panel": "macro",
+    "expand": "macro",
+    "statusLozenge": "macro",
+    "tableOfContents": "macro",
+    "layout": "macro",
+    "layoutColumn": "macro",
+    "childrenDisplay": "macro",
+    "pageInclude": "macro",
+
+    "unknownContent": "preservation",
+    "unknownInline": "preservation"
+  },
+
+  "marks": {
+    "bold": "core",
+    "italic": "core",
+    "strike": "core",
+    "code": "core",
+    "link": "core",
+
+    "unknownMark": "preservation"
+  },
+
+  "_positionComment": [
+    "Capture has to choose between the block placeholder and the inline one,",
+    "and it cannot ask an unknown type which it is — so it decides from the",
+    "position instead. These two lists are what make that decision agree with",
+    "the editor's real content models. Getting one wrong is not silent, though:",
+    "if a placeholder lands where ProseMirror will not accept it, the node is",
+    "dropped, Restore reports the id as missing, and publish refuses the write",
+    "rather than committing the loss."
+  ],
+
+  "inlineNodes": ["text", "hardBreak", "statusLozenge", "unknownInline"],
+
+  "inlineContentNodes": ["paragraph", "heading", "codeBlock"]
+}

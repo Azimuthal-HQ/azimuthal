@@ -5,6 +5,7 @@
 package generated
 
 import (
+	"encoding/json"
 	"net/netip"
 
 	"github.com/google/uuid"
@@ -230,6 +231,17 @@ type Page struct {
 	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 	SearchVector interface{}        `json:"search_vector"`
 	Path         string             `json:"path"`
+	Doc          json.RawMessage    `json:"doc"`
+}
+
+type PageDraft struct {
+	PageID      uuid.UUID          `json:"page_id"`
+	AuthorID    uuid.UUID          `json:"author_id"`
+	Title       string             `json:"title"`
+	Doc         json.RawMessage    `json:"doc"`
+	BaseVersion int32              `json:"base_version"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PageLock struct {
@@ -248,6 +260,7 @@ type PageRevision struct {
 	Content   string             `json:"content"`
 	AuthorID  uuid.UUID          `json:"author_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Doc       json.RawMessage    `json:"doc"`
 }
 
 type ProjectItem struct {

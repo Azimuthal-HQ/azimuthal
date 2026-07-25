@@ -7,6 +7,7 @@ package generated
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -15,7 +16,7 @@ import (
 const createPage = `-- name: CreatePage :one
 INSERT INTO pages (id, space_id, parent_id, title, content, author_id, position, path)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path
+RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path, doc
 `
 
 type CreatePageParams struct {
@@ -55,6 +56,7 @@ func (q *Queries) CreatePage(ctx context.Context, arg CreatePageParams) (Page, e
 		&i.DeletedAt,
 		&i.SearchVector,
 		&i.Path,
+		&i.Doc,
 	)
 	return i, err
 }
@@ -62,7 +64,7 @@ func (q *Queries) CreatePage(ctx context.Context, arg CreatePageParams) (Page, e
 const createPageRevision = `-- name: CreatePageRevision :one
 INSERT INTO page_revisions (id, page_id, version, title, content, author_id)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, page_id, version, title, content, author_id, created_at
+RETURNING id, page_id, version, title, content, author_id, created_at, doc
 `
 
 type CreatePageRevisionParams struct {
@@ -92,6 +94,50 @@ func (q *Queries) CreatePageRevision(ctx context.Context, arg CreatePageRevision
 		&i.Content,
 		&i.AuthorID,
 		&i.CreatedAt,
+		&i.Doc,
+	)
+	return i, err
+}
+
+const createPageRevisionWithDoc = `-- name: CreatePageRevisionWithDoc :one
+INSERT INTO page_revisions (id, page_id, version, title, content, doc, author_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, page_id, version, title, content, author_id, created_at, doc
+`
+
+type CreatePageRevisionWithDocParams struct {
+	ID       uuid.UUID       `json:"id"`
+	PageID   uuid.UUID       `json:"page_id"`
+	Version  int32           `json:"version"`
+	Title    string          `json:"title"`
+	Content  string          `json:"content"`
+	Doc      json.RawMessage `json:"doc"`
+	AuthorID uuid.UUID       `json:"author_id"`
+}
+
+// History for a document-model publish. A revision without its `doc` would
+// make the base-version lookup that resolves preserved unknown content fall
+// back to markdown, which is exactly the lossy direction ADR-0012 forbids.
+func (q *Queries) CreatePageRevisionWithDoc(ctx context.Context, arg CreatePageRevisionWithDocParams) (PageRevision, error) {
+	row := q.db.QueryRow(ctx, createPageRevisionWithDoc,
+		arg.ID,
+		arg.PageID,
+		arg.Version,
+		arg.Title,
+		arg.Content,
+		arg.Doc,
+		arg.AuthorID,
+	)
+	var i PageRevision
+	err := row.Scan(
+		&i.ID,
+		&i.PageID,
+		&i.Version,
+		&i.Title,
+		&i.Content,
+		&i.AuthorID,
+		&i.CreatedAt,
+		&i.Doc,
 	)
 	return i, err
 }
@@ -120,7 +166,7 @@ func (q *Queries) DeletePageLock(ctx context.Context, arg DeletePageLockParams) 
 }
 
 const getPageByID = `-- name: GetPageByID :one
-SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path FROM pages WHERE id = $1 AND deleted_at IS NULL
+SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path, doc FROM pages WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetPageByID(ctx context.Context, id uuid.UUID) (Page, error) {
@@ -140,6 +186,7 @@ func (q *Queries) GetPageByID(ctx context.Context, id uuid.UUID) (Page, error) {
 		&i.DeletedAt,
 		&i.SearchVector,
 		&i.Path,
+		&i.Doc,
 	)
 	return i, err
 }
@@ -203,7 +250,7 @@ func (q *Queries) GetPageDescendants(ctx context.Context, arg GetPageDescendants
 }
 
 const getPageForUpdate = `-- name: GetPageForUpdate :one
-SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path FROM pages WHERE id = $1 AND deleted_at IS NULL FOR UPDATE
+SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path, doc FROM pages WHERE id = $1 AND deleted_at IS NULL FOR UPDATE
 `
 
 // Row-locked read for the move transaction: serialises concurrent moves of
@@ -225,6 +272,7 @@ func (q *Queries) GetPageForUpdate(ctx context.Context, id uuid.UUID) (Page, err
 		&i.DeletedAt,
 		&i.SearchVector,
 		&i.Path,
+		&i.Doc,
 	)
 	return i, err
 }
@@ -247,7 +295,7 @@ func (q *Queries) GetPageLock(ctx context.Context, pageID uuid.UUID) (PageLock, 
 }
 
 const getPageRevision = `-- name: GetPageRevision :one
-SELECT id, page_id, version, title, content, author_id, created_at FROM page_revisions WHERE page_id = $1 AND version = $2
+SELECT id, page_id, version, title, content, author_id, created_at, doc FROM page_revisions WHERE page_id = $1 AND version = $2
 `
 
 type GetPageRevisionParams struct {
@@ -266,6 +314,39 @@ func (q *Queries) GetPageRevision(ctx context.Context, arg GetPageRevisionParams
 		&i.Content,
 		&i.AuthorID,
 		&i.CreatedAt,
+		&i.Doc,
+	)
+	return i, err
+}
+
+const getPageRevisionDocument = `-- name: GetPageRevisionDocument :one
+SELECT version, title, content, doc
+FROM page_revisions WHERE page_id = $1 AND version = $2
+`
+
+type GetPageRevisionDocumentParams struct {
+	PageID  uuid.UUID `json:"page_id"`
+	Version int32     `json:"version"`
+}
+
+type GetPageRevisionDocumentRow struct {
+	Version int32           `json:"version"`
+	Title   string          `json:"title"`
+	Content string          `json:"content"`
+	Doc     json.RawMessage `json:"doc"`
+}
+
+// The document as of one specific version. Publish uses it to resolve a
+// draft's preserved-unknown references against the version the draft was
+// started from, which is not necessarily the current one.
+func (q *Queries) GetPageRevisionDocument(ctx context.Context, arg GetPageRevisionDocumentParams) (GetPageRevisionDocumentRow, error) {
+	row := q.db.QueryRow(ctx, getPageRevisionDocument, arg.PageID, arg.Version)
+	var i GetPageRevisionDocumentRow
+	err := row.Scan(
+		&i.Version,
+		&i.Title,
+		&i.Content,
+		&i.Doc,
 	)
 	return i, err
 }
@@ -566,6 +647,96 @@ func (q *Queries) MovePageToSpace(ctx context.Context, arg MovePageToSpaceParams
 	return err
 }
 
+const overwritePageDocument = `-- name: OverwritePageDocument :one
+UPDATE pages
+SET title = $2, content = $3, doc = $4, version = version + 1
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path, doc
+`
+
+type OverwritePageDocumentParams struct {
+	ID      uuid.UUID       `json:"id"`
+	Title   string          `json:"title"`
+	Content string          `json:"content"`
+	Doc     json.RawMessage `json:"doc"`
+}
+
+// The explicit overwrite arm of the conflict dialogue: no version guard, so it
+// lands on whatever is current. Reachable only from a caller that has already
+// reported the conflict and been told, in those words, to overwrite it.
+func (q *Queries) OverwritePageDocument(ctx context.Context, arg OverwritePageDocumentParams) (Page, error) {
+	row := q.db.QueryRow(ctx, overwritePageDocument,
+		arg.ID,
+		arg.Title,
+		arg.Content,
+		arg.Doc,
+	)
+	var i Page
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.ParentID,
+		&i.Title,
+		&i.Content,
+		&i.Version,
+		&i.AuthorID,
+		&i.Position,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SearchVector,
+		&i.Path,
+		&i.Doc,
+	)
+	return i, err
+}
+
+const publishPageDocument = `-- name: PublishPageDocument :one
+UPDATE pages
+SET title = $3, content = $4, doc = $5, version = version + 1
+WHERE id = $1 AND version = $2 AND deleted_at IS NULL
+RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path, doc
+`
+
+type PublishPageDocumentParams struct {
+	ID      uuid.UUID       `json:"id"`
+	Version int32           `json:"version"`
+	Title   string          `json:"title"`
+	Content string          `json:"content"`
+	Doc     json.RawMessage `json:"doc"`
+}
+
+// Optimistic publish of the document model (issue #15). Same version guard as
+// UpdatePageContent — zero rows means the page moved on under the author, which
+// the caller turns into the reload-or-overwrite conflict.
+func (q *Queries) PublishPageDocument(ctx context.Context, arg PublishPageDocumentParams) (Page, error) {
+	row := q.db.QueryRow(ctx, publishPageDocument,
+		arg.ID,
+		arg.Version,
+		arg.Title,
+		arg.Content,
+		arg.Doc,
+	)
+	var i Page
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.ParentID,
+		&i.Title,
+		&i.Content,
+		&i.Version,
+		&i.AuthorID,
+		&i.Position,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SearchVector,
+		&i.Path,
+		&i.Doc,
+	)
+	return i, err
+}
+
 const searchPages = `-- name: SearchPages :many
 SELECT id, space_id, parent_id, title, version, author_id, position, path, created_at, updated_at
 FROM pages
@@ -639,7 +810,7 @@ const updatePageContent = `-- name: UpdatePageContent :one
 UPDATE pages
 SET title = $3, content = $4, version = version + 1
 WHERE id = $1 AND version = $2 AND deleted_at IS NULL
-RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path
+RETURNING id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path, doc
 `
 
 type UpdatePageContentParams struct {
@@ -671,6 +842,7 @@ func (q *Queries) UpdatePageContent(ctx context.Context, arg UpdatePageContentPa
 		&i.DeletedAt,
 		&i.SearchVector,
 		&i.Path,
+		&i.Doc,
 	)
 	return i, err
 }

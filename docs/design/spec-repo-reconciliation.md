@@ -696,3 +696,140 @@ ADR-0003 explicitly sanctions the column approach.
 - **Custom-field values have no typed columns** — one `TEXT value`, interpreted by the
   definition's `field_type`, validated on write. Sufficient for text/number/date/single_select;
   a future phase adding richer types may want typed storage.
+
+---
+
+**Date:** 2026-07-25
+**Session:** Codex editor phase 1 — the document model (issue #15, ADR-0012), PR-A
+
+## 1. Discrepancies found and corrected
+
+### D50 — the Codex edit button is not a dead control, and page locks are live (phase brief premise)
+
+The phase brief for this work stated that *"the wiki edit button has been a dead control since
+v0.1.x"* and listed **"No page locks"** among its scope decisions, as though locks were something
+this phase might otherwise add. Neither is the repository.
+
+`web/src/pages/codex/WikiPage.tsx` has a working Edit button (`startEdit`, line 302) that opens a
+TipTap-based editor (`web/src/components/ui/MarkdownEditor.tsx`, ~437 lines, markdown round-trip via
+`tiptap-markdown`) and saves through `useUpdateWikiPage` with `expected_version` — so **optimistic
+concurrency on pages already shipped**, in `internal/db/queries/pages.sql`'s `UpdatePageContent`
+(`WHERE id = $1 AND version = $2`), with a purpose-built 409 body
+(`internal/core/wiki/conflict.go`'s `ConflictDetail`). `web/e2e/wiki.spec.ts` has covered the whole
+journey since P1 under the name *"wiki edit button opens editor and edit persists"*, and its comment
+already says "TipTap-based rich text editor".
+
+`page_locks` (migration 013) is equally live: `internal/core/wiki/lock.go`, four sqlc queries, three
+routes, wired in `cmd/server/main.go`. The lock is **advisory only** — `UpdatePage` never consults
+it, so it has never protected a write; it drives the "X is editing" banner.
+
+Per the standing rule (repository wins on existing structure) the phase was executed as a
+*replacement* of a working editor rather than a build from zero, which is what set its blast radius.
+Two consequences worth recording:
+
+- The reusable conflict shape already existed, so publish reports version conflicts through
+  `ConflictDetail` rather than a second format.
+- Because the lock never guarded a write, the new document flow simply does not acquire one, and
+  nothing about write safety changes. **The lock table, service and routes are left in place and
+  untouched** — removing shipped API is a maintainer's decision, not a side effect of an editor
+  phase. See section 3.
+
+### D51 — ADR-0012 governs nodes and is silent on marks and inline content
+
+ADR-0012 names one preservation primitive, `unknownContent`, and describes it as a node. It never
+uses the word "mark". ProseMirror drops an unrecognised **mark** and an unrecognised **inline node**
+exactly as silently as it drops a block, and a node type cannot be both block and inline, so one
+primitive cannot cover all three positions content can occupy.
+
+This phase implements three — `unknownContent`, `unknownInline`, `unknownMark` — through one
+mechanism. That is an **interpretation of the ADR, not a quotation of it**, and it is flagged here
+rather than resolved: the ADR's Decision heading is "Zero silent data loss", which the narrow
+reading would contradict, and the inline case is not hypothetical — Codex's shipped markdown editor
+serialises text colour and highlight as inline `<span>` HTML, so real pages in this repository
+already contain content that the narrow reading would destroy on first edit.
+
+**For a maintainer:** confirm ADR-0012 accordingly, or narrow it. If the narrow reading is intended,
+`unknownInline` and `unknownMark` should be removed and the loss documented as accepted.
+
+### D52 — the section 4 migration table was stale for the third time
+
+It said `029` was the next free number. Migrations 029–035 were already on disk. Corrected in the
+same PR, with the shipped rows filled in from the directory and the pattern named.
+
+## 2. Decisions taken (justified in the phase report, recorded here)
+
+- **`pages.doc` is PostgreSQL `json`, not `jsonb`.** `jsonb` is a parsed, normalised value: it sorts
+  object keys, rewrites number literals, and silently drops duplicate keys. Verified against the
+  test database — `{"zzz":1,"a":{"n":1e2,"dup":1,"dup":2}}` loses the `"dup":1` member entirely.
+  That is silent data loss at the storage layer, which is the failure ADR-0012 exists to prevent. A
+  test in `internal/core/wiki/doc` asserts the round trip against the real database and fails if the
+  type is changed, so the choice cannot be undone silently. Nothing queries inside the document —
+  search reads the projected `content` column — so the GIN indexing `jsonb` would buy has no
+  consumer here.
+- **`pages.content` stays, stays markdown, and becomes derived for document-backed pages.** It feeds
+  the generated `search_vector` (migration 009 spans title + content), so dropping it would silently
+  empty the wiki's search index; and it keeps every legacy reader working. Nothing reads it back
+  **into** the editor when `doc` is present — that direction is where a lossy projection would become
+  data loss.
+- **Conversion is per-page and on first edit, never a bulk migration.** A backfill would rewrite
+  every page in one unreviewable step, so a conversion defect would land on all of them at once
+  instead of on the one page an author is looking at.
+- **The round-trip guarantee lives server-side.** The bytes written back are the bytes that were
+  read; they never pass through the client. A placeholder carries a display copy of its original so
+  the editor can label the block, and `Restore` ignores it.
+- **Publishing refuses to drop preserved content unless the removal is acknowledged.** Deleting an
+  inert block is a legitimate edit, so it must be possible — but it must be *said*, because
+  otherwise a schema-level drop is indistinguishable from an intentional deletion. This is the one
+  place the ADR-0012 catastrophe can be caught in the act.
+- **`page_drafts` is keyed `(page_id, author_id)`** so one draft per person per page is a property of
+  the key rather than of application code. No `space_id`, for migration 027's reason: authorisation
+  derives from the page.
+- **Publishing is one transaction** (page row + history row + draft clear), via a new
+  `PublishPageTx` on the existing `ContentTxAdapter` — extending the established transactional seam
+  rather than forking one. Shared-surfaces convention B: the atomicity is the contract.
+- **No new capability.** Drafting and publishing are the same permission as editing —
+  `access.CanEditEntity` against `pages.author_id`, the same call the markdown save path makes.
+- **Image content types are sniffed, never taken from the client**, against the same allow-list as
+  the avatar surface (PNG/JPEG/WebP/GIF). `image/svg+xml` is excluded deliberately: an SVG can carry
+  script and attachments are streamed inline from our own origin.
+
+## 3. Observed, out of scope
+
+- **The page-lock routes are now unused by the shipped editor and remain wired.** They were already
+  advisory, so nothing depends on them for correctness, but `GET/POST/DELETE .../wiki/{pageID}/lock`
+  and `page_locks` are live API and schema with no caller once the document editor replaces the
+  markdown one on the Codex surface. **Flagged for a maintainer to retire deliberately**, with their
+  tests, rather than removed here.
+- **`internal/core/wiki/render.go` claims to produce "sanitised HTML" and no sanitiser exists.**
+  Safety comes only from goldmark's default `Unsafe: false`, which omits raw HTML. The comment is
+  misleading in a way that invites somebody to add `html.WithUnsafe()` — which would turn
+  `GET .../wiki/{pageID}/render` into stored XSS. Not touched by this phase.
+- **The markdown save path's revision write is still not transactional.**
+  `internal/core/wiki/page.go` updates the page and then inserts the revision as two separate calls
+  against a pool, so a failed revision insert leaves a committed page whose history skips a version.
+  The new publish path is transactional; the old one is unchanged, and is a defect either way.
+- **`internal/core/api/docs_test.go` skips `TestDocsSpec_InSyncWithCode`** with no `SKIP:` marker, no
+  issue number and no re-enable condition — a section 2 skip-discipline violation — and its stated
+  reason ("handled by ... CI pipeline") is not true: CI's `docs-check` job only greps the committed
+  YAML for a few required keys. The real check is the local `make docs-check`, which this PR ran.
+- **Attachment `content_type` is client-declared on the generic upload route** and is echoed as the
+  `Content-Type` of an inline, same-origin download. A space writer can therefore upload HTML
+  declaring `text/html` and have it served as a page — reachable by a share recipient outside the
+  space. This phase closes the hole for the paths it owns (page images sniff on upload, and publish
+  re-sniffs every image a document references) but does **not** change the generic route, because
+  sniffing every attachment would change the served type of legitimate non-image files.
+  **Flagged for a maintainer as a security follow-up.**
+
+### Importer-relevant notes (ADR-0012 anticipates an importer; these are its constraints)
+
+- **An importer must write a `page_revisions` row alongside `pages.doc`.** An overwrite-after-conflict
+  recovers its base document from history, so a document that reached `pages.doc` without a matching
+  revision cannot be recovered from that version and the publish is refused (422). The behaviour is
+  correct — refusing beats guessing — but it makes the paired write a requirement.
+  `TestDocumentAPI_OverwriteRefusesWhenTheBaseVersionHasNoDocument` pins it.
+- **Unknown content should be captured with `az_source` naming the source system**, not the
+  `"document"` value this package produces. `doc.SourceDocument` exists so the two are
+  distinguishable.
+- **Go's `encoding/json` HTML-escapes a `json.RawMessage` it marshals**, and compacts it. An importer
+  that round-trips documents through `json.Marshal` will silently alter their bytes. The `doc`
+  package emits nodes through its own writer for exactly this reason.

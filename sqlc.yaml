@@ -14,3 +14,19 @@ sql:
         overrides:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
+          # The page document columns (migration 036) are PostgreSQL `json`,
+          # deliberately not `jsonb` — see that migration for why. Without this
+          # override sqlc maps them to []byte, which encoding/json marshals as
+          # a base64 STRING, so every document would reach the wire base64'd.
+          # json.RawMessage passes the document through verbatim in both
+          # directions, which is also what ADR-0012's byte-identical round trip
+          # requires of every layer it crosses.
+          - db_type: "pg_catalog.json"
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"
+          - db_type: "pg_catalog.json"
+            nullable: true
+            go_type:
+              import: "encoding/json"
+              type: "RawMessage"

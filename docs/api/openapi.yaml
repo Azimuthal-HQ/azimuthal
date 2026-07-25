@@ -7751,6 +7751,240 @@ paths:
       summary: Diff page versions
       tags:
       - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/document:
+    get:
+      description: Returns the published ProseMirror document for a page, with every
+        node type outside the editor's schema replaced by a preservation placeholder
+        (ADR-0012), plus the calling user's own unpublished draft if they hold one.
+        A page that has only ever held markdown is converted on the way out and not
+        written back.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Editable document
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Get a page's editable document
+      tags:
+      - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/draft:
+    delete:
+      description: Removes the calling user's unpublished draft of a page. The published
+        page is untouched. 404 when the caller holds no draft, so a confirmed destructive
+        action never reports success for something it did not do.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Discarded
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Insufficient permissions
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No draft on this page
+      security:
+      - BearerAuth: []
+      summary: Discard a page draft
+      tags:
+      - wiki
+    put:
+      description: Stores the calling user's unpublished edit of a page, replacing
+        any previous one. A draft is visible only to its author; readers continue
+        to see the last published version. Requires the same permission as editing
+        the page.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Draft title, document and base version
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Saved draft
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Malformed document
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Insufficient permissions
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Save a page draft
+      tags:
+      - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/images:
+    post:
+      description: Stores an image on the page through the shared attachments table
+        and object store. The content type is sniffed from the bytes and checked against
+        the document model's allow-list (PNG, JPEG, WebP, GIF) — the client's declared
+        type is never trusted. The entity comes from the URL, not the form.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Stored image
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not a supported image
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Insufficient permissions
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Image too large
+      security:
+      - BearerAuth: []
+      summary: Upload a page image
+      tags:
+      - wiki
   /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock:
     delete:
       parameters:
@@ -7926,6 +8160,87 @@ paths:
       security:
       - BearerAuth: []
       summary: Move wiki page
+      tags:
+      - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/publish:
+    post:
+      description: Replaces the page's published content, bumps its version, records
+        a revision and clears the caller's draft, all in one transaction. 409 with
+        a conflict body when the page has been published past base_version — reload
+        or overwrite. 409 with a lost-content body when the document no longer carries
+        preserved content the page had, unless the removal is acknowledged (ADR-0012).
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Title, document, base version
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Published page
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Malformed document or empty title
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Insufficient permissions
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Version conflict, or preserved content would be lost
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unresolvable preserved content, or a bad image reference
+      security:
+      - BearerAuth: []
+      summary: Publish a page document
       tags:
       - wiki
   /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/render:
@@ -8152,6 +8467,50 @@ paths:
       security:
       - BearerAuth: []
       summary: Move share impact
+      tags:
+      - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/drafts:
+    get:
+      description: 'Every page in the space on which the calling user holds an unpublished
+        draft. Author-scoped: a draft is never visible to anybody else.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Drafts
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Space not found
+      security:
+      - BearerAuth: []
+      summary: List the caller's page drafts
       tags:
       - wiki
   /orgs/{orgID}/spaces/{spaceID}/wiki/search:

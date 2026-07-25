@@ -79,10 +79,53 @@ func (m *mockLockStore) DeletePageLock(_ context.Context, _ generated.DeletePage
 }
 func (m *mockLockStore) DeleteExpiredPageLocks(_ context.Context) error { return nil }
 
+// mockDocumentStore satisfies wiki.DocumentStore for the routing-level tests in
+// this file. The document surface's real behaviour — capture, restore, conflict,
+// draft isolation — is covered against a real database in
+// internal/core/api/wiki_document_integration_test.go; nothing here asserts it.
+type mockDocumentStore struct{ mockPageStore }
+
+func (m *mockDocumentStore) GetPageRevisionDocument(_ context.Context, _ generated.GetPageRevisionDocumentParams) (generated.GetPageRevisionDocumentRow, error) {
+	return generated.GetPageRevisionDocumentRow{}, pgx.ErrNoRows
+}
+
+func (m *mockDocumentStore) UpsertPageDraft(_ context.Context, arg generated.UpsertPageDraftParams) (generated.PageDraft, error) {
+	return generated.PageDraft{
+		PageID: arg.PageID, AuthorID: arg.AuthorID, Title: arg.Title,
+		Doc: arg.Doc, BaseVersion: arg.BaseVersion,
+	}, nil
+}
+
+func (m *mockDocumentStore) GetPageDraft(_ context.Context, _ generated.GetPageDraftParams) (generated.PageDraft, error) {
+	return generated.PageDraft{}, pgx.ErrNoRows
+}
+
+func (m *mockDocumentStore) DeletePageDraft(_ context.Context, _ generated.DeletePageDraftParams) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockDocumentStore) ListPageDraftsForAuthorInSpace(_ context.Context, _ generated.ListPageDraftsForAuthorInSpaceParams) ([]generated.ListPageDraftsForAuthorInSpaceRow, error) {
+	return []generated.ListPageDraftsForAuthorInSpaceRow{}, nil
+}
+
+// mockDocumentTx satisfies wiki.DocumentTxStore.
+type mockDocumentTx struct{}
+
+func (m *mockDocumentTx) PublishPageTx(_ context.Context, in wiki.PublishPageTxInput) (generated.Page, error) {
+	return generated.Page{
+		ID: in.PageID, Title: in.Title, Content: in.Content,
+		Doc: in.Doc, Version: in.BaseVersion + 1,
+	}, nil
+}
+
 func setupWikiHandler() *wikiapi.Handler {
 	svc := wiki.NewService(&mockPageStore{}, &mockContentTx{})
 	locks := wiki.NewLockService(&mockLockStore{})
-	return wikiapi.NewHandler(svc, locks)
+	// UnavailableImageStore rather than a mock: this harness has no object store,
+	// and the refusing implementation is exactly what a storage-less deployment
+	// gets, so the routes behave here as they would there.
+	docs := wiki.NewDocumentService(&mockDocumentStore{}, &mockDocumentTx{}, wiki.UnavailableImageStore{})
+	return wikiapi.NewHandler(svc, locks, docs)
 }
 
 func withParam(r *http.Request, key, val string) *http.Request {

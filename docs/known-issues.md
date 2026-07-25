@@ -392,7 +392,15 @@ exactly that.
 `TestAttachment_CannotReadArbitraryKeys`. CI runs MinIO for these.
 
 **Scope note**: frontend support is currently read-only and limited to the shared-entity view;
-there is no in-app upload UI on ticket, wiki or project pages. The backend issue this entry
+there is no in-app upload UI on ticket, wiki or project pages.
+
+**Update (issue #15, migration 036):** Codex pages now have a dedicated image
+upload endpoint, `POST /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/images`,
+which stores through this same table and object store and sniffs the content
+type from the bytes rather than trusting the client. The in-app UI that calls it
+lands with the editor surface; ticket and project pages still have neither.
+
+The backend issue this entry
 tracked is closed.
 
 <details><summary>Original entry</summary>

@@ -5,7 +5,13 @@
     "useDefineForClassFields": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "types": ["vite/client"],
+    /* "node" is here for the test files under src that read a file from disk.
+       src/lib/codex/schema.test.ts checks the editor's schema against the Go
+       manifest at internal/core/wiki/doc/schema.json — which Vite cannot bundle,
+       because it lives outside web/, but which a Vitest run in Node reads fine.
+       This does not meaningfully loosen the app build: a component importing
+       node:fs would still fail at bundle time. */
+    "types": ["vite/client", "node"],
     "skipLibCheck": true,
 
     /* Bundler mode */
