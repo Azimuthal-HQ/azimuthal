@@ -163,6 +163,27 @@ func (res *Resolution) Can(c Capability, spaceID uuid.UUID) bool {
 	return res.RoleOn(spaceID).Grants(c)
 }
 
+// CanOrgWide reports whether the caller holds an org-level capability in a
+// context where no space exists yet — space creation being the only one.
+//
+// Can cannot serve that context at all: for an org admin it delegates to
+// CanReadSpace, a membership test against the set of spaces that already
+// exist, so Can(CapSetVisibility, uuid.Nil) answers false for precisely the
+// callers who hold the capability.
+//
+// minRoleFor is the source of truth for which capabilities are space-scoped.
+// A capability in that table is held through a role on a space and so is never
+// held without one — it answers false here. What remains is the org-level set
+// (set_visibility), granted by the org-admin bypass alone. A capability in
+// neither category behaves as it would through the bypass in Can: org admins
+// hold it, everyone else does not.
+func (res *Resolution) CanOrgWide(c Capability) bool {
+	if _, spaceScoped := minRoleFor[c]; spaceScoped {
+		return false
+	}
+	return res.IsOrgAdmin
+}
+
 // ReadableSpaceIDs returns the resolved readable set. Callers must treat it
 // as read-only.
 func (res *Resolution) ReadableSpaceIDs() []uuid.UUID {

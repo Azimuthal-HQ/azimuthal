@@ -263,13 +263,18 @@ type SwaggerCreateItemRequest struct {
 }
 
 // SwaggerUpdateItemRequest matches updateItemRequest in projects handler.
+// The real request type uses pointers to tell "absent" from "empty"; this is
+// the documentation shape, so it keeps plain strings.
 type SwaggerUpdateItemRequest struct {
-	Title       string     `json:"title" example:"Implement search (updated)"`
-	Description string     `json:"description" example:"Updated description"`
-	Priority    string     `json:"priority" example:"high"`
-	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
-	DueAt       *time.Time `json:"due_at,omitempty"`
+	Title       string `json:"title" example:"Implement search (updated)"`
+	Description string `json:"description" example:"Updated description"`
+	// Kind is the org-defined item-type slug. Must name an active type;
+	// unknown or archived values are rejected.
+	Kind       string     `json:"kind" example:"bug"`
+	Priority   string     `json:"priority" example:"high"`
+	AssigneeID *uuid.UUID `json:"assignee_id,omitempty"`
+	Labels     []string   `json:"labels,omitempty"`
+	DueAt      *time.Time `json:"due_at,omitempty"`
 }
 
 // SwaggerStatusRequest matches statusRequest in projects handler.

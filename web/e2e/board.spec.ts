@@ -218,6 +218,85 @@ test.describe('Board customization', () => {
     await assertNoErrors(page)
   })
 
+  test('dragging a card into another type lane retypes the item on the server', async ({ page }) => {
+    // T1. The by-type lane drop was a deliberate no-op while the item PATCH
+    // carried no kind: the card snapped back rather than half-applying. With
+    // the contract extended the drop has to reach the database.
+    //
+    // The assertion that counts is the API re-read at the end. The board keeps
+    // an optimistic lane override for the duration of the request, so a
+    // UI-only check passes on a change that never left the browser — which is
+    // precisely the class of bug this journey exists to catch.
+    const ctx = await setup(page, 'Board Type Drag')
+    const mover = await apiItem(page, ctx, 'Retyped Item', 'task')
+    const anchor = await apiItem(page, ctx, 'Anchor Bug', 'bug')
+    await apiActiveSprint(page, ctx, [mover, anchor])
+
+    /** Re-reads an item straight from the API — never through the board's cache. */
+    const readItem = async (id: string) => {
+      const res = await page.request.get(`${ctx.base}/items/${id}`, { headers: headers(ctx) })
+      if (res.status() !== 200) return { kind: `HTTP ${res.status()}`, status: `HTTP ${res.status()}` }
+      return await res.json() as { kind: string; status: string }
+    }
+
+    const before = await readItem(mover)
+    expect(before.kind, 'seeded type before the drag').toBe('task')
+
+    await page.goto(`/vector/${ctx.spaceId}/board`)
+    await expect(page.getByRole('heading', { level: 1, name: 'Board' })).toBeVisible({ timeout: 10000 })
+    await page.getByRole('radio', { name: 'By type' }).click()
+
+    // Lane ids are the kind slugs, so the lanes are addressable without
+    // depending on the org's display names for its types.
+    const taskLane = page.locator('[data-testid="board-lane"][data-lane-id="task"]')
+    const bugLane = page.locator('[data-testid="board-lane"][data-lane-id="bug"]')
+    await expect(taskLane).toBeVisible()
+    await expect(bugLane).toBeVisible()
+
+    const card = taskLane.getByText('Retyped Item')
+    await expect(card).toBeVisible()
+
+    // Land in the *same* column of the other lane. A drop carries two axes;
+    // holding the column fixed leaves the type as the only thing under test,
+    // and lets the status assertion below mean something.
+    const sourceColumn = taskLane.locator('[data-testid="board-column"]').filter({ hasText: 'Retyped Item' })
+    const columnId = await sourceColumn.getAttribute('data-column-id')
+    expect(columnId, 'the column the dragged card starts in').toBeTruthy()
+    const targetColumn = bugLane.locator(`[data-column-id="${columnId}"]`)
+    await expect(targetColumn).toBeVisible()
+
+    // Same gesture the beacon board drag uses: dnd-kit's PointerSensor needs a
+    // real press, a move past the 5px activation distance, then a glide.
+    const cardBox = await card.boundingBox()
+    const targetBox = await targetColumn.boundingBox()
+    if (!cardBox || !targetBox) throw new Error('could not measure drag source/target')
+
+    await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(cardBox.x + cardBox.width / 2 + 12, cardBox.y + cardBox.height / 2, { steps: 4 })
+    await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + Math.min(120, targetBox.height / 2), { steps: 15 })
+    await page.mouse.up()
+
+    // Persisted, read back over a fresh request: the type actually changed.
+    await expect
+      .poll(async () => (await readItem(mover)).kind, {
+        timeout: 10000,
+        message: 'the dragged item\'s kind, re-read from the API after the drop',
+      })
+      .toBe('bug')
+
+    // …and only the type. A lane drop into the same column must not also
+    // rewrite the workflow status.
+    expect((await readItem(mover)).status, 'status after a type-only drag').toBe(before.status)
+    // The untouched card keeps its own type — the PATCH targeted one item.
+    expect((await readItem(anchor)).kind, 'the item that was not dragged').toBe('bug')
+
+    // The board agrees: both items are bugs now, so the Task lane is gone.
+    await expect(bugLane.getByText('Retyped Item')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByTestId('board-lane')).toHaveCount(1)
+    await assertNoErrors(page)
+  })
+
   test('removing a column re-homes its statuses rather than orphaning them', async ({ page }) => {
     const ctx = await setup(page, 'Board Remove Column')
     const a = await apiItem(page, ctx, 'Rehomed Item')

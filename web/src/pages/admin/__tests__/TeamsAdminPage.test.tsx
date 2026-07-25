@@ -8,16 +8,26 @@ import { TeamsAdminPage } from '../TeamsAdminPage';
 // to the orchestration hook, which creates the space + team grant.
 
 const createMutate = vi.fn();
+const updateMutate = vi.fn();
+const deleteMutate = vi.fn();
+
+// One non-default team so the edit and delete surfaces have a row to act on.
+const TEAM = {
+  id: 't1', name: 'Platform', slug: 'platform', parent_id: null, path: ['t1'],
+  is_default: false, description: null,
+};
 
 vi.mock('../../../lib/api', () => ({
   friendlyErrorMessage: (_e: unknown, f: string) => f,
-  useTeams: () => ({ data: [], isLoading: false, error: null }),
+  useTeams: () => ({ data: [TEAM], isLoading: false, error: null }),
   useCreateTeamWithSpaces: () => ({ mutate: createMutate, reset: vi.fn(), isPending: false, error: null }),
-  useUpdateTeam: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, error: null }),
-  useDeleteTeam: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+  useUpdateTeam: () => ({ mutate: updateMutate, reset: vi.fn(), isPending: false, error: null }),
+  useDeleteTeam: () => ({ mutate: deleteMutate, isPending: false, error: null }),
   usePutTeamMember: () => ({ mutate: vi.fn(), isPending: false }),
   useRemoveTeamMember: () => ({ mutate: vi.fn(), isPending: false }),
   useTeamMembers: () => ({ data: [], isLoading: false }),
+  // A3: the create, edit and delete surfaces now carry a TicketRefField.
+  useTicketRefSuggestions: () => ({ data: [], isLoading: false, error: null }),
 }));
 
 vi.mock('../../../lib/auth', () => ({
@@ -65,5 +75,74 @@ describe('TeamsAdminPage — auto-space at team creation (S10a)', () => {
 
     expect(createMutate).toHaveBeenCalledTimes(1);
     expect(createMutate.mock.calls[0][0].modules).toEqual([]);
+  });
+});
+
+// A3: create, edit and delete can carry the operator's ticket reference.
+// Before A3 all three sent none. Each test pins the mutation variable shape,
+// which is the contract with lib/api — delete takes { id, ticketRef }, the
+// other two take it as a named field alongside the request body.
+describe('TeamsAdminPage — the optional ticket reference (A3)', () => {
+  it('sends a typed reference when creating a team', () => {
+    createMutate.mockReset();
+    renderPage();
+
+    fireEvent.click(screen.getByTestId('team-create-button'));
+    fireEvent.change(screen.getByTestId('team-create-name'), { target: { value: 'DevOps' } });
+    fireEvent.change(screen.getByTestId('team-create-ticket-ref'), { target: { value: 'ORG-3' } });
+    fireEvent.click(screen.getByTestId('team-create-submit'));
+
+    expect(createMutate).toHaveBeenCalledTimes(1);
+    expect(createMutate.mock.calls[0][0].ticketRef).toBe('ORG-3');
+  });
+
+  // The negative half: no reference typed means no reference sent, so the
+  // request is byte-for-byte the one this surface always made.
+  it('sends no reference when creating without one', () => {
+    createMutate.mockReset();
+    renderPage();
+
+    fireEvent.click(screen.getByTestId('team-create-button'));
+    fireEvent.change(screen.getByTestId('team-create-name'), { target: { value: 'DevOps' } });
+    expect(screen.getByTestId('team-create-submit')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('team-create-submit'));
+
+    expect(createMutate).toHaveBeenCalledTimes(1);
+    expect(createMutate.mock.calls[0][0].ticketRef).toBeUndefined();
+  });
+
+  it('sends a typed reference when renaming a team', () => {
+    updateMutate.mockReset();
+    renderPage();
+
+    fireEvent.click(screen.getByTestId('team-edit-button'));
+    fireEvent.change(screen.getByTestId('team-edit-name'), { target: { value: 'Platform Eng' } });
+    fireEvent.change(screen.getByTestId('team-edit-ticket-ref'), { target: { value: 'ORG-4' } });
+    fireEvent.click(screen.getByTestId('team-edit-submit'));
+
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0]).toMatchObject({
+      teamId: 't1', name: 'Platform Eng', ticketRef: 'ORG-4',
+    });
+  });
+
+  // The reference field belongs to the SECOND step of the inline delete
+  // confirmation: it appears with "Confirm delete" and never gates it.
+  it('reveals the reference field only while confirming a delete, and sends it', () => {
+    deleteMutate.mockReset();
+    renderPage();
+
+    expect(screen.queryByTestId('team-delete-ticket-ref')).toBeNull();
+    fireEvent.click(screen.getByTestId('team-delete-button'));
+    expect(screen.getByTestId('team-delete-ticket-ref')).toBeInTheDocument();
+    expect(screen.getByTestId('team-delete-confirm')).not.toBeDisabled();
+
+    fireEvent.change(screen.getByTestId('team-delete-ticket-ref'), { target: { value: 'ORG-9' } });
+    fireEvent.click(screen.getByTestId('team-delete-confirm'));
+
+    expect(deleteMutate).toHaveBeenCalledTimes(1);
+    expect(deleteMutate.mock.calls[0][0]).toEqual({ id: 't1', ticketRef: 'ORG-9' });
+    // Confirming ends the second step, so the field goes away with it.
+    expect(screen.queryByTestId('team-delete-ticket-ref')).toBeNull();
   });
 });

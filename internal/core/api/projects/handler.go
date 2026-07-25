@@ -161,17 +161,59 @@ type createItemRequest struct {
 // made the assignee control on item detail — which sends assignee_id alone —
 // fail with 400 every time.
 //
-// AssigneeID and DueAt stay single pointers: for them, null is a meaningful
-// value (unassign, clear the date) and absent is indistinguishable from null
-// in this shape. Clearing them is the more useful of the two readings, and it
-// is what the existing clients rely on.
+// Kind is a pointer for the same reason and one more: it is validated against
+// the org's active item types, so a plain string decoding as "" on an absent
+// key would not merely blank the stored type — it would turn every PATCH that
+// never mentioned kind into a 400, because "" is not an active type. Absent has
+// to stay distinguishable from "the client asked for this type".
+//
+// AssigneeID and DueAt need three states, not two: absent (leave it alone),
+// explicit null (clear it), and a value. A single pointer collapses the first
+// two, and this used to resolve them as "clear" — which quietly destroyed
+// data. Any PATCH that did not mention due_at wiped the stored due date, and
+// since no frontend surface has ever sent due_at, *every* item edit cleared
+// it: renaming an item removed it from the roadmap. The same shape meant a
+// board drag sending only {"kind": …} unassigned the item as a side effect.
+// optionalField keeps the three states apart, so absent now means absent.
 type updateItemRequest struct {
-	Title       *string    `json:"title"`
-	Description *string    `json:"description"`
-	Priority    *string    `json:"priority"`
-	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
-	DueAt       *time.Time `json:"due_at,omitempty"`
+	Title       *string                  `json:"title"`
+	Description *string                  `json:"description"`
+	Kind        *string                  `json:"kind"`
+	Priority    *string                  `json:"priority"`
+	AssigneeID  optionalField[uuid.UUID] `json:"assignee_id"`
+	Labels      []string                 `json:"labels,omitempty"`
+	DueAt       optionalField[time.Time] `json:"due_at"`
+}
+
+// optionalField distinguishes "the client did not mention this field" from
+// "the client explicitly sent null". encoding/json only calls UnmarshalJSON
+// when the key is present, so Set is false for an absent key and true for
+// both a null and a real value.
+//
+// Note the json tags above must NOT carry omitempty: it has no effect on
+// decoding, but it would wrongly suggest these fields round-trip, and this
+// type is decode-only.
+type optionalField[T any] struct {
+	// Set reports whether the key appeared in the request body at all.
+	Set bool
+	// Value is nil when the key appeared as null, or when it never appeared.
+	Value *T
+}
+
+// UnmarshalJSON records that the key was present, then decodes null as an
+// explicit clear and anything else as a value.
+func (o *optionalField[T]) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var v T
+	if err := json.Unmarshal(b, &v); err != nil {
+		return fmt.Errorf("decoding optional field: %w", err)
+	}
+	o.Value = &v
+	return nil
 }
 
 type statusRequest struct {
@@ -259,6 +301,48 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, items)
 }
 
+// validateItemKind checks a requested type slug against the org's active item
+// types, writing the error response itself; a false return means the caller must
+// stop and write nothing further.
+//
+// This is the only integrity check standing behind project_items.kind. Migration
+// 032 repurposed that column as the org-editable item-type slug and dropped the
+// four-value CHECK that used to constrain it (D49), and referential integrity for
+// types is deliberately a service-layer rule rather than a foreign key, so that
+// an ordinary item insert is not coupled to per-org type seeding. The consequence
+// is that the database will accept a typo, an archived slug or arbitrary junk in
+// this column without complaint. Every write path that sets kind must come
+// through here, and a second copy of this logic would be a defect.
+//
+// The org-types lookup lives in the handler rather than the item service because
+// this is where org context is available; the item service is space-scoped.
+//
+// A nil itemTypes service means the item-type surface was never attached to this
+// handler, and validation is skipped. That check is deliberately inside this
+// method rather than at each call site: a caller that forgot the guard would
+// otherwise dereference a nil service and panic, and the "no service means no
+// validation" rule belongs in exactly one place.
+func (h *Handler) validateItemKind(w http.ResponseWriter, r *http.Request, kind string) bool {
+	if h.itemTypes == nil {
+		return true
+	}
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return false
+	}
+	ok, err := h.itemTypes.IsActiveType(r.Context(), orgID, kind)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to validate item type")
+		return false
+	}
+	if !ok {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "unknown or archived item type")
+		return false
+	}
+	return true
+}
+
 // CreateItem creates a new project item.
 //
 // @Summary      Create a project item
@@ -294,25 +378,10 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The type vocabulary is org-defined (item_types). Validate the chosen type
-	// against the org's active types — this is where org context lives, so it
-	// stays out of the space-scoped item service. A blank or unknown type is
-	// rejected (the frontend picker defaults to task, so real requests carry one).
-	if h.itemTypes != nil {
-		orgID, oerr := orgIDFromURL(r)
-		if oerr != nil {
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
-			return
-		}
-		ok, err := h.itemTypes.IsActiveType(r.Context(), orgID, req.Kind)
-		if err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to validate item type")
-			return
-		}
-		if !ok {
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "unknown or archived item type")
-			return
-		}
+	// A blank or unknown type is rejected here (the frontend picker defaults to
+	// task, so real requests always carry one).
+	if !h.validateItemKind(w, r, req.Kind) {
+		return
 	}
 
 	item := &projects.Item{
@@ -381,14 +450,26 @@ func applyItemPatch(existing *projects.Item, req updateItemRequest) {
 	if req.Description != nil {
 		existing.Description = *req.Description
 	}
+	// Callers must have run validateItemKind on a non-nil Kind before reaching
+	// here; this function only copies, it does not check.
+	if req.Kind != nil {
+		existing.Kind = *req.Kind
+	}
 	if req.Priority != nil {
 		existing.Priority = *req.Priority
 	}
 	if req.Labels != nil {
 		existing.Labels = req.Labels
 	}
-	existing.AssigneeID = req.AssigneeID
-	existing.DueAt = req.DueAt
+	// Only when the key was actually present. A nil Value with Set true is an
+	// explicit null and does mean "clear it" — that is how item detail
+	// unassigns, and it still works.
+	if req.AssigneeID.Set {
+		existing.AssigneeID = req.AssigneeID.Value
+	}
+	if req.DueAt.Set {
+		existing.DueAt = req.DueAt.Value
+	}
 }
 
 // UpdateItem modifies an existing item.
@@ -434,6 +515,16 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if !access.CanEditEntity(r.Context(), spaceID, existing.ReporterID) {
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
+
+	// Only a kind the request actually carried is validated. An absent one must
+	// not be checked at all: it means the client never mentioned the type, and a
+	// stored slug that has since been archived has to stay editable in every
+	// other respect. Validation runs before applyItemPatch so a rejected type
+	// leaves nothing written — and after the permission check, so an unauthorised
+	// caller cannot probe the org's type vocabulary through the error it gets.
+	if req.Kind != nil && !h.validateItemKind(w, r, *req.Kind) {
 		return
 	}
 

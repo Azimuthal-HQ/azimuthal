@@ -52,9 +52,16 @@ WHERE sprint_id = $1 AND deleted_at IS NULL
 ORDER BY rank ASC;
 
 -- name: UpdateProjectItem :one
+-- kind is appended last so every existing parameter position stays stable.
+-- It is written on every update, not only when the client asked to change it:
+-- the handler's applyItemPatch leaves the stored slug in place when the PATCH
+-- body omits "kind", so an omitting request rewrites the same value. Type
+-- integrity is the item-types service's job and not this statement's —
+-- migration 032 dropped the CHECK constraint (D49), so whatever reaches here
+-- is stored verbatim.
 UPDATE project_items
 SET title = $2, description = $3, status = $4, priority = $5,
-    assignee_id = $6, labels = $7, due_at = $8, rank = $9,
+    assignee_id = $6, labels = $7, due_at = $8, rank = $9, kind = $10,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;

@@ -27,6 +27,7 @@ import {
 import { Input } from '../../components/ui/input';
 import { Field, FieldLabel } from '../../components/ui/field';
 import { RadioCardGroup } from '../../components/ui/radio-card';
+import { TicketRefField } from '../../components/TicketRefField';
 
 /**
  * SpacesAdminPage (P2.5 W8): org-wide space governance — rename,
@@ -131,6 +132,7 @@ function EditSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Spac
   const [description, setDescription] = useState(space.description ?? '');
   const [ownerTeamID, setOwnerTeamID] = useState(space.owner_team_id ?? '');
   const [visibility, setVisibility] = useState<SpaceVisibility>(space.visibility ?? 'discoverable');
+  const [ticketRef, setTicketRef] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   return (
@@ -195,6 +197,13 @@ function EditSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Spac
               testId="admin-space-visibility"
             />
           </Field>
+          <TicketRefField
+            orgId={orgId}
+            value={ticketRef}
+            onChange={setTicketRef}
+            testId="admin-space-ticket-ref"
+            hint="Recorded on the audit event for this change."
+          />
           {error && <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{error}</p>}
         </div>
         <DialogFooter>
@@ -215,6 +224,7 @@ function EditSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Spac
                   is_private: space.is_private,
                   owner_team_id: ownerTeamID || undefined,
                   visibility,
+                  ticketRef: ticketRef.trim() || undefined,
                 },
                 {
                   onSuccess: onClose,
@@ -239,6 +249,7 @@ function EditSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Spac
 function DeleteSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Space; onClose: () => void }) {
   const summary = useSpaceContentsSummary(orgId, space.id);
   const del = useDeleteSpace(orgId);
+  const [ticketRef, setTicketRef] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const counts = summary.data;
@@ -264,6 +275,16 @@ function DeleteSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Sp
             {!summary.isLoading && !contents && 'Its contents could not be counted — it may still contain work.'}
           </DialogDescription>
         </DialogHeader>
+        {/* Optional, and never a gate — the delete button below stays enabled
+            whether or not a reference is given. */}
+        <TicketRefField
+          orgId={orgId}
+          value={ticketRef}
+          onChange={setTicketRef}
+          disabled={del.isPending}
+          testId="admin-space-delete-ticket-ref"
+          hint="Recorded on the audit event for this deletion."
+        />
         {error && <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{error}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -273,7 +294,7 @@ function DeleteSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Sp
             data-testid="admin-space-delete-confirm"
             onClick={() => {
               setError(null);
-              del.mutate(space.id, {
+              del.mutate({ id: space.id, ticketRef: ticketRef.trim() || undefined }, {
                 onSuccess: onClose,
                 onError: (err) => setError(friendlyErrorMessage(err, 'The space could not be deleted.')),
               });

@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
+import { TicketRefField } from '../../components/TicketRefField';
 
 type StatusFilter = 'all' | 'active' | 'invited' | 'deactivated';
 
@@ -151,6 +152,10 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
   const [menuOpen, setMenuOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<'deactivate' | 'remove' | null>(null);
+  // Optional operator reference for the two audited destructive actions.
+  // Cleared whenever the confirmation opens so one row's reference never
+  // leaks into the next action.
+  const [ticketRef, setTicketRef] = useState('');
   const lifecycle = usePersonLifecycle(orgId);
   const update = useUpdatePerson(orgId);
   const remove = useRemovePerson(orgId);
@@ -190,10 +195,10 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
     );
   };
 
-  const runLifecycle = (action: 'deactivate' | 'reactivate' | 'force-logout') => {
+  const runLifecycle = (action: 'deactivate' | 'reactivate' | 'force-logout', ref?: string) => {
     setError(null);
     lifecycle.mutate(
-      { userId: person.user_id, action },
+      { userId: person.user_id, action, ticketRef: ref?.trim() || undefined },
       {
         onError: (err) =>
           setError(friendlyErrorMessage(err, `The account could not be ${action === 'force-logout' ? 'signed out' : `${action}d`}.`)),
@@ -363,7 +368,7 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
                   label="Deactivate…"
                   destructive
                   testid={`person-deactivate-${person.email}`}
-                  onClick={() => { setMenuOpen(false); setConfirming('deactivate'); }}
+                  onClick={() => { setMenuOpen(false); setTicketRef(''); setConfirming('deactivate'); }}
                 />
               ) : (
                 <RowAction
@@ -376,7 +381,7 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
                 label="Remove from organization…"
                 destructive
                 testid={`person-remove-${person.email}`}
-                onClick={() => { setMenuOpen(false); setConfirming('remove'); }}
+                onClick={() => { setMenuOpen(false); setTicketRef(''); setConfirming('remove'); }}
               />
             </span>
           )}
@@ -403,6 +408,17 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
                 : 'Their membership, team memberships, and space access are removed. Their account and everything they authored survive, with attribution intact.'}
             </DialogDescription>
           </DialogHeader>
+          {/* Optional and never a gate: the confirmation button below stays
+              enabled whether or not a reference is given, so the two-step
+              confirmation keeps exactly the semantics it shipped with. */}
+          <TicketRefField
+            orgId={orgId}
+            value={ticketRef}
+            onChange={setTicketRef}
+            disabled={busy}
+            testId="person-ticket-ref"
+            hint="Recorded on the audit event for this change."
+          />
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirming(null)}>Cancel</Button>
             <Button
@@ -411,10 +427,10 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
               data-testid="person-confirm-action"
               onClick={() => {
                 if (confirming === 'deactivate') {
-                  runLifecycle('deactivate');
+                  runLifecycle('deactivate', ticketRef);
                 } else {
                   setError(null);
-                  remove.mutate(person.user_id, {
+                  remove.mutate({ id: person.user_id, ticketRef: ticketRef.trim() || undefined }, {
                     onError: (err) => setError(friendlyErrorMessage(err, 'The member could not be removed.')),
                     onSettled: () => setConfirming(null),
                   });
@@ -533,6 +549,7 @@ function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; 
   const [emailsRaw, setEmailsRaw] = useState('');
   const [orgRole, setOrgRole] = useState('member');
   const [teamId, setTeamId] = useState('');
+  const [ticketRef, setTicketRef] = useState('');
   const [outcomes, setOutcomes] = useState<InviteOutcome[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -545,6 +562,7 @@ function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; 
     setEmailsRaw('');
     setOrgRole('member');
     setTeamId('');
+    setTicketRef('');
     setOutcomes(null);
     setError(null);
   };
@@ -601,6 +619,13 @@ function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; 
                 </select>
               </label>
             </div>
+            <TicketRefField
+              orgId={orgId}
+              value={ticketRef}
+              onChange={setTicketRef}
+              testId="invite-ticket-ref"
+              hint="Recorded on the audit event for every invite in this batch."
+            />
             {error && <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{error}</p>}
           </div>
         )}
@@ -638,7 +663,7 @@ function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; 
                 onClick={() => {
                   setError(null);
                   createInvites.mutate(
-                    { emails, org_role: orgRole, team_id: teamId || null },
+                    { emails, org_role: orgRole, team_id: teamId || null, ticketRef: ticketRef.trim() || undefined },
                     {
                       onSuccess: (res) => setOutcomes(res),
                       onError: (err) => setError(friendlyErrorMessage(err, 'The invites could not be created.')),

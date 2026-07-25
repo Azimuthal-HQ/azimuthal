@@ -49,6 +49,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
@@ -72,6 +73,13 @@ type testServer struct {
 	JWT             *auth.JWTService
 	TeamService     *coreteams.Service
 	GrantService    *access.GrantService
+	// RouterCfg is the exact config this server was built from, kept so
+	// TestHarness_NoDarkDependencies can walk it and fail on any handler
+	// dependency the harness forgot to wire.
+	RouterCfg api.RouterConfig
+	// AuditLog is the DB-backed logger the handlers write through, so audit
+	// assertions can read back what a mutation recorded.
+	AuditLog audit.Logger
 }
 
 // tokenFor issues an access token for an arbitrary user of the org —
@@ -177,19 +185,25 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	bulkSvc := access.NewBulkService(adapters.NewBulkGrantAdapter(pool))
 	auditReader := audit.NewReader(adapters.NewAuditReaderAdapter(queries))
 
-	router := api.NewRouter(api.RouterConfig{
+	// Mirrors cmd/server/main.go. Any With* the production wiring passes must
+	// be passed here too: a handler treats a missing dependency as "feature
+	// not enabled" and answers 404, so an omission here does not fail loudly —
+	// it silently makes those routes untestable. That is exactly how the
+	// board-config endpoints reached zero coverage. This is no longer a
+	// convention you have to remember: TestHarness_NoDarkDependencies walks
+	// the config below and fails on any handler dependency left nil.
+	cfg := api.RouterConfig{
 		Authenticator: authenticator,
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner, userAdapter).
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(true),
-		TicketHandler: ticketsapi.NewHandler(ticketSvc),
-		WikiHandler:   wikiapi.NewHandler(wikiSvc, wikiLocks).WithShareQueries(shareAdapter),
-		// Mirrors cmd/server/main.go. Any With* the production wiring passes
-		// must be passed here too: the handler treats a missing dependency as
-		// "feature not enabled" and answers 404, so an omission here does not
-		// fail loudly — it silently makes those routes untestable. That is
-		// exactly how the board-config endpoints reached zero coverage.
+		TicketHandler: ticketsapi.NewHandler(ticketSvc).
+			WithAuditLogger(auditLog).
+			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
+			WithSuggestions(tickets.NewSuggestionService(ticketAdapter)),
+		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiLocks).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
+			WithAuditLogger(auditLog).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).
 			WithCustomFields(customfields.NewService(adapters.NewCustomFieldDefAdapter(queries), adapters.NewCustomFieldValueAdapter(queries))).
 			WithBoardConfig(projects.NewBoardConfigService(
@@ -197,7 +211,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 				adapters.NewWorkflowStatusAdapter(pool),
 			)),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog),
-		CommentHandler:      commentsapi.NewHandler(queries),
+		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
 		NotificationHandler: notificationsapi.NewHandler(queries),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
@@ -216,7 +230,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			return s.OrgID, nil
 		},
 		AccessResolver: accessResolver,
-	})
+	}
+	router := api.NewRouter(cfg)
 
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
@@ -228,6 +243,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		Server: srv, Handler: router, DB: db, OrgID: org.ID, UserID: user.ID,
 		Token: pair.AccessToken, WorkflowAdapter: workflowAdapter,
 		JWT: jwtSvc, TeamService: teamSvc, GrantService: grantSvc,
+		RouterCfg: cfg, AuditLog: auditLog,
 	}
 }
 

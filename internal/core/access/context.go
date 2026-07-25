@@ -33,6 +33,14 @@ func Can(ctx context.Context, c Capability, spaceID uuid.UUID) bool {
 	return res != nil && res.Can(c, spaceID)
 }
 
+// CanOrgWide is the capability check for a mutation with no space to check
+// against — space creation, where the space does not exist yet. Fails closed
+// when no resolution is on the context, exactly like Can.
+func CanOrgWide(ctx context.Context, c Capability) bool {
+	res := FromContext(ctx)
+	return res != nil && res.CanOrgWide(c)
+}
+
 // CanEditEntity implements the edit_own/edit_any split: editing an entity you
 // created needs edit_own_items; editing anyone else's needs edit_any_item.
 func CanEditEntity(ctx context.Context, spaceID, createdBy uuid.UUID) bool {

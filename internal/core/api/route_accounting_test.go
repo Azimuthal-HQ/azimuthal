@@ -2,6 +2,8 @@ package api_test
 
 import (
 	"net/http"
+	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -106,6 +108,7 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/audit-log/":                   "org-admin-404: append-only viewer, batches collapsed",
 	"GET /api/v1/orgs/{orgID}/audit-log/batches/{batchID}":  "org-admin-404: batch expansion",
 	"GET /api/v1/orgs/{orgID}/members/search":               "org-member: person picker over active members",
+	"GET /api/v1/orgs/{orgID}/tickets/suggest":              "org-member: ticket_ref typeahead, filtered to the caller's resolved readable spaces in-handler",
 
 	// Workflows: members read, admins mutate.
 	"GET /api/v1/orgs/{orgID}/workflows/":                                           "org-member",
@@ -125,7 +128,7 @@ var routeAccounting = map[string]string{
 	// rows); creation checks org-admin-or-lead; the rest is capability
 	// checked (manage_space).
 	"GET /api/v1/orgs/{orgID}/spaces/":                              "org-member: directory, filtered against the readable set in-handler",
-	"POST /api/v1/orgs/{orgID}/spaces/":                             "org-member: authority checked in-handler (org admin or lead of owning team); accepts initial visibility WITHOUT set_visibility — pre-existing carve-out, flagged for the maintainer",
+	"POST /api/v1/orgs/{orgID}/spaces/":                             "org-member: authority checked in-handler (org admin or lead of owning team); a non-default initial visibility additionally requires set_visibility, and every create writes space.created",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/":                    "space-read",
 	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/":                    "space-cap: manage_space; visibility changes additionally set_visibility (org admin only)",
 	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/":                 "space-cap: manage_space",
@@ -258,6 +261,79 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/share-impact": "space-read: active-share count a cross-space move would revoke",
 }
 
+// guardClasses is the closed vocabulary of the classes documented above. A
+// row whose class is not one of these fails the sweep, so "TODO", "unknown"
+// or a blank classification cannot pass for an answer — the point of the
+// table is that somebody decided, and a free-text field lets you skip
+// deciding while still looking accounted-for.
+var guardClasses = map[string]bool{
+	"public": true, "user-scoped": true, "org-member": true, "org-read": true,
+	"org-admin": true, "org-admin-404": true, "space-read": true,
+	"space-write": true, "space-cap": true, "share-manage": true,
+	"share-read": true,
+}
+
+// adminGuardedPrefixes are the subtrees of the P2.5 administration surface.
+// Every route under them is org-admin-404 unless it appears in
+// deliberateNonAdminRoutes with a reason.
+//
+// This exists because of #64. Before it, /users carried the guard at group
+// level (r.Use), so a route added to the group inherited it and could not be
+// forgotten. #64 moved the guard per-route (r.With) so the avatar read could
+// be org-member — correct, but it means a new route added to that group with
+// no .With(admin404) is now silently public to any org member, and the
+// accounting table would happily accept a row claiming otherwise. The check
+// below reads the actual middleware chain instead of the claim.
+var adminGuardedPrefixes = []string{
+	"/api/v1/orgs/{orgID}/users/",
+	"/api/v1/orgs/{orgID}/invites/",
+	"/api/v1/orgs/{orgID}/grants/",
+	"/api/v1/orgs/{orgID}/audit-log/",
+}
+
+// deliberateNonAdminRoutes are the routes inside an admin-guarded subtree
+// that are intentionally reachable by ordinary org members. Each needs a
+// stated reason: adding a route here is the explicit act the check exists to
+// force.
+var deliberateNonAdminRoutes = map[string]string{
+	"GET /api/v1/orgs/{orgID}/users/{userID}/avatar": "org-member by design (#64): avatars are shown org-wide and the object key is derived server-side",
+}
+
+// middlewareNames renders a route's resolved middleware chain as the fully
+// qualified names of the functions that produced each closure — e.g.
+// "…/api.NewRouter.func3.2.1.orgAdmin404Guard.RequireOrgAdmin404.2". That is
+// enough to tell which guard a route actually carries, as opposed to which
+// one its accounting row claims.
+func middlewareNames(mws []func(http.Handler) http.Handler) []string {
+	names := make([]string, 0, len(mws))
+	for _, mw := range mws {
+		names = append(names, runtime.FuncForPC(reflect.ValueOf(mw).Pointer()).Name())
+	}
+	return names
+}
+
+// carries reports whether the chain contains the named guard constructor.
+// The dots matter: without the trailing one, "RequireOrgAdmin" would also
+// match every "RequireOrgAdmin404" frame and the two classes would be
+// indistinguishable.
+func carries(chain []string, guard string) bool {
+	for _, name := range chain {
+		if strings.Contains(name, "."+guard+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// classOf returns the leading class token of an accounting value, so
+// "org-admin-404: People directory" classifies as "org-admin-404".
+func classOf(accounting string) string {
+	if i := strings.IndexByte(accounting, ':'); i >= 0 {
+		return strings.TrimSpace(accounting[:i])
+	}
+	return strings.TrimSpace(accounting)
+}
+
 // TestReadPathSweep_EveryRouteAccounted walks the fully wired router and
 // fails on any route missing from the accounting table above, and on any
 // table row whose route no longer exists.
@@ -299,4 +375,114 @@ func TestReadPathSweep_EveryRouteAccounted(t *testing.T) {
 		t.Errorf("accounting rows with no matching route (stale table):\n%s", strings.Join(stale, "\n"))
 	}
 	require.GreaterOrEqual(t, len(found), 90, "route walk looks implausibly small — enumeration broken?")
+}
+
+// TestReadPathSweep_GuardClassMatchesMiddleware is the half of the sweep that
+// a written table cannot do on its own.
+//
+// The table above records what each route's guard is *claimed* to be. This
+// walks the router and reads what each route's middleware chain *is*, then
+// fails when the two disagree. Three ways to fail:
+//
+//  1. A classification outside the documented vocabulary — you have to pick a
+//     real class, not type a placeholder.
+//  2. A route inside an admin-guarded subtree that does not actually carry
+//     RequireOrgAdmin404, and is not on the deliberate-exception list. This is
+//     the #64 hazard: per-route guards mean a new route inherits nothing.
+//  3. A route whose chain carries an admin guard while its row claims a
+//     weaker class, or vice versa — the claim and the code drifting apart.
+//
+// Deliberate-breakage check performed while writing this: adding
+// `r.Get("/{userID}/sessions", cfg.AdminHandler.ListPeople)` to the /users
+// group in mountAdminSurface without `.With(admin404)`, plus an
+// "org-admin-404" row for it, passes the accounting test above and fails here
+// with "claims org-admin-404 but its middleware chain does not include
+// RequireOrgAdmin404". Both changes reverted.
+func TestReadPathSweep_GuardClassMatchesMiddleware(t *testing.T) {
+	ts := newTestServer(t)
+
+	chains := map[string][]string{}
+	walker := func(method string, route string, _ http.Handler, mws ...func(http.Handler) http.Handler) error {
+		route = strings.ReplaceAll(route, "/*/", "/")
+		route = strings.TrimSuffix(route, "*")
+		chains[method+" "+route] = middlewareNames(mws)
+		return nil
+	}
+	mux, ok := ts.Handler.(chi.Routes)
+	require.True(t, ok, "router must expose chi.Routes for enumeration")
+	require.NoError(t, chi.Walk(mux, walker))
+
+	// 1. Every classification is a real class.
+	var badClass []string
+	for route, accounting := range routeAccounting {
+		if class := classOf(accounting); !guardClasses[class] {
+			badClass = append(badClass, route+" -> "+class)
+		}
+	}
+	sort.Strings(badClass)
+	if len(badClass) > 0 {
+		t.Errorf("accounting rows whose guard class is not one of the documented classes:\n%s",
+			strings.Join(badClass, "\n"))
+	}
+
+	// 2 and 3. The claim matches the chain.
+	var unguarded, mismatched []string
+	for route, chain := range chains {
+		accounting, accounted := routeAccounting[route]
+		if !accounted {
+			continue // the sweep above already fails on this
+		}
+		class := classOf(accounting)
+		hasAdmin404 := carries(chain, "RequireOrgAdmin404")
+
+		if class == "org-admin-404" && !hasAdmin404 {
+			mismatched = append(mismatched, route+
+				": claims org-admin-404 but its middleware chain does not include RequireOrgAdmin404")
+		}
+		if hasAdmin404 && class != "org-admin-404" {
+			mismatched = append(mismatched, route+
+				": carries RequireOrgAdmin404 but is classified "+class)
+		}
+		if class == "org-admin" && !carries(chain, "RequireOrgAdmin") {
+			mismatched = append(mismatched, route+
+				": claims org-admin but its middleware chain does not include RequireOrgAdmin")
+		}
+
+		// A route in an administration subtree is org-admin-404 unless it is
+		// a declared exception. Reached through the chain, not the row, so a
+		// wrong row cannot satisfy it.
+		for _, prefix := range adminGuardedPrefixes {
+			if !strings.HasPrefix(strings.SplitN(route, " ", 2)[1], prefix) {
+				continue
+			}
+			if hasAdmin404 {
+				break
+			}
+			if _, deliberate := deliberateNonAdminRoutes[route]; deliberate {
+				break
+			}
+			unguarded = append(unguarded, route)
+			break
+		}
+	}
+	sort.Strings(unguarded)
+	sort.Strings(mismatched)
+
+	if len(unguarded) > 0 {
+		t.Errorf("routes inside an administration subtree that carry no RequireOrgAdmin404.\n"+
+			"Since #64 these guards are applied per-route, so a new route inherits nothing — add\n"+
+			".With(admin404) in mountAdminSurface, or add the route to deliberateNonAdminRoutes\n"+
+			"with the reason it is deliberately member-visible:\n%s", strings.Join(unguarded, "\n"))
+	}
+	if len(mismatched) > 0 {
+		t.Errorf("routes whose accounting row disagrees with their actual middleware chain:\n%s",
+			strings.Join(mismatched, "\n"))
+	}
+
+	// A stale exception is a rule nobody is being held to any more.
+	for route := range deliberateNonAdminRoutes {
+		if _, live := chains[route]; !live {
+			t.Errorf("deliberateNonAdminRoutes names %q, which no longer exists — drop the exception", route)
+		}
+	}
 }

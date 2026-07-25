@@ -63,8 +63,14 @@ components:
           uniqueItems: false
         ticket_ref:
           description: |-
-            TicketRef is an optional operator reference recorded on every audit
-            event of the batch. Free text, no foreign key.
+            TicketRef is the operator reference recorded on every audit event of the
+            batch. Free text, no foreign key. Optional by default; mandatory when
+            the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED.
+
+            This is the one endpoint that carries the reference in the body rather
+            than the ticket_ref query parameter — a shipped contract with clients
+            already sending it. It shares the cap and the requirement rule with the
+            query-parameter transport via ticketref.Policy.
           type: string
       type: object
     admin.bulkChangeRequest:
@@ -736,6 +742,12 @@ components:
           type: string
         due_at:
           type: string
+        kind:
+          description: |-
+            Kind is the org-defined item-type slug. Must name an active type;
+            unknown or archived values are rejected.
+          example: bug
+          type: string
         labels:
           items:
             type: string
@@ -1160,6 +1172,25 @@ components:
             $ref: '#/components/schemas/projects.boardColumnRequest'
           type: array
           uniqueItems: false
+      type: object
+    tickets.ticketRefSuggestion:
+      properties:
+        assigned_to_me:
+          type: boolean
+        number:
+          type: integer
+        ref:
+          type: string
+        space_id:
+          type: string
+        space_key:
+          type: string
+        status:
+          type: string
+        ticket_id:
+          type: string
+        title:
+          type: string
       type: object
     workflow.State:
       properties:
@@ -1850,9 +1881,15 @@ paths:
               oneOf:
               - type: object
               - $ref: '#/components/schemas/admin.bulkApplyRequest'
-                description: Changes and optional ticket_ref
+                description: Changes and the ticket_ref body field (max 200 chars;
+                  may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED). Unlike the
+                  other administrative mutations this endpoint takes the reference
+                  in the body, not the query string — a shipped contract.
                 summary: body
-        description: Changes and optional ticket_ref
+        description: Changes and the ticket_ref body field (max 200 chars; may be
+          mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED). Unlike the other administrative
+          mutations this endpoint takes the reference in the body, not the query string
+          — a shipped contract.
         required: true
       responses:
         "200":
@@ -1866,7 +1903,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error — nothing applied
+          description: Validation error, including a missing or over-long ticket_ref
+            — nothing applied
         "404":
           content:
             application/json:
@@ -1974,6 +2012,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event. Free text,
+          no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set.
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -1999,7 +2043,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error
+          description: Validation error, or a missing/over-long ticket_ref
         "404":
           content:
             application/json:
@@ -2028,9 +2072,21 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event. Free text,
+          no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set.
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "204":
           description: Revoked
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
         "404":
           content:
             application/json:
@@ -2059,6 +2115,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event. Free text,
+          no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set.
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "200":
           content:
@@ -2066,6 +2128,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/invites.createdInviteResponse'
           description: New invite URL
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
         "404":
           content:
             application/json:
@@ -2174,9 +2242,21 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "204":
           description: Removed from org
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
         "404":
           content:
             application/json:
@@ -2210,6 +2290,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit events (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -2229,7 +2315,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error
+          description: Validation error, including a missing or over-long ticket_ref
         "404":
           content:
             application/json:
@@ -2265,9 +2351,21 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "204":
           description: Deactivated; all sessions terminated
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
         "404":
           content:
             application/json:
@@ -2303,9 +2401,21 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "204":
           description: Signed out everywhere
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
         "404":
           content:
             application/json:
@@ -2334,9 +2444,21 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "204":
           description: Reactivated
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
         "404":
           content:
             application/json:
@@ -3294,14 +3416,21 @@ paths:
       description: 'Creates a space in the organization. Type must be ''beacon'',
         ''codex'', or ''vector''. Slugs are unique per module: the same slug may exist
         in different modules of one organization. The owning team defaults to the
-        org default team. Authority: org admin, or a lead of the owning team. The
-        initial visibility is accepted from either authority — unlike later changes,
-        which require set_visibility (org admin only).'
+        org default team. Authority: org admin, or a lead of the owning team. Visibility
+        defaults to ''discoverable''; requesting any other initial visibility additionally
+        requires set_visibility (org admin only), as later changes do. Every create
+        is audited with the visibility it received.'
       parameters:
       - description: Organization ID (UUID)
         in: path
         name: orgID
         required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; required when the deployment mandates it)
+        in: query
+        name: ticket_ref
         schema:
           type: string
       requestBody:
@@ -3328,7 +3457,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error
+          description: Validation error, or a missing/over-long ticket_ref
         "401":
           content:
             application/json:
@@ -3340,7 +3469,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not org admin or lead of the owning team
+          description: Not org admin or lead of the owning team; or set_visibility
+            (org admin) for a non-default initial visibility
         "409":
           content:
             application/json:
@@ -3375,6 +3505,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference (max 200 chars; required when the deployment
+          mandates it)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "204":
           description: Deleted
@@ -3383,7 +3519,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Invalid ID
+          description: Invalid ID, or a missing/over-long ticket_ref
         "401":
           content:
             application/json:
@@ -3472,6 +3608,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; required when the deployment mandates it)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3496,7 +3638,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error
+          description: Validation error, or a missing/over-long ticket_ref
         "401":
           content:
             application/json:
@@ -8314,6 +8456,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -8377,6 +8525,12 @@ paths:
         in: path
         name: teamID
         required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
         schema:
           type: string
       responses:
@@ -8477,6 +8631,12 @@ paths:
         in: path
         name: teamID
         required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
         schema:
           type: string
       requestBody:
@@ -8598,6 +8758,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "204":
           description: Removed
@@ -8652,6 +8818,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -8700,6 +8872,56 @@ paths:
       summary: Add or update team member
       tags:
       - teams
+  /orgs/{orgID}/tickets/suggest:
+    get:
+      description: Typeahead over Beacon tickets the caller can read, for the ticket_ref
+        field. Caller's own assignments first, then most recently updated. Bounded
+        result set. Any org member.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: 'Match text: part of a title, or a reference such as BEA-42 (empty
+          returns the default ordering)'
+        in: query
+        name: q
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/tickets.ticketRefSuggestion'
+                type: array
+          description: Matches
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org not found or caller not a member
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Suggest ticket references
+      tags:
+      - tickets
   /orgs/{orgID}/workflows:
     get:
       description: Returns all workflows belonging to the organization.

@@ -29,6 +29,10 @@ type Handler struct {
 	svc      *tickets.TicketService
 	auditLog audit.Logger
 	notifs   NotificationEnqueuer
+	// suggestions backs the org-scoped ticket_ref typeahead. Held separately
+	// from svc because it reads across spaces, which no space-scoped ticket
+	// route does — see tickets.SuggestionStore.
+	suggestions *tickets.SuggestionService
 }
 
 // NewHandler creates a ticket Handler.
@@ -48,7 +52,18 @@ func (h *Handler) WithNotificationEnqueuer(n NotificationEnqueuer) *Handler {
 	return h
 }
 
-// Routes returns a chi.Router with all ticket endpoints mounted.
+// WithSuggestions attaches the ticket_ref suggestion service, enabling
+// SuggestRefs. Optional in the builder because the route it backs is
+// org-scoped and registered outside Routes().
+func (h *Handler) WithSuggestions(s *tickets.SuggestionService) *Handler {
+	h.suggestions = s
+	return h
+}
+
+// Routes returns a chi.Router with all ticket endpoints mounted. It carries
+// the space-scoped family only — the org-scoped ticket_ref typeahead
+// (SuggestRefs) is registered directly on the org group, because it reads
+// across every space the caller can see rather than one named in the URL.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.List)

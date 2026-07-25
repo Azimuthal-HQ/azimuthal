@@ -34,9 +34,9 @@ import {
   useMembers,
   useItemTypes,
   useBoardConfig,
-  useUpdateProjectItem,
   queryKeys,
   transitionProjectItemStatus,
+  updateProjectItem,
   friendlyErrorMessage,
   type ProjectItem,
   type WorkflowState,
@@ -465,7 +465,6 @@ export function SprintBoardPage() {
   const [pendingLane, setPendingLane] = useState<Record<string, Partial<ProjectItem>>>({});
 
   const queryClient = useQueryClient();
-  const updateItem = useUpdateProjectItem(spaceId, activeItem?.id ?? '');
 
   const effectiveItems = useMemo(() => {
     if (!items) return [];
@@ -595,14 +594,29 @@ export function SprintBoardPage() {
           await transitionProjectItemStatus(spaceId, draggedId, targetStatus);
         }
         if (laneChanged) {
-          // Type is not editable through the item PATCH contract, so a
-          // cross-lane drag under "by type" is a verified no-op: the card
-          // returns to its lane rather than half-applying. Flagged in the PR.
+          // Both lane axes now persist. Type is editable through the item
+          // PATCH contract — the same service path as create validates the
+          // slug, so an unknown or archived type comes back 400 rather than
+          // half-applying.
+          //
+          // The exception is the catch-all "No type" lane, whose laneValue is
+          // null. kind is NOT NULL in the database and must name an active
+          // item type, so no request can clear it: "" is rejected. That drop
+          // stays a no-op and the card snaps back to its own lane, exactly as
+          // the whole "by type" case did before. Assignee is the opposite —
+          // null there is a real value, meaning unassign.
+          //
+          // Both calls pass draggedId explicitly rather than going through
+          // useUpdateProjectItem: that hook binds its item id at render time,
+          // and this handler clears the active item on its first line, so the
+          // mutation would fire at `.../projects/items/` with no id and 404.
+          // That is why the status call beside it has always taken an id.
           if (laneMode === 'assignee') {
-            await updateItem.mutateAsync({ assignee_id: laneValue });
+            await updateProjectItem(spaceId, draggedId, { assignee_id: laneValue });
+          } else if (laneValue !== null) {
+            await updateProjectItem(spaceId, draggedId, { kind: laneValue });
           }
         }
-        queryClient.invalidateQueries({ queryKey: queryKeys.sprintItems(spaceId, sprintId) });
       } catch {
         setPendingStatus((prev) => {
           const next = { ...prev };
@@ -618,9 +632,22 @@ export function SprintBoardPage() {
           delete next[draggedId];
           return next;
         });
+        // Refetch on both paths, not just on success. One drop can carry two
+        // writes, and a status transition that lands before the lane PATCH is
+        // rejected leaves the cache holding neither the old truth nor the new
+        // one — only the server knows which half took. Rolling back locally
+        // cannot express that; re-reading can.
+        queryClient.invalidateQueries({ queryKey: queryKeys.sprintItems(spaceId, sprintId) });
+        // The item lists too, not just this sprint's. `updateProjectItem` is a
+        // bare fetcher with no onSuccess of its own, and `projectItems` keys a
+        // different root, so prefix matching never reaches it. Without this the
+        // backlog and item detail serve the pre-drag type or assignee from cache
+        // for the whole 5-minute staleTime — long enough to look like the drag
+        // silently failed.
+        queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
       }
     },
-    [effectiveItems, columnDefs, columnIdFor, laneMode, spaceId, sprintId, queryClient, updateItem],
+    [effectiveItems, columnDefs, columnIdFor, laneMode, spaceId, sprintId, queryClient],
   );
 
   const isLoading = sprintLoading || (!!sprintId && itemsLoading);

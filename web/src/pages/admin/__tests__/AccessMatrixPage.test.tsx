@@ -14,6 +14,7 @@ const GRANT = { id: 'grant-1', team_id: 'team-child', space_id: 'space-1', role:
 
 const previewMutate = vi.fn();
 const applyMutate = vi.fn();
+const suggestSpy = vi.fn();
 
 vi.mock('../../../lib/api', () => ({
   friendlyErrorMessage: (_err: unknown, fallback: string) => fallback,
@@ -24,6 +25,12 @@ vi.mock('../../../lib/api', () => ({
   }),
   useBulkPreviewGrants: () => ({ mutate: previewMutate, isPending: false }),
   useBulkApplyGrants: () => ({ mutate: applyMutate, isPending: false }),
+  // A1: the ticket_ref input is now TicketRefField, which reaches for the
+  // typeahead. The matrix cares about the value it produces, not the list.
+  useTicketRefSuggestions: (orgId: string, q: string) => {
+    suggestSpy(orgId, q);
+    return { data: [], isLoading: false, error: null };
+  },
 }));
 
 vi.mock('../../../lib/auth', () => ({
@@ -115,5 +122,38 @@ describe('AccessMatrixPage', () => {
 
     expect(screen.getByTestId('matrix-applied-note').textContent).toContain('BEA-42');
     expect(screen.getByTestId('matrix-applied-ticket-ref').textContent).toBe('BEA-42');
+  });
+
+  // A1: the shipped free-text input became TicketRefField. Two things must
+  // survive the swap. (1) `matrix-ticket-ref` still resolves to a real
+  // <input> — web/e2e/admin.spec.ts drives it with Playwright's fill(),
+  // which refuses any other element. (2) A reference the typeahead does not
+  // know — a tracker Azimuthal has never heard of — still reaches the apply
+  // mutation verbatim, unrewritten, with the apply button enabled.
+  it('keeps matrix-ticket-ref a fillable input and sends unmatched free text verbatim', () => {
+    const action = { team_id: 'team-parent', space_id: 'space-1', action: 'create', from_role: '', to_role: 'agent' };
+    previewMutate.mockImplementation((_changes: unknown, opts?: { onSuccess?: (r: unknown) => void }) =>
+      opts?.onSuccess?.({ creates: 1, updates: 0, revokes: 0, noops: 0, actions: [action] }),
+    );
+    applyMutate.mockReset();
+
+    renderPage();
+    fireEvent.click(screen.getByTestId('matrix-cell-team-parent-space-1'));
+    fireEvent.click(screen.getByTestId('matrix-editor-role-agent'));
+    fireEvent.click(screen.getByTestId('matrix-preview-button'));
+
+    const field = screen.getByTestId('matrix-ticket-ref');
+    expect(field.tagName).toBe('INPUT');
+
+    fireEvent.change(field, { target: { value: 'SNOW-CHG0042' } });
+    expect((field as HTMLInputElement).value).toBe('SNOW-CHG0042');
+    expect(field).not.toHaveAttribute('aria-invalid', 'true');
+
+    const applyButton = screen.getByTestId('matrix-apply-button');
+    expect(applyButton).not.toBeDisabled();
+    fireEvent.click(applyButton);
+
+    expect(applyMutate).toHaveBeenCalledTimes(1);
+    expect(applyMutate.mock.calls[0][0].ticketRef).toBe('SNOW-CHG0042');
   });
 });

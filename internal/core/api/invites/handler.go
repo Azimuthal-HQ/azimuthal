@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
@@ -19,9 +20,10 @@ import (
 
 // Handler holds the invite surface dependencies.
 type Handler struct {
-	invites  *invites.Service
-	jwt      *auth.JWTService
-	auditLog audit.Logger
+	invites   *invites.Service
+	jwt       *auth.JWTService
+	auditLog  audit.Logger
+	ticketRef ticketref.Policy
 }
 
 // NewHandler creates an invite Handler. jwt mints the post-acceptance token
@@ -33,6 +35,14 @@ func NewHandler(invitesSvc *invites.Service, jwt *auth.JWTService) *Handler {
 // WithAuditLogger attaches an audit logger.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithTicketRefPolicy attaches the boot-time ticket-reference requirement.
+// The zero value leaves the reference optional, which is the default posture
+// and exactly the behaviour that shipped before the flag existed.
+func (h *Handler) WithTicketRefPolicy(p ticketref.Policy) *Handler {
+	h.ticketRef = p
 	return h
 }
 
@@ -161,40 +171,23 @@ const maxBulkInviteEmails = 200
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id  path      string                        true  "Organization ID"
-// @Param        body    body      invites.createInvitesRequest  true  "Emails, org role, optional team"
+// @Param        org_id      path      string                        true   "Organization ID"
+// @Param        ticket_ref  query     string                        false  "Operator ticket reference recorded on the audit event. Free text, no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set."
+// @Param        body        body      invites.createInvitesRequest  true   "Emails, org role, optional team"
 // @Success      201     {array}   invites.createInviteResult    "Per-email outcomes"
-// @Failure      400     {object}  api.SwaggerErrorResponse      "Validation error"
+// @Failure      400     {object}  api.SwaggerErrorResponse      "Validation error, or a missing/over-long ticket_ref"
 // @Failure      404     {object}  api.SwaggerErrorResponse      "Not found (also returned to non-admins)"
 // @Router       /orgs/{org_id}/invites [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
-	orgID, ok := orgIDFromRequest(w, r)
+	orgID, req, ticketRef, ok := h.createPreconditions(w, r)
 	if !ok {
-		return
-	}
-	claims := auth.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
-		return
-	}
-	var req createInvitesRequest
-	if err := respond.DecodeJSON(r, &req); err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
-		return
-	}
-	if len(req.Emails) == 0 {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "emails must not be empty")
-		return
-	}
-	if len(req.Emails) > maxBulkInviteEmails {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "too many emails in one request")
 		return
 	}
 
 	results := make([]createInviteResult, 0, len(req.Emails))
 	created := 0
 	for _, email := range req.Emails {
-		res, fatal := h.createOneInvite(r, orgID, email, req)
+		res, fatal := h.createOneInvite(r, orgID, email, req, ticketRef)
 		if fatal != "" {
 			// Request-level validation problems (bad org_role, dead team)
 			// apply to the whole request, not one email.
@@ -215,10 +208,48 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, status, results)
 }
 
+// createPreconditions settles everything that must hold before the first
+// invite is issued: the org, the caller, the ticket reference and the shape
+// of the request. Grouped so the ordering is visible in one place — every
+// rejection here happens before any invite exists, which is what makes a 400
+// in required mode mean "nothing went out" rather than "the first few went
+// out unreferenced". Writes the error response itself; ok=false means stop.
+func (h *Handler) createPreconditions(w http.ResponseWriter, r *http.Request) (uuid.UUID, createInvitesRequest, string, bool) {
+	var req createInvitesRequest
+
+	orgID, ok := orgIDFromRequest(w, r)
+	if !ok {
+		return uuid.Nil, req, "", false
+	}
+	if claims := auth.ClaimsFromContext(r.Context()); claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return uuid.Nil, req, "", false
+	}
+	ticketRef, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
+		return uuid.Nil, req, "", false
+	}
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return uuid.Nil, req, "", false
+	}
+	if len(req.Emails) == 0 {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "emails must not be empty")
+		return uuid.Nil, req, "", false
+	}
+	if len(req.Emails) > maxBulkInviteEmails {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "too many emails in one request")
+		return uuid.Nil, req, "", false
+	}
+	return orgID, req, ticketRef, true
+}
+
 // createOneInvite creates one invite and classifies the outcome. A non-empty
 // fatal return is a request-level validation message that fails the whole
 // call.
-func (h *Handler) createOneInvite(r *http.Request, orgID uuid.UUID, email string, req createInvitesRequest) (createInviteResult, string) {
+// One bulk request is one administrative action, so every invite it creates
+// carries the same ticketRef.
+func (h *Handler) createOneInvite(r *http.Request, orgID uuid.UUID, email string, req createInvitesRequest, ticketRef string) (createInviteResult, string) {
 	claims := auth.ClaimsFromContext(r.Context())
 	res := createInviteResult{Email: invites.NormalizeEmail(email)}
 	c, err := h.invites.Create(r.Context(), orgID, email, req.OrgRole, req.TeamID, claims.UserID)
@@ -227,7 +258,7 @@ func (h *Handler) createOneInvite(r *http.Request, orgID uuid.UUID, email string
 		res.Status = "created"
 		cr := createdInviteResponse{inviteResponse: toInviteResponse(c.Invite), InviteURL: c.URL, Delivered: c.Delivered}
 		res.Invite = &cr
-		h.logInviteEvent(r, audit.EventTypeInviteCreated, c.Invite, map[string]string{"email": c.Invite.Email, "org_role": c.Invite.OrgRole})
+		h.logInviteEvent(r, audit.EventTypeInviteCreated, c.Invite, ticketRef, map[string]string{"email": c.Invite.Email, "org_role": c.Invite.OrgRole})
 	case errors.Is(err, invites.ErrInvalidEmail):
 		res.Status = "invalid_email"
 		res.Error = "invalid email address"
@@ -255,9 +286,11 @@ func (h *Handler) createOneInvite(r *http.Request, orgID uuid.UUID, email string
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id     path      string  true  "Organization ID"
-// @Param        invite_id  path      string  true  "Invite ID"
+// @Param        org_id      path      string  true   "Organization ID"
+// @Param        invite_id   path      string  true   "Invite ID"
+// @Param        ticket_ref  query     string  false  "Operator ticket reference recorded on the audit event. Free text, no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set."
 // @Success      204        "Revoked"
+// @Failure      400        {object}  api.SwaggerErrorResponse  "Missing or over-long ticket_ref"
 // @Failure      404        {object}  api.SwaggerErrorResponse  "Not found or no longer active"
 // @Router       /orgs/{org_id}/invites/{invite_id} [delete]
 func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
@@ -268,6 +301,10 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	inviteID, err := uuid.Parse(chi.URLParam(r, "inviteID"))
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid invite_id")
+		return
+	}
+	ticketRef, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
 		return
 	}
 	inv, err := h.invites.GetByID(r.Context(), orgID, inviteID)
@@ -283,7 +320,7 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to revoke invite")
 		return
 	}
-	h.logInviteEvent(r, audit.EventTypeInviteRevoked, inv, map[string]string{"email": inv.Email})
+	h.logInviteEvent(r, audit.EventTypeInviteRevoked, inv, ticketRef, map[string]string{"email": inv.Email})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -294,9 +331,11 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id     path      string  true  "Organization ID"
-// @Param        invite_id  path      string  true  "Invite ID"
+// @Param        org_id      path      string  true   "Organization ID"
+// @Param        invite_id   path      string  true   "Invite ID"
+// @Param        ticket_ref  query     string  false  "Operator ticket reference recorded on the audit event. Free text, no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set."
 // @Success      200        {object}  invites.createdInviteResponse  "New invite URL"
+// @Failure      400        {object}  api.SwaggerErrorResponse       "Missing or over-long ticket_ref"
 // @Failure      404        {object}  api.SwaggerErrorResponse       "Not found or no longer active"
 // @Router       /orgs/{org_id}/invites/{invite_id}/resend [post]
 func (h *Handler) Resend(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +348,10 @@ func (h *Handler) Resend(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid invite_id")
 		return
 	}
+	ticketRef, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
+		return
+	}
 	c, err := h.invites.Resend(r.Context(), orgID, inviteID)
 	if err != nil {
 		if errors.Is(err, invites.ErrNotFound) {
@@ -318,7 +361,7 @@ func (h *Handler) Resend(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to resend invite")
 		return
 	}
-	h.logInviteEvent(r, audit.EventTypeInviteResent, c.Invite, map[string]string{"email": c.Invite.Email})
+	h.logInviteEvent(r, audit.EventTypeInviteResent, c.Invite, ticketRef, map[string]string{"email": c.Invite.Email})
 	respond.JSON(w, http.StatusOK, createdInviteResponse{
 		inviteResponse: toInviteResponse(c.Invite),
 		InviteURL:      c.URL,
@@ -466,8 +509,11 @@ func (h *Handler) mapAcceptError(w http.ResponseWriter, r *http.Request, err err
 	}
 }
 
-// logInviteEvent writes one invite lifecycle audit event.
-func (h *Handler) logInviteEvent(r *http.Request, event audit.EventType, inv invites.Invite, meta map[string]string) {
+// logInviteEvent writes one invite lifecycle audit event. ticketRef is the
+// operator-supplied reference for the administrative action; it is empty
+// unless the caller sent one, and rides its own column rather than the
+// metadata payload.
+func (h *Handler) logInviteEvent(r *http.Request, event audit.EventType, inv invites.Invite, ticketRef string, meta map[string]string) {
 	actor := ""
 	if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
 		actor = claims.UserID.String()
@@ -479,6 +525,7 @@ func (h *Handler) logInviteEvent(r *http.Request, event audit.EventType, inv inv
 		ResourceType: "invite",
 		ResourceID:   inv.ID.String(),
 		Metadata:     meta,
+		TicketRef:    ticketRef,
 	})
 }
 

@@ -55,3 +55,37 @@ LIMIT $3;
 
 -- name: GetTicketMaxNumber :one
 SELECT COALESCE(MAX(number), 0)::bigint AS max_number FROM tickets WHERE space_id = $1;
+
+-- name: SuggestTicketRefs :many
+-- Backs the ticket_ref typeahead. The readable_space_ids filter IS the access
+-- control: for an org admin the resolver fills that set with every live space
+-- in the org, for everyone else with exactly their granted set, so one ANY()
+-- serves both personas and no ticket outside the caller's read access can
+-- appear. The caller never runs this with an empty set — the service
+-- short-circuits first.
+--
+-- Matching is ILIKE, deliberately not the search_vector GIN index: a typeahead
+-- needs substring behaviour on partial words ("BEA-4", "logi") and tsvector
+-- matching gives neither prefix nor infix. Tickets have no key column of their
+-- own, so the human-readable reference is composed here from the space key and
+-- the ticket number; matching that composed string is what lets an operator
+-- type "BEA-42", "bea-42" or just "42".
+--
+-- COALESCE around the assignment test is load-bearing twice over. In the
+-- select list it keeps assigned_to_me a plain bool rather than a tri-state,
+-- and in ORDER BY it makes an unassigned ticket (assignee_id NULL, so the
+-- comparison is NULL) sort *after* the caller's own — DESC defaults to
+-- NULLS FIRST, which would otherwise float every unassigned ticket to the top.
+SELECT t.id, t.number, t.title, t.space_id, t.status,
+       s.key AS space_key,
+       COALESCE(t.assignee_id = sqlc.arg(caller_id)::uuid, false)::boolean AS assigned_to_me
+FROM tickets t
+JOIN spaces s ON s.id = t.space_id AND s.deleted_at IS NULL
+WHERE t.deleted_at IS NULL
+  AND t.space_id = ANY(sqlc.arg(readable_space_ids)::uuid[])
+  AND (sqlc.arg(query)::text = ''
+       OR t.title ILIKE '%' || sqlc.arg(query)::text || '%'
+       OR (s.key || '-' || t.number::text) ILIKE '%' || sqlc.arg(query)::text || '%')
+ORDER BY COALESCE(t.assignee_id = sqlc.arg(caller_id)::uuid, false) DESC,
+         t.updated_at DESC
+LIMIT 20;

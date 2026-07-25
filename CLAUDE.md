@@ -53,6 +53,13 @@ roadmap. No agent-name file suffixes. (On git operations, see the flagged confli
 - Org admin is a middleware bypass, never grant rows.
 - Shares widen, never narrow (ADR-0008).
 - The audit log is append-only. Never UPDATE, never DELETE.
+- **Every route carries an explicit guard classification, and the classification is checked
+  against the router, not taken on trust.** Since #64 moved the administration surface from
+  group-level `r.Use(admin404)` to per-route `r.With(admin404)`, a route added to a guarded
+  group inherits *nothing* — a forgotten guard leaves it open to any org member.
+  `TestReadPathSweep_GuardClassMatchesMiddleware` reads each route's real middleware chain and
+  fails when it disagrees with the accounting row. A route that is deliberately member-visible
+  inside an admin subtree goes in `deliberateNonAdminRoutes` **with its reason**.
 
 **Product.** No pricing, hosting-tier, or paywall language anywhere in code or documentation.
 Azimuthal is Apache 2.0, fully featured for every user, with no enterprise tier — permanently.
@@ -100,6 +107,28 @@ because it reads as coverage.
 **Regression tests.** Every fixed defect gets a test that fails before the fix and passes after.
 State that you verified both directions. Name it for the defect, not the function.
 
+**No dark harness.** Handlers take optional collaborators through `With*` builders, and a
+handler missing one does not fail — it reports the feature disabled and answers 404. In
+production that is correct. In the test harness it is silent: every test against those routes
+gets a tidy 404, every assertion still passes, and the endpoints read as covered while never
+having been reached. That is exactly how the board-config endpoints (W4) sat at zero real
+coverage — `newTestServerOn` never called `WithBoardConfig`, and nothing announced it.
+
+So the rule is structural, not a convention to remember: **`newTestServerOn` must pass every
+`With*` that `cmd/server/main.go` passes.** `TestHarness_NoDarkDependencies` walks the built
+router config and fails by name on any nil collaborator; `TestHarness_AuditLoggersAreLive`
+catches the softer version, a handler left on the discarding no-op logger. A dependency that is
+legitimately absent goes in `intentionallyAbsent` **with its reason**.
+
+**A capability gate needs a subject who is past the write floor and short of the capability.**
+A "viewer is refused" test proves nothing about a handler's own `access.Can` check: viewers are
+already refused upstream by `RequireWriteFloor(CapCreateItems)`, so the test passes with the
+in-handler gate deleted. It asserts the middleware, not the gate. Use a **contributor** — or
+whatever role clears the floor but lacks the capability under test — and mutation-test it both
+ways where practical: gate intact → 403, gate removed → the test fails. If a capability is
+org-level (`set_visibility` holds no space role at all), the persona that must be refused is a
+**team lead**, not a viewer.
+
 **Test debt is not permitted.** No PR merges with "tests to follow." There is no follow-up PR.
 
 Coverage floor is **80%**, rising to 85% at the end of P5. Coverage is a floor, not a goal — §2.5
@@ -127,7 +156,42 @@ make test-db-down
 All three of `make test-live`, `make verify-api` and `make e2e-test` exit 0, or the PR is
 **DRAFT** with a per-item reason.
 
-### Two environment facts that have cost time in every phase
+### Where the working copy lives, and where you should work
+
+The maintainer's working copy is **inside OneDrive**, at
+`C:\Users\Kitsune\OneDrive\Documents\Claude\azimuthal`. That is sanctioned and current — if a
+prompt or an older note tells you the checkout is, or must be moved, outside OneDrive, that note
+is obsolete and this line supersedes it.
+
+Two consequences worth knowing rather than rediscovering:
+
+- **The primary checkout is sometimes shared by concurrent sessions.** Uncommitted work in it is
+  not safe from another session's housekeeping — a `git stash` in a sibling session has silently
+  reverted edits here before, and it read exactly like a OneDrive sync rollback. If work
+  disappears, check `git stash list` before blaming sync. Commit in small batches; see §4.
+- **Work in a sibling worktree**, not in the primary checkout: `git worktree add ../azimuthal-<topic>`
+  beside it, or a harness container. Run `git worktree prune` at the start and end of a session.
+  Pruning can fail with `Permission denied` on a stale worktree directory under OneDrive; that
+  error is noise, not a failure of your change.
+
+### Phases that carry E2E work need Docker Compose and Playwright
+
+`make e2e-test` is not a pure-Go gate. It needs a working Docker Compose (it calls `make test-db-up`
+for postgres on `:5433` and MinIO on `:9001`), an `npm ci && npm run build` of the frontend, a
+built server binary, and Playwright's browsers already installed. **Verify all of that before
+starting a phase that has to run E2E** — discovering it at the gate is how a phase loses an evening.
+
+The port is env-gated. `web/playwright.config.ts` reads **`E2E_PORT`** (default `8082`) in three
+places — `use.baseURL`, the `webServer` `/health` readiness probe, and the spawned server's
+`APP_PORT` — so overriding that one variable moves the whole harness when `8082` is contended.
+Note that `.env.test` sets `APP_PORT=8081`; `webServer.env` overrides it, so the E2E server binds
+the `E2E_PORT` value rather than the `.env.test` one.
+
+One trap: `webServer.env` forwards an **explicit allow-list** of variables to the spawned server.
+A new `AZIMUTHAL_*` setting will not reach an E2E server unless it is added to that list, and the
+symptom is a feature behaving as though its flag were never set.
+
+### Two more environment facts that have cost time in every phase
 
 **`-race` cannot run locally on Windows without cgo and a C compiler.** The race detector requires
 `CGO_ENABLED=1` and GCC. `make test`, `make test-live` and `make test-live-verbose` all pass

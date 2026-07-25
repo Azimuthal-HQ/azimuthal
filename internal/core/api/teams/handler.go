@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
@@ -24,6 +25,16 @@ import (
 type Handler struct {
 	svc      *teams.Service
 	auditLog audit.Logger
+
+	// ticketRef is the boot-time ticket-reference policy. Every mutating
+	// handler below resolves the reference *before* it performs its write:
+	// under a required policy a missing reference has to mean nothing
+	// happened, and a 400 raised after the service call would leave an
+	// unreferenced change committed — precisely the outcome the requirement
+	// exists to prevent. The zero value is the permissive default, so a
+	// handler that is never given a policy behaves as it did before the flag
+	// existed.
+	ticketRef ticketref.Policy
 }
 
 // NewHandler creates a team Handler.
@@ -34,6 +45,13 @@ func NewHandler(svc *teams.Service) *Handler {
 // WithAuditLogger attaches an audit logger to the handler.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithTicketRefPolicy sets the ticket-reference requirement applied to team
+// mutations.
+func (h *Handler) WithTicketRefPolicy(p ticketref.Policy) *Handler {
+	h.ticketRef = p
 	return h
 }
 
@@ -140,18 +158,23 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        orgID  path      string                       true  "Organization ID (UUID)"
-// @Param        body   body      api.SwaggerCreateTeamRequest true  "Team details"
-// @Success      201    {object}  map[string]interface{}       "Created team"
-// @Failure      400    {object}  api.SwaggerErrorResponse     "Validation error"
-// @Failure      401    {object}  api.SwaggerErrorResponse     "Not authenticated"
-// @Failure      403    {object}  api.SwaggerErrorResponse     "Org admin required"
-// @Failure      409    {object}  api.SwaggerErrorResponse     "Slug already in use"
+// @Param        orgID       path      string                       true   "Organization ID (UUID)"
+// @Param        ticket_ref  query     string                       false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
+// @Param        body        body      api.SwaggerCreateTeamRequest true   "Team details"
+// @Success      201         {object}  map[string]interface{}       "Created team"
+// @Failure      400         {object}  api.SwaggerErrorResponse     "Validation error"
+// @Failure      401         {object}  api.SwaggerErrorResponse     "Not authenticated"
+// @Failure      403         {object}  api.SwaggerErrorResponse     "Org admin required"
+// @Failure      409         {object}  api.SwaggerErrorResponse     "Slug already in use"
 // @Router       /orgs/{orgID}/teams [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	ref, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
 		return
 	}
 	var req createTeamRequest
@@ -173,7 +196,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		mapTeamError(w, r, err)
 		return
 	}
-	h.logEvent(r, audit.EventTypeTeamCreated, "team", team.ID, map[string]string{"slug": team.Slug, "name": team.Name})
+	h.logEvent(r, audit.EventTypeTeamCreated, "team", team.ID, ref, map[string]string{"slug": team.Slug, "name": team.Name})
 	respond.JSON(w, http.StatusCreated, team)
 }
 
@@ -206,17 +229,25 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        orgID   path      string                      true  "Organization ID (UUID)"
-// @Param        teamID  path      string                      true  "Team ID (UUID)"
-// @Param        body    body      api.SwaggerPatchTeamRequest true  "Fields to update"
-// @Success      200     {object}  map[string]interface{}      "Updated team"
-// @Failure      400     {object}  api.SwaggerErrorResponse    "Validation error (cycle, depth, default team)"
-// @Failure      401     {object}  api.SwaggerErrorResponse    "Not authenticated"
-// @Failure      403     {object}  api.SwaggerErrorResponse    "Org admin required"
-// @Failure      404     {object}  api.SwaggerErrorResponse    "Not found"
+// @Param        orgID       path      string                      true   "Organization ID (UUID)"
+// @Param        teamID      path      string                      true   "Team ID (UUID)"
+// @Param        ticket_ref  query     string                      false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
+// @Param        body        body      api.SwaggerPatchTeamRequest true   "Fields to update"
+// @Success      200         {object}  map[string]interface{}      "Updated team"
+// @Failure      400         {object}  api.SwaggerErrorResponse    "Validation error (cycle, depth, default team)"
+// @Failure      401         {object}  api.SwaggerErrorResponse    "Not authenticated"
+// @Failure      403         {object}  api.SwaggerErrorResponse    "Org admin required"
+// @Failure      404         {object}  api.SwaggerErrorResponse    "Not found"
 // @Router       /orgs/{orgID}/teams/{teamID} [patch]
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	team, ok := h.teamInOrg(w, r)
+	if !ok {
+		return
+	}
+	// One PATCH can perform two writes and emit two events — team.updated
+	// from the rename, team.reparented from the move. The reference is
+	// resolved once, ahead of both, and both events carry it.
+	ref, ok := h.ticketRef.Resolve(w, r)
 	if !ok {
 		return
 	}
@@ -226,7 +257,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	current, ok := h.applyRename(w, r, team, req)
+	current, ok := h.applyRename(w, r, team, req, ref)
 	if !ok {
 		return
 	}
@@ -247,7 +278,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		if newParent != nil {
 			meta["new_parent_id"] = newParent.String()
 		}
-		h.logEvent(r, audit.EventTypeTeamReparented, "team", current.ID, meta)
+		h.logEvent(r, audit.EventTypeTeamReparented, "team", current.ID, ref, meta)
 	}
 
 	respond.JSON(w, http.StatusOK, current)
@@ -255,8 +286,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 
 // applyRename applies the name/description part of a team PATCH (absent
 // fields keep their current values) and writes the team.updated audit
-// event. Returns ok=false after writing an error response.
-func (h *Handler) applyRename(w http.ResponseWriter, r *http.Request, current teams.Team, req patchTeamRequest) (teams.Team, bool) {
+// event. ticketRef is the reference Update already resolved. Returns
+// ok=false after writing an error response.
+func (h *Handler) applyRename(w http.ResponseWriter, r *http.Request, current teams.Team, req patchTeamRequest, ticketRef string) (teams.Team, bool) {
 	if req.Name == nil && req.Description == nil {
 		return current, true
 	}
@@ -273,7 +305,7 @@ func (h *Handler) applyRename(w http.ResponseWriter, r *http.Request, current te
 		mapTeamError(w, r, err)
 		return current, false
 	}
-	h.logEvent(r, audit.EventTypeTeamUpdated, "team", updated.ID, map[string]string{"name": name})
+	h.logEvent(r, audit.EventTypeTeamUpdated, "team", updated.ID, ticketRef, map[string]string{"name": name})
 	return updated, true
 }
 
@@ -300,8 +332,9 @@ func parseReparentTarget(raw json.RawMessage) (*uuid.UUID, error) {
 // @Description  Soft-deletes a team (org admin only). Rejected while the team has children or owns spaces. Members move to the org default team.
 // @Tags         teams
 // @Security     BearerAuth
-// @Param        orgID   path  string  true  "Organization ID (UUID)"
-// @Param        teamID  path  string  true  "Team ID (UUID)"
+// @Param        orgID       path   string  true   "Organization ID (UUID)"
+// @Param        teamID      path   string  true   "Team ID (UUID)"
+// @Param        ticket_ref  query  string  false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
 // @Success      204  "Deleted"
 // @Failure      400  {object}  api.SwaggerErrorResponse  "Default team"
 // @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
@@ -314,11 +347,15 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ref, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
+		return
+	}
 	if err := h.svc.Delete(r.Context(), team.OrgID, team.ID); err != nil {
 		mapTeamError(w, r, err)
 		return
 	}
-	h.logEvent(r, audit.EventTypeTeamDeleted, "team", team.ID, map[string]string{"slug": team.Slug})
+	h.logEvent(r, audit.EventTypeTeamDeleted, "team", team.ID, ref, map[string]string{"slug": team.Slug})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -357,18 +394,25 @@ func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        orgID   path      string                        true  "Organization ID (UUID)"
-// @Param        teamID  path      string                        true  "Team ID (UUID)"
-// @Param        userID  path      string                        true  "User ID (UUID)"
-// @Param        body    body      api.SwaggerPutMemberRequest   true  "Membership"
-// @Success      200     {object}  map[string]interface{}        "Membership"
-// @Failure      400     {object}  api.SwaggerErrorResponse      "Not an org member / bad role"
-// @Failure      401     {object}  api.SwaggerErrorResponse      "Not authenticated"
-// @Failure      403     {object}  api.SwaggerErrorResponse      "Org admin required"
-// @Failure      404     {object}  api.SwaggerErrorResponse      "Team not found"
+// @Param        orgID       path      string                        true   "Organization ID (UUID)"
+// @Param        teamID      path      string                        true   "Team ID (UUID)"
+// @Param        userID      path      string                        true   "User ID (UUID)"
+// @Param        ticket_ref  query     string                        false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
+// @Param        body        body      api.SwaggerPutMemberRequest   true   "Membership"
+// @Success      200         {object}  map[string]interface{}        "Membership"
+// @Failure      400         {object}  api.SwaggerErrorResponse      "Not an org member / bad role"
+// @Failure      401         {object}  api.SwaggerErrorResponse      "Not authenticated"
+// @Failure      403         {object}  api.SwaggerErrorResponse      "Org admin required"
+// @Failure      404         {object}  api.SwaggerErrorResponse      "Team not found"
 // @Router       /orgs/{orgID}/teams/{teamID}/members/{userID} [put]
 func (h *Handler) PutMember(w http.ResponseWriter, r *http.Request) {
 	team, ok := h.teamInOrg(w, r)
+	if !ok {
+		return
+	}
+	// Resolved ahead of AddMember and SetPrimary alike — PutMember can write
+	// twice, and neither write may outrun the reference check.
+	ref, ok := h.ticketRef.Resolve(w, r)
 	if !ok {
 		return
 	}
@@ -394,7 +438,7 @@ func (h *Handler) PutMember(w http.ResponseWriter, r *http.Request) {
 		}
 		member.IsPrimary = true
 	}
-	h.logEvent(r, audit.EventTypeTeamMemberAdded, "team_member", team.ID,
+	h.logEvent(r, audit.EventTypeTeamMemberAdded, "team_member", team.ID, ref,
 		map[string]string{"user_id": userID.String(), "role": member.Role})
 	respond.JSON(w, http.StatusOK, member)
 }
@@ -405,9 +449,10 @@ func (h *Handler) PutMember(w http.ResponseWriter, r *http.Request) {
 // @Description  Removes the user from the team. A user removed from their last team is re-added to the org default team — never teamless. Org admin only.
 // @Tags         teams
 // @Security     BearerAuth
-// @Param        orgID   path  string  true  "Organization ID (UUID)"
-// @Param        teamID  path  string  true  "Team ID (UUID)"
-// @Param        userID  path  string  true  "User ID (UUID)"
+// @Param        orgID       path   string  true   "Organization ID (UUID)"
+// @Param        teamID      path   string  true   "Team ID (UUID)"
+// @Param        userID      path   string  true   "User ID (UUID)"
+// @Param        ticket_ref  query  string  false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
 // @Success      204  "Removed"
 // @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
 // @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
@@ -416,6 +461,10 @@ func (h *Handler) PutMember(w http.ResponseWriter, r *http.Request) {
 // @Router       /orgs/{orgID}/teams/{teamID}/members/{userID} [delete]
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	team, ok := h.teamInOrg(w, r)
+	if !ok {
+		return
+	}
+	ref, ok := h.ticketRef.Resolve(w, r)
 	if !ok {
 		return
 	}
@@ -428,7 +477,7 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		mapTeamError(w, r, err)
 		return
 	}
-	h.logEvent(r, audit.EventTypeTeamMemberRemoved, "team_member", team.ID,
+	h.logEvent(r, audit.EventTypeTeamMemberRemoved, "team_member", team.ID, ref,
 		map[string]string{"user_id": userID.String()})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -456,8 +505,10 @@ func (h *Handler) teamInOrg(w http.ResponseWriter, r *http.Request) (teams.Team,
 }
 
 // logEvent writes an audit event for a team mutation; failures never
-// interrupt the request (audit.Logger contract).
-func (h *Handler) logEvent(r *http.Request, t audit.EventType, kind string, entityID uuid.UUID, meta map[string]string) {
+// interrupt the request (audit.Logger contract). ticketRef is the reference
+// the caller resolved before its write — empty when none was supplied and
+// the policy did not demand one, which the logger stores as SQL NULL.
+func (h *Handler) logEvent(r *http.Request, t audit.EventType, kind string, entityID uuid.UUID, ticketRef string, meta map[string]string) {
 	claims := auth.ClaimsFromContext(r.Context())
 	actor := ""
 	if claims != nil {
@@ -467,5 +518,6 @@ func (h *Handler) logEvent(r *http.Request, t audit.EventType, kind string, enti
 	_ = h.auditLog.Log(r.Context(), audit.Event{
 		Type: t, ActorID: actor, OrgID: orgID,
 		ResourceType: kind, ResourceID: entityID.String(), Metadata: meta,
+		TicketRef: ticketRef,
 	})
 }

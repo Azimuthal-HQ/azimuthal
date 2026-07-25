@@ -71,6 +71,7 @@ import (
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
@@ -224,6 +225,11 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 
 	ticketAdapter := adapters.NewTicketAdapter(queries)
 	ticketSvc := tickets.NewTicketService(ticketAdapter, contentTx)
+	// The ticket_ref typeahead reads across every space the caller can see,
+	// which no space-scoped ticket read does. It hangs off its own store seam
+	// rather than widening TicketRepository, whose every method is scoped to
+	// a single space id.
+	ticketSuggestSvc := tickets.NewSuggestionService(ticketAdapter)
 
 	itemAdapter := adapters.NewItemAdapter(queries)
 	sprintAdapter := adapters.NewSprintAdapter(pool)
@@ -312,24 +318,31 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	bulkSvc := access.NewBulkService(adapters.NewBulkGrantAdapter(pool))
 	auditReader := audit.NewReader(adapters.NewAuditReaderAdapter(queries))
 
+	// Read once, at boot, and handed to every handler that accepts a ticket
+	// reference. Deliberately not a runtime settings row: turning this on
+	// changes what every administrative action requires, and a restart is the
+	// honest cost of that. One value shared by all four handlers is also what
+	// stops the surfaces disagreeing about whether a reference is mandatory.
+	ticketRefPolicy := ticketref.Policy{Required: cfg.TicketRefRequired}
+
 	return api.NewRouter(api.RouterConfig{
 		Authenticator: authenticator,
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner, userAdapter).
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
-		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
+		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc),
-		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog),
+		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		NotificationHandler: notificationsapi.NewHandler(queries),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
-		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
+		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
 		ShareHandler:        shareHandler,
 		AttachmentHandler:   attachmentHandler,
-		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
-		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
+		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
+		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		AvatarHandler:       avatarHandler,
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,

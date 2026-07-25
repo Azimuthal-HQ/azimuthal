@@ -71,16 +71,20 @@ const (
 	CapManageShares      Capability = "manage_shares"
 	CapManageWorkflow    Capability = "manage_workflow"
 
-	// CapSetVisibility governs changing a space's visibility. Deliberately
-	// absent from minRoleFor: no space role holds it — not even space_admin —
-	// because visibility changes what the whole organisation sees, an
-	// org-level concern. Only the org-admin bypass grants it.
+	// CapSetVisibility governs a space's visibility — both changing it later
+	// and choosing a non-default value at creation. Deliberately absent from
+	// minRoleFor: no space role holds it — not even space_admin — because
+	// visibility changes what the whole organisation sees, an org-level
+	// concern. Only the org-admin bypass grants it.
 	//
-	// Known carve-out: space CREATION (org admin or a lead of the owning
-	// team) still accepts an initial visibility without this capability and
-	// without a visibility_changed audit event — pre-existing behaviour this
-	// capability did not change. Whether creation should also require
-	// set_visibility for a non-default value is an open maintainer decision.
+	// At creation the check is CanOrgWide, not Can: there is no space yet to
+	// check against, and Can answers the org-admin bypass out of the set of
+	// spaces that already exist. Creation authority (org admin, or a lead of
+	// the owning team) still governs whether a space may be created at all;
+	// this capability governs only the initial visibility. A create that omits
+	// visibility, or asks for the default, is not a visibility decision and
+	// needs nothing — which is what keeps team-creation's auto-created spaces
+	// working for leads.
 	CapSetVisibility Capability = "set_visibility"
 )
 

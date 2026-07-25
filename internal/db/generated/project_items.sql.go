@@ -459,7 +459,7 @@ func (q *Queries) SoftDeleteProjectItem(ctx context.Context, id uuid.UUID) error
 const updateProjectItem = `-- name: UpdateProjectItem :one
 UPDATE project_items
 SET title = $2, description = $3, status = $4, priority = $5,
-    assignee_id = $6, labels = $7, due_at = $8, rank = $9,
+    assignee_id = $6, labels = $7, due_at = $8, rank = $9, kind = $10,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key
@@ -475,8 +475,16 @@ type UpdateProjectItemParams struct {
 	Labels      []string           `json:"labels"`
 	DueAt       pgtype.Timestamptz `json:"due_at"`
 	Rank        string             `json:"rank"`
+	Kind        string             `json:"kind"`
 }
 
+// kind is appended last so every existing parameter position stays stable.
+// It is written on every update, not only when the client asked to change it:
+// the handler's applyItemPatch leaves the stored slug in place when the PATCH
+// body omits "kind", so an omitting request rewrites the same value. Type
+// integrity is the item-types service's job and not this statement's —
+// migration 032 dropped the CHECK constraint (D49), so whatever reaches here
+// is stored verbatim.
 func (q *Queries) UpdateProjectItem(ctx context.Context, arg UpdateProjectItemParams) (ProjectItem, error) {
 	row := q.db.QueryRow(ctx, updateProjectItem,
 		arg.ID,
@@ -488,6 +496,7 @@ func (q *Queries) UpdateProjectItem(ctx context.Context, arg UpdateProjectItemPa
 		arg.Labels,
 		arg.DueAt,
 		arg.Rank,
+		arg.Kind,
 	)
 	var i ProjectItem
 	err := row.Scan(

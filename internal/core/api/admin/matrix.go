@@ -3,6 +3,7 @@ package admin
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -101,8 +102,14 @@ type bulkPreviewRequest struct {
 // bulkApplyRequest applies a set of changes atomically.
 type bulkApplyRequest struct {
 	Changes []bulkChangeRequest `json:"changes"`
-	// TicketRef is an optional operator reference recorded on every audit
-	// event of the batch. Free text, no foreign key.
+	// TicketRef is the operator reference recorded on every audit event of the
+	// batch. Free text, no foreign key. Optional by default; mandatory when
+	// the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED.
+	//
+	// This is the one endpoint that carries the reference in the body rather
+	// than the ticket_ref query parameter — a shipped contract with clients
+	// already sending it. It shares the cap and the requirement rule with the
+	// query-parameter transport via ticketref.Policy.
 	TicketRef string `json:"ticket_ref"`
 }
 
@@ -222,9 +229,6 @@ func (h *Handler) BulkPreview(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, toBulkResultResponse(res, false))
 }
 
-// maxTicketRefLen bounds the operator reference field.
-const maxTicketRefLen = 200
-
 // BulkApply applies a bulk grant change as one transaction with one batch_id.
 //
 // @Summary      Apply bulk grant changes (admin)
@@ -234,9 +238,9 @@ const maxTicketRefLen = 200
 // @Produce      json
 // @Security     BearerAuth
 // @Param        org_id  path      string                  true  "Organization ID"
-// @Param        body    body      admin.bulkApplyRequest  true  "Changes and optional ticket_ref"
+// @Param        body    body      admin.bulkApplyRequest  true  "Changes and the ticket_ref body field (max 200 chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED). Unlike the other administrative mutations this endpoint takes the reference in the body, not the query string — a shipped contract."
 // @Success      200     {object}  admin.bulkResultResponse  "Applied diff with batch_id"
-// @Failure      400     {object}  api.SwaggerErrorResponse  "Validation error — nothing applied"
+// @Failure      400     {object}  api.SwaggerErrorResponse  "Validation error, including a missing or over-long ticket_ref — nothing applied"
 // @Failure      404     {object}  api.SwaggerErrorResponse  "Not found (also returned to non-admins)"
 // @Router       /orgs/{org_id}/grants/bulk-apply [post]
 func (h *Handler) BulkApply(w http.ResponseWriter, r *http.Request) {
@@ -254,8 +258,13 @@ func (h *Handler) BulkApply(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
 		return
 	}
-	if len(req.TicketRef) > maxTicketRefLen {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "ticket_ref is too long")
+	// Same policy as the query-parameter transport, deliberately: this
+	// endpoint keeps its shipped body field, but the cap and the required-mode
+	// rule live in one place so the two transports cannot drift. Trimmed
+	// first, because ticketref.FromRequest trims — otherwise a body of "   "
+	// would satisfy a requirement the query string rejects.
+	req.TicketRef = strings.TrimSpace(req.TicketRef)
+	if !h.ticketRef.Check(w, r, req.TicketRef) {
 		return
 	}
 	changes, ok := decodeBulkChanges(w, r, req.Changes)
