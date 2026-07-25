@@ -96,6 +96,12 @@ const (
 	EventTypeSpaceVisibilityChanged EventType = "space.visibility_changed"
 	// EventTypeSpaceOwnerTeamChanged records a space owner-team change.
 	EventTypeSpaceOwnerTeamChanged EventType = "space.owner_team_changed"
+	// EventTypeSpaceDeleted records a space being soft-deleted. Added
+	// alongside space.created so both ends of a space's life are accounted
+	// for: without it, deleting an entire space left less of a trace than
+	// changing its visibility did, and an operator made to supply a ticket
+	// reference under required mode had it discarded.
+	EventTypeSpaceDeleted EventType = "space.deleted"
 
 	// EventTypeInviteCreated records an org invite being created (P2.5).
 	EventTypeInviteCreated EventType = "invite.created"

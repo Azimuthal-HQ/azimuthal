@@ -101,8 +101,16 @@ export function TicketRefField({
 
   const options: TicketRefSuggestion[] = open && q ? (suggestions.data ?? []) : [];
   const searching = open && q.length > 0 && suggestions.isLoading;
-  const empty = open && q.length > 0 && !searching && options.length === 0;
-  const listVisible = open && q.length > 0;
+  // No "no matches" row, and no panel at all when there is nothing to show.
+  //
+  // Two reasons, and the second is the one that bites. Free text is fully
+  // valid here, so an unmatched value is an ordinary correct answer — telling
+  // the operator "no matches" implies they got something wrong when they did
+  // not. And the panel is absolutely positioned above the surrounding form:
+  // rendering it for a value that will never match covered the Apply button of
+  // the bulk-grants dialog, so the click never landed. An empty dropdown is
+  // both a lie and an obstruction.
+  const listVisible = open && q.length > 0 && (searching || options.length > 0);
 
   const accept = (s: TicketRefSuggestion) => {
     onChange(s.ref);
@@ -231,14 +239,6 @@ export function TicketRefField({
             {searching && (
               <li className="px-[var(--space-3)] py-[var(--space-2)] text-[var(--text-sm)] text-[var(--color-text-muted)]">
                 Searching…
-              </li>
-            )}
-            {empty && (
-              <li
-                data-testid={`${testId}-empty`}
-                className="px-[var(--space-3)] py-[var(--space-2)] text-[var(--text-sm)] text-[var(--color-text-muted)]"
-              >
-                No ticket matches “{q}”. It is recorded exactly as typed.
               </li>
             )}
           </ul>

@@ -85,8 +85,12 @@ describe('TicketRefField — free text is always valid', () => {
     expect(input().checkValidity()).toBe(true);
     expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
 
-    // The empty row says out loud that the typed text is what gets recorded.
-    expect(screen.getByTestId('tref-empty').textContent).toContain('recorded exactly as typed');
+    // An unmatched value shows no dropdown at all — not even a "no matches"
+    // row. Free text is a correct answer here, so saying "no matches" would
+    // imply otherwise, and the panel is absolutely positioned: rendering it
+    // over the surrounding form covered the bulk-grants dialog's Apply button
+    // and swallowed the click.
+    expect(screen.queryByTestId('tref-suggestions')).toBeNull();
   });
 
   // Regression guard against "fixing" this into a picker. Every dismissal
@@ -125,7 +129,7 @@ describe('TicketRefField — free text is always valid', () => {
     // Typing past every match clears the list without touching the value.
     fireEvent.change(input(), { target: { value: 'BEA-9000-external' } });
     expect(screen.queryByTestId('tref-option-BEA-42')).toBeNull();
-    expect(screen.getByTestId('tref-empty')).toBeInTheDocument();
+    expect(screen.queryByTestId('tref-suggestions')).toBeNull();
     expect(input().value).toBe('BEA-9000-external');
 
     // At no point did a suggestion's ref reach the caller.

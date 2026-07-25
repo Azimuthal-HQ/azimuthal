@@ -324,6 +324,48 @@ func TestTicketRefAudit_SpaceCreateAndVisibilityChange(t *testing.T) {
 	ticketRefAuditRequireSole(t, ts, audit.EventTypeSpaceVisibilityChanged, "SPACE-VIS")
 }
 
+// TestTicketRefAudit_SpaceDeleteRecordsTheReference closes the third of the
+// space mutations A3 names. Deleting a whole space used to leave less of a
+// trace than changing its visibility did — the handler wrote no event at all,
+// so under required mode an operator was compelled to supply a reference that
+// was then discarded.
+//
+// The metadata assertions matter as much as the reference. The row is read
+// before the soft delete precisely so the event can say what was destroyed,
+// and someone reading this event later has no other way to find out.
+func TestTicketRefAudit_SpaceDeleteRecordsTheReference(t *testing.T) {
+	ts := newTestServer(t)
+
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces", ts.OrgID),
+		map[string]any{"name": "Doomed Space", "slug": "doomed-space", "type": "vector"}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "create space: %s", r.Body)
+	var space struct {
+		ID uuid.UUID `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(r.Body, &space))
+
+	r = ts.delete(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s?ticket_ref=SPACE-DEL", ts.OrgID, space.ID), true)
+	require.Equal(t, http.StatusNoContent, r.StatusCode, "delete space: %s", r.Body)
+
+	// The delete really happened — otherwise the event below is about nothing.
+	var deletedAt *time.Time
+	require.NoError(t, ts.DB.Pool.QueryRow(t.Context(),
+		`SELECT deleted_at FROM spaces WHERE id = $1`, space.ID).Scan(&deletedAt))
+	require.NotNil(t, deletedAt, "the space must actually be soft-deleted")
+
+	ticketRefAuditRequireSole(t, ts, audit.EventTypeSpaceDeleted, "SPACE-DEL")
+
+	var payload []byte
+	require.NoError(t, ts.DB.Pool.QueryRow(t.Context(),
+		`SELECT payload FROM audit_log WHERE org_id = $1 AND action = $2`,
+		ts.OrgID, string(audit.EventTypeSpaceDeleted)).Scan(&payload))
+	var meta map[string]string
+	require.NoError(t, json.Unmarshal(payload, &meta))
+	require.Equal(t, "Doomed Space", meta["name"], "the event must name what was destroyed")
+	require.Equal(t, "vector", meta["type"])
+	require.Equal(t, access.VisibilityDiscoverable, meta["visibility"])
+}
+
 // TestTicketRefAudit_InviteLifecycle_EveryEmailCarriesTheReference covers
 // create, revoke, and resend. One bulk create is one operator action: three
 // emails produce three invite.created events, and all three carry the single

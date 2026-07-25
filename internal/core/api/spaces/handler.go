@@ -943,17 +943,30 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validated before the delete so a required-mode 400 means nothing
-	// happened. The value is discarded because this handler writes no audit
-	// event at all — a space.deleted event is a real gap, tracked separately;
-	// adding one here is out of this change's scope.
-	if _, ok := h.ticketRef.Resolve(w, r); !ok {
+	// happened.
+	ticketRef, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
 		return
 	}
+
+	// Read before the delete: the event records what was destroyed, and the
+	// row stops being readable through the ordinary path afterwards. A failed
+	// lookup is not fatal — the name is context on the event, not the event.
+	current, lookupErr := h.queries.GetSpaceByID(r.Context(), id)
 
 	if err := h.queries.SoftDeleteSpace(r.Context(), id); err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to delete space")
 		return
 	}
+
+	meta := map[string]string{}
+	if lookupErr == nil {
+		meta["name"] = current.Name
+		meta["type"] = current.Type
+		meta["visibility"] = current.Visibility
+	}
+	h.logSpaceEvent(r, audit.EventTypeSpaceDeleted, id, ticketRef, meta)
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
