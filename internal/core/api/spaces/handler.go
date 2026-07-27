@@ -104,7 +104,7 @@ type Handler struct {
 	teamSvc  *teams.Service
 	grantSvc GrantCreator
 	// spaceTx writes a space and everything inseparable from it atomically.
-	spaceTx spacedomain.CreateTxStore
+	spaceTx  spacedomain.CreateTxStore
 	auditLog audit.Logger
 	// ticketRef is the boot-time ticket-reference requirement. The zero value
 	// is the permissive default, so a handler that was never given a policy

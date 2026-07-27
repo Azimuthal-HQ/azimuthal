@@ -143,30 +143,8 @@ func (s *Service) CreateDef(ctx context.Context, orgID uuid.UUID, name, fieldTyp
 	if slug == "" {
 		return nil, ErrInvalidName
 	}
-	if _, err := s.defs.GetByOrgSlug(ctx, orgID, slug); err == nil {
-		return nil, ErrDuplicate
-	} else if !errors.Is(err, ErrNotFound) {
-		return nil, fmt.Errorf("checking custom field slug: %w", err)
-	}
-
-	// S12. Reaching here means no definition holds this slug — but values do
-	// not need one. Deleting a definition deliberately leaves its values behind
-	// as read-only legacy fields (migration 033, zero silent data loss), and
-	// they are keyed by slug. A new field whose name derives to the same slug
-	// would adopt every one of them: values entered under a different field's
-	// meaning, and possibly a different type, would appear as this field's
-	// values, already populated, already past the type validation they were
-	// never subjected to. Nothing anywhere would report it.
-	//
-	// So the collision is refused, and the refusal names what it collided with.
-	orphans, err := s.values.CountByOrgSlug(ctx, orgID, slug)
-	if err != nil {
-		return nil, fmt.Errorf("checking legacy values for custom field slug: %w", err)
-	}
-	if orphans > 0 {
-		return nil, fmt.Errorf("%w: %d item(s) still hold values under %q — "+
-			"choose a different name, or clear those legacy values first",
-			ErrSlugHeldByLegacyValues, orphans, slug)
+	if err := s.slugIsFree(ctx, orgID, slug); err != nil {
+		return nil, err
 	}
 
 	pos, err := s.defs.NextPosition(ctx, orgID)
@@ -178,6 +156,37 @@ func (s *Service) CreateDef(ctx context.Context, orgID uuid.UUID, name, fieldTyp
 		return nil, fmt.Errorf("creating custom field def: %w", err)
 	}
 	return d, nil
+}
+
+// slugIsFree reports whether a new definition may take this slug, and refuses
+// with a message that names what is in the way.
+//
+// Two things can hold a slug, and only one of them is a definition.
+//
+// S12. Deleting a definition deliberately leaves its values behind as
+// read-only legacy fields (migration 033, zero silent data loss), and they are
+// keyed by slug. A new field whose name derives to the same slug would adopt
+// every one of them: values entered under a different field's meaning, and
+// possibly a different type, appearing as this field's values — already
+// populated, and never subjected to the validation this field's type implies.
+// Nothing anywhere would report it.
+func (s *Service) slugIsFree(ctx context.Context, orgID uuid.UUID, slug string) error {
+	if _, err := s.defs.GetByOrgSlug(ctx, orgID, slug); err == nil {
+		return ErrDuplicate
+	} else if !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("checking custom field slug: %w", err)
+	}
+
+	orphans, err := s.values.CountByOrgSlug(ctx, orgID, slug)
+	if err != nil {
+		return fmt.Errorf("checking legacy values for custom field slug: %w", err)
+	}
+	if orphans > 0 {
+		return fmt.Errorf("%w: %d item(s) still hold values under %q — "+
+			"choose a different name, or clear those legacy values first",
+			ErrSlugHeldByLegacyValues, orphans, slug)
+	}
+	return nil
 }
 
 // UpdateDef renames a field and/or replaces its select options. The slug and

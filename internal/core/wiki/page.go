@@ -211,7 +211,11 @@ func (s *Service) UpdatePage(ctx context.Context, input UpdatePageInput) (genera
 	if strings.TrimSpace(input.Title) == "" {
 		return generated.Page{}, ErrEmptyTitle
 	}
-	return s.tx.UpdatePageContentTx(ctx, input)
+	page, err := s.tx.UpdatePageContentTx(ctx, input)
+	if err != nil {
+		return generated.Page{}, fmt.Errorf("updating page: %w", err)
+	}
+	return page, nil
 }
 
 // MovePageInput holds parameters for moving a page: within its space

@@ -67,10 +67,11 @@ func (a *SpaceCreateAdapter) CreateSpaceTx(ctx context.Context, in spaces.Create
 
 	space, err := qtx.CreateSpace(ctx, in.Space)
 	if err != nil {
-		// Unwrapped: the caller reads the constraint name off this to tell a
-		// key collision from a slug collision, and wrapping is fine for
-		// errors.As but the message would read as an internal failure.
-		return generated.Space{}, err
+		// Wrapped with %w, which matters: the caller reads the constraint name
+		// off this with errors.As to tell a key collision (retried with a
+		// suffix) from a slug collision (the client's conflict). It never shows
+		// the message — both arms answer with their own text.
+		return generated.Space{}, fmt.Errorf("create space: %w", err)
 	}
 
 	if _, err := qtx.AddSpaceMember(ctx, generated.AddSpaceMemberParams{
