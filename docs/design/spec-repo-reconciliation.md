@@ -756,6 +756,55 @@ already contain content that the narrow reading would destroy on first edit.
 It said `029` was the next free number. Migrations 029–035 were already on disk. Corrected in the
 same PR, with the shipped rows filled in from the directory and the pattern named.
 
+### D53 — `shared-surfaces.md` listed five `assertNoErrors` strings; the helper asserts six
+
+`web/e2e/helpers/setup.ts` has failed on `"could not be loaded"` since the interior restyle, and
+section 2 of `shared-surfaces.md` did not list it. The repository wins; the doc is corrected in the
+PR that discovered it (issue #15 PR-B).
+
+Not a cosmetic omission. It is the string most easily written by accident, because it is the shape
+almost every `friendlyErrorMessage` fallback takes, and a contributor checking the documented list
+before writing new copy would have concluded it was safe. This phase's image-failure copy read
+"This image could not be loaded" until the list was checked against the helper — a page with a
+broken image would then have failed `assertNoErrors` on every spec that navigated past it, and
+been reported as a broken *page*.
+
+### D54 — the markdown save path leaves `doc` stale on a document-backed page
+
+`PUT /orgs/{o}/spaces/{s}/wiki/{pageID}` writes `content` and bumps `version` through
+`UpdatePageContent` (`internal/db/queries/pages.sql`), which does not touch `doc` — it predates the
+column and PR #73 did not extend it. On a page that holds a document, that produces a row whose
+`content` and `doc` disagree, with `doc` still authoritative for the editor: the next person to
+open the page sees the *old* document, the markdown edit having vanished from the editor while
+remaining in search. The `page_revisions` row written for that version also carries `doc IS NULL`,
+so a later overwrite resolving against it falls back to `FromMarkdown` and reconstructs a document
+from the lossy projection.
+
+**This phase removes the UI that reached it.** The markdown editor is gone and every Codex edit now
+goes through the document surface, so no user-reachable path in the application produces the
+divergence. The route is unchanged and still reachable by an API client, which is why this is
+recorded rather than treated as closed.
+
+Distinct from the entry in section 3 about that path's non-transactional revision write: this is
+about *which columns it writes*, not about atomicity. **For a maintainer:** either extend
+`UpdatePageContent` to clear or update `doc`, or refuse a markdown save on a page where
+`doc IS NOT NULL`. Refusing is the smaller change and the more honest one — a markdown PUT against
+a document-backed page is a category error, not a partial update.
+
+### D55 — ADR-0012 was not amended, so D51 is still open
+
+The brief for this phase stated that ADR-0012 had been amended to cover marks and inline content
+and that D51 was confirmed. It has not been. `docs/adr/0012-content-fidelity-and-unknown-nodes.md`
+is unchanged since it was added in PR #57 (`89c4915`), contains no occurrence of the word "mark",
+and D51 above still reads as an open question for a maintainer.
+
+Nothing was blocked by this and nothing was decided because of it. PR #73 already shipped all three
+carriers, and this phase builds the UI onto what shipped; the editor would be identical under
+either reading, except that a narrowed ADR would mean deleting `unknownInline` and `unknownMark`
+rather than rendering them. **The ADR is not edited here** — amending an ADR is a decision, and
+CLAUDE.md section 5 sends decision-level disagreements to a maintainer rather than resolving them
+in passing. D51 stands as written and still wants an answer.
+
 ## 2. Decisions taken (justified in the phase report, recorded here)
 
 - **`pages.doc` is PostgreSQL `json`, not `jsonb`.** `jsonb` is a parsed, normalised value: it sorts
