@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -364,4 +365,85 @@ var undocumentedRoutes = map[string]struct{}{
 	"PUT /auth/me/avatar":                     {},
 	"PUT /orgs/{orgID}/users/{userID}/avatar": {},
 	"GET /orgs/{orgID}/users/{userID}/avatar": {},
+}
+
+// S6 — the docs page loads nothing from the internet.
+//
+// Every stylesheet and script it names must be served by this deployment. A
+// CDN reference is two separate problems: on an isolated network — the normal
+// case for a self-hosted product — the page is a blank screen with no
+// explanation; and on a connected one it is third-party code, resolved from a
+// floating tag, executing on the origin that holds an administrator's session.
+func TestDocsEndpoint_LoadsNoExternalAssets(t *testing.T) {
+	srv := newDocsTestServer(t)
+	resp, err := http.Get(srv.URL + "/api/docs")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	page, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	// Deliberately broad: any absolute URL is a fetch this deployment does not
+	// control, whichever host it names.
+	for _, marker := range []string{"http://", "https://", "//unpkg.com", "cdn."} {
+		require.NotContains(t, string(page), marker,
+			"the docs page must reference no external origin (found %q)", marker)
+	}
+	require.Contains(t, string(page), "/api/docs/assets/swagger-ui.css")
+	require.Contains(t, string(page), "/api/docs/assets/swagger-ui-bundle.js")
+	require.Contains(t, string(page), "/api/docs/assets/swagger-ui-standalone-preset.js")
+}
+
+// And the assets the page names are actually served, with plausible content
+// types — a 404 here is the same blank screen the CDN gave on an air-gapped
+// network, so asserting only that the HTML changed would prove nothing.
+func TestDocsAssets_AreServedFromTheBinary(t *testing.T) {
+	srv := newDocsTestServer(t)
+
+	for _, tc := range []struct {
+		path        string
+		contentType string
+		mustContain string
+	}{
+		{"/api/docs/assets/swagger-ui.css", "text/css", ".swagger-ui"},
+		{"/api/docs/assets/swagger-ui-bundle.js", "javascript", "SwaggerUIBundle"},
+		{"/api/docs/assets/swagger-ui-standalone-preset.js", "javascript", "StandalonePreset"},
+	} {
+		resp, err := http.Get(srv.URL + tc.path)
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		require.Equal(t, http.StatusOK, resp.StatusCode, "%s", tc.path)
+		require.Contains(t, resp.Header.Get("Content-Type"), tc.contentType, "%s", tc.path)
+		require.Contains(t, string(body), tc.mustContain, "%s served the wrong file", tc.path)
+		require.Greater(t, len(body), 1024, "%s looks truncated", tc.path)
+	}
+}
+
+// S6 — the spec is no longer readable cross-origin by every site on the
+// internet.
+//
+// It carried Access-Control-Allow-Origin: * unconditionally, which handed any
+// page a visiting administrator opened the deployment's entire API surface:
+// every route, parameter and schema. Its only consumer is the same-origin
+// docs UI. A genuine cross-origin consumer belongs in the deployment's
+// AZIMUTHAL_ALLOWED_ORIGINS allow-list, which the router's CORS middleware
+// applies to this route like any other — not in a wildcard this handler sets
+// for itself.
+func TestDocsSpec_DoesNotAllowEveryOrigin(t *testing.T) {
+	srv := newDocsTestServer(t)
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/docs/openapi.yaml", nil)
+	require.NoError(t, err)
+	req.Header.Set("Origin", "https://attacker.example")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, resp.Header.Get("Access-Control-Allow-Origin"),
+		"the spec route must not set its own CORS header; the deployment's allow-list decides")
 }

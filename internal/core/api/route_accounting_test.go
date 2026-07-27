@@ -49,6 +49,7 @@ var routeAccounting = map[string]string{
 	"GET /ready":                 "public: readiness probe, no org data",
 	"GET /api/docs":              "public: API documentation UI",
 	"GET /api/docs/openapi.yaml": "public: committed OpenAPI spec",
+	"GET /api/docs/assets/":      "public: vendored Swagger UI assets (static, embedded)",
 	"POST /api/v1/auth/login":    "public: credential exchange",
 	"POST /api/v1/auth/register": "public: account creation — 404 unless allow_registration (default off since P2.5)",
 	"POST /api/v1/auth/refresh":  "public: token refresh (validates refresh token + live account state)",

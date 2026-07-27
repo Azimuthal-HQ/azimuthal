@@ -1,3 +1,10 @@
 ﻿* text=auto eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Vendored Swagger UI assets (internal/core/api/swaggerui/assets). Minified
+# third-party bundles: not ours to review, and a diff of them is noise that
+# hides the one line that matters — the version in swaggerui.go.
+internal/core/api/swaggerui/assets/** linguist-vendored
+internal/core/api/swaggerui/assets/*.js -diff
+internal/core/api/swaggerui/assets/*.css -diff
