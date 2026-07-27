@@ -13,7 +13,10 @@ services:
     volumes:
       - azimuthal_test_db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "azimuthal_test"]
+      # -h localhost forces TCP: the image's initialisation server listens on
+      # the unix socket only, so a socket probe reports ready before the
+      # database exists. See the note in the Makefile's test-db-up.
+      test: ["CMD", "pg_isready", "-h", "localhost", "-U", "azimuthal_test"]
       interval: 2s
       timeout: 5s
       retries: 10

@@ -150,11 +150,26 @@ make lint
 make test-live       # Go integration tests against real postgres
 make verify-api      # API smoke checks
 make e2e-test        # Playwright
-make test-db-down
+cd web && npm run type-check && npm run test:unit   # frontend gates — now required in CI
+make docs-check      # the OpenAPI spec is regenerated and diffed
+make test-db-down    # NOTE: this DELETES the test data — see below
 ```
 
 All three of `make test-live`, `make verify-api` and `make e2e-test` exit 0, or the PR is
 **DRAFT** with a per-item reason.
+
+**`make test-db-down` removes the volumes.** It runs `docker compose down -v`, so "turn it off
+and on again" really does give you an empty database. That was not true before: `down` left the
+volumes behind and `up` came back with every row from the previous run, and two phases misread an
+E2E result reasoning about a "clean database" that was nothing of the kind. `make test-db-reset`
+does the same thing in one step when the stack is already running. If you want the data kept, do
+not run `down`.
+
+One consequence worth knowing: on a genuinely fresh volume, postgres initialises before it accepts
+TCP connections, and `pg_isready` over the container's unix socket reports "accepting connections"
+during that window. `test-db-up` probes with `-h localhost` to force TCP for exactly that reason.
+If you write your own readiness loop, do the same, or it will pass and the next command will die
+on a connection reset.
 
 ### Where the working copy lives, and where you should work
 
@@ -207,6 +222,25 @@ reverse. Check `golangci-lint --version` against the pin before trusting or acti
 Two more worth knowing. CI's coverage run passes `-p 1` (no parallel packages) because the tests
 share one database — no Makefile target sets it, so if you reproduce a CI coverage figure locally
 you must pass it yourself. And `make verify-api` needs `.env.test`.
+
+### The frontend gates run in CI
+
+`npm run type-check` and `npm run test:unit` are required CI gates (the `Frontend` job). They were
+local-only until the integrity pass, and with them every drift guard written as a vitest test —
+`web/src/lib/no-direct-fetch.test.ts`, `web/src/lib/codex/schema.test.ts` and
+`web/src/components/codex/extensions/extensions.test.ts`. The last two fail in both directions on
+the ADR-0012 editor-vocabulary equality, whose failure mode is silent data loss, and none of them
+had ever run on a pull request.
+
+`npm run lint` is **not** a gate. eslint reports 46 errors on `main` — mostly
+`react-refresh/only-export-components` and `react-hooks/set-state-in-effect` — so gating on it
+today would fail every pull request, and the alternative is a baseline file, which is an exemption
+ledger. The inventory and what closing it would take are in `docs/known-issues.md`. Do not add a
+baseline; do not add `--max-warnings` slack. Fix the findings or leave the gate off.
+
+`make docs-check` is a gate too, and now actually checks: the CI job used to grep the committed
+YAML for four structural markers and two path names, and would have passed a spec that had lost
+every other endpoint in the API. It regenerates from the handler annotations and diffs.
 
 ### Documentation-only pull requests
 

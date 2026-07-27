@@ -448,3 +448,46 @@ pass it to the handlers that need it, behind a failing test that uploads and
 retrieves an object end-to-end.
 
 </details>
+
+---
+
+## 17. eslint is not a CI gate — 46 errors on `main`
+
+**Severity**: Low (code quality; no known user-facing defect)
+**Status**: Open. Recorded by the security and integrity pass (T1), deliberately not fixed there.
+
+`web/package.json` has `npm run lint` (`eslint .`) and it is not run by CI. The integrity pass
+added the `Frontend` job that makes `npm run type-check` and `npm run test:unit` required gates,
+and left lint out of it, because eslint does not pass on `main` today:
+
+```
+20  react-refresh/only-export-components
+13  react-hooks/set-state-in-effect
+ 4  @typescript-eslint/no-unused-vars
+ 3  @typescript-eslint/no-explicit-any
+ 2  react-hooks/preserve-manual-memoization
+ 2  jsx-a11y/no-autofocus
+ 1  @typescript-eslint/no-empty-object-type
+ 1  react-hooks/purity
+—— 46 errors across roughly 25 files
+```
+
+**Why it was not just fixed.** Two of the groups are not mechanical. The twenty
+`react-refresh/only-export-components` findings are fixed by moving constants and helpers out of
+component files, which rewrites import paths across the app for a fast-refresh developer-experience
+rule. The thirteen `react-hooks/set-state-in-effect` findings are behavioural — each one is a
+render cascade to be reasoned about individually, and several sit in the Codex editor and the
+sprint board. Together they are a frontend-quality piece of work with its own blast radius, and
+folding them into a security and integrity PR would have buried the changes a reviewer needs to
+check.
+
+**What must NOT happen.** Do not add an eslint baseline or suppression file, and do not gate with
+`--max-warnings` slack. Either would turn this into a permanent exemption ledger — the same
+mechanism the same pass spent its time deleting from the OpenAPI drift guard. The gate goes on when
+the findings are gone.
+
+**Proper fix**: close the eight trivial findings (`no-unused-vars`, `no-explicit-any`,
+`no-empty-object-type`) first; decide the `react-refresh` rule on its merits (fix or turn the rule
+off deliberately, in `eslint.config.js`, with the reason written down); work the
+`react-hooks/set-state-in-effect` findings individually with a test for any that turn out to be a
+real defect. Then add `npm run lint` to the `Frontend` job in `.github/workflows/ci.yml`.
