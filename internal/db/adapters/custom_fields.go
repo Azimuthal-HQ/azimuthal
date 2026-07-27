@@ -174,6 +174,20 @@ func (a *CustomFieldValueAdapter) Upsert(ctx context.Context, itemID uuid.UUID, 
 	return nil
 }
 
+// CountByOrgSlug implements the repository interface. It reaches the org
+// through project_items -> spaces, because item_field_values has no org column
+// of its own: values hang off items, and items hang off the org-scoped space.
+func (a *CustomFieldValueAdapter) CountByOrgSlug(ctx context.Context, orgID uuid.UUID, slug string) (int, error) {
+	n, err := a.q.CountItemFieldValuesByOrgSlug(ctx, generated.CountItemFieldValuesByOrgSlugParams{
+		OrgID:     orgID,
+		FieldSlug: slug,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("custom field value adapter count by org slug: %w", err)
+	}
+	return int(n), nil
+}
+
 // Delete implements the repository interface.
 func (a *CustomFieldValueAdapter) Delete(ctx context.Context, itemID uuid.UUID, slug string) error {
 	if err := a.q.DeleteItemFieldValue(ctx, generated.DeleteItemFieldValueParams{ItemID: itemID, FieldSlug: slug}); err != nil {

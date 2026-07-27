@@ -540,6 +540,13 @@ func (m *mockCustomFieldValueRepo) Upsert(_ context.Context, _ uuid.UUID, _, _ s
 }
 func (m *mockCustomFieldValueRepo) Delete(_ context.Context, _ uuid.UUID, _ string) error { return nil }
 
+// CountByOrgSlug reports no legacy values: this mock stores none, so any other
+// answer would be a fabrication. The slug-reuse guard it feeds is covered
+// against a real database in internal/db/adapters and internal/core/api.
+func (m *mockCustomFieldValueRepo) CountByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (int, error) {
+	return 0, nil
+}
+
 func (m *mockItemRepo) GetByID(_ context.Context, id uuid.UUID) (*projects.Item, error) {
 	item, ok := m.items[id]
 	if !ok {

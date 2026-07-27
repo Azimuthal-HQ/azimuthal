@@ -46,3 +46,23 @@ RETURNING *;
 
 -- name: DeleteItemFieldValue :exec
 DELETE FROM item_field_values WHERE item_id = $1 AND field_slug = $2;
+
+-- name: CountItemFieldValuesByOrgSlug :one
+-- Counts the org's live items still holding a value under a field slug. Used to
+-- refuse a NEW definition whose slug would silently adopt values left behind by
+-- a deleted definition (values are stored by slug and outlive their
+-- definitions, by design — migration 033).
+--
+-- item_field_values has no org column: values hang off project items. The org
+-- is read from project_items.org_id, which migration 031 denormalised onto the
+-- item and made NOT NULL, and which idx_project_items_org_id indexes — rather
+-- than joined through spaces, which would also have to reason about a
+-- soft-deleted space whose items are still holding values.
+--
+-- Soft-deleted items are excluded: their values are unreachable, so counting
+-- them would refuse a legitimate field name over data nobody can see.
+SELECT count(*) FROM item_field_values v
+JOIN project_items i ON i.id = v.item_id
+WHERE i.org_id = $1
+  AND v.field_slug = $2
+  AND i.deleted_at IS NULL;

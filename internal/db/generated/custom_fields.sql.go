@@ -12,6 +12,39 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countItemFieldValuesByOrgSlug = `-- name: CountItemFieldValuesByOrgSlug :one
+SELECT count(*) FROM item_field_values v
+JOIN project_items i ON i.id = v.item_id
+WHERE i.org_id = $1
+  AND v.field_slug = $2
+  AND i.deleted_at IS NULL
+`
+
+type CountItemFieldValuesByOrgSlugParams struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	FieldSlug string    `json:"field_slug"`
+}
+
+// Counts the org's live items still holding a value under a field slug. Used to
+// refuse a NEW definition whose slug would silently adopt values left behind by
+// a deleted definition (values are stored by slug and outlive their
+// definitions, by design — migration 033).
+//
+// item_field_values has no org column: values hang off project items. The org
+// is read from project_items.org_id, which migration 031 denormalised onto the
+// item and made NOT NULL, and which idx_project_items_org_id indexes — rather
+// than joined through spaces, which would also have to reason about a
+// soft-deleted space whose items are still holding values.
+//
+// Soft-deleted items are excluded: their values are unreachable, so counting
+// them would refuse a legitimate field name over data nobody can see.
+func (q *Queries) CountItemFieldValuesByOrgSlug(ctx context.Context, arg CountItemFieldValuesByOrgSlugParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countItemFieldValuesByOrgSlug, arg.OrgID, arg.FieldSlug)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createCustomFieldDef = `-- name: CreateCustomFieldDef :one
 INSERT INTO custom_field_defs (id, org_id, slug, name, field_type, options, position)
 VALUES ($1, $2, $3, $4, $5, $6, $7)

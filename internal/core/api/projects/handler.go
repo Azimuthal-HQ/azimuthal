@@ -2043,7 +2043,11 @@ func handleCustomFieldError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, customfields.ErrOptionsRequired),
 		errors.Is(err, customfields.ErrInvalidValue):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
-	case errors.Is(err, customfields.ErrDuplicate):
+	case errors.Is(err, customfields.ErrDuplicate),
+		errors.Is(err, customfields.ErrSlugHeldByLegacyValues):
+		// 409: the name is well formed and the caller is entitled to use it —
+		// something already occupies the slug it derives to. The message names
+		// what, and how many items are involved.
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
 	default:
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,

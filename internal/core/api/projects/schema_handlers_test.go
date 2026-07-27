@@ -108,6 +108,12 @@ func (m *mockFieldValueRepo) ListByItem(context.Context, uuid.UUID) ([]customfie
 func (m *mockFieldValueRepo) Upsert(context.Context, uuid.UUID, string, string) error { return nil }
 func (m *mockFieldValueRepo) Delete(context.Context, uuid.UUID, string) error         { return nil }
 
+// CountByOrgSlug reports no legacy values: this mock stores none, so any other
+// answer would be a fabrication.
+func (m *mockFieldValueRepo) CountByOrgSlug(context.Context, uuid.UUID, string) (int, error) {
+	return 0, nil
+}
+
 func schemaHandler(types *mockTypeRepo, defs *mockFieldDefRepo) *projectsapi.Handler {
 	ir := &mockItemRepo{}
 	sr := &mockSprintRepo{}
