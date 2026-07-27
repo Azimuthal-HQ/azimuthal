@@ -1,23 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Edit, AlertCircle, History, X, ChevronRight, Lock, Share2, FolderInput } from 'lucide-react';
-import { MarkdownEditor } from '../../components/ui/MarkdownEditor';
+import { Edit, AlertCircle, History, X, ChevronRight, PenLine, Share2, FolderInput } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Button } from '../../components/ui/button';
-import { Input } from '../../components/ui/input';
 import { cn } from '../../lib/utils';
 import {
   friendlyErrorMessage,
   useWikiPages,
   useWikiPage,
-  useUpdateWikiPage,
   useWikiRevisions,
-  usePageLock,
-  useAcquirePageLock,
-  useReleasePageLock,
+  usePageDocument,
+  useSpaceDrafts,
   useMe,
   useComments,
   useCreateComment,
@@ -28,6 +24,8 @@ import {
 import { ShareBadge } from '../../components/ShareBadge';
 import { ShareDialog } from '../../components/ShareDialog';
 import { MovePageDialog } from '../../components/MovePageDialog';
+import { CodexDocRenderer } from '../../components/codex/CodexDocRenderer';
+import { PageEditor } from '../../components/codex/PageEditor';
 
 // ---------------------------------------------------------------------------
 // Revisions panel
@@ -125,19 +123,16 @@ export function WikiPage() {
     if (pageId) setActiveId(pageId);
   }, [pageId]);
 
-  // Inline edit state
+  // Inline edit state. The document editor owns everything about an editing
+  // session — the draft, the version it started from, and every failure it
+  // can report — so this only records whether one is open.
   const [editMode, setEditMode] = useState(false);
-  const [editTitle, setEditTitle] = useState('');
-  const [editContent, setEditContent] = useState('');
-  const editContentRef = useRef('');
-  const [editError, setEditError] = useState<string | null>(null);
 
   // Selecting a different page (via the sidebar tree) leaves edit mode and
   // closes the revisions panel — the behaviour the in-content panel's
   // click handler used to provide, now keyed off the selection itself.
   useEffect(() => {
     setEditMode(false);
-    setEditError(null);
     setRevisionsOpen(false);
   }, [activeId]);
 
@@ -152,8 +147,38 @@ export function WikiPage() {
   }, [pages, activeId]);
 
   const { data: activePage } = useWikiPage(spaceId, activeId ?? '', { enabled: !!activeId });
-  const updateMutation = useUpdateWikiPage(spaceId, activeId ?? '');
   const { data: me } = useMe();
+
+  /**
+   * The page's shielded document (issue #15, ADR-0012).
+   *
+   * Fetched for reading as well as editing, and that is deliberate.
+   * `activePage.doc` is the *stored* document, which still contains node types
+   * outside the editor's schema — handing it to ProseMirror would drop them
+   * silently and show a reader a blank where content exists. This route
+   * shields first, so every preserved item arrives labelled. It needs only
+   * space-read, so a reader who cannot edit can still open it.
+   *
+   * Legacy markdown pages (`doc` null) never reach it: they keep their
+   * existing markdown rendering, unchanged, per migration 036's dual-format
+   * contract. The one exception is entering edit mode, where the same route
+   * performs the convert-on-first-edit that turns a markdown page into a
+   * document — without writing anything until the author publishes.
+   */
+  const isDocumentPage = !!activePage?.doc;
+  const {
+    data: pageDocument,
+    isLoading: documentLoading,
+    error: documentError,
+    refetch: refetchDocument,
+  } = usePageDocument(spaceId, activeId ?? '', {
+    enabled: !!activeId && (isDocumentPage || editMode),
+  });
+
+  // Which pages the viewer holds an unpublished draft on. One query for the
+  // whole space — the index on page_drafts (author_id) exists for exactly this.
+  const { data: drafts = [] } = useSpaceDrafts(spaceId, { enabled: !!spaceId });
+  const hasDraftHere = drafts.some((d) => d.page_id === activeId);
   const orgId = me?.org_id ?? '';
   const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, 'page', activeId ?? '', { enabled: !!activeId && !!orgId });
   const createCommentMutation = useCreateComment(orgId, spaceId, 'page', activeId ?? '');
@@ -166,11 +191,14 @@ export function WikiPage() {
     refetchComments();
   }
 
-  const { data: pageLock } = usePageLock(spaceId, activeId ?? '', { enabled: !!activeId });
-  const acquireLock = useAcquirePageLock(spaceId, activeId ?? '');
-  const releaseLock = useReleasePageLock(spaceId, activeId ?? '');
-
-  const lockedByOther = pageLock && me && pageLock.user_id !== me.id;
+  // The page-lock API is deliberately not used by this flow. It was never
+  // consulted by any write — `UpdatePage` does not read it — so it only ever
+  // advised, and per-author drafts plus the `base_version` guard make the
+  // advice redundant: two people editing the same page now hold two private
+  // drafts and the second to publish is told, by name, what changed. The lock
+  // table, service and routes are left in place and untouched; retiring
+  // shipped API is a maintainer's decision, not this phase's side effect
+  // (PR #73, and D50 in spec-repo-reconciliation.md).
 
   // Share affordances (P3, ADR-0008). The badge is space-read (any reader
   // sees which pages are shared, incl. cascade coverage). Managing shares and
@@ -182,42 +210,9 @@ export function WikiPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
 
-  async function startEdit() {
+  function startEdit() {
     if (!activePage) return;
-    try {
-      await acquireLock.mutateAsync();
-    } catch {
-      // If lock acquisition fails, lock banner will show — don't enter edit mode
-      return;
-    }
-    setEditTitle(activePage.title);
-    const initial = activePage.content ?? '';
-    setEditContent(initial);
-    editContentRef.current = initial;
-    setEditError(null);
     setEditMode(true);
-  }
-
-  function cancelEdit() {
-    setEditMode(false);
-    setEditError(null);
-    releaseLock.mutate();
-  }
-
-  async function handleSave() {
-    if (!activePage) return;
-    setEditError(null);
-    try {
-      await updateMutation.mutateAsync({
-        title: editTitle.trim() || activePage.title,
-        content: editContentRef.current,
-        expected_version: activePage.version,
-      });
-      setEditMode(false);
-      releaseLock.mutate();
-    } catch (err) {
-      setEditError(friendlyErrorMessage(err, 'The page could not be saved.'));
-    }
   }
 
   if (isLoading) {
@@ -254,10 +249,13 @@ export function WikiPage() {
                 detail={shareState.viaCascade ? 'via a shared folder' : undefined}
               />
             </span>
-            {lockedByOther && (
-              <span className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-warning)_15%,transparent)] px-2.5 py-1 text-[var(--text-xs)] text-[var(--color-warning)]">
-                <Lock className="h-3 w-3" />
-                {pageLock!.user_name} is editing
+            {hasDraftHere && !editMode && (
+              <span
+                data-testid="codex-unpublished-badge"
+                className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--module-codex)_20%,transparent)] px-2.5 py-1 text-[var(--text-xs)] text-[var(--module-codex)]"
+              >
+                <PenLine className="h-3 w-3" aria-hidden="true" />
+                You have unpublished changes
               </span>
             )}
             {!editMode && (
@@ -299,7 +297,7 @@ export function WikiPage() {
                     </Button>
                   </>
                 )}
-                <Button variant="secondary" size="sm" onClick={startEdit} disabled={!activePage || !!lockedByOther}>
+                <Button variant="secondary" size="sm" onClick={startEdit} disabled={!activePage}>
                   <Edit className="mr-1.5 h-3.5 w-3.5" />
                   Edit
                 </Button>
@@ -329,34 +327,38 @@ export function WikiPage() {
             {/* Page content */}
             <div className="flex-1 overflow-y-auto p-6">
               {editMode ? (
-                <div className="space-y-3">
-                  <Input
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    className="text-[var(--text-xl)] font-bold"
-                    placeholder="Page title"
-                  />
-                  <MarkdownEditor
-                    key={activeId ?? ''}
-                    value={editContent}
-                    onChange={(md) => {
-                      editContentRef.current = md;
-                      setEditContent(md);
-                    }}
-                    disabled={updateMutation.isPending}
-                  />
-                  {editError && (
-                    <p className="text-[var(--text-sm)] text-[var(--color-danger)]">{editError}</p>
-                  )}
-                  <div className="flex gap-2">
-                    <Button onClick={handleSave} disabled={updateMutation.isPending}>
-                      {updateMutation.isPending ? 'Saving…' : 'Save'}
-                    </Button>
-                    <Button variant="outline" onClick={cancelEdit} disabled={updateMutation.isPending}>
-                      Cancel
+                /* Opening the editor is what converts a legacy markdown page:
+                   GET …/document renders one from the page's markdown on the
+                   way out and writes nothing until the author publishes
+                   (migration 036 — conversion is per-page and on first edit,
+                   never a bulk migration). */
+                documentLoading ? (
+                  <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                    Opening the editor…
+                  </p>
+                ) : documentError ? (
+                  <div className="space-y-3">
+                    <p
+                      data-testid="codex-document-error"
+                      className="text-[var(--text-sm)] text-[var(--color-danger)]"
+                    >
+                      {friendlyErrorMessage(documentError, 'This page could not be opened for editing.')}
+                    </p>
+                    <Button variant="outline" onClick={() => setEditMode(false)}>
+                      Back to the page
                     </Button>
                   </div>
-                </div>
+                ) : pageDocument ? (
+                  <PageEditor
+                    key={activeId ?? ''}
+                    spaceId={spaceId}
+                    pageId={activeId ?? ''}
+                    document={pageDocument}
+                    pages={pages}
+                    onClose={() => setEditMode(false)}
+                    onReloadDocument={async () => (await refetchDocument()).data}
+                  />
+                ) : null
               ) : (
                 <>
                   {/* Reading surface: a bounded measure — full-width prose
@@ -378,7 +380,25 @@ export function WikiPage() {
                     </p>
                   </div>
 
-                  {activePage.content ? (
+                  {/* The dual-format read path (migration 036).
+
+                      A document-backed page renders through the shared
+                      renderer — the editor's own extensions, not editable — so
+                      macros and, above all, labelled preserved blocks look to
+                      a reader exactly as they did to the author. A page that
+                      has only ever held markdown (`doc` null) renders through
+                      the markdown path below, byte for byte as it always has.
+                      Both are tested. */}
+                  {isDocumentPage && pageDocument ? (
+                    <CodexDocRenderer
+                      doc={pageDocument.doc}
+                      spaceId={spaceId}
+                      pageId={activePage.id}
+                      pages={pages}
+                    />
+                  ) : isDocumentPage && documentLoading ? (
+                    <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">Loading…</p>
+                  ) : activePage.content ? (
                     <article
                       className={cn(
                         'prose prose-sm max-w-none leading-[1.78]',

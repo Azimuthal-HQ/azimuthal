@@ -52,13 +52,29 @@ vi.mock('../../lib/api', () => ({
   })),
   useCreateWikiPage: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false, error: null })),
   useWikiPage: vi.fn(() => ({
-    data: { id: 'p1', title: 'Alpha Page', content: 'Alpha body text.', version: 1, path: 'alpha', updated_at: '2026-07-22T00:00:00Z' },
+    data: {
+      id: 'p1',
+      title: 'Alpha Page',
+      content: 'Alpha body text.',
+      // A page that has only ever held markdown (migration 036).
+      doc: null,
+      version: 1,
+      path: 'alpha',
+      updated_at: '2026-07-22T00:00:00Z',
+    },
   })),
-  useUpdateWikiPage: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useWikiRevisions: vi.fn(() => ({ data: [], isLoading: false })),
-  usePageLock: vi.fn(() => ({ data: null })),
-  useAcquirePageLock: vi.fn(() => ({ mutateAsync: vi.fn() })),
-  useReleasePageLock: vi.fn(() => ({ mutate: vi.fn() })),
+  // The Codex document surface (issue #15). `doc: null` above makes this page
+  // a legacy markdown page, so the read path here is the markdown one and the
+  // document query stays disabled — which is what keeps this a navigation
+  // test rather than an editor one.
+  usePageDocument: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+  useSpaceDrafts: vi.fn(() => ({ data: [] })),
   useMe: vi.fn(() => ({ data: { id: 'u1', org_id: 'org-1', display_name: 'Test User' } })),
   useComments: vi.fn(() => ({ data: [], refetch: vi.fn() })),
   useCreateComment: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
@@ -79,9 +95,11 @@ vi.mock('../../lib/auth', () => ({
 }));
 
 // The editor mounts only in edit mode; stub it so the suite does not load
-// TipTap for a navigation test.
-vi.mock('../../components/ui/MarkdownEditor', () => ({
-  MarkdownEditor: () => <div data-testid="markdown-editor-stub" />,
+// TipTap for a navigation test. (The stub target moved with issue #15: the
+// markdown editor this replaced is gone, and the document editor is a
+// different component in a different place.)
+vi.mock('../../components/codex/PageEditor', () => ({
+  PageEditor: () => <div data-testid="codex-page-editor-stub" />,
 }));
 
 function renderCodexPageView() {
