@@ -16,6 +16,19 @@ import { PriorityPill, normalizePriority } from '../../components/priority';
 const VALID_TYPES: ShareEntityType[] = ['page', 'ticket', 'project_item'];
 
 /**
+ * The types the server will actually stream inline, sniffed from the object's
+ * own bytes (internal/core/attachments/serve.go, ServeTypeFor). Anything else
+ * — SVG included, because it is scriptable — comes back as
+ * application/octet-stream with Content-Disposition: attachment.
+ *
+ * `content_type` on the wire is the type the UPLOADER declared, so it only
+ * predicts the server's answer, it does not determine it. That is why the
+ * download list below is unconditional: a preview is allowed to be wrong, but
+ * every attachment must stay reachable either way.
+ */
+const PREVIEWABLE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/**
  * SharedEntityPage (P3, ADR-0008): the standalone view for the shared read
  * route. It renders OUTSIDE the app shell — no space sidebar, no product
  * tabs, no breadcrumb chain into a space the viewer cannot enter. The only
@@ -79,7 +92,7 @@ export function SharedEntityPage() {
           {attachments.data && attachments.data.length > 0 && (
             <div className="space-y-2" data-testid="shared-attachments">
               {attachments.data
-                .filter((a) => a.content_type.startsWith('image/'))
+                .filter((a) => PREVIEWABLE_TYPES.has(a.content_type))
                 .map((a) => (
                   <img
                     key={a.id}
@@ -98,12 +111,17 @@ export function SharedEntityPage() {
             <ReactMarkdown>{entity.data.body || ''}</ReactMarkdown>
           </div>
 
-          {/* Non-image attachments as download links. */}
-          {attachments.data && attachments.data.some((a) => !a.content_type.startsWith('image/')) && (
+          {/* Every attachment as a download link — including the ones
+              previewed above. The list is deliberately NOT the complement of
+              the preview filter: `content_type` is the uploader's claim, so any
+              filter here can disagree with what the server decides to stream,
+              and an attachment that matches neither list would be unreachable
+              from this page entirely. A duplicated image link is a much
+              smaller cost than a file with no way to open it. */}
+          {attachments.data && attachments.data.length > 0 && (
             <div className="space-y-1 border-t border-[var(--color-border)] pt-3">
               <p className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Attachments</p>
               {attachments.data
-                .filter((a) => !a.content_type.startsWith('image/'))
                 .map((a) => (
                   <a
                     key={a.id}
