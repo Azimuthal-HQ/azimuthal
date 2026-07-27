@@ -18,7 +18,10 @@ import {
   ChevronDown,
   Code,
   Code2,
+  Columns2,
   Columns3,
+  Columns as ColumnsIcon,
+  Heading,
   Heading1,
   Heading2,
   Heading3,
@@ -33,10 +36,13 @@ import {
   Minus,
   Network,
   Quote,
+  Rows as RowsIcon,
+  Rows3,
   Square,
   Strikethrough,
   Table as TableIcon,
   Tag,
+  Trash2,
 } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 import type { ComponentType, ReactNode } from 'react';
@@ -277,6 +283,53 @@ export function CodexToolbar({ editor, onInsertImage, uploadingImage }: CodexToo
       ],
     },
   ];
+
+  // Table editing appears only inside a table. Six always-visible controls that
+  // are disabled everywhere else would be six more stops to arrow past for the
+  // majority of documents that contain no table at all.
+  if (state.inTable) {
+    groups.push({
+      name: 'Table',
+      items: [
+        {
+          key: 'row-after',
+          label: 'Add row below',
+          icon: Rows3,
+          run: () => editor.chain().focus().addRowAfter().run(),
+        },
+        {
+          key: 'row-delete',
+          label: 'Delete row',
+          icon: RowsIcon,
+          run: () => editor.chain().focus().deleteRow().run(),
+        },
+        {
+          key: 'col-after',
+          label: 'Add column to the right',
+          icon: Columns2,
+          run: () => editor.chain().focus().addColumnAfter().run(),
+        },
+        {
+          key: 'col-delete',
+          label: 'Delete column',
+          icon: ColumnsIcon,
+          run: () => editor.chain().focus().deleteColumn().run(),
+        },
+        {
+          key: 'header-row',
+          label: 'Toggle header row',
+          icon: Heading,
+          run: () => editor.chain().focus().toggleHeaderRow().run(),
+        },
+        {
+          key: 'table-delete',
+          label: 'Delete table',
+          icon: Trash2,
+          run: () => editor.chain().focus().deleteTable().run(),
+        },
+      ],
+    });
+  }
 
   const flat = groups.flatMap((g) => g.items);
 

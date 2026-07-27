@@ -458,6 +458,57 @@ test.describe('the editing surface', () => {
     await assertNoErrors(page)
   })
 
+  test('adds and removes table rows and columns, and the shape persists', async ({ page }) => {
+    const ctx = await codexSpace(page, 'Table Wiki')
+    const pageId = await createPage(page, ctx, 'Table Page', 'Body.\n')
+
+    await openEditor(page, ctx, pageId)
+    const editor = page.locator('.ProseMirror')
+    await editor.click()
+    await page.keyboard.press('Control+End')
+
+    await page.getByTestId('codex-tool-table').click()
+    const table = editor.locator('table')
+    await expect(table).toBeVisible({ timeout: 10000 })
+    // 3×3 with a header row.
+    await expect(table.locator('tr')).toHaveCount(3)
+    await expect(table.locator('tr').first().locator('th')).toHaveCount(3)
+
+    // The table controls appear only inside a table — six always-visible
+    // controls would be six more stops to arrow past on every other document.
+    await table.locator('td').first().click()
+    await expect(page.getByTestId('codex-tool-row-after')).toBeVisible()
+
+    await page.getByTestId('codex-tool-row-after').click()
+    await expect(table.locator('tr')).toHaveCount(4)
+
+    await page.getByTestId('codex-tool-col-after').click()
+    await expect(table.locator('tr').first().locator('th')).toHaveCount(4)
+
+    await page.getByTestId('codex-tool-row-delete').click()
+    await expect(table.locator('tr')).toHaveCount(3)
+
+    await page.getByTestId('codex-tool-col-delete').click()
+    await expect(table.locator('tr').first().locator('th')).toHaveCount(3)
+
+    // Put something in a cell so the persistence check means something.
+    await table.locator('td').first().click()
+    await editor.pressSequentially('cell text')
+
+    await page.getByTestId('codex-publish').click()
+    await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible({ timeout: 10000 })
+
+    const readerTable = page.locator('article').locator('table')
+    await expect(readerTable).toBeVisible()
+    await expect(readerTable.locator('tr')).toHaveCount(3)
+    await expect(readerTable).toContainText('cell text')
+
+    // And the markdown projection carries it, so the cell is searchable.
+    const stored = await storedPage(page, ctx, pageId)
+    expect(stored.content).toContain('cell text')
+    await assertNoErrors(page)
+  })
+
   test('the toolbar is operable from the keyboard alone', async ({ page }) => {
     const ctx = await codexSpace(page, 'A11y Wiki')
     const pageId = await createPage(page, ctx, 'Keyboard Page', 'Body.\n')
