@@ -185,6 +185,31 @@ func writeCORSHeaders(w http.ResponseWriter, allowed string) {
 	w.Header().Set("Access-Control-Max-Age", "86400")
 }
 
+// SecurityHeaders sets the response headers that hold for every route.
+//
+// X-Content-Type-Options: nosniff stops a browser second-guessing a declared
+// Content-Type and executing bytes as a type the server did not choose. The
+// attachment and avatar serve paths each set it per-response already; setting
+// it globally means a route added later inherits it rather than having to
+// remember, and it reaches the routes that never set it — notably the wiki
+// render endpoint, which returns user-authored content as text/html.
+//
+// It is set before the handler runs, so a handler's own Set replaces it rather
+// than duplicating it.
+//
+// What it is NOT: a defence against a content type the server declares
+// deliberately. nosniff constrains sniffing, not rendering — a response the
+// server labels text/html is still rendered as HTML. That is exactly why the
+// attachment serve path sniffs the stored bytes instead of relying on this
+// header, and why adding this middleware would not on its own have closed
+// that hole.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Recoverer is middleware that recovers from panics and returns a 500 error.
 func Recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

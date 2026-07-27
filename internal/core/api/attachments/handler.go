@@ -13,6 +13,15 @@
 //     audience. The object key is always taken from the row and the
 //     attachment must belong to the covered entity — a guessed key or a
 //     borrowed attachment id reads nothing (leak failure mode 4).
+//
+// Both families stream through one helper, [Handler.stream], and it decides
+// the response Content-Type by SNIFFING the stored bytes — never from the
+// attachment's content_type column. That column holds whatever the uploading
+// client declared, and the shared family hands bytes to viewers outside the
+// space, so an echoed type would let a space writer publish a same-origin
+// document to a share's audience. The column remains in the wire response as
+// display metadata; it is not a serving input. See
+// [github.com/Azimuthal-HQ/azimuthal/internal/core/attachments.ServeTypeFor].
 package attachments
 
 import (
@@ -217,7 +226,7 @@ func (h *Handler) ListInSpace(w http.ResponseWriter, r *http.Request) {
 // is loaded by id, then its entity is re-verified to live in the URL space.
 //
 // @Summary      Download an attachment (space)
-// @Description  Streams an attachment's bytes for a space member.
+// @Description  Streams an attachment's bytes for a space member. The Content-Type is SNIFFED from the stored bytes at serve time and the stored content_type is never echoed. PNG, JPEG, GIF, WebP and PDF are served inline with their sniffed type; every other type — including SVG, HTML and XML — is served as application/octet-stream with Content-Disposition: attachment, under its original filename.
 // @Tags         attachments
 // @Produce      application/octet-stream
 // @Security     BearerAuth
@@ -225,6 +234,9 @@ func (h *Handler) ListInSpace(w http.ResponseWriter, r *http.Request) {
 // @Param        spaceID        path      string  true  "Space ID (UUID)"
 // @Param        attachmentID   path      string  true  "Attachment ID (UUID)"
 // @Success      200            {file}    file                      "Attachment bytes"
+// @Header       200            {string}  Content-Type              "Sniffed from the bytes; application/octet-stream unless the object is a PNG, JPEG, GIF, WebP or PDF"
+// @Header       200            {string}  Content-Disposition       "inline for the allow-listed types, attachment otherwise; the stored filename is preserved either way"
+// @Header       200            {string}  X-Content-Type-Options    "nosniff"
 // @Failure      404            {object}  api.SwaggerErrorResponse  "Not found"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/attachments/{attachmentID} [get]
 func (h *Handler) DownloadInSpace(w http.ResponseWriter, r *http.Request) {
@@ -316,7 +328,7 @@ func (h *Handler) ListShared(w http.ResponseWriter, r *http.Request) {
 // DownloadShared streams a shared entity's attachment for a share holder.
 //
 // @Summary      Download an attachment (shared)
-// @Description  Streams a shared entity's attachment. Authorised by an active share; needs no space access. The attachment must belong to the shared entity, and its object key comes from the stored row.
+// @Description  Streams a shared entity's attachment. Authorised by an active share; needs no space access. The attachment must belong to the shared entity, and its object key comes from the stored row. The Content-Type is SNIFFED from the stored bytes at serve time and the stored content_type is never echoed — this route crosses the space boundary, so a stored type taken on trust would be stored XSS against the share's audience. PNG, JPEG, GIF, WebP and PDF are served inline with their sniffed type; every other type — including SVG, HTML and XML — is served as application/octet-stream with Content-Disposition: attachment, under its original filename.
 // @Tags         attachments
 // @Produce      application/octet-stream
 // @Security     BearerAuth
@@ -325,6 +337,9 @@ func (h *Handler) ListShared(w http.ResponseWriter, r *http.Request) {
 // @Param        entityID       path      string  true  "Entity ID (UUID)"
 // @Param        attachmentID   path      string  true  "Attachment ID (UUID)"
 // @Success      200            {file}    file                      "Attachment bytes"
+// @Header       200            {string}  Content-Type              "Sniffed from the bytes; application/octet-stream unless the object is a PNG, JPEG, GIF, WebP or PDF"
+// @Header       200            {string}  Content-Disposition       "inline for the allow-listed types, attachment otherwise; the stored filename is preserved either way"
+// @Header       200            {string}  X-Content-Type-Options    "nosniff"
 // @Failure      404            {object}  api.SwaggerErrorResponse  "Not found / not shared"
 // @Router       /orgs/{orgID}/shared/{entityType}/{entityID}/attachments/{attachmentID} [get]
 func (h *Handler) DownloadShared(w http.ResponseWriter, r *http.Request) {
@@ -378,20 +393,39 @@ func (h *Handler) writeList(w http.ResponseWriter, r *http.Request, entityType s
 	respond.JSON(w, http.StatusOK, out)
 }
 
-// stream writes the attachment's bytes with its stored content type. The
-// object key is read from the row, never from the request.
+// stream writes the attachment's bytes with a content type SNIFFED from the
+// object at serve time. The object key is read from the row, never from the
+// request.
+//
+// The stored content_type is not consulted for serving — see
+// attachments.ServeTypeFor for why, and for what the inline allow-list is.
+// The short version: the stored value is whatever the uploader declared, so
+// echoing it on an `inline`, same-origin response turns any space writer's
+// file upload into stored XSS against every share recipient, who by ADR-0008
+// sits outside the space. The column survives as display metadata (the file
+// list, icons); only serving changed.
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request, att attachments.Attachment) {
-	rc, err := h.svc.Open(r.Context(), att)
+	rc, serveType, err := h.svc.OpenForServing(r.Context(), att)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to read attachment")
 		return
 	}
 	defer func() { _ = rc.Close() }()
-	w.Header().Set("Content-Type", att.ContentType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", att.Filename))
+	w.Header().Set("Content-Type", serveType.ContentType)
+	w.Header().Set("Content-Disposition", disposition(serveType, att.Filename))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, rc)
+}
+
+// disposition formats the Content-Disposition header. The stored filename is
+// preserved either way — a file that downloads still downloads under its own
+// name. %q quotes and escapes it, so a filename cannot inject a header.
+func disposition(serveType attachments.ServeType, filename string) string {
+	if serveType.Inline {
+		return fmt.Sprintf("inline; filename=%q", filename)
+	}
+	return fmt.Sprintf("attachment; filename=%q", filename)
 }
 
 // orgSpace parses {orgID} and {spaceID}.
@@ -410,6 +444,11 @@ func (h *Handler) orgSpace(w http.ResponseWriter, r *http.Request) (uuid.UUID, u
 }
 
 // contentType defaults a blank content type to a safe generic value.
+//
+// What this returns is DISPLAY METADATA and nothing more. It is the client's
+// own claim about the file, stored so the UI can pick an icon and show a type
+// in the file list. It is not a security control and must never be used to
+// decide how bytes are served — the serve path sniffs (see stream).
 func contentType(ct string) string {
 	if ct == "" {
 		return "application/octet-stream"
