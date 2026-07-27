@@ -402,6 +402,35 @@ func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, pageID, _ u
 	return 0, nil
 }
 
+// UpdatePageContentTx makes the same four decisions the real transaction
+// makes, over the mock page map, so the wiki PUT route stays exercised end to
+// end by the wiring tests rather than answering from a stub.
+func (m *mockContentTx) UpdatePageContentTx(_ context.Context, in wiki.UpdatePageInput) (generated.Page, error) {
+	p, ok := m.pages.pages[in.PageID]
+	if !ok {
+		return generated.Page{}, wiki.ErrPageNotFound
+	}
+	if p.Doc != nil {
+		return generated.Page{}, wiki.ErrPageIsDocumentBacked
+	}
+	if p.Version != in.ExpectedVersion {
+		return generated.Page{}, wiki.ErrVersionConflict
+	}
+	p.Title = in.Title
+	p.Content = in.Content
+	p.Version++
+	m.pages.pages[p.ID] = p
+	m.pages.revisions[p.ID] = append(m.pages.revisions[p.ID], generated.PageRevision{
+		ID:       uuid.New(),
+		PageID:   p.ID,
+		Version:  p.Version,
+		Title:    p.Title,
+		Content:  p.Content,
+		AuthorID: in.AuthorID,
+	})
+	return p, nil
+}
+
 // mockShareDeleter satisfies tickets.ShareRevokingDeleter and
 // projects.ShareRevokingDeleter with no-ops for the router wiring tests.
 type mockShareDeleter struct{}

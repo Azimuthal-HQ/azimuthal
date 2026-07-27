@@ -179,6 +179,90 @@ func revokeSubtreeSharesTx(ctx context.Context, qtx *generated.Queries, actorID,
 	return int64(len(revoked)), nil
 }
 
+// UpdatePageContentTx is the markdown save path, as one transaction.
+//
+// Two writes that have to be one: the page row (title, content, version+1)
+// and the history row for the version just created. Run separately — as they
+// were until this — a failure between them leaves a page whose history skips
+// a version, permanently, because nothing retries a half-finished save. That
+// is the same failure PublishPageTx exists to prevent on the document path,
+// and it gets the same answer (shared-surfaces convention B).
+//
+// The row is locked before anything is decided, which is what makes the three
+// refusals distinguishable instead of one undifferentiated "zero rows
+// affected":
+//
+//   - the page is gone           → ErrPageNotFound
+//   - the page holds a document  → ErrPageIsDocumentBacked
+//   - the version moved on       → ErrVersionConflict
+//
+// The document refusal is the load-bearing one. The markdown UPDATE writes
+// `content` and never touches `doc`, and `doc` is authoritative once it
+// exists (ADR-0012) — so a markdown save against a document-backed page
+// reports success, bumps the version, writes a history row, and is then
+// invisible to every reader that goes through the document. The write is
+// refused rather than reconciled: converting markdown back into a document
+// here would silently drop whatever the document holds that markdown cannot
+// express, which is the loss ADR-0012 exists to prevent.
+//
+// The test is strictly `doc IS NOT NULL`. A page that has only ever held
+// markdown — including one being edited in the new editor but not yet
+// published — has a NULL doc and keeps taking markdown saves.
+func (a *ContentTxAdapter) UpdatePageContentTx(ctx context.Context, in wiki.UpdatePageInput) (generated.Page, error) {
+	tx, err := a.pool.Begin(ctx)
+	if err != nil {
+		return generated.Page{}, fmt.Errorf("update page content: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := a.q.WithTx(tx)
+
+	current, err := qtx.GetPageForUpdate(ctx, in.PageID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return generated.Page{}, wiki.ErrPageNotFound
+	}
+	if err != nil {
+		return generated.Page{}, fmt.Errorf("update page content: locking page: %w", err)
+	}
+	if current.Doc != nil {
+		return generated.Page{}, wiki.ErrPageIsDocumentBacked
+	}
+	if current.Version != in.ExpectedVersion {
+		return generated.Page{}, wiki.ErrVersionConflict
+	}
+
+	page, err := qtx.UpdatePageContent(ctx, generated.UpdatePageContentParams{
+		ID:      in.PageID,
+		Version: in.ExpectedVersion,
+		Title:   in.Title,
+		Content: in.Content,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Unreachable while the row lock above is held — kept so a future
+		// change that drops the lock degrades to a conflict rather than to a
+		// 500 with a pgx error in it.
+		return generated.Page{}, wiki.ErrVersionConflict
+	}
+	if err != nil {
+		return generated.Page{}, fmt.Errorf("update page content: %w", err)
+	}
+
+	if _, err := qtx.CreatePageRevision(ctx, generated.CreatePageRevisionParams{
+		ID:       uuid.New(),
+		PageID:   page.ID,
+		Version:  page.Version,
+		Title:    page.Title,
+		Content:  page.Content,
+		AuthorID: in.AuthorID,
+	}); err != nil {
+		return generated.Page{}, fmt.Errorf("update page content: recording revision: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return generated.Page{}, fmt.Errorf("update page content: commit: %w", err)
+	}
+	return page, nil
+}
+
 // DeletePageAndRevokeShares soft-deletes the page and revokes its shares in
 // one transaction (ADR-0008 rule 10).
 func (a *ContentTxAdapter) DeletePageAndRevokeShares(ctx context.Context, pageID, actorID uuid.UUID) (int64, error) {
