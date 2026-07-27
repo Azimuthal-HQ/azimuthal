@@ -751,6 +751,18 @@ already contain content that the narrow reading would destroy on first edit.
 **For a maintainer:** confirm ADR-0012 accordingly, or narrow it. If the narrow reading is intended,
 `unknownInline` and `unknownMark` should be removed and the loss documented as accepted.
 
+> **CLOSED — 2026-07-27, security & integrity pass (S1).** The maintainer confirmed the broad
+> reading on 2026-07-25. ADR-0012's Decision section now names all three carriers
+> (`unknownContent`, `unknownInline`, `unknownMark`) with the position each covers, states that the
+> three-way split is the substance of the guarantee rather than an implementation detail, and
+> extends the round-trip requirement and its Consequences bullet to marks. The three shipped
+> carriers stand as-is; nothing was removed.
+>
+> One correction carried with it: this entry says, in the present tense, that Codex's *shipped*
+> markdown editor serialises colour and highlight as inline `<span>`. That editor was deleted in
+> PR #75. The justification is unaffected — the pages it wrote still hold that inline HTML — but
+> the tense was wrong here and in three code comments, and all four are corrected.
+
 ### D52 — the section 4 migration table was stale for the third time
 
 It said `029` was the next free number. Migrations 029–035 were already on disk. Corrected in the
@@ -804,6 +816,10 @@ either reading, except that a narrowed ADR would mean deleting `unknownInline` a
 rather than rendering them. **The ADR is not edited here** — amending an ADR is a decision, and
 CLAUDE.md section 5 sends decision-level disagreements to a maintainer rather than resolving them
 in passing. D51 stands as written and still wants an answer.
+
+> **CLOSED — 2026-07-27, security & integrity pass (S1).** The amendment was made, under an
+> explicit maintainer instruction recording the broad reading as confirmed on 2026-07-25. See the
+> resolution note on D51.
 
 ## 2. Decisions taken (justified in the phase report, recorded here)
 

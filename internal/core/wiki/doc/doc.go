@@ -47,13 +47,14 @@
 //	unknownMark     a mark on inline content  (an unknown inline formatting)
 //
 // This is an interpretation of ADR-0012 rather than a quotation of it: the ADR
-// names the node and is silent on marks and inline content. It is recorded in
-// docs/design/spec-repo-reconciliation.md for a maintainer to ratify. The
-// alternative reading — preserve unknown blocks, drop unknown marks and inline
-// HTML — contradicts the ADR's own Decision heading ("Zero silent data loss"),
-// and inline HTML is not hypothetical here: the markdown editor Codex shipped
-// with serialises text colour and highlight as inline <span> HTML, so real
-// pages in this repository already contain it.
+// named only the node. That gap is closed: ADR-0012's Decision section now
+// names all three carriers and the position each covers (S1, 2026-07-27), so
+// the broad reading is the ADR's own and not this package's interpretation.
+// The alternative — preserve unknown blocks, drop unknown marks and inline
+// HTML — would have contradicted the ADR's Decision heading ("Zero silent data
+// loss"), and inline HTML is not hypothetical here: the markdown editor Codex
+// shipped with serialised text colour and highlight as inline <span> HTML. That
+// editor was removed in PR #75; the pages it wrote were not.
 package doc
 
 import (

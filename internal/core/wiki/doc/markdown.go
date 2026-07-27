@@ -22,8 +22,9 @@ const (
 	LegacyHTMLBlock = "legacyHtmlBlock"
 
 	// LegacyHTMLInline preserves raw HTML inside a paragraph. Codex's markdown
-	// editor serialises text colour and highlight as inline <span>, so existing
-	// pages in this repository contain these.
+	// editor serialised text colour and highlight as inline <span>, so existing
+	// pages in this repository contain these. That editor was removed in PR #75;
+	// the pages it wrote remain, which is why this carrier does too.
 	LegacyHTMLInline = "legacyHtmlInline"
 
 	// LegacyImage preserves an image whose URL is not a plain http(s) or
