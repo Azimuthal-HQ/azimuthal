@@ -65,7 +65,6 @@ func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, _, _ uuid.U
 	return 0, nil
 }
 
-
 // mockDocumentStore satisfies wiki.DocumentStore for the routing-level tests in
 // this file. The document surface's real behaviour — capture, restore, conflict,
 // draft isolation — is covered against a real database in

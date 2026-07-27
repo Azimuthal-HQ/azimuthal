@@ -413,7 +413,6 @@ func (m *mockShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uui
 	return nil
 }
 
-
 // ---- Mock project repos ----
 
 type mockItemRepo struct {

@@ -833,8 +833,7 @@ func TestRenderHTML_RawHTMLIsNotPassedThrough(t *testing.T) {
 	r := wiki.NewRenderer()
 
 	cases := []struct {
-		name string
-		//nolint:gosec // G101: markdown fixtures, not credentials.
+		name     string
 		markdown string
 		// forbidden is the executable markup that must never reach the output.
 		forbidden []string

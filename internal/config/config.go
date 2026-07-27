@@ -184,7 +184,6 @@ func (c *Config) IsProduction() bool {
 // default only widened the blast radius of a malicious page in an operator's
 // browser, so it is gone. An operator who really does serve the frontend from
 // another origin sets AZIMUTHAL_ALLOWED_ORIGINS to that origin.
-//
 func parseAllowedOrigins(raw string) []string {
 	if raw == "" {
 		return []string{}
