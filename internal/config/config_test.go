@@ -197,6 +197,50 @@ func TestConfig_AllowedOrigins_ProductionEmpty(t *testing.T) {
 	}
 }
 
+// TestConfig_AllowedOrigins_EmptyByDefaultInEveryEnv pins the S5 default.
+//
+// Development and test used to default to []string{"*"}, which meant a
+// developer's browser would honour a cross-origin call from any page on the
+// internet to their local API. Nothing needs it — the SPA is served from this
+// binary in production and proxied server-side by Vite in development — so the
+// default is now empty everywhere and cross-origin access is opt-in.
+func TestConfig_AllowedOrigins_EmptyByDefaultInEveryEnv(t *testing.T) {
+	for _, appEnv := range []string{"development", "test", "staging", "production"} {
+		t.Run(appEnv, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+			t.Setenv("APP_ENV", appEnv)
+			t.Setenv("AZIMUTHAL_ALLOWED_ORIGINS", "")
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cfg.AllowedOrigins) != 0 {
+				t.Errorf("APP_ENV=%s with no AZIMUTHAL_ALLOWED_ORIGINS: got %v, want none — "+
+					"a permissive CORS default must not depend on the environment name",
+					appEnv, cfg.AllowedOrigins)
+			}
+		})
+	}
+}
+
+// TestConfig_AllowedOrigins_WildcardStaysOptIn keeps the escape hatch honest:
+// an operator who really wants any-origin access can still ask for it, and the
+// test above must not be satisfied by silently dropping "*" support.
+func TestConfig_AllowedOrigins_WildcardStaysOptIn(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("AZIMUTHAL_ALLOWED_ORIGINS", "*")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.AllowedOrigins) != 1 || cfg.AllowedOrigins[0] != "*" {
+		t.Errorf("explicit wildcard: got %v, want [*]", cfg.AllowedOrigins)
+	}
+}
+
 func TestConfig_AdministrationDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
 

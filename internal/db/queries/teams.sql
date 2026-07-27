@@ -29,6 +29,26 @@ SELECT * FROM teams WHERE id = $1 AND deleted_at IS NULL;
 -- name: GetDefaultTeam :one
 SELECT * FROM teams WHERE org_id = $1 AND is_default AND deleted_at IS NULL;
 
+-- name: InsertDefaultTeamIfAbsent :exec
+-- Idempotent seed of the org's default team (T3).
+--
+-- Every org-creation path calls this, and `admin create-user` reaches it for
+-- an org that may already exist. A read-then-insert cannot be made safe here:
+-- two concurrent callers both see no row and both insert. ON CONFLICT DO
+-- NOTHING is deliberately targetless — the row can collide on either
+-- teams_org_id_slug_key (org_id, slug) or the partial teams_one_default
+-- (org_id) WHERE is_default AND deleted_at IS NULL, and both mean the same
+-- thing: another caller won the race and the team now exists.
+--
+-- path is ARRAY[id] rather than '{}' because the teams_path_ends_self check
+-- constraint requires the last element to be the row's own id.
+INSERT INTO teams (id, org_id, parent_id, path, slug, name, description, is_default, source)
+VALUES (
+    sqlc.arg(id), sqlc.arg(org_id), NULL, ARRAY[sqlc.arg(id)::uuid],
+    'default', 'Default', sqlc.arg(description), true, 'manual'
+)
+ON CONFLICT DO NOTHING;
+
 -- name: ListTeamsByOrg :many
 SELECT * FROM teams WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC;
 

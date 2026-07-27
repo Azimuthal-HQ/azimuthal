@@ -734,8 +734,12 @@ SELECT u.id, u.email, u.display_name, u.avatar_url
 FROM memberships m
 JOIN users u ON u.id = m.user_id AND u.deleted_at IS NULL
 WHERE m.org_id = $1 AND u.is_active
-  AND (u.display_name ILIKE '%' || $2::text || '%'
-       OR u.email ILIKE '%' || $2::text || '%')
+  -- See SuggestTicketRefs: the caller's text is a literal substring, so ` + "`" + `%` + "`" + `
+  -- and ` + "`" + `_` + "`" + ` are escaped to match themselves rather than act as wildcards
+  -- (backslash is PostgreSQL's default LIKE escape, so it is doubled first).
+  -- An empty query still matches every member — '%%' — which is intended.
+  AND (u.display_name ILIKE '%' || replace(replace(replace($2::text, '\', '\\'), '%', '\%'), '_', '\_') || '%'
+       OR u.email ILIKE '%' || replace(replace(replace($2::text, '\', '\\'), '%', '\%'), '_', '\_') || '%')
 ORDER BY u.display_name ASC, u.id ASC
 LIMIT 20
 `

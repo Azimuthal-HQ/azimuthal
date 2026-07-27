@@ -751,6 +751,18 @@ already contain content that the narrow reading would destroy on first edit.
 **For a maintainer:** confirm ADR-0012 accordingly, or narrow it. If the narrow reading is intended,
 `unknownInline` and `unknownMark` should be removed and the loss documented as accepted.
 
+> **CLOSED — 2026-07-27, security & integrity pass (S1).** The maintainer confirmed the broad
+> reading on 2026-07-25. ADR-0012's Decision section now names all three carriers
+> (`unknownContent`, `unknownInline`, `unknownMark`) with the position each covers, states that the
+> three-way split is the substance of the guarantee rather than an implementation detail, and
+> extends the round-trip requirement and its Consequences bullet to marks. The three shipped
+> carriers stand as-is; nothing was removed.
+>
+> One correction carried with it: this entry says, in the present tense, that Codex's *shipped*
+> markdown editor serialises colour and highlight as inline `<span>`. That editor was deleted in
+> PR #75. The justification is unaffected — the pages it wrote still hold that inline HTML — but
+> the tense was wrong here and in three code comments, and all four are corrected.
+
 ### D52 — the section 4 migration table was stale for the third time
 
 It said `029` was the next free number. Migrations 029–035 were already on disk. Corrected in the
@@ -805,6 +817,10 @@ rather than rendering them. **The ADR is not edited here** — amending an ADR i
 CLAUDE.md section 5 sends decision-level disagreements to a maintainer rather than resolving them
 in passing. D51 stands as written and still wants an answer.
 
+> **CLOSED — 2026-07-27, security & integrity pass (S1).** The amendment was made, under an
+> explicit maintainer instruction recording the broad reading as confirmed on 2026-07-25. See the
+> resolution note on D51.
+
 ## 2. Decisions taken (justified in the phase report, recorded here)
 
 - **`pages.doc` is PostgreSQL `json`, not `jsonb`.** `jsonb` is a parsed, normalised value: it sorts
@@ -844,15 +860,12 @@ in passing. D51 stands as written and still wants an answer.
 
 ## 3. Observed, out of scope
 
-- **The page-lock routes are now unused by the shipped editor and remain wired.** They were already
-  advisory, so nothing depends on them for correctness, but `GET/POST/DELETE .../wiki/{pageID}/lock`
-  and `page_locks` are live API and schema with no caller once the document editor replaces the
-  markdown one on the Codex surface. **Flagged for a maintainer to retire deliberately**, with their
-  tests, rather than removed here.
-- **`internal/core/wiki/render.go` claims to produce "sanitised HTML" and no sanitiser exists.**
-  Safety comes only from goldmark's default `Unsafe: false`, which omits raw HTML. The comment is
-  misleading in a way that invites somebody to add `html.WithUnsafe()` — which would turn
-  `GET .../wiki/{pageID}/render` into stored XSS. Not touched by this phase.
+- ~~**The page-lock routes are now unused by the shipped editor and remain wired.**~~ **Closed by S2**
+  (security & integrity pass, 2026-07-27) under an explicit maintainer instruction to retire them.
+  Routes, service, queries, table (migration 037) and the three dead frontend hooks are gone.
+- ~~**`internal/core/wiki/render.go` claims to produce "sanitised HTML" and no sanitiser exists.**~~
+  **Closed by S4** (2026-07-27). The docstring states the real mechanism and
+  `TestRenderHTML_RawHTMLIsNotPassedThrough` fails if anyone adds `html.WithUnsafe()`.
 - **The markdown save path's revision write is still not transactional.**
   `internal/core/wiki/page.go` updates the page and then inserts the revision as two separate calls
   against a pool, so a failed revision insert leaves a committed page whose history skips a version.

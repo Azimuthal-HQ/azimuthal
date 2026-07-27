@@ -413,6 +413,66 @@ func TestTicketSuggest_QueryMatching(t *testing.T) {
 	require.Empty(t, ticketSuggestGet(t, f.ts, f.contribTok, ticketSuggestQ("OTH-42")))
 }
 
+// TestTicketSuggest_WildcardCharactersAreLiteral pins S11.
+//
+// The query text is bound as a parameter and then wrapped in '%' || … || '%'
+// inside the SQL, so it was never an injection risk — but until S11 nothing
+// escaped the caller's own `%` and `_`, and ILIKE read them as wildcards. A
+// user typing a single `%` matched every ticket they could read, and `_`
+// matched any character, so a search for "a_b" also returned "axb".
+//
+// Verified fails-before: with the replace() escaping removed from
+// SuggestTicketRefs, the percent, underscore, and underscore_is_not_any_char
+// subtests all fail.
+func TestTicketSuggest_WildcardCharactersAreLiteral(t *testing.T) {
+	f := ticketSuggestNewFixture(t)
+
+	plain := ticketSuggestCreateTicket(t, f.ts, f.spaceA, "Ordinary ticket", nil)
+	pct := ticketSuggestCreateTicket(t, f.ts, f.spaceA, "Discount 50% off", nil)
+	under := ticketSuggestCreateTicket(t, f.ts, f.spaceA, "snake_case naming", nil)
+	axb := ticketSuggestCreateTicket(t, f.ts, f.spaceA, "axb collision probe", nil)
+
+	t.Run("percent_matches_only_the_literal_percent", func(t *testing.T) {
+		rows := ticketSuggestGet(t, f.ts, f.contribTok, ticketSuggestQ("%"))
+		require.ElementsMatch(t, []uuid.UUID{pct.ID}, ticketSuggestIDs(rows),
+			"a bare %% must match the ticket containing a literal %%, not every readable ticket")
+	})
+
+	t.Run("underscore_matches_only_the_literal_underscore", func(t *testing.T) {
+		rows := ticketSuggestGet(t, f.ts, f.contribTok, ticketSuggestQ("_"))
+		require.ElementsMatch(t, []uuid.UUID{under.ID}, ticketSuggestIDs(rows),
+			"a bare _ must match the ticket containing a literal _, not every readable ticket")
+	})
+
+	t.Run("underscore_is_not_any_char", func(t *testing.T) {
+		rows := ticketSuggestGet(t, f.ts, f.contribTok, ticketSuggestQ("a_b"))
+		require.Empty(t, ticketSuggestIDs(rows),
+			"a_b must not match 'axb' — _ is a literal, not a single-character wildcard")
+	})
+
+	t.Run("backslash_is_literal_too", func(t *testing.T) {
+		// The escape character itself must be escaped, or a trailing backslash
+		// produces a malformed pattern and Postgres errors the whole query.
+		rows := ticketSuggestGet(t, f.ts, f.contribTok, ticketSuggestQ(`\`))
+		require.Empty(t, ticketSuggestIDs(rows),
+			"a lone backslash must be a literal that matches nothing here, not a dangling escape")
+	})
+
+	// The negative guard: ordinary substring search must still work, or every
+	// assertion above would be satisfied by a query that matches nothing.
+	t.Run("ordinary_substring_still_matches", func(t *testing.T) {
+		rows := ticketSuggestGet(t, f.ts, f.contribTok, ticketSuggestQ("Ordinary"))
+		require.ElementsMatch(t, []uuid.UUID{plain.ID}, ticketSuggestIDs(rows))
+	})
+
+	t.Run("empty_query_still_returns_everything_readable", func(t *testing.T) {
+		rows := ticketSuggestGet(t, f.ts, f.contribTok, ticketSuggestQ(""))
+		require.ElementsMatch(t,
+			[]uuid.UUID{plain.ID, pct.ID, under.ID, axb.ID},
+			ticketSuggestIDs(rows))
+	})
+}
+
 // --- 6. Soft deletes ---
 
 // TestTicketSuggest_ExcludesSoftDeleted covers both halves of the liveness

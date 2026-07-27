@@ -817,6 +817,88 @@ func TestRenderer_Standalone(t *testing.T) {
 	}
 }
 
+// TestRenderHTML_RawHTMLIsNotPassedThrough pins the safety boundary the wiki
+// markdown renderer actually relies on (S4).
+//
+// There is no sanitiser in internal/core/wiki/render.go. Author-supplied
+// markup is kept out of the rendered page solely by goldmark's default
+// Unsafe=false, which is a library default rather than anything visible at
+// the call site. Adding html.WithUnsafe() to NewRenderer would turn every
+// wiki page into a stored-XSS sink while leaving render.go looking correct.
+//
+// This test fails in exactly that case. Verified in both directions: with
+// html.WithUnsafe() added to NewRenderer's renderer options, every subtest
+// below fails; without it, all pass.
+func TestRenderHTML_RawHTMLIsNotPassedThrough(t *testing.T) {
+	r := wiki.NewRenderer()
+
+	cases := []struct {
+		name     string
+		markdown string
+		// forbidden is the executable markup that must never reach the output.
+		forbidden []string
+	}{
+		{
+			name:      "raw script block",
+			markdown:  "<script>alert('xss')</script>",
+			forbidden: []string{"<script>", "</script>"},
+		},
+		{
+			name:      "inline event handler on a raw tag",
+			markdown:  "text <img src=x onerror=\"alert(1)\"> more",
+			forbidden: []string{"<img src=x", "onerror=\"alert(1)\""},
+		},
+		{
+			name:      "raw iframe block",
+			markdown:  "<iframe src=\"https://evil.example\"></iframe>",
+			forbidden: []string{"<iframe", "</iframe>"},
+		},
+		{
+			name:      "svg with inline handler",
+			markdown:  "<svg onload=\"alert(1)\"></svg>",
+			forbidden: []string{"<svg", "onload="},
+		},
+		{
+			name:      "script smuggled inside a blockquote",
+			markdown:  "> quoted\n>\n> <script>alert('nested')</script>",
+			forbidden: []string{"<script>", "</script>"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := r.RenderHTML(tc.markdown)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, bad := range tc.forbidden {
+				if findSubstringTest(out, bad) {
+					t.Errorf("raw HTML reached the output: %q present in %q\n"+
+						"This means the renderer is no longer dropping raw HTML. "+
+						"Check whether html.WithUnsafe() was added to NewRenderer.",
+						bad, out)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderHTML_MarkdownStillRendersAfterTheRawHTMLPin guards against the
+// lazy way to make the test above pass: neutering the renderer entirely.
+// Legitimate markdown must still produce real HTML.
+func TestRenderHTML_MarkdownStillRendersAfterTheRawHTMLPin(t *testing.T) {
+	r := wiki.NewRenderer()
+	out, err := r.RenderHTML("# Title\n\nSome **bold** and a [link](https://example.com).")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"<h1", "Title", "<strong>bold</strong>", `href="https://example.com"`} {
+		if !findSubstringTest(out, want) {
+			t.Errorf("expected %q in rendered output, got %q", want, out)
+		}
+	}
+}
+
 // ---------- search tests ----------
 
 func TestSearchPages(t *testing.T) {

@@ -145,7 +145,6 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	labelSvc := projects.NewLabelService(adapters.NewLabelAdapter(queries))
 
 	wikiSvc := wiki.NewService(queries, contentTx)
-	wikiLocks := wiki.NewLockService(queries)
 
 	workflowAdapter := adapters.NewWorkflowAdapter(queries)
 	workflowEngine := workflow.NewDBEngine(workflowAdapter)
@@ -208,7 +207,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithAuditLogger(auditLog).
 			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
 			WithSuggestions(tickets.NewSuggestionService(ticketAdapter)),
-		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiLocks, wikiDocs).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
+		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
 			WithAuditLogger(auditLog).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).
@@ -769,8 +768,15 @@ func TestIntegration_CreateWikiPage_ViaAPI(t *testing.T) {
 
 // --- CORS ---
 
-// TestIntegration_CORS_PreflightReturns204 verifies OPTIONS returns 204.
-func TestIntegration_CORS_PreflightReturns204(t *testing.T) {
+// TestIntegration_CORS_UnlistedOriginPreflightIsRefused verifies the S5
+// default end to end, through the real router and middleware stack.
+//
+// This test used to require a 204 and a NON-EMPTY Access-Control-Allow-Origin
+// for an arbitrary origin (http://localhost:3000). It passed because the test
+// harness never set RouterConfig.AllowedOrigins, and nil selected a middleware
+// that echoed "*" at everyone. The harness still sets no allow-list — that is
+// the point — but the meaning of "no allow-list" is now "admit nobody".
+func TestIntegration_CORS_UnlistedOriginPreflightIsRefused(t *testing.T) {
 	ts := newTestServer(t)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodOptions,
 		ts.url("/api/v1/auth/login"), nil)
@@ -779,8 +785,26 @@ func TestIntegration_CORS_PreflightReturns204(t *testing.T) {
 	req.Header.Set("Access-Control-Request-Method", "POST")
 
 	r := ts.do(t, req)
-	require.Equal(t, http.StatusNoContent, r.StatusCode)
-	require.NotEmpty(t, r.Header.Get("Access-Control-Allow-Origin"))
+	require.Equal(t, http.StatusForbidden, r.StatusCode,
+		"a cross-origin preflight from an unconfigured origin must be refused")
+	require.Empty(t, r.Header.Get("Access-Control-Allow-Origin"),
+		"no allow-list configured means no origin is advertised")
+}
+
+// TestIntegration_CORS_SameOriginRequestIsUnaffected is the guard that the S5
+// tightening did not break the actual product. The SPA is served from this
+// same binary, so its calls carry no Origin header and must be served exactly
+// as before — a same-origin POST is not a CORS request at all.
+func TestIntegration_CORS_SameOriginRequestIsUnaffected(t *testing.T) {
+	ts := newTestServer(t)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodOptions,
+		ts.url("/api/v1/auth/login"), nil)
+	require.NoError(t, err)
+
+	r := ts.do(t, req)
+	require.Equal(t, http.StatusNoContent, r.StatusCode,
+		"a request with no Origin is same-origin and must still be served")
+	require.Empty(t, r.Header.Get("Access-Control-Allow-Origin"))
 }
 
 // --- Auth /me endpoint ---
@@ -1894,43 +1918,6 @@ func TestIntegration_Workflow_ApplyTransitionToItem(t *testing.T) {
 	}, true)
 	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusNotFound || r.StatusCode == http.StatusConflict,
 		"item workflow transition: %d %s", r.StatusCode, r.Body)
-}
-
-// --- Wiki lock endpoints ---
-
-// TestIntegration_Wiki_Lock tests the wiki page locking endpoints.
-func TestIntegration_Wiki_Lock(t *testing.T) {
-	ts := newTestServer(t)
-	user := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
-	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, user.ID, "codex")
-
-	// Create a page.
-	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki", ts.OrgID, space.ID), map[string]any{
-		"title": "Lock test page", "content": "",
-	}, true)
-	require.Equal(t, http.StatusCreated, r.StatusCode)
-	var page map[string]any
-	require.NoError(t, json.Unmarshal(r.Body, &page))
-	pageID := page["id"].(string)
-
-	// GetLock on new page — should return 200 with null or 404.
-	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s/lock", ts.OrgID, space.ID, pageID), true)
-	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusNotFound,
-		"get lock: %d %s", r.StatusCode, r.Body)
-
-	// AcquireLock.
-	r = ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s/lock", ts.OrgID, space.ID, pageID), nil, true)
-	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusCreated || r.StatusCode == http.StatusConflict,
-		"acquire lock: %d %s", r.StatusCode, r.Body)
-
-	// ReleaseLock.
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodDelete,
-		ts.url(fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s/lock", ts.OrgID, space.ID, pageID)), nil)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+ts.Token)
-	result := ts.do(t, req)
-	require.True(t, result.StatusCode == http.StatusNoContent || result.StatusCode == http.StatusOK || result.StatusCode == http.StatusNotFound,
-		"release lock: %d %s", result.StatusCode, result.Body)
 }
 
 // --- Projects: RankItem endpoint ---

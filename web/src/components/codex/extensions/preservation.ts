@@ -117,9 +117,10 @@ export const UnknownInline = Node.create({
  * A mark has no node view, so it is styled rather than replaced: the text it
  * covers stays readable and editable, because unlike an unknown node an
  * unknown mark's *content* is ordinary text this editor understands perfectly
- * well. Only the formatting is unrepresentable. Codex's shipped markdown
- * editor writes text colour and highlight as inline HTML, so this is the
- * carrier real pages in this repository already need.
+ * well. Only the formatting is unrepresentable. Codex's markdown editor wrote
+ * text colour and highlight as inline HTML before it was removed in PR #75, so
+ * this is the carrier real pages in this repository already need. ADR-0012
+ * names it explicitly as of the S1 amendment.
  */
 export const UnknownMark = Mark.create({
   name: MARK_UNKNOWN_MARK,

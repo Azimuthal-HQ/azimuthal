@@ -370,6 +370,38 @@ func (q *Queries) GetTeamMember(ctx context.Context, arg GetTeamMemberParams) (T
 	return i, err
 }
 
+const insertDefaultTeamIfAbsent = `-- name: InsertDefaultTeamIfAbsent :exec
+INSERT INTO teams (id, org_id, parent_id, path, slug, name, description, is_default, source)
+VALUES (
+    $1, $2, NULL, ARRAY[$1::uuid],
+    'default', 'Default', $3, true, 'manual'
+)
+ON CONFLICT DO NOTHING
+`
+
+type InsertDefaultTeamIfAbsentParams struct {
+	ID          uuid.UUID `json:"id"`
+	OrgID       uuid.UUID `json:"org_id"`
+	Description string    `json:"description"`
+}
+
+// Idempotent seed of the org's default team (T3).
+//
+// Every org-creation path calls this, and `admin create-user` reaches it for
+// an org that may already exist. A read-then-insert cannot be made safe here:
+// two concurrent callers both see no row and both insert. ON CONFLICT DO
+// NOTHING is deliberately targetless — the row can collide on either
+// teams_org_id_slug_key (org_id, slug) or the partial teams_one_default
+// (org_id) WHERE is_default AND deleted_at IS NULL, and both mean the same
+// thing: another caller won the race and the team now exists.
+//
+// path is ARRAY[id] rather than '{}' because the teams_path_ends_self check
+// constraint requires the last element to be the row's own id.
+func (q *Queries) InsertDefaultTeamIfAbsent(ctx context.Context, arg InsertDefaultTeamIfAbsentParams) error {
+	_, err := q.db.Exec(ctx, insertDefaultTeamIfAbsent, arg.ID, arg.OrgID, arg.Description)
+	return err
+}
+
 const listEffectiveTeams = `-- name: ListEffectiveTeams :many
 SELECT id, org_id, parent_id, path, slug, name, description, is_default, source, created_at, updated_at, deleted_at FROM teams
 WHERE org_id = $1 AND deleted_at IS NULL AND path && $2::uuid[]

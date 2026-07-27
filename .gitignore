@@ -75,3 +75,7 @@ current-agent-progress/
 github-actions-progress/
 release-progress/
 server
+
+# Local golangci-lint cache (set via GOLANGCI_LINT_CACHE when parallel
+# sessions share a checkout — never committed).
+.golangci-cache/

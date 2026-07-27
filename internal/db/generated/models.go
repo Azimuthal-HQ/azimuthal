@@ -244,14 +244,6 @@ type PageDraft struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
-type PageLock struct {
-	PageID     uuid.UUID          `json:"page_id"`
-	UserID     uuid.UUID          `json:"user_id"`
-	UserName   string             `json:"user_name"`
-	AcquiredAt pgtype.Timestamptz `json:"acquired_at"`
-	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-}
-
 type PageRevision struct {
 	ID        uuid.UUID          `json:"id"`
 	PageID    uuid.UUID          `json:"page_id"`

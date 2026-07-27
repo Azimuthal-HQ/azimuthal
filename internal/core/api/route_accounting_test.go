@@ -174,9 +174,6 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/revisions/{version}": "space-read",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/diff":                "space-read",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/render":              "space-read",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock":                "space-read",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock":               "space-write",
-	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock":             "space-write",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/comments":            "space-read",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/comments":           "space-write: comment capability",
 

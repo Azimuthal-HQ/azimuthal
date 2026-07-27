@@ -117,21 +117,5 @@ SELECT * FROM page_revisions WHERE page_id = $1 AND version = $2;
 SELECT id, page_id, version, title, author_id, created_at
 FROM page_revisions WHERE page_id = $1 ORDER BY version DESC;
 
--- name: UpsertPageLock :one
-INSERT INTO page_locks (page_id, user_id, user_name, acquired_at, expires_at)
-VALUES ($1, $2, $3, now(), $4)
-ON CONFLICT (page_id) DO UPDATE
-  SET user_id = EXCLUDED.user_id,
-      user_name = EXCLUDED.user_name,
-      acquired_at = now(),
-      expires_at = EXCLUDED.expires_at
-RETURNING *;
-
--- name: GetPageLock :one
-SELECT * FROM page_locks WHERE page_id = $1 AND expires_at > now();
-
--- name: DeletePageLock :exec
-DELETE FROM page_locks WHERE page_id = $1 AND user_id = $2;
-
--- name: DeleteExpiredPageLocks :exec
-DELETE FROM page_locks WHERE expires_at <= now();
+-- The page-lock queries were removed in S2 along with the page_locks table
+-- (migration 037). The lock was advisory only — no write path consulted it.

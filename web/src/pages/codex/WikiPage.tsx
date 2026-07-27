@@ -191,14 +191,10 @@ export function WikiPage() {
     refetchComments();
   }
 
-  // The page-lock API is deliberately not used by this flow. It was never
-  // consulted by any write — `UpdatePage` does not read it — so it only ever
-  // advised, and per-author drafts plus the `base_version` guard make the
-  // advice redundant: two people editing the same page now hold two private
-  // drafts and the second to publish is told, by name, what changed. The lock
-  // table, service and routes are left in place and untouched; retiring
-  // shipped API is a maintainer's decision, not this phase's side effect
-  // (PR #73, and D50 in spec-repo-reconciliation.md).
+  // Concurrent editing is handled by per-author drafts plus the `base_version`
+  // guard: two people editing the same page hold two private drafts, and the
+  // second to publish is told, by name, what changed. There is no lock to take.
+  // The advisory page-lock API this flow never used was retired in S2.
 
   // Share affordances (P3, ADR-0008). The badge is space-read (any reader
   // sees which pages are shared, incl. cascade coverage). Managing shares and

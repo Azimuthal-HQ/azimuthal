@@ -413,19 +413,6 @@ func (m *mockShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uui
 	return nil
 }
 
-type mockLockStore struct{}
-
-func (m *mockLockStore) UpsertPageLock(_ context.Context, _ generated.UpsertPageLockParams) (generated.PageLock, error) {
-	return generated.PageLock{}, nil
-}
-func (m *mockLockStore) GetPageLock(_ context.Context, _ uuid.UUID) (generated.PageLock, error) {
-	return generated.PageLock{}, pgx.ErrNoRows
-}
-func (m *mockLockStore) DeletePageLock(_ context.Context, _ generated.DeletePageLockParams) error {
-	return nil
-}
-func (m *mockLockStore) DeleteExpiredPageLocks(_ context.Context) error { return nil }
-
 // ---- Mock project repos ----
 
 type mockItemRepo struct {
@@ -725,7 +712,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		// really gets, so the routes behave here as they would there.
 		wiki.UnavailableImageStore{},
 	)
-	wikiHandler := wikiapi.NewHandler(wikiSvc, wiki.NewLockService(&mockLockStore{}), wikiDocs)
+	wikiHandler := wikiapi.NewHandler(wikiSvc, wikiDocs)
 	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
 	spaceHandler := spacesapi.NewHandler(nil)
@@ -816,6 +803,12 @@ func TestReadyEndpoint(t *testing.T) {
 	}
 }
 
+// TestCORSPreflight asserts the router's default CORS posture (S5).
+//
+// setupRouter builds a RouterConfig without AllowedOrigins, which is exactly
+// the case that used to fail open: nil selected a permissive middleware and
+// this test required Access-Control-Allow-Origin: "*". A router built without
+// an explicit allow-list must now emit no CORS headers.
 func TestCORSPreflight(t *testing.T) {
 	router, _ := setupRouter(t)
 
@@ -826,8 +819,29 @@ func TestCORSPreflight(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusNoContent)
 	}
-	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "*" {
-		t.Errorf("CORS origin = %q, want '*'", got)
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want no header — a router with no configured allow-list must not advertise one", got)
+	}
+}
+
+// TestCORS_CrossOriginPreflightRefusedByDefault is the negative case
+// TestCORSPreflight alone cannot make: a preflight carrying no Origin header
+// would come back header-free under any implementation, a permissive one
+// included. This sends a real cross-origin preflight and requires refusal.
+func TestCORS_CrossOriginPreflightRefusedByDefault(t *testing.T) {
+	router, _ := setupRouter(t)
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/auth/login", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("cross-origin preflight status = %d, want %d", rr.Code, http.StatusForbidden)
+	}
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want no header for an unlisted origin", got)
 	}
 }
 

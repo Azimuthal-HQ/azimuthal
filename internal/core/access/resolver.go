@@ -173,12 +173,18 @@ func (res *Resolution) Can(c Capability, spaceID uuid.UUID) bool {
 //
 // minRoleFor is the source of truth for which capabilities are space-scoped.
 // A capability in that table is held through a role on a space and so is never
-// held without one — it answers false here. What remains is the org-level set
-// (set_visibility), granted by the org-admin bypass alone. A capability in
-// neither category behaves as it would through the bypass in Can: org admins
-// hold it, everyone else does not.
+// held without one — it answers false here. The org-level set is named
+// explicitly by orgLevelCaps (set_visibility), granted by the org-admin
+// bypass alone.
+//
+// A capability in NEITHER map answers false, and that is the point. This used
+// to treat org-level as the complement of minRoleFor and end in a bare
+// `return res.IsOrgAdmin`, so an unrecognised capability — a retired
+// constant, a typo, one added to the const block but never placed in a table
+// — became an org-wide permission held by every org admin with no space check
+// at all. Role.Grants fails closed on exactly that input; so does this now.
 func (res *Resolution) CanOrgWide(c Capability) bool {
-	if _, spaceScoped := minRoleFor[c]; spaceScoped {
+	if _, orgLevel := orgLevelCaps[c]; !orgLevel {
 		return false
 	}
 	return res.IsOrgAdmin

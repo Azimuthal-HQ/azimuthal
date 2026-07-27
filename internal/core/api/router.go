@@ -58,8 +58,14 @@ type RouterConfig struct {
 	// (e.g. when object storage is unavailable).
 	AvatarHandler *avatarapi.Handler
 	SPAHandler    http.Handler // serves the embedded frontend; nil disables SPA serving
-	// AllowedOrigins is the explicit CORS allow-list. nil falls back to the
-	// permissive wildcard for backwards compatibility with existing tests.
+	// AllowedOrigins is the explicit CORS allow-list, and nil or empty is the
+	// safe default: no CORS headers are emitted and the browser enforces
+	// same-origin. Cross-origin callers are admitted only by an operator
+	// setting AZIMUTHAL_ALLOWED_ORIGINS at boot.
+	//
+	// This field used to fail open — nil selected a permissive middleware that
+	// echoed Access-Control-Allow-Origin: * on every response. Leave it unset
+	// and you now get the restrictive behaviour, not the permissive one.
 	AllowedOrigins []string
 	// QueueStatus is reported in the /health response: "ok", "disabled", or "error".
 	QueueStatus string
@@ -82,11 +88,9 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	r.Use(RequestID)
 	r.Use(Logging)
 	r.Use(SecurityHeaders)
-	if cfg.AllowedOrigins == nil {
-		r.Use(CORS)
-	} else {
-		r.Use(NewCORS(cfg.AllowedOrigins))
-	}
+	// Unconditional: an unset allow-list means "emit no CORS headers", not
+	// "allow everything". See RouterConfig.AllowedOrigins.
+	r.Use(NewCORS(cfg.AllowedOrigins))
 
 	// Public endpoints (no auth required)
 	queueStatus := cfg.QueueStatus

@@ -213,17 +213,44 @@ the restart.
 ## 8. ~~CORS Allows All Origins~~ (RESOLVED)
 
 **Severity**: Medium (security)
-**Status**: Resolved — production denies all origins unless an allow-list is set
+**Status**: Resolved — no CORS headers in any environment unless an allow-list is set
 
-`api.NewCORS` now echoes `Access-Control-Allow-Origin` only for origins on an
-explicit allow-list from `AZIMUTHAL_ALLOWED_ORIGINS`. `config.parseAllowedOrigins`
-returns `["*"]` in development/test but an empty list in production, so an
-unconfigured production deployment denies all cross-origin requests by default
-and forces the operator to name allowed origins. The legacy permissive `CORS`
-middleware is only used when the allow-list is `nil` (non-production defaults).
+`api.NewCORS` echoes `Access-Control-Allow-Origin` only for origins on an
+explicit allow-list from `AZIMUTHAL_ALLOWED_ORIGINS`, and it is now the only
+CORS middleware in the codebase.
 
-**Tests**: `internal/config/config_test.go` — `TestConfig_AllowedOrigins_ProductionEmpty`,
-`TestConfig_AllowedOrigins_Explicit`.
+This entry was previously marked resolved while its own closing sentence
+described the part that was not: `config.parseAllowedOrigins` returned `["*"]`
+outside production, and `NewRouter` fell back to a legacy permissive `CORS`
+middleware — one that echoed `Access-Control-Allow-Origin: *` on every
+response — whenever `RouterConfig.AllowedOrigins` was `nil`. That fallback was
+a fail-open default rather than a compatibility shim: every construction site
+that omitted the field silently got wildcard CORS, which is why no test in the
+repository had ever exercised the restrictive path through the router.
+
+The S5 pass closed both halves. The legacy `CORS` middleware is deleted,
+`NewRouter` always uses `NewCORS`, and an unset `AZIMUTHAL_ALLOWED_ORIGINS`
+yields an empty list in **every** environment — so the default is same-origin
+and cross-origin access is an explicit boot-time decision. Nothing in the
+product regressed: in production the SPA is served from the same binary, and in
+development Vite proxies `/api` server-side (`web/vite.config.ts`), so in
+neither case does a browser issue a cross-origin request.
+
+**Breaking change for API consumers**: a browser-based client on another origin
+that previously worked by accident now needs the operator to set
+`AZIMUTHAL_ALLOWED_ORIGINS`. Server-to-server clients send no `Origin` header
+and are unaffected.
+
+**Tests**: `internal/config/config_test.go` — `TestConfig_AllowedOrigins_EmptyByDefaultInEveryEnv`,
+`TestConfig_AllowedOrigins_WildcardStaysOptIn`, `TestConfig_AllowedOrigins_ProductionEmpty`,
+`TestConfig_AllowedOrigins_Explicit`. `internal/core/api/middleware_test.go` —
+`TestCORSMiddleware_EmptyAllowListEmitsNoHeaders`,
+`TestCORSMiddleware_UnlistedOriginPreflightIsRefused`,
+`TestCORSMiddleware_ListedOriginIsEchoed`. `internal/core/api/router_test.go` —
+`TestCORS_CrossOriginPreflightRefusedByDefault`.
+`internal/core/api/routes_integration_test.go` —
+`TestIntegration_CORS_UnlistedOriginPreflightIsRefused`,
+`TestIntegration_CORS_SameOriginRequestIsUnaffected`.
 
 ---
 

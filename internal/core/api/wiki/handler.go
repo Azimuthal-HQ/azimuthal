@@ -31,7 +31,6 @@ type ShareQueries interface {
 // Handler holds the dependencies for wiki HTTP handlers.
 type Handler struct {
 	svc      *wiki.Service
-	locks    *wiki.LockService
 	docs     *wiki.DocumentService
 	auditLog audit.Logger
 	shares   ShareQueries
@@ -46,8 +45,8 @@ type Handler struct {
 // tidy 404 and the endpoints would read as covered (CLAUDE.md section 2, "No dark
 // harness"). A required argument does not compile when it is forgotten, which is
 // a stronger guarantee than a guard test.
-func NewHandler(svc *wiki.Service, locks *wiki.LockService, docs *wiki.DocumentService) *Handler {
-	return &Handler{svc: svc, locks: locks, docs: docs, auditLog: audit.NewLogger()}
+func NewHandler(svc *wiki.Service, docs *wiki.DocumentService) *Handler {
+	return &Handler{svc: svc, docs: docs, auditLog: audit.NewLogger()}
 }
 
 // WithAuditLogger attaches an audit logger to the handler.
@@ -80,10 +79,6 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/{pageID}/revisions/{version}", h.GetRevision)
 	r.Get("/{pageID}/diff", h.DiffRevisions)
 	r.Get("/{pageID}/render", h.RenderPage)
-	// Page locks
-	r.Get("/{pageID}/lock", h.GetLock)
-	r.Post("/{pageID}/lock", h.AcquireLock)
-	r.Delete("/{pageID}/lock", h.ReleaseLock)
 	// The document surface (issue #15, ADR-0012). /drafts is registered before
 	// /{pageID} paths for readability only — chi matches static segments ahead of
 	// parameters regardless.
@@ -817,95 +812,6 @@ func orgIDFromURL(r *http.Request) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("parsing org ID: %w", err)
 	}
 	return id, nil
-}
-
-// GetLock returns the active lock for a page, or null if unlocked.
-//
-// @Summary      Get page lock
-// @Tags         wiki
-// @Produce      json
-// @Security     BearerAuth
-// @Param        orgID    path      string  true  "Organization ID (UUID)"
-// @Param        spaceID  path      string  true  "Space ID"
-// @Param        pageID   path      string  true  "Page ID"
-// @Success      200      {object}  map[string]interface{}
-// @Failure      404      {object}  api.SwaggerErrorResponse
-// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock [get]
-func (h *Handler) GetLock(w http.ResponseWriter, r *http.Request) {
-	pageID, err := pageIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
-		return
-	}
-	lock, err := h.locks.GetLock(r.Context(), pageID)
-	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to get lock")
-		return
-	}
-	respond.JSON(w, http.StatusOK, lock)
-}
-
-// AcquireLock acquires or renews a page edit lock for the current user.
-//
-// @Summary      Acquire page lock
-// @Tags         wiki
-// @Produce      json
-// @Security     BearerAuth
-// @Param        orgID    path      string  true  "Organization ID (UUID)"
-// @Param        spaceID  path      string  true  "Space ID"
-// @Param        pageID   path      string  true  "Page ID"
-// @Success      200      {object}  map[string]interface{}
-// @Failure      409      {object}  api.SwaggerErrorResponse
-// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock [post]
-func (h *Handler) AcquireLock(w http.ResponseWriter, r *http.Request) {
-	pageID, err := pageIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
-		return
-	}
-	claims := auth.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "unauthorized")
-		return
-	}
-	lock, err := h.locks.AcquireLock(r.Context(), pageID, claims.UserID, claims.Email)
-	if err != nil {
-		if errors.Is(err, wiki.ErrPageLocked) {
-			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
-			return
-		}
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to acquire lock")
-		return
-	}
-	respond.JSON(w, http.StatusOK, lock)
-}
-
-// ReleaseLock releases the current user's lock on a page.
-//
-// @Summary      Release page lock
-// @Tags         wiki
-// @Security     BearerAuth
-// @Param        orgID    path      string  true  "Organization ID (UUID)"
-// @Param        spaceID  path      string  true  "Space ID"
-// @Param        pageID   path      string  true  "Page ID"
-// @Success      204
-// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/lock [delete]
-func (h *Handler) ReleaseLock(w http.ResponseWriter, r *http.Request) {
-	pageID, err := pageIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
-		return
-	}
-	claims := auth.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "unauthorized")
-		return
-	}
-	if err := h.locks.ReleaseLock(r.Context(), pageID, claims.UserID); err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to release lock")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleWikiError(w http.ResponseWriter, r *http.Request, err error) {

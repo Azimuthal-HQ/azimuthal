@@ -65,20 +65,6 @@ func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, _, _ uuid.U
 	return 0, nil
 }
 
-// mockLockStore satisfies wiki.LockStore with no-ops.
-type mockLockStore struct{}
-
-func (m *mockLockStore) UpsertPageLock(_ context.Context, _ generated.UpsertPageLockParams) (generated.PageLock, error) {
-	return generated.PageLock{}, nil
-}
-func (m *mockLockStore) GetPageLock(_ context.Context, _ uuid.UUID) (generated.PageLock, error) {
-	return generated.PageLock{}, pgx.ErrNoRows
-}
-func (m *mockLockStore) DeletePageLock(_ context.Context, _ generated.DeletePageLockParams) error {
-	return nil
-}
-func (m *mockLockStore) DeleteExpiredPageLocks(_ context.Context) error { return nil }
-
 // mockDocumentStore satisfies wiki.DocumentStore for the routing-level tests in
 // this file. The document surface's real behaviour — capture, restore, conflict,
 // draft isolation — is covered against a real database in
@@ -120,12 +106,11 @@ func (m *mockDocumentTx) PublishPageTx(_ context.Context, in wiki.PublishPageTxI
 
 func setupWikiHandler() *wikiapi.Handler {
 	svc := wiki.NewService(&mockPageStore{}, &mockContentTx{})
-	locks := wiki.NewLockService(&mockLockStore{})
 	// UnavailableImageStore rather than a mock: this harness has no object store,
 	// and the refusing implementation is exactly what a storage-less deployment
 	// gets, so the routes behave here as they would there.
 	docs := wiki.NewDocumentService(&mockDocumentStore{}, &mockDocumentTx{}, wiki.UnavailableImageStore{})
-	return wikiapi.NewHandler(svc, locks, docs)
+	return wikiapi.NewHandler(svc, docs)
 }
 
 func withParam(r *http.Request, key, val string) *http.Request {
