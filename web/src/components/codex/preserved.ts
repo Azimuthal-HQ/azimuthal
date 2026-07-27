@@ -14,7 +14,7 @@
  */
 
 /** The `az_source` value the document model itself produces. */
-export const SOURCE_DOCUMENT = 'document';
+const SOURCE_DOCUMENT = 'document';
 
 /**
  * The internal type names `wiki/doc`'s markdown converter emits for source it

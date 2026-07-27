@@ -65,6 +65,7 @@ export function PageIncludeView({ node, editor, updateAttributes }: NodeViewProp
       {picking && (
         <PagePicker
           title="Include a page"
+          selectedId={pageId}
           onSelect={(id) => {
             updateAttributes({ page_id: id });
             setPicking(false);
