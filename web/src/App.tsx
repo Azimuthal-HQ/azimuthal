@@ -14,6 +14,7 @@ import { TicketListPage } from './pages/beacon/TicketListPage';
 import { TicketDetailPage } from './pages/beacon/TicketDetailPage';
 import { ReportsPage } from './pages/beacon/ReportsPage';
 import { WikiPage } from './pages/codex/WikiPage';
+import { DraftsPage } from './pages/codex/DraftsPage';
 import { ItemDetailPage } from './pages/vector/ItemDetailPage';
 import {
   ModuleBacklogRoute,
@@ -107,7 +108,9 @@ export function App() {
           <Route path="search" element={<SpacePlaceholderPage feature="search" />} />
           <Route path="recent" element={<SpacePlaceholderPage feature="recent" />} />
           <Route path="starred" element={<SpacePlaceholderPage feature="starred" />} />
-          <Route path="drafts" element={<SpacePlaceholderPage feature="drafts" />} />
+          {/* Real since issue #15: GET …/wiki/drafts shipped in PR #73 and the
+              sidebar has linked here since the navigation collapse. */}
+          <Route path="drafts" element={<ErrorBoundary><DraftsPage /></ErrorBoundary>} />
           <Route path="settings" element={<ErrorBoundary><SpaceSettingsPage /></ErrorBoundary>} />
           {/* Unknown sub-routes keep the space chrome and render the branded
               empty state, never a blank body. */}

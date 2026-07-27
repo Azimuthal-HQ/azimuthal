@@ -5,6 +5,7 @@ import {
 } from '@tanstack/react-query';
 import type { UseQueryOptions } from '@tanstack/react-query';
 import { getToken, setToken, setRefreshToken, getRefreshToken, removeToken, removeRefreshToken, getCurrentOrgId } from './auth';
+import type { CodexDoc } from './codex/schema';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -97,9 +98,25 @@ function splitIdRef(v: IdWithTicketRef): { id: string; ticketRef?: string } {
 // Base fetch helper
 // ---------------------------------------------------------------------------
 
+/**
+ * ClaimErrorBody lets one caller recognise a failure body that is NOT the
+ * standard `{error:{…}}` envelope and throw its own typed error for it.
+ *
+ * Exactly one surface needs this. The Codex publish route answers 409 with a
+ * bare `ConflictDetail` or `LostContentDetail` object rather than an envelope,
+ * because those bodies *are* the dialogue the author reads — see
+ * `internal/core/api/wiki/document_handler.go`. Without a hook here the
+ * envelope parser reads `body.error.message` off an object with no `error`
+ * member, throws a TypeError, and destroys the only description of what would
+ * have been lost. Returning `undefined` falls through to the ordinary
+ * `APIError` path, so this changes nothing for a caller that passes none.
+ */
+type ClaimErrorBody = (status: number, body: unknown) => Error | undefined;
+
 async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
+  claimErrorBody?: ClaimErrorBody,
 ): Promise<T> {
   const headers = new Headers(options.headers);
 
@@ -138,18 +155,32 @@ async function apiFetch<T>(
       }
     }
 
-    let body: APIErrorBody;
+    let parsed: unknown;
+    let parseFailed = false;
     try {
-      body = (await response.json()) as APIErrorBody;
+      parsed = await response.json();
     } catch {
-      body = {
-        error: {
-          code: 'unknown',
-          message: response.statusText || 'Request failed',
-          request_id: '',
-        },
-      };
+      parseFailed = true;
     }
+
+    // Give the caller first refusal on a non-envelope body, before the
+    // envelope parser touches it.
+    if (!parseFailed && claimErrorBody) {
+      const claimed = claimErrorBody(response.status, parsed);
+      if (claimed) throw claimed;
+    }
+
+    const envelope = parsed as APIErrorBody | undefined;
+    const body: APIErrorBody =
+      !parseFailed && envelope?.error
+        ? envelope
+        : {
+            error: {
+              code: 'unknown',
+              message: response.statusText || 'Request failed',
+              request_id: '',
+            },
+          };
     throw new APIError(response.status, body);
   }
 
@@ -341,6 +372,16 @@ export interface WikiPage {
   space_id: string;
   title: string;
   content: string;
+  /**
+   * The page's ProseMirror document, or null for a page that has only ever
+   * held markdown (migration 036). This is the *stored* document, so it still
+   * carries any node types the editor's schema does not define — reading it
+   * through ProseMirror would drop them. Anything that renders or edits a
+   * document reads {@link CodexEditableDocument.doc} from the `/document`
+   * route instead, which is shielded; `doc` here answers exactly one
+   * question, and it is the dual-format one: markdown page, or document page?
+   */
+  doc: CodexDoc | null;
   version: number;
   parent_id: string | null;
   author_id: string;
@@ -1242,6 +1283,241 @@ async function updateWikiPage(
 }
 
 // ---------------------------------------------------------------------------
+// Codex document API (issue #15 / ADR-0012)
+//
+// The document surface shipped in PR #73. Its contract, and the three shapes
+// below, are fixed by `internal/core/wiki/document.go`; this is the client
+// half and it invents nothing.
+// ---------------------------------------------------------------------------
+
+/**
+ * CodexEditableDocument is what `GET …/wiki/{pageID}/document` returns: the
+ * published document with every type outside the editor's schema replaced by
+ * a preservation placeholder, plus the caller's own draft if they hold one.
+ *
+ * `doc` is safe to hand to ProseMirror; `WikiPage.doc` is not.
+ */
+export interface CodexEditableDocument {
+  page_id: string;
+  title: string;
+  doc: CodexDoc;
+  /** The published version `doc` belongs to; a publish must carry it back. */
+  base_version: number;
+  /** 'document' if the page already held one, 'markdown' if it was converted. */
+  source_format: 'document' | 'markdown';
+  /**
+   * The placeholder ids in `doc`, in document order, taken from the server's
+   * payload before ProseMirror parses it. If ProseMirror drops a placeholder
+   * on load the id is here and absent from the editor's state, which is what
+   * makes the loss detectable instead of invisible.
+   */
+  preserved_ids: string[];
+  draft: CodexDraftDocument | null;
+}
+
+export interface CodexDraftDocument {
+  title: string;
+  doc: CodexDoc;
+  base_version: number;
+  updated_at: string;
+  /** The page has been published past the version this draft started from. */
+  stale: boolean;
+}
+
+/** One row of the Codex Drafts view, from `GET …/wiki/drafts`. */
+export interface CodexDraftSummary {
+  page_id: string;
+  page_title: string;
+  draft_title: string;
+  base_version: number;
+  page_version: number;
+  path: string;
+  updated_at: string;
+  stale: boolean;
+}
+
+/** A stored page image. A document refers to images by id, never by URL. */
+export interface CodexPageImage {
+  attachment_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+}
+
+/** The `ConflictDetail` 409 body: the page moved on under the author. */
+export interface CodexPublishConflict {
+  page_id: string;
+  expected_version: number;
+  current_page: WikiPage;
+  message: string;
+}
+
+/** One piece of preserved content a publish would remove. */
+export interface CodexLostContentItem {
+  id: string;
+  name: string;
+  text: string;
+}
+
+/** The lost-content 409 body: the ADR-0012 catastrophe caught in the act. */
+export interface CodexPublishLostContent {
+  page_id: string;
+  lost_ids: string[];
+  lost: CodexLostContentItem[];
+  message: string;
+}
+
+/**
+ * PublishConflictError carries the 409 the version guard produced. The author
+ * can resolve it — reload, or overwrite — so the detail travels with the error
+ * rather than collapsing to a message.
+ */
+export class PublishConflictError extends Error {
+  detail: CodexPublishConflict;
+  constructor(detail: CodexPublishConflict) {
+    super(detail.message);
+    this.name = 'PublishConflictError';
+    this.detail = detail;
+  }
+}
+
+/**
+ * PublishLostContentError carries the 409 that names preserved content the
+ * publish would have removed. Republishing with those ids in
+ * `acknowledged_lost_ids` is the author's explicit confirmation.
+ */
+export class PublishLostContentError extends Error {
+  detail: CodexPublishLostContent;
+  constructor(detail: CodexPublishLostContent) {
+    super(detail.message);
+    this.name = 'PublishLostContentError';
+    this.detail = detail;
+  }
+}
+
+/**
+ * classifyPublishFailure recognises the publish route's two bare-object 409s.
+ *
+ * Both arrive as 409, so the discriminator is structural: a version conflict
+ * names `current_page`, a lost-content refusal names `lost_ids`. Anything else
+ * — including a 409 in the ordinary `{error:{…}}` envelope — is left to the
+ * standard path.
+ */
+function classifyPublishFailure(status: number, body: unknown): Error | undefined {
+  if (status !== 409 || body == null || typeof body !== 'object') return undefined;
+  const candidate = body as Record<string, unknown>;
+  if (Array.isArray(candidate.lost_ids)) {
+    return new PublishLostContentError(body as CodexPublishLostContent);
+  }
+  if (candidate.current_page != null) {
+    return new PublishConflictError(body as CodexPublishConflict);
+  }
+  return undefined;
+}
+
+async function fetchPageDocument(spaceId: string, pageId: string): Promise<CodexEditableDocument> {
+  return apiFetch<CodexEditableDocument>(`${spaceBase(spaceId)}/wiki/${pageId}/document`);
+}
+
+export interface SavePageDraftRequest {
+  title: string;
+  doc: CodexDoc;
+  base_version: number;
+}
+
+async function savePageDraft(
+  spaceId: string,
+  pageId: string,
+  req: SavePageDraftRequest,
+): Promise<CodexDraftDocument> {
+  return apiFetch<CodexDraftDocument>(`${spaceBase(spaceId)}/wiki/${pageId}/draft`, {
+    method: 'PUT',
+    body: JSON.stringify(req),
+  });
+}
+
+async function discardPageDraft(spaceId: string, pageId: string): Promise<void> {
+  return apiFetch<void>(`${spaceBase(spaceId)}/wiki/${pageId}/draft`, { method: 'DELETE' });
+}
+
+async function fetchSpaceDrafts(spaceId: string): Promise<CodexDraftSummary[]> {
+  // Audit ref: testing-audit.md §7.5 — null-instead-of-[] regression.
+  const data = await apiFetch<CodexDraftSummary[] | null>(`${spaceBase(spaceId)}/wiki/drafts`);
+  return data ?? [];
+}
+
+export interface PublishPageRequest {
+  title: string;
+  doc: CodexDoc;
+  base_version: number;
+  /** The preserved blocks the author has explicitly confirmed removing. */
+  acknowledged_lost_ids?: string[];
+  /** Publish over a page that moved on. Only after the conflict was reported. */
+  overwrite?: boolean;
+}
+
+async function publishPage(
+  spaceId: string,
+  pageId: string,
+  req: PublishPageRequest,
+): Promise<WikiPage> {
+  return apiFetch<WikiPage>(
+    `${spaceBase(spaceId)}/wiki/${pageId}/publish`,
+    { method: 'POST', body: JSON.stringify(req) },
+    classifyPublishFailure,
+  );
+}
+
+async function uploadPageImage(
+  spaceId: string,
+  pageId: string,
+  file: File,
+): Promise<CodexPageImage> {
+  const form = new FormData();
+  form.append('file', file);
+  return apiFetch<CodexPageImage>(`${spaceBase(spaceId)}/wiki/${pageId}/images`, {
+    method: 'POST',
+    body: form,
+  });
+}
+
+/**
+ * fetchPageImageObjectURL resolves an image a document refers to by attachment
+ * id into a blob URL an `<img src>` can use.
+ *
+ * It cannot be a plain URL. The attachment route authenticates from the
+ * `Authorization` header or a `session` cookie, and this frontend holds a
+ * bearer token in localStorage and sets no cookie — nothing in
+ * `internal/core/api/auth` calls `http.SetCookie` — so a browser-issued image
+ * request carries no credential and gets a 401. The bytes therefore come
+ * through the authenticated client like every other request, and the caller
+ * revokes the URL when it is done with it.
+ *
+ * The document deliberately stores no URL of its own: the address a reader
+ * needs depends on whether they reached the page through the space or through
+ * a share, so baking one in would make it wrong for one of them.
+ */
+export async function fetchPageImageObjectURL(
+  spaceId: string,
+  attachmentId: string,
+): Promise<string> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  const response = await fetch(
+    `${API_BASE_URL}${spaceBase(spaceId)}/attachments/${attachmentId}`,
+    { headers },
+  );
+  if (!response.ok) {
+    throw new APIError(response.status, {
+      error: { code: 'unknown', message: 'the image is unavailable', request_id: '' },
+    });
+  }
+  return URL.createObjectURL(await response.blob());
+}
+
+// ---------------------------------------------------------------------------
 // Project item API functions
 // ---------------------------------------------------------------------------
 
@@ -1825,6 +2101,9 @@ export const queryKeys = {
   wikiRevisions: (spaceId: string, pageId: string) => ['wikiRevisions', spaceId, pageId] as const,
   wikiRevision: (spaceId: string, pageId: string, version: number) => ['wikiRevision', spaceId, pageId, version] as const,
   wikiDiff: (spaceId: string, pageId: string, from: number, to: number) => ['wikiDiff', spaceId, pageId, from, to] as const,
+  /** The Codex document surface (issue #15). */
+  pageDocument: (spaceId: string, pageId: string) => ['pageDocument', spaceId, pageId] as const,
+  spaceDrafts: (spaceId: string) => ['spaceDrafts', spaceId] as const,
   relations: (spaceId: string, itemId: string) => ['relations', spaceId, itemId] as const,
   roadmap: (spaceId: string, from: string, to: string) => ['roadmap', spaceId, from, to] as const,
   roadmapOverdue: (spaceId: string) => ['roadmapOverdue', spaceId] as const,
@@ -2256,6 +2535,103 @@ export function useUpdateWikiPage(spaceId: string, pageId: string) {
       queryClient.invalidateQueries({ queryKey: queryKeys.wikiPages(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.wikiPage(spaceId, pageId) });
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Codex document hooks (issue #15 / ADR-0012)
+// ---------------------------------------------------------------------------
+
+/**
+ * usePageDocument reads a page's editable document.
+ *
+ * `staleTime: Infinity` is load-bearing rather than a tuning choice. The
+ * response carries `base_version` and the preservation ids that were minted
+ * against it, and the editor's unsaved state is keyed to both. A background
+ * refetch that swapped them under an open editor would make the next publish
+ * resolve placeholders against a document the author never saw. The page view
+ * invalidates this key deliberately after a publish, which is the only moment
+ * a new base exists.
+ */
+export function usePageDocument(
+  spaceId: string,
+  pageId: string,
+  opts?: QueryOpts<CodexEditableDocument>,
+) {
+  return useQuery<CodexEditableDocument, APIError>({
+    queryKey: queryKeys.pageDocument(spaceId, pageId),
+    queryFn: () => fetchPageDocument(spaceId, pageId),
+    enabled: !!spaceId && !!pageId,
+    staleTime: Infinity,
+    ...opts,
+  });
+}
+
+/** The pages in this space on which the caller holds an unpublished draft. */
+export function useSpaceDrafts(spaceId: string, opts?: QueryOpts<CodexDraftSummary[]>) {
+  return useQuery<CodexDraftSummary[], APIError>({
+    queryKey: queryKeys.spaceDrafts(spaceId),
+    queryFn: () => fetchSpaceDrafts(spaceId),
+    enabled: !!spaceId,
+    ...opts,
+  });
+}
+
+/**
+ * useSavePageDraft is the autosave.
+ *
+ * It deliberately invalidates only the space's draft list — the badge that
+ * says "you have unpublished changes here". Invalidating the document key
+ * would refetch the editor's own base out from under it on every keystroke
+ * batch.
+ */
+export function useSavePageDraft(spaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<CodexDraftDocument, APIError, SavePageDraftRequest>({
+    mutationFn: (req) => savePageDraft(spaceId, pageId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaceDrafts(spaceId) });
+    },
+  });
+}
+
+export function useDiscardPageDraft(spaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, void>({
+    mutationFn: () => discardPageDraft(spaceId, pageId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaceDrafts(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pageDocument(spaceId, pageId) });
+    },
+  });
+}
+
+/**
+ * usePublishPage publishes a document.
+ *
+ * The error type is `Error`, not `APIError`, because two of this route's
+ * failures are not APIErrors: {@link PublishConflictError} and
+ * {@link PublishLostContentError} each carry a body the UI has to render
+ * rather than a message it can show.
+ */
+export function usePublishPage(spaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<WikiPage, Error, PublishPageRequest>({
+    mutationFn: (req) => publishPage(spaceId, pageId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiPages(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiPage(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiTree(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pageDocument(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.spaceDrafts(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiRevisions(spaceId, pageId) });
+    },
+  });
+}
+
+export function useUploadPageImage(spaceId: string, pageId: string) {
+  return useMutation<CodexPageImage, APIError, File>({
+    mutationFn: (file) => uploadPageImage(spaceId, pageId, file),
   });
 }
 

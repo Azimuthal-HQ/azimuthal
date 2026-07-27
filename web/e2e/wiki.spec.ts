@@ -48,7 +48,15 @@ test.describe('Wiki', () => {
     await expect(page).toHaveURL('/')
   })
 
-  test('wiki edit button opens editor and edit persists', async ({ page }) => {
+  // Migrated to the document editor (issue #15). The journey is the same one
+  // and every assertion it made is still made — including the two that carry
+  // the weight: read mode must be reached before the content check, and the
+  // check is scoped to <article>. What changed is the verb. The markdown
+  // editor saved; the document editor autosaves a private draft and
+  // *publishes*, so "Save" became "Publish" and the assertion that readers see
+  // the result is now a claim about published content rather than about a
+  // successful PUT.
+  test('wiki edit button opens editor and a published edit persists', async ({ page }) => {
     await createUserAndLogin(page)
     await createSpace(page, 'Editor Wiki', 'codex')
 
@@ -57,29 +65,28 @@ test.describe('Wiki', () => {
     await page.locator('[role="dialog"] button:has-text("Create Page")').click()
     await expect(page.getByTestId('wiki-page-title')).toContainText('Editable Page', { timeout: 5000 })
 
-    // Open the editor (TipTap-based rich text editor). Use an exact-name
-    // locator: a substring match on "Edit" would also match a page titled
-    // "Editable…" elsewhere on the page.
+    // Open the editor. Use an exact-name locator: a substring match on "Edit"
+    // would also match a page titled "Editable…" elsewhere on the page.
     await page.getByRole('button', { name: 'Edit', exact: true }).click()
     const editor = page.locator('.ProseMirror')
-    await expect(editor).toBeVisible({ timeout: 5000 })
+    await expect(editor).toBeVisible({ timeout: 10000 })
 
-    // Type content and save
     await editor.click()
     await editor.pressSequentially('Content written in the editor')
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await page.getByTestId('codex-publish').click()
 
-    // Save must actually exit edit mode (the read-mode Edit button returns).
-    // The TipTap editor is contentEditable, so the typed text is live DOM
-    // that text= matches even if the save request never fired — and on a
-    // failed save the page stays in edit mode with the text still mounted.
+    // Publishing must actually exit edit mode (the read-mode Edit button
+    // returns). The editor is contentEditable, so the typed text is live DOM
+    // that text= matches even if the request never fired — and on a failed
+    // publish the page stays in edit mode with the text still mounted.
     // Asserting read mode first makes the content check mean "rendered from
-    // the saved page", then the reload proves persistence. Scoped to the
-    // read-mode article so nothing else on the page can satisfy it.
-    await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible({ timeout: 5000 })
+    // the published page", then the reload proves persistence. Scoped to the
+    // read-mode <article> so nothing else on the page can satisfy it.
+    await expect(page.getByRole('button', { name: 'Edit', exact: true })).toBeVisible({ timeout: 10000 })
     await expect(page.locator('article').getByText('Content written in the editor')).toBeVisible({ timeout: 5000 })
     await page.reload()
     await expect(page.locator('article').getByText('Content written in the editor')).toBeVisible({ timeout: 10000 })
+    await assertNoErrors(page)
   })
 
   test('wiki page tree shows hierarchy', async ({ page }) => {

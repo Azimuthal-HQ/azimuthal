@@ -69,17 +69,34 @@ on the wire because this list names it.)
 > **The rule: no raw backend string ever reaches a user.** This is not a style preference; it is a
 > regression the E2E suite actively hunts.
 
-`assertNoErrors(page)` in `web/e2e/helpers/setup.ts` is called 20 times across 8 spec files, after
-navigation, and fails if any of these are visible:
+`assertNoErrors(page)` in `web/e2e/helpers/setup.ts` is called after navigation across the E2E
+suite, and fails if any of these **six** strings is visible:
 
 ```
-"Something went wrong"   "Failed to load"   "invalid space_id"
-"invalid request body"   "UNAUTHORIZED"
+"Something went wrong"   "Failed to load"        "could not be loaded"
+"invalid space_id"       "invalid request body"  "UNAUTHORIZED"
 ```
+
+`"could not be loaded"` is the one most easily tripped by accident, because it is also the shape
+most `friendlyErrorMessage` fallbacks take — the interior restyle routed every load failure
+through copy reading "… could not be loaded." New fallback copy on any path an E2E spec navigates
+through must avoid all six. (**D53**: this list said five until issue #15; the helper has asserted
+six since the interior restyle.)
 
 Rendering an `APIError`'s `.message` directly into a component is the exact defect this catches.
 The most recent instance was fixed in the space-create dialog after migration 028 started
 returning a constraint-name-driven conflict.
+
+**One sanctioned exception, and only one.** The Codex publish route answers its two 409s with a
+bare `ConflictDetail` or `LostContentDetail` object rather than an error envelope, so they carry
+no code at all and `friendlyErrorMessage` would collapse them into a fallback. Those `message`
+fields are prose written server-side for exactly one dialog — "this text IS the dialogue the
+author reads", `internal/core/api/wiki/document_handler.go` — and they name the versions and
+counts involved, so restating them client-side would mean maintaining the same sentence in two
+languages and letting them drift. They are shown verbatim, from the two typed errors
+(`PublishConflictError`, `PublishLostContentError`) only. Everything that arrives as an `APIError`
+still goes through `friendlyErrorMessage`, including this route's 422s — which do carry
+`VALIDATION_ERROR`, so they pass through it anyway.
 
 ---
 
@@ -299,7 +316,8 @@ Three things about it that are easy to get wrong twice:
   anybody changes it.
 
 **Current consumers** — `internal/core/wiki` (`DocumentService`), `internal/core/attachments`
-(image sniffing, via `doc.SniffImageType` / `doc.SupportedImageType`).
+(image sniffing, via `doc.SniffImageType` / `doc.SupportedImageType`), and the editor
+(section 11).
 
 ---
 
@@ -324,7 +342,54 @@ already published, is not fixable by retrying.
 
 **Note the asymmetry with the older path.** `wiki.Service.UpdatePage` — the markdown save — still
 updates the page and inserts its revision as two separate pool calls. That is recorded as a defect
-in `spec-repo-reconciliation.md`, not as a second convention.
+in `spec-repo-reconciliation.md`, not as a second convention (see also D54: it leaves `doc` stale).
+
+---
+
+## 11. The Codex editor — one extension set, one renderer, one page picker
+
+**Where:** `web/src/components/codex/`.
+
+```ts
+codexExtensions(): AnyExtension[]        // extensions/index.ts — the registered vocabulary
+registeredTypes(exts): {nodes, marks}    // derived from a real ProseMirror schema
+<CodexEditor …>                          // the editing surface
+<CodexDocRenderer …>                     // the reading surface: the same thing, not editable
+<PagePicker …>                           // the only "choose a page in this space" control
+```
+
+Built for issue #15 PR-B on the model in section 9.
+
+> **The rule: the editor's registered vocabulary equals `schema.json`, in both directions, and a
+> test proves it against a real schema.** A type the editor registers but the manifest omits is
+> merely preserved when it need not have been — annoying, safe. A type the manifest names and the
+> editor does **not** register is silent data loss: the server stops capturing it because the
+> schema says the editor handles it, and ProseMirror drops it on load before anything server-side
+> can notice. `web/src/lib/codex/schema.test.ts` compares the TypeScript mirror to the Go
+> manifest; `extensions/extensions.test.ts` compares a schema built from the real extension list
+> to that mirror. Both fail in both directions.
+>
+> The concrete case is not hypothetical: StarterKit ships `underline`, which `schema.json` does
+> not name, so it is explicitly disabled. Re-enabling it is a one-word change.
+
+Four things about it that are easy to get wrong:
+
+- **The reading surface is the editor with `editable: false`.** Not a second renderer. A separate
+  read path drifts, and the first thing to drift is the labelling of preserved blocks — which is
+  precisely what ADR-0012 section 2 requires a reader to see.
+- **The reader's document comes from `GET …/{pageID}/document`, never from `WikiPage.doc`.** The
+  stored document still contains types outside the editor's schema; only the `/document` route
+  shields them into labelled placeholders. Reading it needs space-read, not edit.
+- **Macro attribute names are a contract with `doc.ToMarkdown`,** which reads `kind`, `title`,
+  `text`, `page_id`, `language` and `attachment_id` by name to build the markdown that feeds the
+  generated `search_vector`. Renaming one breaks nothing at runtime — the page publishes, the
+  document stores correctly, and the content quietly stops being findable.
+- **`base_version` is fixed for the life of an editing session,** including through an overwrite.
+  The preservation ids were minted against that version and publish re-derives it to resolve them.
+
+**Current consumers** — `web/src/pages/codex/WikiPage.tsx`, `web/src/pages/codex/DraftsPage.tsx`.
+Any later rich-text surface — a Beacon ticket description, a Vector item body — extends this set
+and this schema rather than starting a second one.
 
 ## Related
 
