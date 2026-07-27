@@ -118,11 +118,11 @@ func userIDFromRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool)
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id  path      string  true  "Organization ID"
+// @Param        orgID  path      string  true  "Organization ID"
 // @Success      200     {array}   admin.personResponse       "Members"
 // @Failure      401     {object}  api.SwaggerErrorResponse   "Not authenticated"
 // @Failure      404     {object}  api.SwaggerErrorResponse   "Not found (also returned to non-admins)"
-// @Router       /orgs/{org_id}/users [get]
+// @Router       /orgs/{orgID}/users [get]
 func (h *Handler) ListPeople(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {
@@ -157,15 +157,15 @@ type updatePersonRequest struct {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id      path      string                     true   "Organization ID"
-// @Param        user_id     path      string                     true   "User ID"
+// @Param        orgID      path      string                     true   "Organization ID"
+// @Param        userID     path      string                     true   "User ID"
 // @Param        ticket_ref  query     string                     false  "Operator ticket reference recorded on the audit events (max 200 chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)"
 // @Param        body        body      admin.updatePersonRequest  true   "Fields to change"
 // @Success      204         "Updated"
 // @Failure      400         {object}  api.SwaggerErrorResponse   "Validation error, including a missing or over-long ticket_ref"
 // @Failure      404         {object}  api.SwaggerErrorResponse   "Not found"
 // @Failure      409         {object}  api.SwaggerErrorResponse   "Last-admin protection"
-// @Router       /orgs/{org_id}/users/{user_id} [patch]
+// @Router       /orgs/{orgID}/users/{userID} [patch]
 func (h *Handler) UpdatePerson(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {
@@ -235,14 +235,14 @@ func (h *Handler) applyPersonUpdates(w http.ResponseWriter, r *http.Request, org
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id      path      string  true   "Organization ID"
-// @Param        user_id     path      string  true   "User ID"
+// @Param        orgID      path      string  true   "Organization ID"
+// @Param        userID     path      string  true   "User ID"
 // @Param        ticket_ref  query     string  false  "Operator ticket reference recorded on the audit event (max 200 chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)"
 // @Success      204         "Deactivated; all sessions terminated"
 // @Failure      400         {object}  api.SwaggerErrorResponse  "Missing or over-long ticket_ref"
 // @Failure      404         {object}  api.SwaggerErrorResponse  "Not found"
 // @Failure      409         {object}  api.SwaggerErrorResponse  "Last-admin protection or already deactivated"
-// @Router       /orgs/{org_id}/users/{user_id}/deactivate [post]
+// @Router       /orgs/{orgID}/users/{userID}/deactivate [post]
 func (h *Handler) DeactivatePerson(w http.ResponseWriter, r *http.Request) {
 	h.lifecycleAction(w, r, h.people.Deactivate, audit.EventTypeUserDeactivated, map[string]string{"sessions_terminated": "true"})
 }
@@ -254,14 +254,14 @@ func (h *Handler) DeactivatePerson(w http.ResponseWriter, r *http.Request) {
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id      path      string  true   "Organization ID"
-// @Param        user_id     path      string  true   "User ID"
+// @Param        orgID      path      string  true   "Organization ID"
+// @Param        userID     path      string  true   "User ID"
 // @Param        ticket_ref  query     string  false  "Operator ticket reference recorded on the audit event (max 200 chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)"
 // @Success      204         "Reactivated"
 // @Failure      400         {object}  api.SwaggerErrorResponse  "Missing or over-long ticket_ref"
 // @Failure      404         {object}  api.SwaggerErrorResponse  "Not found"
 // @Failure      409         {object}  api.SwaggerErrorResponse  "Already active"
-// @Router       /orgs/{org_id}/users/{user_id}/reactivate [post]
+// @Router       /orgs/{orgID}/users/{userID}/reactivate [post]
 func (h *Handler) ReactivatePerson(w http.ResponseWriter, r *http.Request) {
 	h.lifecycleAction(w, r, h.people.Reactivate, audit.EventTypeUserReactivated, nil)
 }
@@ -273,13 +273,13 @@ func (h *Handler) ReactivatePerson(w http.ResponseWriter, r *http.Request) {
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id      path      string  true   "Organization ID"
-// @Param        user_id     path      string  true   "User ID"
+// @Param        orgID      path      string  true   "Organization ID"
+// @Param        userID     path      string  true   "User ID"
 // @Param        ticket_ref  query     string  false  "Operator ticket reference recorded on the audit event (max 200 chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)"
 // @Success      204         "Signed out everywhere"
 // @Failure      400         {object}  api.SwaggerErrorResponse  "Missing or over-long ticket_ref"
 // @Failure      404         {object}  api.SwaggerErrorResponse  "Not found"
-// @Router       /orgs/{org_id}/users/{user_id}/force-logout [post]
+// @Router       /orgs/{orgID}/users/{userID}/force-logout [post]
 func (h *Handler) ForceLogoutPerson(w http.ResponseWriter, r *http.Request) {
 	h.lifecycleAction(w, r, h.people.ForceLogout, audit.EventTypeUserForceLogout, nil)
 }
@@ -292,14 +292,14 @@ func (h *Handler) ForceLogoutPerson(w http.ResponseWriter, r *http.Request) {
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id      path      string  true   "Organization ID"
-// @Param        user_id     path      string  true   "User ID"
+// @Param        orgID      path      string  true   "Organization ID"
+// @Param        userID     path      string  true   "User ID"
 // @Param        ticket_ref  query     string  false  "Operator ticket reference recorded on the audit event (max 200 chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)"
 // @Success      204         "Removed from org"
 // @Failure      400         {object}  api.SwaggerErrorResponse  "Missing or over-long ticket_ref"
 // @Failure      404         {object}  api.SwaggerErrorResponse  "Not found"
 // @Failure      409         {object}  api.SwaggerErrorResponse  "Last-admin protection"
-// @Router       /orgs/{org_id}/users/{user_id} [delete]
+// @Router       /orgs/{orgID}/users/{userID} [delete]
 func (h *Handler) RemovePerson(w http.ResponseWriter, r *http.Request) {
 	h.lifecycleAction(w, r, h.people.RemoveFromOrg, audit.EventTypeUserRemovedFromOrg, nil)
 }

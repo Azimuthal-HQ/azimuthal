@@ -52,11 +52,11 @@ type matrixResponse struct {
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id  path      string  true  "Organization ID"
+// @Param        orgID  path      string  true  "Organization ID"
 // @Success      200     {object}  admin.matrixResponse       "Matrix data"
 // @Failure      401     {object}  api.SwaggerErrorResponse   "Not authenticated"
 // @Failure      404     {object}  api.SwaggerErrorResponse   "Not found (also returned to non-admins)"
-// @Router       /orgs/{org_id}/access-matrix [get]
+// @Router       /orgs/{orgID}/access-matrix [get]
 func (h *Handler) AccessMatrix(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {
@@ -201,12 +201,12 @@ func mapBulkError(w http.ResponseWriter, r *http.Request, err error) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id  path      string                    true  "Organization ID"
+// @Param        orgID  path      string                    true  "Organization ID"
 // @Param        body    body      admin.bulkPreviewRequest  true  "Requested cell states"
 // @Success      200     {object}  admin.bulkResultResponse  "The diff"
 // @Failure      400     {object}  api.SwaggerErrorResponse  "Validation error — the whole batch is rejected"
 // @Failure      404     {object}  api.SwaggerErrorResponse  "Not found (also returned to non-admins)"
-// @Router       /orgs/{org_id}/grants/bulk-preview [post]
+// @Router       /orgs/{orgID}/grants/bulk-preview [post]
 func (h *Handler) BulkPreview(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {
@@ -237,12 +237,12 @@ func (h *Handler) BulkPreview(w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id  path      string                  true  "Organization ID"
+// @Param        orgID  path      string                  true  "Organization ID"
 // @Param        body    body      admin.bulkApplyRequest  true  "Changes and the ticket_ref body field (max 200 chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED). Unlike the other administrative mutations this endpoint takes the reference in the body, not the query string — a shipped contract."
 // @Success      200     {object}  admin.bulkResultResponse  "Applied diff with batch_id"
 // @Failure      400     {object}  api.SwaggerErrorResponse  "Validation error, including a missing or over-long ticket_ref — nothing applied"
 // @Failure      404     {object}  api.SwaggerErrorResponse  "Not found (also returned to non-admins)"
-// @Router       /orgs/{org_id}/grants/bulk-apply [post]
+// @Router       /orgs/{orgID}/grants/bulk-apply [post]
 func (h *Handler) BulkApply(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {

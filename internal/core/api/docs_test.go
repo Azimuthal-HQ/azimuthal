@@ -238,6 +238,17 @@ func TestDocsSpec_LoginEndpointHasNoSecurity(t *testing.T) {
 // page-lock operations could have gone on being published in the spec after
 // their routes were deleted.
 //
+// N1: this test shipped with an undocumentedRoutes ledger of nineteen known
+// gaps — the whole P2.5 administration surface, plus both avatar routes. The
+// ledger is gone, because the gap is: sixteen of the nineteen turned out to be
+// annotated all along but under snake_case path placeholders ({org_id}) where
+// the router and the other eighty-eight documented paths use {orgID}, so the
+// spec described endpoints at names nothing served and this test could not
+// match them; the remaining three, the avatars, had no annotations at all and
+// sat in a package the docs target never even scanned. Both are fixed, and
+// with nothing left to exempt the exemption mechanism is gone too — a ledger
+// that can be added to is a ledger that will be.
+//
 // Regenerating with swag from inside a test is the wrong shape — it shells
 // out, writes the repo, and needs a toolchain the test cannot assume. The
 // drift that actually matters is one-directional and checkable without it:
@@ -269,7 +280,6 @@ func TestDocsSpec_EveryRouterPathIsDocumented(t *testing.T) {
 	require.True(t, ok, "router must expose chi.Routes for enumeration")
 
 	var missing []string
-	var unexpectedlyDocumented []string
 	seen := make(map[string]struct{})
 	require.NoError(t, chi.Walk(mux, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		// chi mounts leave "/*" artifacts on subtree roots; normalise exactly
@@ -290,14 +300,8 @@ func TestDocsSpec_EveryRouterPathIsDocumented(t *testing.T) {
 		}
 		seen[key] = struct{}{}
 
-		_, isDocumented := documented[specPath]
-		_, isKnownGap := undocumentedRoutes[key]
-
-		switch {
-		case !isDocumented && !isKnownGap:
+		if _, isDocumented := documented[specPath]; !isDocumented {
 			missing = append(missing, key)
-		case isDocumented && isKnownGap:
-			unexpectedlyDocumented = append(unexpectedlyDocumented, key)
 		}
 		return nil
 	}))
@@ -309,62 +313,6 @@ func TestDocsSpec_EveryRouterPathIsDocumented(t *testing.T) {
 			"from the spec is undocumented API; a stale spec entry is caught by "+
 			"`make docs-check`.",
 		strings.Join(missing, "\n  "))
-
-	// The ledger must shrink, never rot. A route that gained annotations has
-	// to leave undocumentedRoutes, or the map slowly stops meaning anything.
-	sort.Strings(unexpectedlyDocumented)
-	require.Emptyf(t, unexpectedlyDocumented,
-		"these routes are now documented but are still listed in undocumentedRoutes:\n  %s\n\n"+
-			"Delete their entries — the list is a shrinking ledger, not a permanent exemption.",
-		strings.Join(unexpectedlyDocumented, "\n  "))
-}
-
-// undocumentedRoutes is the known gap between the router and the OpenAPI spec.
-//
-// Every entry is a live, authenticated route whose handler carries no swaggo
-// annotations, so `make docs` never emits it. This is not a policy decision —
-// it is nineteen endpoints of real API that the published spec does not
-// mention, and it was invisible because the only test that would have caught
-// it skipped unconditionally (T2).
-//
-// The whole P2.5 administration surface is here: user administration, invites,
-// the access matrix, bulk grants, the audit log, and both avatar routes. An
-// API consumer reading docs/api/openapi.yaml today cannot discover any of it.
-//
-// This list is a ledger to burn down, not an exemption to live with. Adding a
-// route here to make this test pass would be a misuse of it — a NEW route must
-// be documented, and the test above fails if it is not. Flagged for a
-// maintainer: annotating these is a self-contained follow-up.
-var undocumentedRoutes = map[string]struct{}{
-	// People administration (P2.5).
-	"GET /orgs/{orgID}/users":                        {},
-	"PATCH /orgs/{orgID}/users/{userID}":             {},
-	"DELETE /orgs/{orgID}/users/{userID}":            {},
-	"POST /orgs/{orgID}/users/{userID}/deactivate":   {},
-	"POST /orgs/{orgID}/users/{userID}/reactivate":   {},
-	"POST /orgs/{orgID}/users/{userID}/force-logout": {},
-	"GET /orgs/{orgID}/members/search":               {},
-
-	// Invites (P2.5). The public acceptance routes ARE documented; the
-	// admin-side management routes are not.
-	"GET /orgs/{orgID}/invites":                    {},
-	"POST /orgs/{orgID}/invites":                   {},
-	"DELETE /orgs/{orgID}/invites/{inviteID}":      {},
-	"POST /orgs/{orgID}/invites/{inviteID}/resend": {},
-
-	// Access matrix and bulk grants (P2.5 admin hardening).
-	"GET /orgs/{orgID}/access-matrix":        {},
-	"POST /orgs/{orgID}/grants/bulk-preview": {},
-	"POST /orgs/{orgID}/grants/bulk-apply":   {},
-
-	// Audit log read surface.
-	"GET /orgs/{orgID}/audit-log":                   {},
-	"GET /orgs/{orgID}/audit-log/batches/{batchID}": {},
-
-	// Avatars.
-	"PUT /auth/me/avatar":                     {},
-	"PUT /orgs/{orgID}/users/{userID}/avatar": {},
-	"GET /orgs/{orgID}/users/{userID}/avatar": {},
 }
 
 // S6 — the docs page loads nothing from the internet.

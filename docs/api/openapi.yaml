@@ -871,6 +871,11 @@ components:
         email:
           type: string
       type: object
+    avatar.avatarResponse:
+      properties:
+        avatar_url:
+          type: string
+      type: object
     generated.ProjectItem:
       properties:
         assignee_id:
@@ -1466,6 +1471,65 @@ paths:
       summary: Update current user
       tags:
       - auth
+  /auth/me/avatar:
+    put:
+      description: Uploads the caller's own avatar. The image type is sniffed from
+        the bytes server-side, never taken from the declared content type, and only
+        PNG, JPEG, WebP and GIF are accepted. The object key is derived from the org
+        and user ids.
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              title: file
+              type: file
+          multipart/form-data:
+            schema:
+              type: object
+        description: Image file (PNG, JPEG, WebP or GIF; 5 MiB maximum)
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/avatar.avatarResponse'
+          description: The serve URL now recorded on the user
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No file part, or an invalid organization on the token
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Image exceeds the maximum size
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not a supported image type
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Set my avatar
+      tags:
+      - auth
   /auth/refresh:
     post:
       description: Exchanges a valid refresh token for a new access/refresh token
@@ -1718,764 +1782,6 @@ paths:
       summary: Mark all notifications read
       tags:
       - notifications
-  /orgs/{org_id}/access-matrix:
-    get:
-      description: Teams (tree, member counts), spaces, and every direct team grant,
-        in a constant number of queries. Inherited access is derived client-side from
-        team paths. Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/admin.matrixResponse'
-          description: Matrix data
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not authenticated
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found (also returned to non-admins)
-      security:
-      - BearerAuth: []
-      summary: Access matrix (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/audit-log:
-    get:
-      description: Append-only audit events with filters for actor, entity kind, action,
-        and date range. Events of one bulk batch collapse to a single row carrying
-        batch_size; expand via the batches endpoint. Keyset cursor pagination. Org
-        admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: Filter by actor
-        in: query
-        name: actor_id
-        schema:
-          type: string
-      - description: Filter by entity kind
-        in: query
-        name: entity_kind
-        schema:
-          type: string
-      - description: Filter by action
-        in: query
-        name: action
-        schema:
-          type: string
-      - description: RFC 3339 lower bound
-        in: query
-        name: from
-        schema:
-          type: string
-      - description: RFC 3339 upper bound
-        in: query
-        name: to
-        schema:
-          type: string
-      - description: Keyset cursor from next_cursor
-        in: query
-        name: cursor
-        schema:
-          type: string
-      - description: Page size (max 100, default 50)
-        in: query
-        name: limit
-        schema:
-          type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/admin.auditListResponse'
-          description: One page
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Invalid filter
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found (also returned to non-admins)
-      security:
-      - BearerAuth: []
-      summary: Audit log (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/audit-log/batches/{batch_id}:
-    get:
-      description: The constituent events of one bulk batch, oldest first. Org admins
-        only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: Batch ID
-        in: path
-        name: batch_id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/admin.auditEntryResponse'
-                type: array
-          description: Events
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found (also returned to non-admins)
-      security:
-      - BearerAuth: []
-      summary: Audit log batch events (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/grants/bulk-apply:
-    post:
-      description: 'Applies the changes atomically: one transaction, one batch_id,
-        one audit batch. A failure anywhere rolls back everything. Org admins only.'
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/admin.bulkApplyRequest'
-                description: Changes and the ticket_ref body field (max 200 chars;
-                  may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED). Unlike the
-                  other administrative mutations this endpoint takes the reference
-                  in the body, not the query string — a shipped contract.
-                summary: body
-        description: Changes and the ticket_ref body field (max 200 chars; may be
-          mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED). Unlike the other administrative
-          mutations this endpoint takes the reference in the body, not the query string
-          — a shipped contract.
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/admin.bulkResultResponse'
-          description: Applied diff with batch_id
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error, including a missing or over-long ticket_ref
-            — nothing applied
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found (also returned to non-admins)
-      security:
-      - BearerAuth: []
-      summary: Apply bulk grant changes (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/grants/bulk-preview:
-    post:
-      description: Computes the itemised diff (creates, role changes, revocations)
-        the given changes would apply, using the same computation apply uses. Nothing
-        is written. Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/admin.bulkPreviewRequest'
-                description: Requested cell states
-                summary: body
-        description: Requested cell states
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/admin.bulkResultResponse'
-          description: The diff
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error — the whole batch is rejected
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found (also returned to non-admins)
-      security:
-      - BearerAuth: []
-      summary: Preview bulk grant changes (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/invites:
-    get:
-      description: Pending (not accepted, not revoked) invites, expired ones included
-        so they can be resent or revoked. Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/invites.inviteResponse'
-                type: array
-          description: Pending invites
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not authenticated
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found (also returned to non-admins)
-      security:
-      - BearerAuth: []
-      summary: List pending invites (admin)
-      tags:
-      - admin
-    post:
-      description: Invites one or many emails with an org role and optional initial
-        team. Returns a per-email outcome; each created invite carries its one-time
-        invite_url — the raw token is never stored and cannot be retrieved again.
-        Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: Operator ticket reference recorded on the audit event. Free text,
-          no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set.
-        in: query
-        name: ticket_ref
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/invites.createInvitesRequest'
-                description: Emails, org role, optional team
-                summary: body
-        description: Emails, org role, optional team
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/invites.createInviteResult'
-                type: array
-          description: Per-email outcomes
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error, or a missing/over-long ticket_ref
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found (also returned to non-admins)
-      security:
-      - BearerAuth: []
-      summary: Create invites (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/invites/{invite_id}:
-    delete:
-      description: Revokes a pending invite. The invite link stops working immediately.
-        Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: Invite ID
-        in: path
-        name: invite_id
-        required: true
-        schema:
-          type: string
-      - description: Operator ticket reference recorded on the audit event. Free text,
-          no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set.
-        in: query
-        name: ticket_ref
-        schema:
-          type: string
-      responses:
-        "204":
-          description: Revoked
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Missing or over-long ticket_ref
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found or no longer active
-      security:
-      - BearerAuth: []
-      summary: Revoke invite (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/invites/{invite_id}/resend:
-    post:
-      description: Generates a fresh token and expiry for a pending invite. The previous
-        link stops working. Returns the new one-time invite_url. Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: Invite ID
-        in: path
-        name: invite_id
-        required: true
-        schema:
-          type: string
-      - description: Operator ticket reference recorded on the audit event. Free text,
-          no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set.
-        in: query
-        name: ticket_ref
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/invites.createdInviteResponse'
-          description: New invite URL
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Missing or over-long ticket_ref
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found or no longer active
-      security:
-      - BearerAuth: []
-      summary: Resend invite (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/members/search:
-    get:
-      description: Name-or-email search over active members, for person pickers. Bounded
-        result set. Any org member.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: Search text (empty returns the first page alphabetically)
-        in: query
-        name: q
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/admin.personRefResponse'
-                type: array
-          description: Matches
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not authenticated
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Org not found or caller not a member
-      security:
-      - BearerAuth: []
-      summary: Search org members
-      tags:
-      - admin
-  /orgs/{org_id}/users:
-    get:
-      description: Every member with org role, primary team, status, and last sign-in.
-        Org admins only; non-admins receive 404.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/admin.personResponse'
-                type: array
-          description: Members
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not authenticated
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found (also returned to non-admins)
-      security:
-      - BearerAuth: []
-      summary: List org members (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/users/{user_id}:
-    delete:
-      description: Drops the membership, team memberships, and grants in one transaction.
-        The user account and their authored content survive with attribution intact.
-        The last active admin cannot be removed. Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: User ID
-        in: path
-        name: user_id
-        required: true
-        schema:
-          type: string
-      - description: Operator ticket reference recorded on the audit event (max 200
-          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
-        in: query
-        name: ticket_ref
-        schema:
-          type: string
-      responses:
-        "204":
-          description: Removed from org
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Missing or over-long ticket_ref
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Last-admin protection
-      security:
-      - BearerAuth: []
-      summary: Remove member from org (admin)
-      tags:
-      - admin
-    patch:
-      description: Change a member's org role (member|admin) or primary team. The
-        last active admin cannot be demoted. Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: User ID
-        in: path
-        name: user_id
-        required: true
-        schema:
-          type: string
-      - description: Operator ticket reference recorded on the audit events (max 200
-          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
-        in: query
-        name: ticket_ref
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              oneOf:
-              - type: object
-              - $ref: '#/components/schemas/admin.updatePersonRequest'
-                description: Fields to change
-                summary: body
-        description: Fields to change
-        required: true
-      responses:
-        "204":
-          description: Updated
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error, including a missing or over-long ticket_ref
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Last-admin protection
-      security:
-      - BearerAuth: []
-      summary: Update org member (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/users/{user_id}/deactivate:
-    post:
-      description: Blocks sign-in and invalidates every session and token the user
-        holds, immediately. The last active admin cannot be deactivated. Org admins
-        only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: User ID
-        in: path
-        name: user_id
-        required: true
-        schema:
-          type: string
-      - description: Operator ticket reference recorded on the audit event (max 200
-          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
-        in: query
-        name: ticket_ref
-        schema:
-          type: string
-      responses:
-        "204":
-          description: Deactivated; all sessions terminated
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Missing or over-long ticket_ref
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Last-admin protection or already deactivated
-      security:
-      - BearerAuth: []
-      summary: Deactivate org member (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/users/{user_id}/force-logout:
-    post:
-      description: Invalidates every session and token the user holds. The account
-        stays active — they simply sign in again. For lost devices and suspected credential
-        leaks. Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: User ID
-        in: path
-        name: user_id
-        required: true
-        schema:
-          type: string
-      - description: Operator ticket reference recorded on the audit event (max 200
-          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
-        in: query
-        name: ticket_ref
-        schema:
-          type: string
-      responses:
-        "204":
-          description: Signed out everywhere
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Missing or over-long ticket_ref
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found
-      security:
-      - BearerAuth: []
-      summary: Force logout org member (admin)
-      tags:
-      - admin
-  /orgs/{org_id}/users/{user_id}/reactivate:
-    post:
-      description: Re-enables sign-in for a deactivated account. Tokens invalidated
-        at deactivation stay dead. Org admins only.
-      parameters:
-      - description: Organization ID
-        in: path
-        name: org_id
-        required: true
-        schema:
-          type: string
-      - description: User ID
-        in: path
-        name: user_id
-        required: true
-        schema:
-          type: string
-      - description: Operator ticket reference recorded on the audit event (max 200
-          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
-        in: query
-        name: ticket_ref
-        schema:
-          type: string
-      responses:
-        "204":
-          description: Reactivated
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Missing or over-long ticket_ref
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Already active
-      security:
-      - BearerAuth: []
-      summary: Reactivate org member (admin)
-      tags:
-      - admin
   /orgs/{orgID}:
     get:
       description: Returns an organization by its ID. 404 for non-members — existence
@@ -2581,6 +1887,151 @@ paths:
       summary: Update organization
       tags:
       - spaces
+  /orgs/{orgID}/access-matrix:
+    get:
+      description: Teams (tree, member counts), spaces, and every direct team grant,
+        in a constant number of queries. Inherited access is derived client-side from
+        team paths. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/admin.matrixResponse'
+          description: Matrix data
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Access matrix (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/audit-log:
+    get:
+      description: Append-only audit events with filters for actor, entity kind, action,
+        and date range. Events of one bulk batch collapse to a single row carrying
+        batch_size; expand via the batches endpoint. Keyset cursor pagination. Org
+        admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Filter by actor
+        in: query
+        name: actor_id
+        schema:
+          type: string
+      - description: Filter by entity kind
+        in: query
+        name: entity_kind
+        schema:
+          type: string
+      - description: Filter by action
+        in: query
+        name: action
+        schema:
+          type: string
+      - description: RFC 3339 lower bound
+        in: query
+        name: from
+        schema:
+          type: string
+      - description: RFC 3339 upper bound
+        in: query
+        name: to
+        schema:
+          type: string
+      - description: Keyset cursor from next_cursor
+        in: query
+        name: cursor
+        schema:
+          type: string
+      - description: Page size (max 100, default 50)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/admin.auditListResponse'
+          description: One page
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid filter
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Audit log (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/audit-log/batches/{batchID}:
+    get:
+      description: The constituent events of one bulk batch, oldest first. Org admins
+        only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Batch ID
+        in: path
+        name: batchID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/admin.auditEntryResponse'
+                type: array
+          description: Events
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Audit log batch events (admin)
+      tags:
+      - admin
   /orgs/{orgID}/custom-fields:
     get:
       parameters:
@@ -2686,6 +2137,288 @@ paths:
       summary: Update a custom field
       tags:
       - projects
+  /orgs/{orgID}/grants/bulk-apply:
+    post:
+      description: 'Applies the changes atomically: one transaction, one batch_id,
+        one audit batch. A failure anywhere rolls back everything. Org admins only.'
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/admin.bulkApplyRequest'
+                description: Changes and the ticket_ref body field (max 200 chars;
+                  may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED). Unlike the
+                  other administrative mutations this endpoint takes the reference
+                  in the body, not the query string — a shipped contract.
+                summary: body
+        description: Changes and the ticket_ref body field (max 200 chars; may be
+          mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED). Unlike the other administrative
+          mutations this endpoint takes the reference in the body, not the query string
+          — a shipped contract.
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/admin.bulkResultResponse'
+          description: Applied diff with batch_id
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error, including a missing or over-long ticket_ref
+            — nothing applied
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Apply bulk grant changes (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/grants/bulk-preview:
+    post:
+      description: Computes the itemised diff (creates, role changes, revocations)
+        the given changes would apply, using the same computation apply uses. Nothing
+        is written. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/admin.bulkPreviewRequest'
+                description: Requested cell states
+                summary: body
+        description: Requested cell states
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/admin.bulkResultResponse'
+          description: The diff
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error — the whole batch is rejected
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Preview bulk grant changes (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/invites:
+    get:
+      description: Pending (not accepted, not revoked) invites, expired ones included
+        so they can be resent or revoked. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/invites.inviteResponse'
+                type: array
+          description: Pending invites
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: List pending invites (admin)
+      tags:
+      - admin
+    post:
+      description: Invites one or many emails with an org role and optional initial
+        team. Returns a per-email outcome; each created invite carries its one-time
+        invite_url — the raw token is never stored and cannot be retrieved again.
+        Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event. Free text,
+          no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set.
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/invites.createInvitesRequest'
+                description: Emails, org role, optional team
+                summary: body
+        description: Emails, org role, optional team
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/invites.createInviteResult'
+                type: array
+          description: Per-email outcomes
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error, or a missing/over-long ticket_ref
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: Create invites (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/invites/{inviteID}:
+    delete:
+      description: Revokes a pending invite. The invite link stops working immediately.
+        Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Invite ID
+        in: path
+        name: inviteID
+        required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event. Free text,
+          no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set.
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Revoked
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or no longer active
+      security:
+      - BearerAuth: []
+      summary: Revoke invite (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/invites/{inviteID}/resend:
+    post:
+      description: Generates a fresh token and expiry for a pending invite. The previous
+        link stops working. Returns the new one-time invite_url. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Invite ID
+        in: path
+        name: inviteID
+        required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event. Free text,
+          no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set.
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/invites.createdInviteResponse'
+          description: New invite URL
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or no longer active
+      security:
+      - BearerAuth: []
+      summary: Resend invite (admin)
+      tags:
+      - admin
   /orgs/{orgID}/item-types:
     get:
       description: Returns all item types for an organization (active and archived)
@@ -3034,6 +2767,48 @@ paths:
       summary: Delete a label
       tags:
       - labels
+  /orgs/{orgID}/members/search:
+    get:
+      description: Name-or-email search over active members, for person pickers. Bounded
+        result set. Any org member.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Search text (empty returns the first page alphabetically)
+        in: query
+        name: q
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/admin.personRefResponse'
+                type: array
+          description: Matches
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org not found or caller not a member
+      security:
+      - BearerAuth: []
+      summary: Search org members
+      tags:
+      - admin
   /orgs/{orgID}/shared/{entityType}/{entityID}:
     get:
       description: Returns a shared entity with no container information — no space,
@@ -9215,6 +8990,415 @@ paths:
       summary: Suggest ticket references
       tags:
       - tickets
+  /orgs/{orgID}/users:
+    get:
+      description: Every member with org role, primary team, status, and last sign-in.
+        Org admins only; non-admins receive 404.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/admin.personResponse'
+                type: array
+          description: Members
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins)
+      security:
+      - BearerAuth: []
+      summary: List org members (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/users/{userID}:
+    delete:
+      description: Drops the membership, team memberships, and grants in one transaction.
+        The user account and their authored content survive with attribution intact.
+        The last active admin cannot be removed. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Removed from org
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Last-admin protection
+      security:
+      - BearerAuth: []
+      summary: Remove member from org (admin)
+      tags:
+      - admin
+    patch:
+      description: Change a member's org role (member|admin) or primary team. The
+        last active admin cannot be demoted. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit events (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/admin.updatePersonRequest'
+                description: Fields to change
+                summary: body
+        description: Fields to change
+        required: true
+      responses:
+        "204":
+          description: Updated
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error, including a missing or over-long ticket_ref
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Last-admin protection
+      security:
+      - BearerAuth: []
+      summary: Update org member (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/users/{userID}/avatar:
+    get:
+      description: Streams a member's avatar image. Readable by any org member — avatars
+        are shown org-wide — which is why this route sits outside the admin guard
+        its sibling PUT carries. The response content type is sniffed from the stored
+        bytes and served only if it is a supported image; anything else answers 404
+        rather than being rendered.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: User ID (UUID)
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            image/png:
+              schema:
+                type: file
+          description: The image bytes
+        "400":
+          content:
+            image/png:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ids
+        "401":
+          content:
+            image/png:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            image/png:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No avatar set, or the stored object is not a supported image
+      security:
+      - BearerAuth: []
+      summary: Get a member's avatar
+      tags:
+      - admin
+    put:
+      description: Uploads another member's avatar. Same server-side type sniffing
+        and size ceiling as the self route. Org admins only; non-admins receive 404.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: User ID (UUID)
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              title: file
+              type: file
+          multipart/form-data:
+            schema:
+              type: object
+        description: Image file (PNG, JPEG, WebP or GIF; 5 MiB maximum)
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/avatar.avatarResponse'
+          description: The serve URL now recorded on the user
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ids, or no file part
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found (also returned to non-admins, and when the target
+            is not a member)
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Image exceeds the maximum size
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not a supported image type
+      security:
+      - BearerAuth: []
+      summary: Set a member's avatar (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/users/{userID}/deactivate:
+    post:
+      description: Blocks sign-in and invalidates every session and token the user
+        holds, immediately. The last active admin cannot be deactivated. Org admins
+        only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deactivated; all sessions terminated
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Last-admin protection or already deactivated
+      security:
+      - BearerAuth: []
+      summary: Deactivate org member (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/users/{userID}/force-logout:
+    post:
+      description: Invalidates every session and token the user holds. The account
+        stays active — they simply sign in again. For lost devices and suspected credential
+        leaks. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Signed out everywhere
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Force logout org member (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/users/{userID}/reactivate:
+    post:
+      description: Re-enables sign-in for a deactivated account. Tokens invalidated
+        at deactivation stay dead. Org admins only.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: User ID
+        in: path
+        name: userID
+        required: true
+        schema:
+          type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          chars; may be mandatory — see AZIMUTHAL_TICKET_REF_REQUIRED)
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Reactivated
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing or over-long ticket_ref
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Already active
+      security:
+      - BearerAuth: []
+      summary: Reactivate org member (admin)
+      tags:
+      - admin
   /orgs/{orgID}/workflows:
     get:
       description: Returns all workflows belonging to the organization.

@@ -27,12 +27,12 @@ type personRefResponse struct {
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id  path      string  true   "Organization ID"
+// @Param        orgID  path      string  true   "Organization ID"
 // @Param        q       query     string  false  "Search text (empty returns the first page alphabetically)"
 // @Success      200     {array}   admin.personRefResponse   "Matches"
 // @Failure      401     {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404     {object}  api.SwaggerErrorResponse  "Org not found or caller not a member"
-// @Router       /orgs/{org_id}/members/search [get]
+// @Router       /orgs/{orgID}/members/search [get]
 func (h *Handler) SearchMembers(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {
