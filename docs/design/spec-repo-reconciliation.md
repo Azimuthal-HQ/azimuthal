@@ -803,6 +803,15 @@ about *which columns it writes*, not about atomicity. **For a maintainer:** eith
 `doc IS NOT NULL`. Refusing is the smaller change and the more honest one — a markdown PUT against
 a document-backed page is a category error, not a partial update.
 
+> **CLOSED — 2026-07-27, security & integrity pass (S3).** Refused, as recommended.
+> `ContentTxAdapter.UpdatePageContentTx` returns `wiki.ErrPageIsDocumentBacked` — HTTP 409 — when
+> the locked row has `doc IS NOT NULL`. The test is strictly that, so a page that has only ever
+> held markdown, including one open in the Codex editor but never published, still takes markdown
+> saves; `web/e2e/codex-editor.spec.ts` depends on that and stays green. Covered by
+> `TestUpdatePageContentTx_RefusesPageThatHoldsADocument` (real database, fails with the guard
+> removed), `TestMarkdownSave_RefusesPageThatHoldsADocument` (HTTP) and
+> `TestUpdatePage_RefusesDocumentBackedPage` (unit).
+
 ### D55 — ADR-0012 was not amended, so D51 is still open
 
 The brief for this phase stated that ADR-0012 had been amended to cover marks and inline content
@@ -870,10 +879,20 @@ in passing. D51 stands as written and still wants an answer.
   `internal/core/wiki/page.go` updates the page and then inserts the revision as two separate calls
   against a pool, so a failed revision insert leaves a committed page whose history skips a version.
   The new publish path is transactional; the old one is unchanged, and is a defect either way.
+  > **CLOSED — 2026-07-27, security & integrity pass (S13).** Both writes now commit together in
+  > `ContentTxStore.UpdatePageContentTx`, following `PublishPageTx` and shared-surfaces convention
+  > B. `TestUpdatePageContentTx_RevisionFailureRollsBackThePageRow` injects the failure through
+  > `page_revisions.author_id`'s foreign key and asserts the page row rolled back with it.
 - **`internal/core/api/docs_test.go` skips `TestDocsSpec_InSyncWithCode`** with no `SKIP:` marker, no
   issue number and no re-enable condition — a section 2 skip-discipline violation — and its stated
   reason ("handled by ... CI pipeline") is not true: CI's `docs-check` job only greps the committed
   YAML for a few required keys. The real check is the local `make docs-check`, which this PR ran.
+  > **CLOSED — 2026-07-27, security & integrity pass (T2, then T1).** The skip became
+  > `TestDocsSpec_EveryRouterPathIsDocumented` in the first integrity PR, which walks the live
+  > router and fails on any path the committed spec omits. Its `undocumentedRoutes` ledger of
+  > nineteen known gaps is now empty and deleted (N1). Separately, CI's `docs-check` job runs
+  > `make docs-check` — it regenerates from the annotations and diffs — instead of grepping for
+  > structural markers; the grep is kept as a floor under it.
 - **Attachment `content_type` is client-declared on the generic upload route** and is echoed as the
   `Content-Type` of an inline, same-origin download. A space writer can therefore upload HTML
   declaring `text/html` and have it served as a page — reachable by a share recipient outside the
@@ -881,6 +900,14 @@ in passing. D51 stands as written and still wants an answer.
   re-sniffs every image a document references) but does **not** change the generic route, because
   sniffing every attachment would change the served type of legitimate non-image files.
   **Flagged for a maintainer as a security follow-up.**
+  > **CLOSED for attachments — PR #74**, which introduced `attachments.ServeTypeFor`: the served
+  > type is sniffed from the object's own bytes at serve time and anything off the inline
+  > allow-list downloads as `application/octet-stream`.
+  > **CLOSED for avatars — 2026-07-27, security & integrity pass (S7).** The avatar serve path had
+  > the same shape and was missed: it returned the sniffed type unchecked, with
+  > `Content-Disposition: inline` and `X-Content-Type-Options: nosniff`, so a stored object
+  > sniffing as `text/html` rendered as a document on the app's origin for any org member. It now
+  > checks the sniffed type against `doc.SupportedImageType` and refuses anything else.
 
 ### Importer-relevant notes (ADR-0012 anticipates an importer; these are its constraints)
 
