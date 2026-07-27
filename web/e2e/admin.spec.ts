@@ -1,26 +1,13 @@
 import { test, expect } from '@playwright/test'
-import { execSync } from 'child_process'
-import { createUserAndLogin, getAuthToken, getCurrentUser } from './helpers/setup'
-
-const BINARY = process.env.AZIMUTHAL_BINARY || '/tmp/azimuthal-test'
+import { createUserAndLogin, getAuthToken, getCurrentUser, loginAs, seedUser, signIn, uniqueEmail, type SeededUser } from './helpers/setup'
 
 // P2.5 administration journeys. The CLI seeds every e2e user into the shared
 // "e2e-user" org (keyed off the display name), so every assertion is scoped
 // to per-run unique names and ids — never bare counts.
 
-function uniqueEmail(tag: string): string {
-  return `e2e-${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@azimuthal.dev`
-}
-
 /** Creates a non-admin member of the shared org via the CLI. */
-function createMemberViaCLI(): { email: string; password: string } {
-  const email = uniqueEmail('member')
-  const password = 'E2eTestPass123!'
-  execSync(
-    `${BINARY} admin create-user --email "${email}" --name "E2E User" --password "${password}" --role member`,
-    { stdio: 'pipe' },
-  )
-  return { email, password }
+function createMemberViaCLI(): SeededUser {
+  return seedUser({ role: 'member', tag: 'member' })
 }
 
 /** API helpers over the admin surface, using the page's stored token. */
@@ -60,12 +47,7 @@ async function createSpaceViaAPI(page: import('@playwright/test').Page, name: st
 
 test.describe('Administration area', () => {
   test('is invisible to non-admins: no menu entry, 404 page, 404 API', async ({ page }) => {
-    const member = createMemberViaCLI()
-    await page.goto('/login')
-    await page.fill('input[type="email"]', member.email)
-    await page.fill('input[type="password"]', member.password)
-    await page.click('button[type="submit"], button:has-text("Sign in")')
-    await expect(page).not.toHaveURL(/\/login/, { timeout: 15000 })
+    const member = await loginAs(page, createMemberViaCLI())
 
     // No Administration entry in the avatar menu.
     await page.getByTestId('avatar-menu').click()
@@ -140,11 +122,7 @@ test.describe('Administration area', () => {
     // The member signs in and holds a live token.
     const memberCtx = await browser.newContext()
     const memberPage = await memberCtx.newPage()
-    await memberPage.goto('/login')
-    await memberPage.fill('input[type="email"]', member.email)
-    await memberPage.fill('input[type="password"]', member.password)
-    await memberPage.click('button[type="submit"], button:has-text("Sign in")')
-    await expect(memberPage).not.toHaveURL(/\/login/, { timeout: 15000 })
+    await loginAs(memberPage, member)
     const memberToken = await getAuthToken(memberPage)
 
     // Premise: the token works.
@@ -168,11 +146,10 @@ test.describe('Administration area', () => {
     })
     expect(after.status()).toBe(401)
 
-    // Sign-in is blocked too.
-    await memberPage.goto('/login')
-    await memberPage.fill('input[type="email"]', member.email)
-    await memberPage.fill('input[type="password"]', member.password)
-    await memberPage.click('button[type="submit"], button:has-text("Sign in")')
+    // Sign-in is blocked too. This one drives the form through signIn and
+    // asserts the OPPOSITE of loginAs — a deactivated member must be left on
+    // /login. It is the reason signIn exists apart from loginAs.
+    await signIn(memberPage, member.email, member.password)
     await expect(memberPage).toHaveURL(/\/login/)
     await memberCtx.close()
 
