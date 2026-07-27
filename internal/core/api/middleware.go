@@ -105,30 +105,22 @@ func Logging(next http.Handler) http.Handler {
 	})
 }
 
-// CORS is the legacy permissive middleware. It echoes Access-Control-Allow-Origin: *
-// on every request and is preserved for tests and existing wiring that builds
-// the router without an allow-list. Use NewCORS for production-safe behavior.
-func CORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-Request-ID")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 // NewCORS returns a CORS middleware that only echoes Access-Control-Allow-Origin
 // when the request's Origin matches one of allowedOrigins. The wildcard "*"
-// in allowedOrigins permits any origin (development default). An empty list
-// rejects all cross-origin requests, which is the production default driven by
-// AZIMUTHAL_ALLOWED_ORIGINS — audit ref: testing-audit.md §3.3.
+// in allowedOrigins permits any origin and must only ever come from an operator
+// setting AZIMUTHAL_ALLOWED_ORIGINS=* deliberately.
+//
+// A nil or empty list emits no CORS headers at all, which is the default in
+// every environment: the browser then enforces same-origin, which is what the
+// SPA needs (it is served from this same binary in production and through
+// Vite's server-side /api proxy in development, so neither is a cross-origin
+// caller). Cross-origin access is a boot-time decision, never a runtime one.
+//
+// This function is the only CORS middleware. A permissive `CORS` variant that
+// echoed Access-Control-Allow-Origin: * unconditionally used to sit beside it
+// and was selected whenever RouterConfig.AllowedOrigins was nil — a fail-open
+// default that every test harness silently picked up. It was removed in the
+// S5 security pass; do not reintroduce a "just for tests" permissive path.
 func NewCORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	allowAny, allowSet := buildOriginAllowList(allowedOrigins)
 	return func(next http.Handler) http.Handler {

@@ -113,7 +113,7 @@ func Load() (*Config, error) {
 		AllowRegistration: v.GetBool("AZIMUTHAL_ALLOW_REGISTRATION"),
 		InviteDelivery:    v.GetString("AZIMUTHAL_INVITE_DELIVERY"),
 		TicketRefRequired: v.GetBool("AZIMUTHAL_TICKET_REF_REQUIRED"),
-		AllowedOrigins:    parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS"), v.GetString("APP_ENV")),
+		AllowedOrigins:    parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS")),
 		SMTPHost:          v.GetString("SMTP_HOST"),
 		SMTPPort:          v.GetInt("SMTP_PORT"),
 		SMTPFrom:          v.GetString("SMTP_FROM"),
@@ -172,15 +172,22 @@ func (c *Config) IsProduction() bool {
 }
 
 // parseAllowedOrigins splits a comma-separated origin list. When the env var
-// is unset the default depends on AppEnv: development and test allow all
-// origins ("*"); production denies all by default and forces the operator to
-// configure AZIMUTHAL_ALLOWED_ORIGINS explicitly.
-func parseAllowedOrigins(raw, appEnv string) []string {
+// is unset the result is empty in every environment, which means the server
+// emits no CORS headers and the browser enforces same-origin. Cross-origin
+// access is admitted only by setting AZIMUTHAL_ALLOWED_ORIGINS explicitly —
+// security policy is a boot-time decision, never a runtime one.
+//
+// Development and test used to default to "*". Nothing in this repository
+// needed it: in production the SPA is served from this same binary, and in
+// development Vite proxies /api server-side (web/vite.config.ts), so in
+// neither case does a browser make a cross-origin request. The permissive
+// default only widened the blast radius of a malicious page in an operator's
+// browser, so it is gone. An operator who really does serve the frontend from
+// another origin sets AZIMUTHAL_ALLOWED_ORIGINS to that origin.
+//
+func parseAllowedOrigins(raw string) []string {
 	if raw == "" {
-		if appEnv == "production" {
-			return []string{}
-		}
-		return []string{"*"}
+		return []string{}
 	}
 	parts := strings.Split(raw, ",")
 	origins := make([]string, 0, len(parts))

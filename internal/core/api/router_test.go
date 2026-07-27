@@ -816,6 +816,12 @@ func TestReadyEndpoint(t *testing.T) {
 	}
 }
 
+// TestCORSPreflight asserts the router's default CORS posture (S5).
+//
+// setupRouter builds a RouterConfig without AllowedOrigins, which is exactly
+// the case that used to fail open: nil selected a permissive middleware and
+// this test required Access-Control-Allow-Origin: "*". A router built without
+// an explicit allow-list must now emit no CORS headers.
 func TestCORSPreflight(t *testing.T) {
 	router, _ := setupRouter(t)
 
@@ -826,8 +832,29 @@ func TestCORSPreflight(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusNoContent)
 	}
-	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "*" {
-		t.Errorf("CORS origin = %q, want '*'", got)
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want no header — a router with no configured allow-list must not advertise one", got)
+	}
+}
+
+// TestCORS_CrossOriginPreflightRefusedByDefault is the negative case
+// TestCORSPreflight alone cannot make: a preflight carrying no Origin header
+// would come back header-free under any implementation, a permissive one
+// included. This sends a real cross-origin preflight and requires refusal.
+func TestCORS_CrossOriginPreflightRefusedByDefault(t *testing.T) {
+	router, _ := setupRouter(t)
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/auth/login", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("cross-origin preflight status = %d, want %d", rr.Code, http.StatusForbidden)
+	}
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want no header for an unlisted origin", got)
 	}
 }
 
