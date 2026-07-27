@@ -491,6 +491,17 @@ func (a *TeamAdapter) IsOrgMember(ctx context.Context, orgID, userID uuid.UUID) 
 
 // SeedDefaultTeam creates the org's default team if absent. Called by every
 // org-creation path (register provisioning and the admin CLI).
+//
+// It is safe to call concurrently for the same org. It used to read and then
+// insert, which is a check-then-act race: two callers both saw no row, both
+// inserted, and the second failed on teams_org_id_slug_key. That is not a
+// theoretical window — `admin create-user` reaches this for an org that may
+// already exist, and parallel callers against a fresh database hit it
+// reliably (it was the cause of the E2E fixture failures in T3/T4).
+//
+// The read is kept only as the fast path for the overwhelmingly common case
+// where the team already exists; correctness rests on the insert itself being
+// idempotent.
 func (a *TeamAdapter) SeedDefaultTeam(ctx context.Context, orgID uuid.UUID) error {
 	_, err := a.q.GetDefaultTeam(ctx, orgID)
 	if err == nil {
@@ -499,18 +510,11 @@ func (a *TeamAdapter) SeedDefaultTeam(ctx context.Context, orgID uuid.UUID) erro
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("checking default team: %w", err)
 	}
-	id := uuid.New()
-	_, err = a.q.CreateTeam(ctx, generated.CreateTeamParams{
-		ID:          id,
+	if err := a.q.InsertDefaultTeamIfAbsent(ctx, generated.InsertDefaultTeamIfAbsentParams{
+		ID:          uuid.New(),
 		OrgID:       orgID,
-		ParentID:    pgUUID(nil),
-		Slug:        "default",
-		Name:        "Default",
 		Description: "Org default team. Every member belongs here until assigned elsewhere.",
-		IsDefault:   true,
-		Source:      "manual",
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("seeding default team: %w", err)
 	}
 	return nil
