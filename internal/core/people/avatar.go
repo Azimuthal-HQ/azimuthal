@@ -6,12 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki/doc"
 )
 
 // MaxAvatarBytes caps an avatar upload (5 MiB). Avatars are small; the ceiling
@@ -27,13 +26,6 @@ var (
 	// ErrAvatarNotFound is returned when no avatar object exists for a user.
 	ErrAvatarNotFound = errors.New("no avatar set")
 )
-
-var allowedAvatarTypes = map[string]bool{
-	"image/png":  true,
-	"image/jpeg": true,
-	"image/webp": true,
-	"image/gif":  true,
-}
 
 // AvatarStore is the persistence the avatar service needs: it records the
 // serve reference on the user row, scoped to the org (member check).
@@ -77,7 +69,7 @@ func (s *AvatarService) SetAvatar(ctx context.Context, orgID, userID uuid.UUID, 
 	if int64(len(data)) > MaxAvatarBytes {
 		return "", ErrAvatarTooLarge
 	}
-	if !allowedAvatarTypes[sniffImageType(data)] {
+	if !inlineSafeAvatarType(doc.SniffImageType(data)) {
 		return "", ErrAvatarType
 	}
 
@@ -93,8 +85,31 @@ func (s *AvatarService) SetAvatar(ctx context.Context, orgID, userID uuid.UUID, 
 	return serveURL, nil
 }
 
-// AvatarObject returns the stored avatar bytes and its sniffed content type for
-// serving. The key is derived from the ids, never from the client.
+// AvatarObject returns the stored avatar bytes and the content type they may
+// be served as. The key is derived from the ids, never from the client.
+//
+// S7. The type is not merely sniffed — it is sniffed AND checked against the
+// inline allow-list, and an object that is not on it is refused rather than
+// served. Sniffing alone was the defect: the serve handler sets the returned
+// type with Content-Disposition: inline and X-Content-Type-Options: nosniff,
+// so an object sniffing as text/html would have been rendered as a document,
+// on the app's own origin, by a browser explicitly told not to second-guess
+// the type. The upload gate has always refused such an object, but the serve
+// path trusted what it found in storage — and a serve path that is only safe
+// because some other code path was careful is not safe, it is lucky. Objects
+// written before the gate existed, or by any future writer to the same bucket
+// prefix, go through this check too.
+//
+// The allow-list is doc.SupportedImageType, the same four raster types the
+// page-image gate and this service's own upload gate use, rather than
+// attachments.ServeTypeFor. ServeTypeFor is the right shared decision for an
+// attachment and additionally admits application/pdf; an avatar is rendered
+// in an <img>, so a PDF there is a broken image at best. The four-type list is
+// the shared thing; the PDF exception belongs to attachments.
+//
+// It is not a fourth copy of the sniffer either: this used to carry its own
+// http.DetectContentType wrapper and its own map of the same four types. Both
+// are gone.
 func (s *AvatarService) AvatarObject(ctx context.Context, orgID, userID uuid.UUID) ([]byte, string, error) {
 	rc, err := s.blobs.Get(ctx, avatarKey(orgID, userID))
 	if err != nil {
@@ -105,15 +120,16 @@ func (s *AvatarService) AvatarObject(ctx context.Context, orgID, userID uuid.UUI
 	if err != nil {
 		return nil, "", fmt.Errorf("reading avatar object: %w", err)
 	}
-	return data, sniffImageType(data), nil
+	sniffed := doc.SniffImageType(data)
+	if !inlineSafeAvatarType(sniffed) {
+		return nil, "", ErrAvatarType
+	}
+	return data, sniffed, nil
 }
 
-// sniffImageType detects the content type from the leading bytes and strips
-// any parameters (http.DetectContentType may append "; charset=...").
-func sniffImageType(data []byte) string {
-	ct := http.DetectContentType(data)
-	if i := strings.IndexByte(ct, ';'); i >= 0 {
-		ct = strings.TrimSpace(ct[:i])
-	}
-	return ct
+// inlineSafeAvatarType reports whether a sniffed content type may be served
+// inline as an avatar. One predicate, used by both the upload gate and the
+// serve path, so the two can never drift apart.
+func inlineSafeAvatarType(sniffed string) bool {
+	return doc.SupportedImageType(sniffed)
 }

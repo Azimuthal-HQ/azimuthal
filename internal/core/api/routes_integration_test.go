@@ -80,6 +80,10 @@ type testServer struct {
 	// AuditLog is the DB-backed logger the handlers write through, so audit
 	// assertions can read back what a mutation recorded.
 	AuditLog audit.Logger
+	// AvatarBlobs is the object store the avatar surface writes to, exposed so
+	// a test can plant an object the upload gate would never have accepted —
+	// which is the only way to reach the serve path's own type check.
+	AvatarBlobs *storage.MemoryStore
 }
 
 // tokenFor issues an access token for an arbitrary user of the org —
@@ -183,7 +187,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// disabled-by-default behaviour has its own dedicated tests.
 	peopleAdapter := adapters.NewPeopleAdapter(pool)
 	peopleSvc := people.NewService(peopleAdapter)
-	avatarHandler := avatarapi.NewHandler(people.NewAvatarService(peopleAdapter, storage.NewMemoryStore())).WithAuditLogger(auditLog)
+	avatarBlobs := storage.NewMemoryStore()
+	avatarHandler := avatarapi.NewHandler(people.NewAvatarService(peopleAdapter, avatarBlobs)).WithAuditLogger(auditLog)
 	inviteSvc := invites.NewService(adapters.NewInviteAdapter(pool), nil, invites.Config{
 		TTL:     7 * 24 * time.Hour,
 		BaseURL: "http://localhost:8082",
@@ -249,7 +254,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		Server: srv, Handler: router, DB: db, OrgID: org.ID, UserID: user.ID,
 		Token: pair.AccessToken, WorkflowAdapter: workflowAdapter,
 		JWT: jwtSvc, TeamService: teamSvc, GrantService: grantSvc,
-		RouterCfg: cfg, AuditLog: auditLog,
+		RouterCfg: cfg, AuditLog: auditLog, AvatarBlobs: avatarBlobs,
 	}
 }
 

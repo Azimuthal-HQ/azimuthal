@@ -143,3 +143,76 @@ func TestAvatar_AdminUploadAndAuthz(t *testing.T) {
 	require.Equal(t, http.StatusOK, sr.StatusCode, "member reads the avatar: %s", sr.Body)
 	require.Equal(t, "image/png", sr.ContentType)
 }
+
+// S7 — the avatar serve path decides the content type from the shared image
+// allow-list, not from whatever the bytes happen to sniff as.
+//
+// The serve handler sets the returned type with Content-Disposition: inline
+// and X-Content-Type-Options: nosniff. Returning the raw sniffed type meant
+// that an object sniffing as text/html was served as an HTML document, on the
+// application's own origin, to a browser that had been explicitly told not to
+// second-guess the type — every org member being a valid reader of every other
+// member's avatar. Stored XSS, one GET away.
+//
+// The upload gate has always refused such an object, and that is exactly why
+// the test has to plant one directly: a serve path that is safe only because
+// a different code path was careful is not safe, it is lucky. Objects written
+// before the gate existed, or by any future writer to the same bucket prefix,
+// take this path too.
+//
+// Fails before the fix with 200 and Content-Type: text/html.
+func TestAvatarServe_RefusesAnObjectThatIsNotAnAllowedImage(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+
+	// An HTML document parked at the avatar key the serve route derives.
+	key := fmt.Sprintf("orgs/%s/avatars/%s", ts.OrgID, ts.UserID)
+	require.NoError(t, ts.AvatarBlobs.Put(ctx, key,
+		bytes.NewReader([]byte("<html><body><script>alert(document.domain)</script></body></html>"))))
+
+	r := ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/users/%s/avatar", ts.OrgID, ts.UserID), true)
+	require.Equal(t, http.StatusNotFound, r.StatusCode,
+		"an avatar object that is not an allowed image must not be served: %s", r.Body)
+	require.NotContains(t, r.Header.Get("Content-Type"), "text/html",
+		"the response must never carry the sniffed type of a non-image object")
+	require.NotContains(t, string(r.Body), "<script>",
+		"the planted document must not come back")
+}
+
+// SVG is the case the allow-list exists for. It is a scriptable XML document,
+// not a bitmap, and http.DetectContentType reports it as text/xml — so it is
+// excluded by not being on the list rather than by a rule about SVG, and would
+// stay excluded if the sniffer's answer ever changed.
+func TestAvatarServe_RefusesSVG(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+
+	svg := []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg">` +
+		`<script>alert(document.domain)</script></svg>`)
+
+	// Refused at upload...
+	r := putAvatar(t, ts, ts.Token, "/api/v1/auth/me/avatar", svg)
+	require.Equal(t, http.StatusUnsupportedMediaType, r.StatusCode, "upload: %s", r.Body)
+
+	// ...and refused on the way out, for an object that got there anyway.
+	key := fmt.Sprintf("orgs/%s/avatars/%s", ts.OrgID, ts.UserID)
+	require.NoError(t, ts.AvatarBlobs.Put(ctx, key, bytes.NewReader(svg)))
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/users/%s/avatar", ts.OrgID, ts.UserID), true)
+	require.Equal(t, http.StatusNotFound, r.StatusCode, "serve: %s", r.Body)
+}
+
+// A real image still round-trips, with its sniffed type — the guard must not
+// have broken the feature it protects.
+func TestAvatarServe_ServesAnAllowedImageInline(t *testing.T) {
+	ts := newTestServer(t)
+
+	r := putAvatar(t, ts, ts.Token, "/api/v1/auth/me/avatar", pngBytes)
+	require.Equal(t, http.StatusOK, r.StatusCode, "upload: %s", r.Body)
+
+	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/users/%s/avatar", ts.OrgID, ts.UserID), true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "serve: %s", r.Body)
+	require.Equal(t, "image/png", r.Header.Get("Content-Type"))
+	require.Equal(t, "nosniff", r.Header.Get("X-Content-Type-Options"))
+	require.Equal(t, "inline", r.Header.Get("Content-Disposition"))
+	require.Equal(t, pngBytes, r.Body)
+}
