@@ -105,6 +105,23 @@ var minRoleFor = map[Capability]Role{
 	CapManageWorkflow:    RoleSpaceAdmin,
 }
 
+// orgLevelCaps is the other half of the partition: capabilities held at the
+// org level, through the org-admin bypass alone, with no space role granting
+// them. Every Capability constant belongs to exactly one of minRoleFor and
+// this map, and TestCapabilityConstants_AreExhaustivelyPartitioned enforces
+// that at build time.
+//
+// It exists so CanOrgWide can fail closed. CanOrgWide used to treat the
+// org-level set as the *complement* of minRoleFor — "not space-scoped,
+// therefore org-level" — which meant a capability in neither map was granted
+// to every org admin without any space check. A retired constant, a typo, or
+// a newly added one somebody forgot to place would silently become an
+// org-wide permission. Role.Grants has always failed closed on the same
+// input; this removes the asymmetry.
+var orgLevelCaps = map[Capability]struct{}{
+	CapSetVisibility: {},
+}
+
 // Grants reports whether the role holds the capability. Unknown capabilities
 // are never granted — fail closed.
 func (r Role) Grants(c Capability) bool {
