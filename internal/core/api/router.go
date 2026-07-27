@@ -81,6 +81,7 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	r.Use(Recoverer)
 	r.Use(RequestID)
 	r.Use(Logging)
+	r.Use(SecurityHeaders)
 	if cfg.AllowedOrigins == nil {
 		r.Use(CORS)
 	} else {
