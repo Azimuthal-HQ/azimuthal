@@ -844,15 +844,12 @@ in passing. D51 stands as written and still wants an answer.
 
 ## 3. Observed, out of scope
 
-- **The page-lock routes are now unused by the shipped editor and remain wired.** They were already
-  advisory, so nothing depends on them for correctness, but `GET/POST/DELETE .../wiki/{pageID}/lock`
-  and `page_locks` are live API and schema with no caller once the document editor replaces the
-  markdown one on the Codex surface. **Flagged for a maintainer to retire deliberately**, with their
-  tests, rather than removed here.
-- **`internal/core/wiki/render.go` claims to produce "sanitised HTML" and no sanitiser exists.**
-  Safety comes only from goldmark's default `Unsafe: false`, which omits raw HTML. The comment is
-  misleading in a way that invites somebody to add `html.WithUnsafe()` — which would turn
-  `GET .../wiki/{pageID}/render` into stored XSS. Not touched by this phase.
+- ~~**The page-lock routes are now unused by the shipped editor and remain wired.**~~ **Closed by S2**
+  (security & integrity pass, 2026-07-27) under an explicit maintainer instruction to retire them.
+  Routes, service, queries, table (migration 037) and the three dead frontend hooks are gone.
+- ~~**`internal/core/wiki/render.go` claims to produce "sanitised HTML" and no sanitiser exists.**~~
+  **Closed by S4** (2026-07-27). The docstring states the real mechanism and
+  `TestRenderHTML_RawHTMLIsNotPassedThrough` fails if anyone adds `html.WithUnsafe()`.
 - **The markdown save path's revision write is still not transactional.**
   `internal/core/wiki/page.go` updates the page and then inserts the revision as two separate calls
   against a pool, so a failed revision insert leaves a committed page whose history skips a version.

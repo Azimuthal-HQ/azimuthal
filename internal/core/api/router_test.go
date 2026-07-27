@@ -413,18 +413,6 @@ func (m *mockShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uui
 	return nil
 }
 
-type mockLockStore struct{}
-
-func (m *mockLockStore) UpsertPageLock(_ context.Context, _ generated.UpsertPageLockParams) (generated.PageLock, error) {
-	return generated.PageLock{}, nil
-}
-func (m *mockLockStore) GetPageLock(_ context.Context, _ uuid.UUID) (generated.PageLock, error) {
-	return generated.PageLock{}, pgx.ErrNoRows
-}
-func (m *mockLockStore) DeletePageLock(_ context.Context, _ generated.DeletePageLockParams) error {
-	return nil
-}
-func (m *mockLockStore) DeleteExpiredPageLocks(_ context.Context) error { return nil }
 
 // ---- Mock project repos ----
 
@@ -725,7 +713,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		// really gets, so the routes behave here as they would there.
 		wiki.UnavailableImageStore{},
 	)
-	wikiHandler := wikiapi.NewHandler(wikiSvc, wiki.NewLockService(&mockLockStore{}), wikiDocs)
+	wikiHandler := wikiapi.NewHandler(wikiSvc, wikiDocs)
 	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
 	spaceHandler := spacesapi.NewHandler(nil)

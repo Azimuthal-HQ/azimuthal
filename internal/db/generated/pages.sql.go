@@ -142,29 +142,6 @@ func (q *Queries) CreatePageRevisionWithDoc(ctx context.Context, arg CreatePageR
 	return i, err
 }
 
-const deleteExpiredPageLocks = `-- name: DeleteExpiredPageLocks :exec
-DELETE FROM page_locks WHERE expires_at <= now()
-`
-
-func (q *Queries) DeleteExpiredPageLocks(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, deleteExpiredPageLocks)
-	return err
-}
-
-const deletePageLock = `-- name: DeletePageLock :exec
-DELETE FROM page_locks WHERE page_id = $1 AND user_id = $2
-`
-
-type DeletePageLockParams struct {
-	PageID uuid.UUID `json:"page_id"`
-	UserID uuid.UUID `json:"user_id"`
-}
-
-func (q *Queries) DeletePageLock(ctx context.Context, arg DeletePageLockParams) error {
-	_, err := q.db.Exec(ctx, deletePageLock, arg.PageID, arg.UserID)
-	return err
-}
-
 const getPageByID = `-- name: GetPageByID :one
 SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path, doc FROM pages WHERE id = $1 AND deleted_at IS NULL
 `
@@ -273,23 +250,6 @@ func (q *Queries) GetPageForUpdate(ctx context.Context, id uuid.UUID) (Page, err
 		&i.SearchVector,
 		&i.Path,
 		&i.Doc,
-	)
-	return i, err
-}
-
-const getPageLock = `-- name: GetPageLock :one
-SELECT page_id, user_id, user_name, acquired_at, expires_at FROM page_locks WHERE page_id = $1 AND expires_at > now()
-`
-
-func (q *Queries) GetPageLock(ctx context.Context, pageID uuid.UUID) (PageLock, error) {
-	row := q.db.QueryRow(ctx, getPageLock, pageID)
-	var i PageLock
-	err := row.Scan(
-		&i.PageID,
-		&i.UserID,
-		&i.UserName,
-		&i.AcquiredAt,
-		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -843,42 +803,6 @@ func (q *Queries) UpdatePageContent(ctx context.Context, arg UpdatePageContentPa
 		&i.SearchVector,
 		&i.Path,
 		&i.Doc,
-	)
-	return i, err
-}
-
-const upsertPageLock = `-- name: UpsertPageLock :one
-INSERT INTO page_locks (page_id, user_id, user_name, acquired_at, expires_at)
-VALUES ($1, $2, $3, now(), $4)
-ON CONFLICT (page_id) DO UPDATE
-  SET user_id = EXCLUDED.user_id,
-      user_name = EXCLUDED.user_name,
-      acquired_at = now(),
-      expires_at = EXCLUDED.expires_at
-RETURNING page_id, user_id, user_name, acquired_at, expires_at
-`
-
-type UpsertPageLockParams struct {
-	PageID    uuid.UUID          `json:"page_id"`
-	UserID    uuid.UUID          `json:"user_id"`
-	UserName  string             `json:"user_name"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
-}
-
-func (q *Queries) UpsertPageLock(ctx context.Context, arg UpsertPageLockParams) (PageLock, error) {
-	row := q.db.QueryRow(ctx, upsertPageLock,
-		arg.PageID,
-		arg.UserID,
-		arg.UserName,
-		arg.ExpiresAt,
-	)
-	var i PageLock
-	err := row.Scan(
-		&i.PageID,
-		&i.UserID,
-		&i.UserName,
-		&i.AcquiredAt,
-		&i.ExpiresAt,
 	)
 	return i, err
 }

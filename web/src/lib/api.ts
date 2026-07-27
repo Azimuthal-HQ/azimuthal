@@ -2097,7 +2097,6 @@ export const queryKeys = {
   notifications: () => ['notifications'] as const,
   wikiTree: (spaceId: string) => ['wikiTree', spaceId] as const,
   wikiSearch: (spaceId: string, q: string) => ['wikiSearch', spaceId, q] as const,
-  wikiLock: (spaceId: string, pageId: string) => ['wikiLock', spaceId, pageId] as const,
   wikiRevisions: (spaceId: string, pageId: string) => ['wikiRevisions', spaceId, pageId] as const,
   wikiRevision: (spaceId: string, pageId: string, version: number) => ['wikiRevision', spaceId, pageId, version] as const,
   wikiDiff: (spaceId: string, pageId: string, from: number, to: number) => ['wikiDiff', spaceId, pageId, from, to] as const,
@@ -2721,42 +2720,6 @@ export function useWikiRevisions(spaceId: string, pageId: string, opts?: QueryOp
     queryFn: () => fetchWikiRevisions(spaceId, pageId),
     enabled: !!spaceId && !!pageId,
     ...opts,
-  });
-}
-
-export interface PageLock {
-  page_id: string;
-  user_id: string;
-  user_name: string;
-  expires_at: string;
-}
-
-export function usePageLock(spaceId: string, pageId: string, opts?: QueryOpts<PageLock | null>) {
-  return useQuery<PageLock | null, APIError>({
-    queryKey: queryKeys.wikiLock(spaceId, pageId),
-    queryFn: async () => {
-      const data = await apiFetch<PageLock | null>(`${spaceBase(spaceId)}/wiki/${pageId}/lock`);
-      return data;
-    },
-    enabled: !!spaceId && !!pageId,
-    refetchInterval: 15000,
-    ...opts,
-  });
-}
-
-export function useAcquirePageLock(spaceId: string, pageId: string) {
-  const queryClient = useQueryClient();
-  return useMutation<PageLock, APIError, void>({
-    mutationFn: () => apiFetch<PageLock>(`${spaceBase(spaceId)}/wiki/${pageId}/lock`, { method: 'POST' }),
-    onSuccess: (data) => queryClient.setQueryData(queryKeys.wikiLock(spaceId, pageId), data),
-  });
-}
-
-export function useReleasePageLock(spaceId: string, pageId: string) {
-  const queryClient = useQueryClient();
-  return useMutation<void, APIError, void>({
-    mutationFn: () => apiFetch<void>(`${spaceBase(spaceId)}/wiki/${pageId}/lock`, { method: 'DELETE' }),
-    onSuccess: () => queryClient.setQueryData(queryKeys.wikiLock(spaceId, pageId), null),
   });
 }
 

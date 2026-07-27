@@ -249,7 +249,6 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	)
 
 	wikiSvc := wiki.NewService(queries, contentTx)
-	wikiLocks := wiki.NewLockService(queries)
 
 	spaHandler, err := newSPAHandler()
 	if err != nil {
@@ -337,7 +336,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc),
-		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiLocks, wikiDocs).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
