@@ -3129,9 +3129,15 @@ paths:
       - attachments
   /orgs/{orgID}/shared/{entityType}/{entityID}/attachments/{attachmentID}:
     get:
-      description: Streams a shared entity's attachment. Authorised by an active share;
-        needs no space access. The attachment must belong to the shared entity, and
-        its object key comes from the stored row.
+      description: 'Streams a shared entity''s attachment. Authorised by an active
+        share; needs no space access. The attachment must belong to the shared entity,
+        and its object key comes from the stored row. The Content-Type is SNIFFED
+        from the stored bytes at serve time and the stored content_type is never echoed
+        — this route crosses the space boundary, so a stored type taken on trust would
+        be stored XSS against the share''s audience. PNG, JPEG, GIF, WebP and PDF
+        are served inline with their sniffed type; every other type — including SVG,
+        HTML and XML — is served as application/octet-stream with Content-Disposition:
+        attachment, under its original filename.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -3164,6 +3170,21 @@ paths:
               schema:
                 type: file
           description: Attachment bytes
+          headers:
+            Content-Disposition:
+              description: inline for the allow-listed types, attachment otherwise;
+                the stored filename is preserved either way
+              schema:
+                type: string
+            Content-Type:
+              description: Sniffed from the bytes; application/octet-stream unless
+                the object is a PNG, JPEG, GIF, WebP or PDF
+              schema:
+                type: string
+            X-Content-Type-Options:
+              description: nosniff
+              schema:
+                type: string
         "404":
           content:
             application/octet-stream:
@@ -3809,7 +3830,12 @@ paths:
       tags:
       - attachments
     get:
-      description: Streams an attachment's bytes for a space member.
+      description: 'Streams an attachment''s bytes for a space member. The Content-Type
+        is SNIFFED from the stored bytes at serve time and the stored content_type
+        is never echoed. PNG, JPEG, GIF, WebP and PDF are served inline with their
+        sniffed type; every other type — including SVG, HTML and XML — is served as
+        application/octet-stream with Content-Disposition: attachment, under its original
+        filename.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -3836,6 +3862,21 @@ paths:
               schema:
                 type: file
           description: Attachment bytes
+          headers:
+            Content-Disposition:
+              description: inline for the allow-listed types, attachment otherwise;
+                the stored filename is preserved either way
+              schema:
+                type: string
+            Content-Type:
+              description: Sniffed from the bytes; application/octet-stream unless
+                the object is a PNG, JPEG, GIF, WebP or PDF
+              schema:
+                type: string
+            X-Content-Type-Options:
+              description: nosniff
+              schema:
+                type: string
         "404":
           content:
             application/octet-stream:
