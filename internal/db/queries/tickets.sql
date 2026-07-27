@@ -83,9 +83,14 @@ FROM tickets t
 JOIN spaces s ON s.id = t.space_id AND s.deleted_at IS NULL
 WHERE t.deleted_at IS NULL
   AND t.space_id = ANY(sqlc.arg(readable_space_ids)::uuid[])
+  -- The caller's text is a literal substring, not a pattern. It is already a
+  -- bound parameter, so this is not an injection guard — it stops a bare `%`
+  -- or `_` in a legitimate query from acting as a wildcard and quietly
+  -- widening the match. Backslash is PostgreSQL's default LIKE escape, so the
+  -- escape character itself is doubled first.
   AND (sqlc.arg(query)::text = ''
-       OR t.title ILIKE '%' || sqlc.arg(query)::text || '%'
-       OR (s.key || '-' || t.number::text) ILIKE '%' || sqlc.arg(query)::text || '%')
+       OR t.title ILIKE '%' || replace(replace(replace(sqlc.arg(query)::text, '\', '\\'), '%', '\%'), '_', '\_') || '%'
+       OR (s.key || '-' || t.number::text) ILIKE '%' || replace(replace(replace(sqlc.arg(query)::text, '\', '\\'), '%', '\%'), '_', '\_') || '%')
 ORDER BY COALESCE(t.assignee_id = sqlc.arg(caller_id)::uuid, false) DESC,
          t.updated_at DESC
 LIMIT 20;
