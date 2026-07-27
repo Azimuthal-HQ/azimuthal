@@ -9,19 +9,35 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 )
 
-// Renderer converts markdown content to sanitised HTML.
+// Renderer converts markdown content to HTML.
+//
+// There is no sanitiser in this path, and the docstring used to claim there
+// was one. What actually keeps author-supplied markup out of the output is
+// goldmark's own default: the HTML renderer's Unsafe option is false unless
+// html.WithUnsafe() is passed, and with it false goldmark drops raw HTML
+// blocks and raw inline HTML rather than passing them through. Nothing else
+// downstream escapes this output, so that default IS the safety boundary.
+//
+// Because the protection is a library default rather than an explicit call,
+// it is invisible at this call site — adding html.WithUnsafe() here would
+// silently turn every wiki page into a stored-XSS sink and no line in this
+// file would look wrong. TestRenderHTML_RawHTMLIsNotPassedThrough pins the
+// behaviour so that change fails the suite instead.
 type Renderer struct {
 	md goldmark.Markdown
 }
 
 // NewRenderer creates a Renderer configured with common goldmark extensions
 // (tables, strikethrough, autolinks, task lists).
+//
+// Do not add html.WithUnsafe() to the renderer options. See the type docstring.
 func NewRenderer() *Renderer {
 	md := goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM, // GitHub Flavored Markdown
 		),
 		goldmark.WithRendererOptions(
+			// Deliberately no html.WithUnsafe(): raw HTML must stay dropped.
 			html.WithHardWraps(),
 			html.WithXHTML(),
 		),
