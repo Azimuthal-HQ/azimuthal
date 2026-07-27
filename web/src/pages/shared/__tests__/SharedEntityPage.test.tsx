@@ -10,6 +10,12 @@ import { SharedEntityPage } from '../SharedEntityPage';
 // an attachment matching neither would have no link and a broken <img>, i.e.
 // no way to reach the file at all.
 //
+// Since S8 the page reaches the bytes through the authenticated client and
+// renders them from object URLs, because a URL left in the markup is fetched by
+// the browser with no credential and answered 401. Everything here is therefore
+// asynchronous — the mocked fetcher resolves to `blob:<attachment id>` so the
+// assertions can still say WHICH attachment each affordance points at.
+//
 // Fixtures live inside the factory because vi.mock hoists above file scope.
 vi.mock('react-router-dom', () => ({
   useParams: () => ({ entityType: 'page', entityId: 'page-1' }),
@@ -32,8 +38,9 @@ vi.mock('../../../lib/api', () => ({
       { id: 'a-txt', filename: 'notes.txt', content_type: 'text/plain' },
     ],
   })),
-  sharedAttachmentURL: (_org: string, _t: string, _e: string, attID: string) =>
-    `/api/v1/attachments/${attID}`,
+  fetchSharedAttachmentObjectURL: vi.fn(
+    (_org: string, _t: string, _e: string, attID: string) => Promise.resolve(`blob:${attID}`),
+  ),
   friendlyErrorMessage: (e: unknown) => String(e),
 }));
 
@@ -46,7 +53,7 @@ describe('SharedEntityPage attachments', () => {
   // sat in the image bucket (its declared type starts with "image/") and was
   // excluded from the link list, so the only affordance was an <img> the
   // server now refuses to serve inline.
-  it('gives every attachment a reachable link, including declared-image types the server will not inline', () => {
+  it('gives every attachment a reachable link, including declared-image types the server will not inline', async () => {
     render(<SharedEntityPage />);
 
     for (const [filename, id] of [
@@ -55,19 +62,24 @@ describe('SharedEntityPage attachments', () => {
       ['report.pdf', 'a-pdf'],
       ['notes.txt', 'a-txt'],
     ]) {
-      const link = screen.getByRole('link', { name: filename });
-      expect(link).toHaveAttribute('href', `/api/v1/attachments/${id}`);
+      const link = await screen.findByRole('link', { name: filename });
+      // S8: the href is an object URL fetched with the caller's credential,
+      // never the API path — a browser-issued request to that path carries no
+      // bearer token and is answered 401, which an <a download> turns into a
+      // saved file full of JSON.
+      expect(link).toHaveAttribute('href', `blob:${id}`);
+      expect(link).toHaveAttribute('download', filename);
     }
   });
 
   // The preview filter matches the server's inline allow-list exactly, so the
   // page does not emit an <img> for bytes the server will send as a download.
-  it('previews only the raster types the server streams inline', () => {
+  it('previews only the raster types the server streams inline', async () => {
     render(<SharedEntityPage />);
 
-    const previews = screen.getAllByRole('img');
-    expect(previews).toHaveLength(1);
-    expect(previews[0]).toHaveAttribute('alt', 'figure.png');
+    const preview = await screen.findByAltText('figure.png');
+    expect(preview).toHaveAttribute('src', 'blob:a-png');
+    expect(screen.getAllByRole('img')).toHaveLength(1);
 
     // Specifically: no <img> for the SVG. An SVG is scriptable, which is why
     // the server refuses to stream it inline in the first place.
