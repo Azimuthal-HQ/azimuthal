@@ -138,11 +138,11 @@ func orgIDFromRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) 
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id  path      string  true  "Organization ID"
+// @Param        orgID  path      string  true  "Organization ID"
 // @Success      200     {array}   invites.inviteResponse    "Pending invites"
 // @Failure      401     {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404     {object}  api.SwaggerErrorResponse  "Not found (also returned to non-admins)"
-// @Router       /orgs/{org_id}/invites [get]
+// @Router       /orgs/{orgID}/invites [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {
@@ -171,13 +171,13 @@ const maxBulkInviteEmails = 200
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id      path      string                        true   "Organization ID"
+// @Param        orgID      path      string                        true   "Organization ID"
 // @Param        ticket_ref  query     string                        false  "Operator ticket reference recorded on the audit event. Free text, no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set."
 // @Param        body        body      invites.createInvitesRequest  true   "Emails, org role, optional team"
 // @Success      201     {array}   invites.createInviteResult    "Per-email outcomes"
 // @Failure      400     {object}  api.SwaggerErrorResponse      "Validation error, or a missing/over-long ticket_ref"
 // @Failure      404     {object}  api.SwaggerErrorResponse      "Not found (also returned to non-admins)"
-// @Router       /orgs/{org_id}/invites [post]
+// @Router       /orgs/{orgID}/invites [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	orgID, req, ticketRef, ok := h.createPreconditions(w, r)
 	if !ok {
@@ -286,13 +286,13 @@ func (h *Handler) createOneInvite(r *http.Request, orgID uuid.UUID, email string
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id      path      string  true   "Organization ID"
-// @Param        invite_id   path      string  true   "Invite ID"
+// @Param        orgID      path      string  true   "Organization ID"
+// @Param        inviteID   path      string  true   "Invite ID"
 // @Param        ticket_ref  query     string  false  "Operator ticket reference recorded on the audit event. Free text, no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set."
 // @Success      204        "Revoked"
 // @Failure      400        {object}  api.SwaggerErrorResponse  "Missing or over-long ticket_ref"
 // @Failure      404        {object}  api.SwaggerErrorResponse  "Not found or no longer active"
-// @Router       /orgs/{org_id}/invites/{invite_id} [delete]
+// @Router       /orgs/{orgID}/invites/{inviteID} [delete]
 func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {
@@ -331,13 +331,13 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id      path      string  true   "Organization ID"
-// @Param        invite_id   path      string  true   "Invite ID"
+// @Param        orgID      path      string  true   "Organization ID"
+// @Param        inviteID   path      string  true   "Invite ID"
 // @Param        ticket_ref  query     string  false  "Operator ticket reference recorded on the audit event. Free text, no foreign key. Required when AZIMUTHAL_TICKET_REF_REQUIRED is set."
 // @Success      200        {object}  invites.createdInviteResponse  "New invite URL"
 // @Failure      400        {object}  api.SwaggerErrorResponse       "Missing or over-long ticket_ref"
 // @Failure      404        {object}  api.SwaggerErrorResponse       "Not found or no longer active"
-// @Router       /orgs/{org_id}/invites/{invite_id}/resend [post]
+// @Router       /orgs/{orgID}/invites/{inviteID}/resend [post]
 func (h *Handler) Resend(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {

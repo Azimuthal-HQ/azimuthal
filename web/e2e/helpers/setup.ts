@@ -1,53 +1,118 @@
 import { Page, expect } from '@playwright/test'
 import { execSync } from 'child_process'
 
-const BINARY = process.env.AZIMUTHAL_BINARY || '/tmp/azimuthal-test'
-
 /**
- * Creates a fresh user via CLI and logs in via the UI.
- * Returns the email, password, and org slug for use in tests.
- * Each call creates a unique user so tests are fully isolated.
+ * The server binary the CLI seeding below shells out to. Exported because
+ * three spec files used to declare their own copy of this line (T5).
  */
-export async function createUserAndLogin(page: Page): Promise<{
+export const BINARY = process.env.AZIMUTHAL_BINARY || '/tmp/azimuthal-test'
+
+/** A user seeded through the admin CLI, with the credentials to sign in as them. */
+export interface SeededUser {
   email: string
   password: string
-}> {
-  const ts = Date.now()
-  // Random suffix: parallel workers can hit the same millisecond, and a bare
-  // timestamp then collides on the users_org_id_email_key unique constraint.
-  const suffix = Math.random().toString(36).slice(2, 8)
-  const email = `e2e-${ts}-${suffix}@azimuthal.dev`
-  const password = 'E2eTestPass123!'
+  /** The display name — see seedUser for why this is load-bearing. */
+  displayName: string
+}
 
-  // Create user via admin CLI — only supported first-user flow
+export interface SeedOptions {
+  /**
+   * The display name, which is ALSO the organization key: the CLI slugifies it
+   * and reuses any org whose slug matches, creating one only if none does. So
+   * two users seeded with different display names land in different orgs and
+   * cannot see each other, and "normalising" this to a single default would
+   * silently rewrite what a test is testing. Defaults to 'E2E User', the
+   * shared org almost every spec expects.
+   */
+  displayName?: string
+  /**
+   * Org membership role. Omitted means the CLI's own default, which is owner —
+   * an org admin. Pass 'member' for the non-admin personas.
+   */
+  role?: 'owner' | 'admin' | 'member'
+  /** A short tag in the generated address, so a failure names the persona. */
+  tag?: string
+}
+
+/**
+ * uniqueEmail generates a per-run address.
+ *
+ * Timestamp AND random suffix: parallel workers do hit the same millisecond,
+ * and a bare timestamp then collides on the users_org_id_email_key unique
+ * constraint. Exported for the tests that need an address without a user
+ * behind it — an invitee, for instance.
+ */
+export function uniqueEmail(tag?: string): string {
+  const prefix = tag ? `${tag}-` : ''
+  return `e2e-${prefix}${Date.now()}-${Math.random().toString(36).slice(2, 8)}@azimuthal.dev`
+}
+
+/**
+ * seedUser creates a user through the admin CLI and returns their credentials.
+ */
+export function seedUser(opts: SeedOptions = {}): SeededUser {
+  const displayName = opts.displayName ?? 'E2E User'
+  const email = uniqueEmail(opts.tag)
+  const password = 'E2eTestPass123!'
+  const role = opts.role ? ` --role ${opts.role}` : ''
+
   try {
     execSync(
-      `${BINARY} admin create-user --email "${email}" --name "E2E User" --password "${password}"`,
-      { stdio: 'pipe' }
+      `${BINARY} admin create-user --email "${email}" --name "${displayName}" --password "${password}"${role}`,
+      { stdio: 'pipe' },
     )
   } catch (err) {
-    throw new Error(`Failed to create test user: ${err}`)
+    throw new Error(`Failed to seed test user: ${err}`)
   }
+  return { email, password, displayName }
+}
 
-  // Navigate to login
+/**
+ * signIn drives the login form and asserts NOTHING about the outcome.
+ *
+ * That is the whole point of it existing separately from loginAs. A negative
+ * login — admin.spec's deactivated member, who must be refused — needs the same
+ * five interactions and the opposite expectation, and a helper that asserted
+ * success would be unusable there. Splitting the mechanics from the contract is
+ * what lets both cases share one implementation instead of one of them keeping
+ * a hand-written copy that can drift.
+ */
+export async function signIn(page: Page, email: string, password: string): Promise<void> {
   await page.goto('/login')
   await expect(page.locator('input[type="email"]')).toBeVisible({ timeout: 10000 })
-
-  // Fill credentials
   await page.fill('input[type="email"]', email)
   await page.fill('input[type="password"]', password)
   await page.click('button[type="submit"], button:has-text("Sign in")')
+}
 
-  // Wait for successful redirect away from login
+/**
+ * loginAs signs in and asserts the login SUCCEEDED: the app navigated away from
+ * /login, and a JWT reached localStorage.
+ *
+ * The token assertion is not redundant with the URL one. LoginPage calls
+ * `login(...)` — which writes localStorage synchronously — before `navigate()`,
+ * so a session that redirected without a stored token would be a real defect in
+ * that ordering, and the URL check alone would not see it. Every later helper
+ * here reads the token, so a test that lost it would otherwise fail somewhere
+ * unrelated and much less legibly.
+ */
+export async function loginAs(page: Page, user: SeededUser): Promise<SeededUser> {
+  await signIn(page, user.email, user.password)
   await expect(page).not.toHaveURL(/\/login/, { timeout: 15000 })
 
-  // Verify token was stored
   const token = await page.evaluate((): string | null =>
-    localStorage.getItem('azimuthal_access_token')
+    localStorage.getItem('azimuthal_access_token'),
   )
   if (!token) throw new Error('Login succeeded but no JWT found in localStorage')
+  return user
+}
 
-  return { email, password }
+/**
+ * Creates a fresh org-owner user via the CLI and logs them in through the UI.
+ * Each call creates a unique user so tests are fully isolated.
+ */
+export async function createUserAndLogin(page: Page): Promise<SeededUser> {
+  return loginAs(page, seedUser())
 }
 
 /**

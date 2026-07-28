@@ -65,6 +65,16 @@ func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, _, _ uuid.U
 	return 0, nil
 }
 
+// UpdatePageContentTx reports not-found, matching mockPageStore.GetPageByID,
+// which reports the same for every id. Returning a fabricated success here
+// would let a handler test that never set up a page read as though it had
+// saved one. The markdown save's real behaviour — the transaction, the
+// document-backed refusal, the version guard — is covered in
+// internal/core/wiki (unit) and internal/db/adapters (real database).
+func (m *mockContentTx) UpdatePageContentTx(_ context.Context, _ wiki.UpdatePageInput) (generated.Page, error) {
+	return generated.Page{}, wiki.ErrPageNotFound
+}
+
 // mockDocumentStore satisfies wiki.DocumentStore for the routing-level tests in
 // this file. The document surface's real behaviour — capture, restore, conflict,
 // draft isolation — is covered against a real database in

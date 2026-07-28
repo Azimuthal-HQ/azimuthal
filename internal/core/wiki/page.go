@@ -47,13 +47,20 @@ var (
 	// ErrPageMoveCycle is returned when a move would place a page beneath
 	// itself or one of its own descendants.
 	ErrPageMoveCycle = errors.New("cannot move a page beneath itself or its descendants")
+
+	// ErrPageIsDocumentBacked is returned when the markdown update path is
+	// aimed at a page that already holds a stored document. The markdown
+	// path writes `content` and leaves `doc` untouched, so accepting the
+	// write would leave the two representations describing different pages
+	// — and `doc` is the authoritative one (ADR-0012), so the author's
+	// markdown would be silently discarded on the next document read.
+	ErrPageIsDocumentBacked = errors.New("page is edited as a document: publish through the document editor")
 )
 
 // PageStore defines the database operations required by the wiki service.
 type PageStore interface {
 	CreatePage(ctx context.Context, arg generated.CreatePageParams) (generated.Page, error)
 	GetPageByID(ctx context.Context, id uuid.UUID) (generated.Page, error)
-	UpdatePageContent(ctx context.Context, arg generated.UpdatePageContentParams) (generated.Page, error)
 	ListPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]generated.ListPagesBySpaceRow, error)
 	ListRootPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]generated.ListRootPagesBySpaceRow, error)
 	ListChildPages(ctx context.Context, parentID pgtype.UUID) ([]generated.ListChildPagesRow, error)
@@ -79,9 +86,15 @@ type MovePageTxResult struct {
 // transaction. The share.revoked audit rows ride in those transactions too,
 // following the P2.5 bulk-grant precedent: the trail is part of the
 // atomicity contract, not best-effort.
+//
+// UpdatePageContentTx joined it for the same reason: the markdown save is a
+// page row and a history row that have to be one write, and the guard that
+// decides whether the write is allowed at all has to see the row it is
+// guarding.
 type ContentTxStore interface {
 	MovePageTx(ctx context.Context, in MovePageInput) (MovePageTxResult, error)
 	DeletePageAndRevokeShares(ctx context.Context, pageID, actorID uuid.UUID) (int64, error)
+	UpdatePageContentTx(ctx context.Context, in UpdatePageInput) (generated.Page, error)
 }
 
 // Service provides wiki operations: page CRUD, tree navigation, versioning,
@@ -186,44 +199,22 @@ type UpdatePageInput struct {
 }
 
 // UpdatePage updates a page's title and content using optimistic locking.
-// Returns ErrVersionConflict if the expected version does not match.
+// Returns ErrVersionConflict if the expected version does not match,
+// ErrPageNotFound if the page is gone, and ErrPageIsDocumentBacked if the
+// page has moved to the document model and can no longer take a markdown
+// write.
+//
+// The page row and its history row commit together — see
+// [ContentTxStore.UpdatePageContentTx]. This service method holds only the
+// validation that needs no database.
 func (s *Service) UpdatePage(ctx context.Context, input UpdatePageInput) (generated.Page, error) {
 	if strings.TrimSpace(input.Title) == "" {
 		return generated.Page{}, ErrEmptyTitle
 	}
-
-	page, err := s.store.UpdatePageContent(ctx, generated.UpdatePageContentParams{
-		ID:      input.PageID,
-		Version: input.ExpectedVersion,
-		Title:   input.Title,
-		Content: input.Content,
-	})
+	page, err := s.tx.UpdatePageContentTx(ctx, input)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			_, getErr := s.store.GetPageByID(ctx, input.PageID)
-			if getErr != nil {
-				if errors.Is(getErr, pgx.ErrNoRows) {
-					return generated.Page{}, ErrPageNotFound
-				}
-				return generated.Page{}, fmt.Errorf("checking page existence: %w", getErr)
-			}
-			return generated.Page{}, ErrVersionConflict
-		}
-		return generated.Page{}, fmt.Errorf("updating page content: %w", err)
+		return generated.Page{}, fmt.Errorf("updating page: %w", err)
 	}
-
-	_, err = s.store.CreatePageRevision(ctx, generated.CreatePageRevisionParams{
-		ID:       uuid.New(),
-		PageID:   page.ID,
-		Version:  page.Version,
-		Title:    page.Title,
-		Content:  page.Content,
-		AuthorID: input.AuthorID,
-	})
-	if err != nil {
-		return generated.Page{}, fmt.Errorf("creating revision: %w", err)
-	}
-
 	return page, nil
 }
 

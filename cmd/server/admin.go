@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
@@ -138,41 +141,103 @@ func slugifyName(name string) string {
 	return s
 }
 
-// ensureOrgForUser creates or retrieves an organization with a slug derived from the display name.
-func ensureOrgForUser(ctx context.Context, queries *generated.Queries, displayName string) (uuid.UUID, string, error) {
+// ensureOrgForUser finds or creates the organization a CLI-created user
+// belongs to, keyed on the slugified display name, and seeds everything a
+// usable org needs.
+//
+// N2. This used to read, then insert, with nothing between: two `admin
+// create-user` invocations for the same display name — which the E2E harness
+// issues from four parallel workers against a freshly reset database — both
+// saw no org and both inserted, and the loser died on
+// organizations_slug_key. The failure landed on whichever spec lost the race,
+// which is why it read as an unrelated flake in a different test on every run.
+//
+// Two things fix it, and both are needed:
+//
+//   - The insert and the seeding are ONE transaction, so the org row becomes
+//     visible to another connection only once its default workflows and item
+//     types exist. Otherwise the loser's re-read would hand back an org that
+//     is present but not yet usable, and the race would simply move.
+//   - A unique violation on the insert is not an error. It means somebody else
+//     created the org between the read and the write, which is the outcome
+//     this function wanted; it re-reads and returns theirs.
+//
+// (The default TEAM seed was made race-safe in T3, via a targetless ON
+// CONFLICT DO NOTHING. This is the same class of bug one level up.)
+func ensureOrgForUser(ctx context.Context, pool *pgxpool.Pool, displayName string) (uuid.UUID, string, error) {
 	orgSlug := slugifyName(displayName)
 
-	existingOrg, err := queries.GetOrganizationBySlug(ctx, orgSlug)
-	if err == nil {
-		return existingOrg.ID, orgSlug, nil
+	// Two attempts, not a loop: attempt 1 reads and may insert; attempt 2 only
+	// happens after a unique violation, which proves the row now exists, so its
+	// read cannot fail for the same reason. A third pass could only spin.
+	for attempt := range 2 {
+		queries := generated.New(pool)
+		existingOrg, err := queries.GetOrganizationBySlug(ctx, orgSlug)
+		if err == nil {
+			return existingOrg.ID, orgSlug, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, "", fmt.Errorf("looking up organization: %w", err)
+		}
+
+		orgID, err := createAndSeedOrg(ctx, pool, orgSlug, displayName)
+		switch {
+		case err == nil:
+			return orgID, orgSlug, nil
+		case isUniqueViolation(err) && attempt == 0:
+			continue // another caller won; the next read finds theirs
+		default:
+			return uuid.Nil, "", err
+		}
 	}
+	return uuid.Nil, "", fmt.Errorf("organization %q could not be created or found", orgSlug)
+}
+
+// createAndSeedOrg writes the org row and everything an org is unusable
+// without, in one transaction.
+//
+// Without the seeds an org exists but nothing works in it:
+// AssignDefaultWorkflowToSpace fails for every space (the register endpoint
+// seeds via OrgProvisionerAdapterWithWorkflows; the CLI must do the same), and
+// item creation fails type validation (likewise SeedDefaults).
+func createAndSeedOrg(ctx context.Context, pool *pgxpool.Pool, orgSlug, displayName string) (uuid.UUID, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("creating organization: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := generated.New(tx)
 
 	orgID := uuid.New()
 	orgDesc := fmt.Sprintf("Organization for %s", displayName)
-	_, err = queries.CreateOrganization(ctx, generated.CreateOrganizationParams{
+	if _, err := qtx.CreateOrganization(ctx, generated.CreateOrganizationParams{
 		ID:          orgID,
 		Slug:        orgSlug,
 		Name:        displayName,
 		Description: &orgDesc,
-	})
-	if err != nil {
-		return uuid.Nil, "", fmt.Errorf("creating organization: %w", err)
+	}); err != nil {
+		// Returned unwrapped past the caller's isUniqueViolation check, which
+		// needs the pg error to tell "somebody beat us to it" from a failure.
+		return uuid.Nil, fmt.Errorf("creating organization: %w", err)
+	}
+	if err := adapters.NewWorkflowAdapter(qtx).SeedDefaultWorkflows(ctx, orgID); err != nil {
+		return uuid.Nil, fmt.Errorf("seeding default workflows: %w", err)
+	}
+	if err := adapters.NewItemTypeAdapter(qtx).SeedDefaults(ctx, orgID); err != nil {
+		return uuid.Nil, fmt.Errorf("seeding default item types: %w", err)
 	}
 
-	// Every org needs its seeded default workflows, no matter which path
-	// created it — without them AssignDefaultWorkflowToSpace fails for
-	// every space in the org. (The register endpoint seeds via
-	// OrgProvisionerAdapterWithWorkflows; the CLI must do the same.)
-	if err := adapters.NewWorkflowAdapter(queries).SeedDefaultWorkflows(ctx, orgID); err != nil {
-		return uuid.Nil, "", fmt.Errorf("seeding default workflows: %w", err)
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, fmt.Errorf("creating organization: commit: %w", err)
 	}
-	// Likewise every org needs its default Vector item types, no matter which
-	// path created it — without them item creation fails type validation. (The
-	// register endpoint seeds via OrgProvisionerAdapter.WithItemTypeSeeder.)
-	if err := adapters.NewItemTypeAdapter(queries).SeedDefaults(ctx, orgID); err != nil {
-		return uuid.Nil, "", fmt.Errorf("seeding default item types: %w", err)
-	}
-	return orgID, orgSlug, nil
+	return orgID, nil
+}
+
+// isUniqueViolation reports whether err is a Postgres unique-constraint
+// violation anywhere in its chain.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 // runCreateUser connects to the database and creates a user, organization, and membership.
@@ -201,7 +266,7 @@ func runCreateUser(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("invalid --role %q: must be owner, admin, or member", createUserRole)
 	}
 
-	orgID, orgSlug, err := ensureOrgForUser(ctx, queries, createUserName)
+	orgID, orgSlug, err := ensureOrgForUser(ctx, pool, createUserName)
 	if err != nil {
 		return fmt.Errorf("setting up organization: %w", err)
 	}

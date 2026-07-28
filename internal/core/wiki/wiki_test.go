@@ -2,6 +2,7 @@ package wiki_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -56,17 +57,46 @@ func (m *mockStore) GetPageByID(_ context.Context, id uuid.UUID) (generated.Page
 	return p, nil
 }
 
-func (m *mockStore) UpdatePageContent(_ context.Context, arg generated.UpdatePageContentParams) (generated.Page, error) {
+// UpdatePageContentTx implements the ContentTxStore markdown-save seam in
+// memory, faithfully rather than as a stub: the nine UpdatePage unit tests in
+// this file run through it, so a stub would turn every one of them into a
+// test of nothing.
+//
+// Faithful means the same four decisions the real transaction makes, in the
+// same order and under one lock (which is what the mutex stands in for):
+// missing page → ErrPageNotFound, stored document → ErrPageIsDocumentBacked,
+// stale version → ErrVersionConflict, otherwise write the page row AND its
+// revision together. Holding the lock across the whole sequence is what makes
+// the concurrent-editors test meaningful — release it between the check and
+// the write and both editors would win.
+func (m *mockStore) UpdatePageContentTx(_ context.Context, in wiki.UpdatePageInput) (generated.Page, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p, ok := m.pages[arg.ID]
-	if !ok || p.Version != arg.Version {
-		return generated.Page{}, pgx.ErrNoRows
+
+	p, ok := m.pages[in.PageID]
+	if !ok {
+		return generated.Page{}, wiki.ErrPageNotFound
 	}
-	p.Title = arg.Title
-	p.Content = arg.Content
+	if p.Doc != nil {
+		return generated.Page{}, wiki.ErrPageIsDocumentBacked
+	}
+	if p.Version != in.ExpectedVersion {
+		return generated.Page{}, wiki.ErrVersionConflict
+	}
+
+	p.Title = in.Title
+	p.Content = in.Content
 	p.Version++
 	m.pages[p.ID] = p
+
+	m.revisions[p.ID] = append(m.revisions[p.ID], generated.PageRevision{
+		ID:       uuid.New(),
+		PageID:   p.ID,
+		Version:  p.Version,
+		Title:    p.Title,
+		Content:  p.Content,
+		AuthorID: in.AuthorID,
+	})
 	return p, nil
 }
 
@@ -1052,6 +1082,120 @@ func TestCreatePage_WithParent(t *testing.T) {
 	}
 	if !child.ParentID.Valid || child.ParentID.Bytes != parent.ID {
 		t.Error("expected child to reference parent")
+	}
+}
+
+// ---------- S3: the markdown save refuses a document-backed page ----------
+
+// setDoc puts a stored document on a page, which is what publishing through
+// the document editor does to it.
+func (m *mockStore) setDoc(pageID uuid.UUID, doc json.RawMessage) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p := m.pages[pageID]
+	p.Doc = doc
+	m.pages[pageID] = p
+}
+
+// A page that holds a document cannot take a markdown save. The markdown path
+// writes `content` and never `doc`, and `doc` is authoritative (ADR-0012), so
+// accepting the write would report success and then discard the author's text
+// on the next document read.
+func TestUpdatePage_RefusesDocumentBackedPage(t *testing.T) {
+	svc, store := testService()
+	ctx := context.Background()
+	spaceID := uuid.New()
+	authorID := uuid.New()
+
+	page := createTestPage(t, svc, spaceID, authorID, "Doc page", "markdown body", nil)
+	store.setDoc(page.ID, json.RawMessage(`{"type":"doc","content":[]}`))
+
+	_, err := svc.UpdatePage(ctx, wiki.UpdatePageInput{
+		PageID:          page.ID,
+		ExpectedVersion: 1,
+		Title:           "Markdown overwrite",
+		Content:         "markdown overwrite",
+		AuthorID:        authorID,
+	})
+	if !errors.Is(err, wiki.ErrPageIsDocumentBacked) {
+		t.Fatalf("expected ErrPageIsDocumentBacked, got %v", err)
+	}
+
+	// And it wrote nothing: no version bump, no history row.
+	after, err := svc.GetPage(ctx, page.ID)
+	if err != nil {
+		t.Fatalf("re-reading page: %v", err)
+	}
+	if after.Version != 1 {
+		t.Errorf("refused save bumped the version to %d", after.Version)
+	}
+	if after.Content != "markdown body" {
+		t.Errorf("refused save changed the content to %q", after.Content)
+	}
+	revs, err := svc.ListRevisions(ctx, page.ID)
+	if err != nil {
+		t.Fatalf("listing revisions: %v", err)
+	}
+	if len(revs) != 1 {
+		t.Errorf("refused save wrote history: expected 1 revision, got %d", len(revs))
+	}
+}
+
+// The refusal is strictly `doc IS NOT NULL`: a page whose document has never
+// been published still takes markdown saves. web/e2e/codex-editor.spec.ts
+// depends on this — it PUTs markdown to pages the editor has opened but not
+// published, and expects 200.
+func TestUpdatePage_AllowsPageWithNoStoredDocument(t *testing.T) {
+	svc, store := testService()
+	ctx := context.Background()
+	spaceID := uuid.New()
+	authorID := uuid.New()
+
+	page := createTestPage(t, svc, spaceID, authorID, "Markdown page", "body", nil)
+	if store.pages[page.ID].Doc != nil {
+		t.Fatal("fixture precondition: a freshly created page has no stored document")
+	}
+
+	updated, err := svc.UpdatePage(ctx, wiki.UpdatePageInput{
+		PageID:          page.ID,
+		ExpectedVersion: 1,
+		Title:           "Markdown page v2",
+		Content:         "body v2",
+		AuthorID:        authorID,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated.Version != 2 {
+		t.Errorf("expected version 2, got %d", updated.Version)
+	}
+}
+
+// UpdatePageOrConflict passes the document refusal through unchanged: it is
+// not a version conflict, so it must not be dressed up as one — a merge UI
+// offering "reload and re-apply" would be the wrong advice for a page that
+// cannot take this kind of write at all.
+func TestUpdatePageOrConflict_DocumentRefusalIsNotAConflictDetail(t *testing.T) {
+	svc, store := testService()
+	ctx := context.Background()
+	spaceID := uuid.New()
+	authorID := uuid.New()
+
+	page := createTestPage(t, svc, spaceID, authorID, "Doc page", "body", nil)
+	store.setDoc(page.ID, json.RawMessage(`{"type":"doc","content":[]}`))
+
+	_, conflict, err := svc.UpdatePageOrConflict(ctx, wiki.UpdatePageInput{
+		PageID:          page.ID,
+		ExpectedVersion: 1,
+		Title:           "Overwrite",
+		Content:         "overwrite",
+		AuthorID:        authorID,
+	})
+	if !errors.Is(err, wiki.ErrPageIsDocumentBacked) {
+		t.Fatalf("expected ErrPageIsDocumentBacked, got %v", err)
+	}
+	if conflict != nil {
+		t.Errorf("expected no conflict detail, got %+v", conflict)
 	}
 }
 

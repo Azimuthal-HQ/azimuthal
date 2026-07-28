@@ -107,7 +107,7 @@ jobs:
     name: Build
     needs: changes
     # Skipping build cascade-skips every job that `needs` it (test, lint,
-    # sast, vuln-scan, container-scan, e2e, docs-check, docker-e2e). All
+    # frontend, sast, vuln-scan, container-scan, e2e, docs-check, docker-e2e). All
     # of them still report a skipped status, which satisfies required
     # checks. secret-scan does not depend on build and always runs.
     if: needs.changes.outputs.docs_only != 'true'
@@ -331,6 +331,45 @@ jobs:
           git diff --exit-code go.sum || \
             (echo "❌ go.sum out of date — run go mod tidy" && exit 1)
 
+
+  # ─────────────────────────────────────────────────────────────
+  # GATE 3B: Frontend — type-check and unit tests
+  #
+  # T1. The frontend's unit suite was local-only, and with it every drift
+  # guard written as a vitest test: web/src/lib/no-direct-fetch.test.ts (the
+  # ADR rule that all network access goes through lib/api.ts),
+  # web/src/lib/codex/schema.test.ts and
+  # web/src/components/codex/extensions/extensions.test.ts (the ADR-0012
+  # editor-vocabulary equality, whose failure mode is silent data loss). A
+  # guard nobody runs on a pull request guards nothing, so they run here.
+  #
+  # `npm run lint` is deliberately NOT in this job — see docs/known-issues.md.
+  # eslint reports 46 errors on main today, so adding it now would either fail
+  # every pull request or need a baseline file, and a baseline is the
+  # exemption ledger this pass has spent its time deleting.
+  # ─────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: cd web && npm ci
+
+      - name: Type-check
+        run: cd web && npm run type-check
+
+      - name: Unit tests
+        run: cd web && npm run test:unit
 
   # ─────────────────────────────────────────────────────────────
   # GATE 4A: SAST
@@ -758,6 +797,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Create stub frontend dist (for go:embed)
+        run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
+
+      - name: Install swag
+        run: go install github.com/swaggo/swag/v2/cmd/swag@latest
+
+      # T1. This is the check that matters, and until now it existed only as a
+      # local Makefile target. What ran here was a grep for four structural
+      # markers — `openapi: 3`, `info:`, `title:`, `BearerAuth:` — plus two
+      # path names, and it would have passed a spec that had lost every other
+      # endpoint in the API. `make docs-check` regenerates from the handler
+      # annotations and diffs, which is the only thing that can tell a stale
+      # spec from a current one.
+      - name: Regenerate the spec and diff it
+        run: make docs-check
+
+      # Kept, and now as a floor under the real check rather than a substitute
+      # for it: it is the one thing that still catches a regeneration which
+      # succeeds while producing something structurally wrong.
       - name: Validate OpenAPI 3.0 structure
         run: |
           SPEC=docs/api/openapi.yaml
@@ -942,7 +1006,7 @@ jobs:
     # `changes` is listed so a failed path-detection job fails this gate —
     # otherwise a broken detection job would skip every gate and still merge.
     # Skipped results (docs-only PRs) are not failures and pass this gate.
-    needs: [changes, build, test, lint, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e]
+    needs: [changes, build, test, lint, frontend, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e]
     runs-on: ubuntu-latest
     if: always()
     steps:

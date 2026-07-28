@@ -5,11 +5,11 @@ import {
   useMe,
   useSharedEntity,
   useSharedAttachments,
-  sharedAttachmentURL,
   friendlyErrorMessage,
   type ShareEntityType,
 } from '../../lib/api';
 import { ShareBadge } from '../../components/ShareBadge';
+import { SharedAttachmentImage, SharedAttachmentLink } from './SharedAttachment';
 import { Badge } from '../../components/ui';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 
@@ -94,11 +94,13 @@ export function SharedEntityPage() {
               {attachments.data
                 .filter((a) => PREVIEWABLE_TYPES.has(a.content_type))
                 .map((a) => (
-                  <img
+                  <SharedAttachmentImage
                     key={a.id}
-                    src={sharedAttachmentURL(orgId, et, entityId ?? '', a.id)}
-                    alt={a.filename}
-                    className="max-w-full rounded-[var(--radius-md)] border border-[var(--color-border)]"
+                    orgId={orgId}
+                    entityType={et}
+                    entityId={entityId ?? ''}
+                    attachmentId={a.id}
+                    filename={a.filename}
                   />
                 ))}
             </div>
@@ -119,17 +121,18 @@ export function SharedEntityPage() {
               from this page entirely. A duplicated image link is a much
               smaller cost than a file with no way to open it. */}
           {attachments.data && attachments.data.length > 0 && (
-            <div className="space-y-1 border-t border-[var(--color-border)] pt-3">
+            <div className="space-y-1 border-t border-[var(--color-border)] pt-3" data-testid="shared-attachment-links">
               <p className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">Attachments</p>
               {attachments.data
                 .map((a) => (
-                  <a
+                  <SharedAttachmentLink
                     key={a.id}
-                    href={sharedAttachmentURL(orgId, et, entityId ?? '', a.id)}
-                    className="block text-[var(--text-sm)] text-[var(--color-primary)] hover:underline"
-                  >
-                    {a.filename}
-                  </a>
+                    orgId={orgId}
+                    entityType={et}
+                    entityId={entityId ?? ''}
+                    attachmentId={a.id}
+                    filename={a.filename}
+                  />
                 ))}
             </div>
           )}

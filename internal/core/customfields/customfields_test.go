@@ -3,6 +3,7 @@ package customfields
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -114,6 +115,20 @@ func (r *stubValueRepo) Upsert(_ context.Context, itemID uuid.UUID, slug, value 
 func (r *stubValueRepo) Delete(_ context.Context, itemID uuid.UUID, slug string) error {
 	delete(r.values, vkey(itemID, slug))
 	return nil
+}
+
+// CountByOrgSlug counts every stored value under slug. The stub holds one org,
+// so org scoping is the real repository's job (proved against a real database
+// in internal/db/adapters); what this models faithfully is the fact the guard
+// turns on — that values survive their definitions and are found by slug.
+func (r *stubValueRepo) CountByOrgSlug(_ context.Context, _ uuid.UUID, slug string) (int, error) {
+	n := 0
+	for k := range r.values {
+		if len(k) > 37 && k[37:] == slug {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func TestCreateDef_Validation(t *testing.T) {
@@ -338,5 +353,71 @@ func TestListDefs(t *testing.T) {
 	}
 	if len(list) != 2 {
 		t.Errorf("expected 2 defs, got %d", len(list))
+	}
+}
+
+// S12 — a new definition may not reuse a slug that still holds legacy values.
+//
+// Deleting a definition deliberately leaves its values behind, keyed by slug,
+// so nothing is silently lost. The consequence nobody had guarded: a new field
+// whose name derives to the same slug adopts all of them at once, under a type
+// they were never validated against.
+func TestCreateDef_RefusesSlugStillHeldByLegacyValues(t *testing.T) {
+	defs, values := newStubDefRepo(), newStubValueRepo()
+	svc := NewService(defs, values)
+	ctx := context.Background()
+	org, item := uuid.New(), uuid.New()
+
+	d, err := svc.CreateDef(ctx, org, "Story Points", TypeNumber, nil)
+	if err != nil {
+		t.Fatalf("CreateDef: %v", err)
+	}
+	if err := svc.SetValue(ctx, org, item, "story_points", "8"); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	if err := svc.DeleteDef(ctx, org, d.ID); err != nil {
+		t.Fatalf("DeleteDef: %v", err)
+	}
+
+	// The value is still there — that is the design, not the defect.
+	if got, _ := values.CountByOrgSlug(ctx, org, "story_points"); got != 1 {
+		t.Fatalf("precondition: expected the legacy value to survive, got %d", got)
+	}
+
+	_, err = svc.CreateDef(ctx, org, "story points", TypeSingleSelect, []string{"gold"})
+	if !errors.Is(err, ErrSlugHeldByLegacyValues) {
+		t.Fatalf("expected ErrSlugHeldByLegacyValues, got %v", err)
+	}
+	// The message has to be actionable: which slug, and how much is in the way.
+	if !strings.Contains(err.Error(), "story_points") || !strings.Contains(err.Error(), "1 item") {
+		t.Errorf("refusal must name the slug and the count, got %q", err.Error())
+	}
+}
+
+// Clearing the legacy values frees the slug again — the guard is about
+// orphaned data, not a permanent reservation of the name.
+func TestCreateDef_SlugFreeOnceLegacyValuesAreCleared(t *testing.T) {
+	svc := NewService(newStubDefRepo(), newStubValueRepo())
+	ctx := context.Background()
+	org, item := uuid.New(), uuid.New()
+
+	d, err := svc.CreateDef(ctx, org, "Tier", TypeText, nil)
+	if err != nil {
+		t.Fatalf("CreateDef: %v", err)
+	}
+	if err := svc.SetValue(ctx, org, item, "tier", "gold"); err != nil {
+		t.Fatalf("SetValue: %v", err)
+	}
+	// An empty value deletes the stored row — the supported way to leave
+	// nothing behind.
+	if err := svc.SetValue(ctx, org, item, "tier", ""); err != nil {
+		t.Fatalf("clearing value: %v", err)
+	}
+	if err := svc.DeleteDef(ctx, org, d.ID); err != nil {
+		t.Fatalf("DeleteDef: %v", err)
+	}
+
+	if _, err := svc.CreateDef(ctx, org, "Tier", TypeSingleSelect, []string{"gold", "silver"}); err != nil {
+		t.Fatalf("a slug with no values behind it must be reusable, got %v", err)
 	}
 }

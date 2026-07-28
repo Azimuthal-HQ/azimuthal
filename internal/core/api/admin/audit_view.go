@@ -127,7 +127,7 @@ func parseAuditWindow(w http.ResponseWriter, r *http.Request, f audit.ListFilter
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id       path      string  true   "Organization ID"
+// @Param        orgID       path      string  true   "Organization ID"
 // @Param        actor_id     query     string  false  "Filter by actor"
 // @Param        entity_kind  query     string  false  "Filter by entity kind"
 // @Param        action       query     string  false  "Filter by action"
@@ -138,7 +138,7 @@ func parseAuditWindow(w http.ResponseWriter, r *http.Request, f audit.ListFilter
 // @Success      200          {object}  admin.auditListResponse   "One page"
 // @Failure      400          {object}  api.SwaggerErrorResponse  "Invalid filter"
 // @Failure      404          {object}  api.SwaggerErrorResponse  "Not found (also returned to non-admins)"
-// @Router       /orgs/{org_id}/audit-log [get]
+// @Router       /orgs/{orgID}/audit-log [get]
 func (h *Handler) ListAuditLog(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {
@@ -175,11 +175,11 @@ func (h *Handler) ListAuditLog(w http.ResponseWriter, r *http.Request) {
 // @Tags         admin
 // @Produce      json
 // @Security     BearerAuth
-// @Param        org_id    path      string  true  "Organization ID"
-// @Param        batch_id  path      string  true  "Batch ID"
+// @Param        orgID    path      string  true  "Organization ID"
+// @Param        batchID  path      string  true  "Batch ID"
 // @Success      200       {array}   admin.auditEntryResponse  "Events"
 // @Failure      404       {object}  api.SwaggerErrorResponse  "Not found (also returned to non-admins)"
-// @Router       /orgs/{org_id}/audit-log/batches/{batch_id} [get]
+// @Router       /orgs/{orgID}/audit-log/batches/{batchID} [get]
 func (h *Handler) AuditLogBatch(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := orgIDFromRequest(w, r)
 	if !ok {

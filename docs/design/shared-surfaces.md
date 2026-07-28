@@ -111,7 +111,19 @@ func (a *ContentTxAdapter) MovePageTx(ctx, wiki.MovePageInput) (wiki.MovePageTxR
 func (a *ContentTxAdapter) DeletePageAndRevokeShares(ctx, pageID, actorID) (int64, error)
 func (a *ContentTxAdapter) DeleteTicketAndRevokeShares(ctx, ticketID, actorID) error
 func (a *ContentTxAdapter) DeleteItemAndRevokeShares(ctx, itemID, actorID) error
+func (a *ContentTxAdapter) UpdatePageContentTx(ctx, wiki.UpdatePageInput) (generated.Page, error)
+func (a *ContentTxAdapter) PublishPageTx(ctx, wiki.PublishPageTxInput) (generated.Page, error)
 ```
+
+The last two carry no share invariant. They are here because they are the other kind of thing this
+adapter owns: a content write whose parts have to land together. See sections 10 and 12.
+
+Space creation has the same shape and its own adapter, `SpaceCreateAdapter`
+(`internal/db/adapters/space_create_tx.go`), reached through `spaces.CreateTxStore`: the space row,
+the creator's `space_members` row and — for a non-org-admin creator — the creator's `space_admin`
+grant commit together, so a failure cannot leave an orphaned space holding the slug and key. The
+grant inside that transaction goes through the real `access.GrantService`, bound to the
+transaction's queries by `AccessAdapter.withTx`, rather than a second hand-written INSERT.
 
 It owns a pool, opens the transaction itself (`Begin` / `defer Rollback` / `WithTx`), and runs the
 entity mutation, the share revocation and the `share.revoked` audit write inside it — tagged with a
@@ -340,9 +352,18 @@ The same reasoning that put share revocation in a transaction (ADR-0008 rules 9 
 here: a page whose history skips a version, or a draft that reappears as unpublished work the author
 already published, is not fixable by retrying.
 
-**Note the asymmetry with the older path.** `wiki.Service.UpdatePage` — the markdown save — still
-updates the page and inserts its revision as two separate pool calls. That is recorded as a defect
-in `spec-repo-reconciliation.md`, not as a second convention (see also D54: it leaves `doc` stale).
+**The asymmetry with the older path is gone.** `wiki.Service.UpdatePage` — the markdown save —
+used to update the page and insert its revision as two separate pool calls, and to leave `doc`
+stale on a document-backed page. Both were recorded as defects (D54 and the section 3 entry) and
+both are closed: the save now runs through `ContentTxStore.UpdatePageContentTx`, one transaction,
+and refuses a page where `doc IS NOT NULL` with 409 rather than writing half a representation.
+
+> **The rule: three refusals, decided under one row lock.** The transaction takes
+> `GetPageForUpdate` first, so "zero rows affected" never has to be guessed at afterwards by a
+> second read — gone is `ErrPageNotFound`, holds a document is `ErrPageIsDocumentBacked`, version
+> moved on is `ErrVersionConflict`. The document test is strictly `doc IS NOT NULL`: a page that
+> has only ever held markdown, including one open in the editor but never published, keeps taking
+> markdown saves.
 
 ---
 
@@ -390,6 +411,53 @@ Four things about it that are easy to get wrong:
 **Current consumers** — `web/src/pages/codex/WikiPage.tsx`, `web/src/pages/codex/DraftsPage.tsx`.
 Any later rich-text surface — a Beacon ticket description, a Vector item body — extends this set
 and this schema rather than starting a second one.
+
+## 12. `fetchObjectURL` — the only way server bytes reach the browser
+
+**Where:** `web/src/lib/api.ts`.
+
+```ts
+async function fetchObjectURL(path, unavailable): Promise<string>   // internal
+export async function fetchPageImageObjectURL(spaceId, attachmentId): Promise<string>
+export async function fetchSharedAttachmentObjectURL(orgId, entityType, entityId, attachmentId): Promise<string>
+```
+
+Every binary route authenticates from the `Authorization` header or a `session` cookie, and this
+frontend holds a bearer token in localStorage and sets **no cookie** — nothing in
+`internal/core/api/auth` calls `http.SetCookie`. So a URL handed straight to the browser is fetched
+with no credential at all and answered 401.
+
+> **The rule: a route that streams bytes gets a fetch-and-object-URL helper, never a URL builder.**
+> The failure is silent in both places it can happen. In an `<img src>` it is a broken-image icon
+> and no error anywhere; in an `<a href download>` it is a saved file whose contents are a JSON
+> error. That is how the shared entity page shipped with neither its images nor its downloads
+> working, behind a URL builder whose own comment claimed "the browser fetches it with the session
+> cookie" (S8). `sharedAttachmentURL` is gone; the shape that produced the bug is no longer
+> available.
+
+Callers own the lifetime: resolve, use, `URL.revokeObjectURL` on teardown, and revoke immediately
+if the component unmounted while the request was in flight. `web/src/components/codex/nodeviews/ImageView.tsx`
+and `web/src/pages/shared/SharedAttachment.tsx` are the two examples.
+
+**Current consumers** — the Codex image node view, and the shared entity page's previews and
+download links.
+
+---
+
+## 13. The Swagger UI assets are vendored
+
+**Where:** `internal/core/api/swaggerui/`, served from `/api/docs/assets/`.
+
+swagger-ui-dist is embedded in the binary (Apache 2.0, licence and third-party notices alongside
+it), not loaded from a CDN.
+
+> **The rule: a self-hosted product fetches nothing from the internet to render its own pages.** An
+> isolated network is the normal deployment, not the exception, and there a CDN reference is a blank
+> screen with no explanation. On a connected one it is third-party code, resolved from a floating
+> version tag, executing in an authenticated administrator's browser on the origin that holds their
+> session. `TestDocsEndpoint_LoadsNoExternalAssets` fails on any absolute URL in the page.
+
+---
 
 ## Related
 

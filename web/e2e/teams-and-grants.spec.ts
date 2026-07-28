@@ -1,8 +1,5 @@
 import { test, expect, Page } from '@playwright/test'
-import { execSync } from 'child_process'
-import { createUserAndLogin, createSpace, getAuthToken, getCurrentUser } from './helpers/setup'
-
-const BINARY = process.env.AZIMUTHAL_BINARY || '/tmp/azimuthal-test'
+import { createUserAndLogin, createSpace, getAuthToken, getCurrentUser, loginAs, seedUser } from './helpers/setup'
 
 // P2 — teams, grants, and the space directory (v0.3 spec §6, ADR-0006/0007).
 //
@@ -18,20 +15,7 @@ const BINARY = process.env.AZIMUTHAL_BINARY || '/tmp/azimuthal-test'
 
 /** Creates a NON-admin org member in the shared E2E org and logs them in. */
 async function createMemberAndLogin(page: Page): Promise<{ email: string }> {
-  const ts = Date.now()
-  const suffix = Math.random().toString(36).slice(2, 8)
-  const email = `e2e-member-${ts}-${suffix}@azimuthal.dev`
-  const password = 'E2eTestPass123!'
-  execSync(
-    `${BINARY} admin create-user --email "${email}" --name "E2E User" --password "${password}" --role member`,
-    { stdio: 'pipe' },
-  )
-  await page.goto('/login')
-  await page.fill('input[type="email"]', email)
-  await page.fill('input[type="password"]', password)
-  await page.click('button[type="submit"], button:has-text("Sign in")')
-  await expect(page).not.toHaveURL(/\/login/, { timeout: 15000 })
-  return { email }
+  return loginAs(page, seedUser({ role: 'member', tag: 'member' }))
 }
 
 test.describe('Teams admin', () => {

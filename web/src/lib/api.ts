@@ -1482,16 +1482,41 @@ async function uploadPageImage(
 }
 
 /**
+ * fetchObjectURL fetches a binary route through the authenticated client and
+ * hands back a blob URL an `<img src>` or an `<a href download>` can use. The
+ * caller revokes it when done.
+ *
+ * This is the ONLY way this frontend puts server bytes in front of the
+ * browser, and it is not a convenience. Every binary route authenticates from
+ * the `Authorization` header or a `session` cookie, and this frontend holds a
+ * bearer token in localStorage and sets no cookie — nothing in
+ * `internal/core/api/auth` calls `http.SetCookie`. So a URL handed straight to
+ * the browser, in an `<img src>` or an `<a href>`, is fetched with no
+ * credential at all and answered 401. In an `<img>` that is a broken-image
+ * icon and no error anywhere; in an `<a>` it is a saved file containing a JSON
+ * error. Both are silent, which is how the shared page shipped with neither
+ * its images nor its downloads working (S8).
+ *
+ * A route that streams bytes therefore gets a fetch-and-object-URL helper
+ * here, never a URL builder.
+ */
+async function fetchObjectURL(path: string, unavailable: string): Promise<string> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers });
+  if (!response.ok) {
+    throw new APIError(response.status, {
+      error: { code: 'unknown', message: unavailable, request_id: '' },
+    });
+  }
+  return URL.createObjectURL(await response.blob());
+}
+
+/**
  * fetchPageImageObjectURL resolves an image a document refers to by attachment
  * id into a blob URL an `<img src>` can use.
- *
- * It cannot be a plain URL. The attachment route authenticates from the
- * `Authorization` header or a `session` cookie, and this frontend holds a
- * bearer token in localStorage and sets no cookie — nothing in
- * `internal/core/api/auth` calls `http.SetCookie` — so a browser-issued image
- * request carries no credential and gets a 401. The bytes therefore come
- * through the authenticated client like every other request, and the caller
- * revokes the URL when it is done with it.
  *
  * The document deliberately stores no URL of its own: the address a reader
  * needs depends on whether they reached the page through the space or through
@@ -1501,20 +1526,10 @@ export async function fetchPageImageObjectURL(
   spaceId: string,
   attachmentId: string,
 ): Promise<string> {
-  const headers = new Headers();
-  const token = getToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-
-  const response = await fetch(
-    `${API_BASE_URL}${spaceBase(spaceId)}/attachments/${attachmentId}`,
-    { headers },
+  return fetchObjectURL(
+    `${spaceBase(spaceId)}/attachments/${attachmentId}`,
+    'the image is unavailable',
   );
-  if (!response.ok) {
-    throw new APIError(response.status, {
-      error: { code: 'unknown', message: 'the image is unavailable', request_id: '' },
-    });
-  }
-  return URL.createObjectURL(await response.blob());
 }
 
 // ---------------------------------------------------------------------------
@@ -3703,16 +3718,25 @@ export function useMoveShareImpact(
   });
 }
 
-/** The absolute URL of a shared entity's attachment (for <img src>), so the
- *  browser fetches it with the session cookie. Bearer-only deployments should
- *  proxy through fetch; here the object streams from a same-origin route. */
-export function sharedAttachmentURL(
+/**
+ * fetchSharedAttachmentObjectURL resolves a shared entity's attachment into a
+ * blob URL, through the authenticated client.
+ *
+ * It replaces a `sharedAttachmentURL` builder whose comment claimed "the
+ * browser fetches it with the session cookie". There is no session cookie —
+ * this frontend is bearer-only — so every image on a shared page 401'd and
+ * every download link saved an error body (S8). See fetchObjectURL.
+ */
+export async function fetchSharedAttachmentObjectURL(
   orgId: string,
   entityType: ShareEntityType,
   entityId: string,
   attachmentId: string,
-): string {
-  return `${API_BASE_URL}/orgs/${orgId}/shared/${entityType}/${entityId}/attachments/${attachmentId}`;
+): Promise<string> {
+  return fetchObjectURL(
+    `/orgs/${orgId}/shared/${entityType}/${entityId}/attachments/${attachmentId}`,
+    'this attachment is unavailable',
+  );
 }
 
 // Re-export create helpers for direct use

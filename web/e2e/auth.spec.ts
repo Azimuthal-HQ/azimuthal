@@ -1,8 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { execSync } from 'child_process'
-import { createUserAndLogin } from './helpers/setup'
-
-const BINARY = process.env.AZIMUTHAL_BINARY || '/tmp/azimuthal-test'
+import { createUserAndLogin, seedUser, signIn } from './helpers/setup'
 
 test.describe('Authentication', () => {
   test('unauthenticated user is redirected to login page', async ({ page }) => {
@@ -30,13 +27,11 @@ test.describe('Authentication', () => {
   })
 
   test('valid credentials logs in and shows dashboard', async ({ page }) => {
-    const email = `auth-${Date.now()}@azimuthal.dev`
-    execSync(`${BINARY} admin create-user --email "${email}" --name "Auth Test" --password "TestPass123!"`, { stdio: 'pipe' })
+    // 'Auth Test' is not decoration: the display name is the org key, so this
+    // user gets their own org rather than joining the shared 'E2E User' one.
+    const user = seedUser({ displayName: 'Auth Test', tag: 'auth' })
 
-    await page.goto('/login')
-    await page.fill('input[type="email"]', email)
-    await page.fill('input[type="password"]', 'TestPass123!')
-    await page.click('button[type="submit"], button:has-text("Sign in")')
+    await signIn(page, user.email, user.password)
 
     await expect(page).not.toHaveURL(/\/login/, { timeout: 15000 })
     await expect(page.locator('text=Welcome back')).toBeVisible()

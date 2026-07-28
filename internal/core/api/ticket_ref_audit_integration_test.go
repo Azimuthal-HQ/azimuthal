@@ -583,6 +583,7 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 		SpaceHandler: spacesapi.NewHandler(queries).
 			WithTeamService(teamSvc).
 			WithGrantService(grantSvc).
+			WithSpaceCreateTx(adapters.NewSpaceCreateAdapter(pool)).
 			WithAuditLogger(auditLog).
 			WithTicketRefPolicy(required),
 		TeamHandler: teamsapi.NewHandler(teamSvc).

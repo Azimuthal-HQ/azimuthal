@@ -25,6 +25,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	spacedomain "github.com/Azimuthal-HQ/azimuthal/internal/core/spaces"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
@@ -89,8 +90,9 @@ type WorkflowAssigner interface {
 	AssignDefaultWorkflowToSpace(ctx context.Context, orgID uuid.UUID, spaceType string, spaceID uuid.UUID) error
 }
 
-// GrantCreator creates the creator's space_admin grant on a new space, so a
-// non-org-admin creator can reach the space they just made.
+// GrantCreator creates a grant. Space creation no longer uses it — the
+// creator's space_admin grant is written inside the creation transaction — but
+// it stays as the handler's grant seam for the surfaces below.
 type GrantCreator interface {
 	Create(ctx context.Context, orgID, spaceID uuid.UUID, subjectType access.SubjectType, subjectID uuid.UUID, role access.Role, createdBy uuid.UUID) (access.Grant, error)
 }
@@ -101,6 +103,8 @@ type Handler struct {
 	wfAssign WorkflowAssigner
 	teamSvc  *teams.Service
 	grantSvc GrantCreator
+	// spaceTx writes a space and everything inseparable from it atomically.
+	spaceTx  spacedomain.CreateTxStore
 	auditLog audit.Logger
 	// ticketRef is the boot-time ticket-reference requirement. The zero value
 	// is the permissive default, so a handler that was never given a policy
@@ -127,9 +131,16 @@ func (h *Handler) WithTeamService(svc *teams.Service) *Handler {
 	return h
 }
 
-// WithGrantService attaches the grant service (creator auto-grant).
+// WithGrantService attaches the grant service.
 func (h *Handler) WithGrantService(svc GrantCreator) *Handler {
 	h.grantSvc = svc
+	return h
+}
+
+// WithSpaceCreateTx attaches the transactional space-creation store. Space
+// creation is unavailable without it — see Create.
+func (h *Handler) WithSpaceCreateTx(store spacedomain.CreateTxStore) *Handler {
+	h.spaceTx = store
 	return h
 }
 
@@ -521,23 +532,48 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 
 	// A derived key that collides is retried with a numeric suffix (KEY →
 	// KEY2 → KEY3 …); an explicit key that collides is the client's conflict.
+	// Loudly, not as a 404 "feature disabled": space creation is not optional,
+	// and a deployment that reached here without the store is misconfigured.
+	// TestHarness_NoDarkDependencies fails by name if the test harness ever
+	// leaves this nil, so this branch guards production, not coverage.
+	if h.spaceTx == nil {
+		slog.Error("space creation attempted with no transactional store wired", "org_id", orgID) //nolint:gosec // G706: org_id is a UUID, not attacker-controlled
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create space")
+		return
+	}
+
 	const maxKeyAttempts = 20
 	var space generated.Space
 	baseKey := key
+
+	// A non-org-admin creator (a lead) needs a grant to reach the space they
+	// just created — org admins keep zero grant rows (ADR-0007). Decided here,
+	// executed inside the creation transaction.
+	res := access.FromContext(r.Context())
+	creatorNeedsGrant := res == nil || !res.IsOrgAdmin
+
+	// Each attempt is its own transaction. A failed INSERT aborts the
+	// transaction it ran in, so a key collision cannot be retried inside the
+	// same one — and does not need to be: nothing has been written yet.
 	for attempt := 0; ; attempt++ {
-		space, err = h.queries.CreateSpace(r.Context(), generated.CreateSpaceParams{
-			ID:          uuid.New(),
-			OrgID:       orgID,
-			Slug:        req.Slug,
-			Name:        req.Name,
-			Description: req.Description,
-			Type:        req.Type,
-			Icon:        req.Icon,
-			IsPrivate:   req.IsPrivate,
-			CreatedBy:   claims.UserID,
-			Key:         key,
-			OwnerTeamID: ownerTeam.ID,
-			Visibility:  visibility,
+		space, err = h.spaceTx.CreateSpaceTx(r.Context(), spacedomain.CreateInput{
+			Space: generated.CreateSpaceParams{
+				ID:          uuid.New(),
+				OrgID:       orgID,
+				Slug:        req.Slug,
+				Name:        req.Name,
+				Description: req.Description,
+				Type:        req.Type,
+				Icon:        req.Icon,
+				IsPrivate:   req.IsPrivate,
+				CreatedBy:   claims.UserID,
+				Key:         key,
+				OwnerTeamID: ownerTeam.ID,
+				Visibility:  visibility,
+			},
+			MemberRowID:       uuid.New(),
+			CreatorID:         claims.UserID,
+			CreatorNeedsGrant: creatorNeedsGrant,
 		})
 		if err == nil {
 			break
@@ -570,39 +606,16 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 		}
 	}
 
-	// Audited as soon as the row exists, not on the 201: the steps below run
-	// outside any enclosing transaction, so a failure in one of them leaves
-	// the space created and returns 500. The event follows the row, which is
-	// what an audit log is for; the initial visibility is recorded whether or
-	// not it was the default, so "created discoverable, never changed" is a
-	// visible fact rather than an absence.
+	// Audited after the mutation, which is convention A and was not available
+	// before: the space row, the creator's membership and the creator's grant
+	// now commit together, so there is no longer a state in which the space
+	// half-exists and an audit row has to be written early to describe it. The
+	// initial visibility is recorded whether or not it was the default, so
+	// "created discoverable, never changed" is a visible fact rather than an
+	// absence.
 	h.logSpaceEvent(r, audit.EventTypeSpaceCreated, space.ID, ticketRef, map[string]string{
 		"visibility": space.Visibility, "type": space.Type, "owner_team_id": space.OwnerTeamID.String(),
 	})
-
-	// Auto-add the creator as an admin member of the new space (legacy
-	// space_members metadata, kept for continuity).
-	if _, err := h.queries.AddSpaceMember(r.Context(), generated.AddSpaceMemberParams{
-		ID:      uuid.New(),
-		SpaceID: space.ID,
-		UserID:  claims.UserID,
-		Role:    "admin",
-	}); err != nil {
-		slog.Error("AddSpaceMember failed", "error", err, "space_id", space.ID)
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to add creator as member")
-		return
-	}
-
-	// A non-org-admin creator (a lead) needs a grant to reach the space they
-	// just created — org admins keep zero grant rows (ADR-0007).
-	res := access.FromContext(r.Context())
-	if h.grantSvc != nil && (res == nil || !res.IsOrgAdmin) {
-		if _, err := h.grantSvc.Create(r.Context(), orgID, space.ID, access.SubjectUser, claims.UserID, access.RoleSpaceAdmin, claims.UserID); err != nil {
-			slog.Error("creator auto-grant failed", "error", err, "space_id", space.ID)
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to grant creator access")
-			return
-		}
-	}
 
 	// Assign the default workflow for this space type (best-effort; non-fatal).
 	if h.wfAssign != nil {

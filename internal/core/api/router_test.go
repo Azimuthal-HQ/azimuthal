@@ -402,6 +402,35 @@ func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, pageID, _ u
 	return 0, nil
 }
 
+// UpdatePageContentTx makes the same four decisions the real transaction
+// makes, over the mock page map, so the wiki PUT route stays exercised end to
+// end by the wiring tests rather than answering from a stub.
+func (m *mockContentTx) UpdatePageContentTx(_ context.Context, in wiki.UpdatePageInput) (generated.Page, error) {
+	p, ok := m.pages.pages[in.PageID]
+	if !ok {
+		return generated.Page{}, wiki.ErrPageNotFound
+	}
+	if p.Doc != nil {
+		return generated.Page{}, wiki.ErrPageIsDocumentBacked
+	}
+	if p.Version != in.ExpectedVersion {
+		return generated.Page{}, wiki.ErrVersionConflict
+	}
+	p.Title = in.Title
+	p.Content = in.Content
+	p.Version++
+	m.pages.pages[p.ID] = p
+	m.pages.revisions[p.ID] = append(m.pages.revisions[p.ID], generated.PageRevision{
+		ID:       uuid.New(),
+		PageID:   p.ID,
+		Version:  p.Version,
+		Title:    p.Title,
+		Content:  p.Content,
+		AuthorID: in.AuthorID,
+	})
+	return p, nil
+}
+
 // mockShareDeleter satisfies tickets.ShareRevokingDeleter and
 // projects.ShareRevokingDeleter with no-ops for the router wiring tests.
 type mockShareDeleter struct{}
@@ -510,6 +539,13 @@ func (m *mockCustomFieldValueRepo) Upsert(_ context.Context, _ uuid.UUID, _, _ s
 	return nil
 }
 func (m *mockCustomFieldValueRepo) Delete(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+
+// CountByOrgSlug reports no legacy values: this mock stores none, so any other
+// answer would be a fabrication. The slug-reuse guard it feeds is covered
+// against a real database in internal/db/adapters and internal/core/api.
+func (m *mockCustomFieldValueRepo) CountByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (int, error) {
+	return 0, nil
+}
 
 func (m *mockItemRepo) GetByID(_ context.Context, id uuid.UUID) (*projects.Item, error) {
 	item, ok := m.items[id]

@@ -58,8 +58,8 @@ help:
 	@echo ""
 	@echo "  Test Database"
 	@echo "    make test-db-up         Start test postgres (:5433) + minio (:9001)"
-	@echo "    make test-db-down       Stop and remove test services"
-	@echo "    make test-db-reset      Wipe and recreate test database"
+	@echo "    make test-db-down       Stop test services AND DELETE their data"
+	@echo "    make test-db-reset      Wipe and recreate the test database"
 	@echo ""
 	@echo "  Security Scanning"
 	@echo "    make scan               Run ALL security scans"
@@ -204,7 +204,7 @@ docs: ## Generate OpenAPI 3.0 spec from handler annotations
 	@which swag > /dev/null 2>&1 || (echo "swag not installed. Run: go install github.com/swaggo/swag/v2/cmd/swag@latest" && exit 1)
 	@swag init \
 		--generalInfo main.go \
-		--dir ./cmd/server,./internal/core/api,./internal/core/api/auth,./internal/core/api/tickets,./internal/core/api/wiki,./internal/core/api/projects,./internal/core/api/spaces,./internal/core/api/comments,./internal/core/api/notifications,./internal/core/api/teams,./internal/core/api/grants,./internal/core/api/admin,./internal/core/api/invites,./internal/core/api/shares,./internal/core/api/attachments \
+		--dir ./cmd/server,./internal/core/api,./internal/core/api/auth,./internal/core/api/tickets,./internal/core/api/wiki,./internal/core/api/projects,./internal/core/api/spaces,./internal/core/api/comments,./internal/core/api/notifications,./internal/core/api/teams,./internal/core/api/grants,./internal/core/api/admin,./internal/core/api/invites,./internal/core/api/shares,./internal/core/api/attachments,./internal/core/api/avatar \
 		--output docs/api \
 		--outputTypes yaml \
 		--v3.1 \
@@ -234,18 +234,32 @@ test-db-up: ## Start test database and storage (postgres on :5433, minio on :900
 	@echo "→ Starting test services..."
 	@docker compose -f build/docker-compose.test.yml up -d
 	@echo "→ Waiting for postgres to be ready..."
-	@until docker compose -f build/docker-compose.test.yml exec -T postgres-test pg_isready -U azimuthal_test; do \
+	@# -h localhost forces the probe over TCP. Without it pg_isready reaches the
+	@# unix socket, which the postgres image's INITIALISATION server is already
+	@# listening on while it creates the database — with listen_addresses='' so
+	@# nothing outside the container can connect yet. It therefore reports
+	@# "accepting connections" seconds before anything is true, and the goose
+	@# run below dies on a connection reset. Invisible until N3 made
+	@# test-db-down remove the volume, because a second start had nothing left
+	@# to initialise.
+	@until docker compose -f build/docker-compose.test.yml exec -T postgres-test \
+		pg_isready -h localhost -U azimuthal_test > /dev/null 2>&1; do \
 		sleep 1; \
 	done
 	@echo "→ Running migrations..."
 	@export $(ENV_TEST_VARS) && goose -dir migrations postgres "$$DATABASE_URL" up
 	@echo "✓ Test database ready at localhost:5433"
 
-test-db-down: ## Stop and remove test database
-	@docker compose -f build/docker-compose.test.yml down
-	@echo "✓ Test services stopped"
+# N3. `down` takes the volumes with it. Without -v the compose volumes survive,
+# so the obvious "turn it off and on again" — test-db-down then test-db-up —
+# comes back with every row from the previous run still there. Two phases have
+# now misread an E2E result because of it, reasoning about a "clean database"
+# that was nothing of the kind. If you want the data kept, do not run `down`.
+test-db-down: ## Stop test services and DELETE their data (postgres + minio volumes)
+	@docker compose -f build/docker-compose.test.yml down -v
+	@echo "✓ Test services stopped and their volumes removed"
 
-test-db-reset: ## Wipe and recreate test database from scratch
+test-db-reset: ## Wipe and recreate the test database from scratch
 	@docker compose -f build/docker-compose.test.yml down -v
 	@$(MAKE) test-db-up
 	@echo "✓ Test database reset complete"

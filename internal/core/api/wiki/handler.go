@@ -292,12 +292,16 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 		Content:         req.Content,
 		AuthorID:        claims.UserID,
 	})
-	if err != nil {
-		handleWikiError(w, r, err)
-		return
-	}
+	// The conflict arm is checked FIRST. UpdatePageOrConflict returns the
+	// detail *together with* ErrVersionConflict — testing err first, as this
+	// did until the integrity pass, made the whole merge payload unreachable
+	// and every version conflict answer with the bare error envelope instead.
 	if conflict != nil {
 		respond.JSON(w, http.StatusConflict, conflict)
+		return
+	}
+	if err != nil {
+		handleWikiError(w, r, err)
 		return
 	}
 	_ = h.auditLog.Log(r.Context(), audit.Event{
@@ -819,6 +823,12 @@ func handleWikiError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, wiki.ErrPageNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
 	case errors.Is(err, wiki.ErrVersionConflict):
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
+	case errors.Is(err, wiki.ErrPageIsDocumentBacked):
+		// 409, not 400: the request is well formed and the caller had the
+		// right to make it — the page moved to a representation this endpoint
+		// cannot write. Reloading is what resolves it, same as a version
+		// conflict.
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
 	case errors.Is(err, wiki.ErrEmptyTitle),
 		errors.Is(err, wiki.ErrInvalidSpaceID),
