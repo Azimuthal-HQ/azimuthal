@@ -491,3 +491,95 @@ the findings are gone.
 off deliberately, in `eslint.config.js`, with the reason written down); work the
 `react-hooks/set-state-in-effect` findings individually with a test for any that turn out to be a
 real defect. Then add `npm run lint` to the `Frontend` job in `.github/workflows/ci.yml`.
+
+---
+
+## 18. The race detector, not the database, is the largest single cost in the Test job
+
+**Severity**: Low (CI wall-clock only; no user-facing defect)
+**Status**: Open. Measured by the CI optimization pass, deliberately not fixed there — the lever
+is in product code, which that pass was scoped out of.
+
+`internal/core/auth` and `internal/core/api/auth` cost 142s of the 793s `go test` step on CI, and
+almost none of it is database work. `bcryptCost = 12` (`internal/core/auth/password.go:11`) costs
+about 0.16s per operation on a developer machine and **3.2s per operation under `-race`** — a 20x
+multiplier, measured against the CI timings of the four pure-crypto tests in
+`internal/core/auth/password_test.go`, which open no connection at all:
+
+```
+TestHashPassword                 3.27s / 1 bcrypt op
+TestHashPassword_DifferentEachTime  6.46s / 2
+TestComparePassword_Match        6.36s / 2
+TestComparePassword_Mismatch     6.54s / 2
+```
+
+Across the suite that is roughly **200s of the Test job spent in bcrypt**, which the template
+database change in the same pass recovers exactly none of. `internal/core/auth` is 91% bcrypt and
+8.6% database; only 11 of its 66 tests call `NewTestDB`.
+
+**What must NOT happen.** Do not lower `bcryptCost`. Twelve is the stated security minimum and it
+is the production value; a test suite that exercises a weaker hash than production is not testing
+production.
+
+**Proper fix**: make the cost injectable rather than constant — a package-level variable that
+production sets to 12 and the test harness sets to `bcrypt.MinCost`, with the *real* cost still
+exercised by the handful of tests that exist to prove the hashing itself (which is what
+`password_test.go` is for). `testutil.CreateTestUserWithRole` already ships a pre-computed cost-4
+hash for exactly this reason, so the precedent is in the repository; what is missing is the same
+treatment for the paths that hash at run time. Any such change is product code and needs its own
+review — it is recorded here rather than done in passing.
+
+---
+
+## 19. `newTestServerOn` generates a fresh RSA-2048 key for every integration test
+
+**Severity**: Low (CI wall-clock only)
+**Status**: Open. Measured by the CI optimization pass, deliberately not taken there.
+
+`internal/core/api/routes_integration_test.go:114` calls `rsa.GenerateKey(rand.Reader, 2048)` on
+every `newTestServerOn`, and that helper backs 203 of the 208 `NewTestDB` calls in
+`internal/core/api`. Measured at 38.6ms per keygen locally and an estimated 0.1–0.15s on CI, that
+is roughly **25–38s per Test job** spent minting keys no test asserts anything about.
+
+**Why it was not taken.** The fix is small — hoist the key into a `sync.OnceValue` so each test
+binary mints one — but `routes_integration_test.go` is the busiest test file in the repository and
+P4 (saved views) was working in it concurrently. A 5–7% saving is not worth a merge conflict in
+that file. Nothing about the change is risky: no test asserts that two servers have different
+signing keys, and if one did it would fail loudly rather than pass weakly.
+
+**Proper fix**: one `var testSigningKey = sync.OnceValue(func() *rsa.PrivateKey { ... })`, used by
+`newTestServerOn` and by `setupRouter` in `router_test.go`.
+
+---
+
+## 20. Two structural liabilities in the project-item-detail E2E assertions
+
+**Severity**: Low (test robustness; the underlying product behaviour is correct)
+**Status**: Open. Found by the CI optimization pass while investigating the status-dropdown flake.
+Not changed there, because changing a passing assertion was outside that pass's scope.
+
+The flake itself was fixed in #70 (`bbadf7c`), which replaced `await page.waitForTimeout(1000)`
+with a `waitForResponse` on the status POST. It has passed first-attempt on every `main` run since,
+and 12 repeats at 6 parallel workers locally did not reproduce it. Two things around it are still
+shaped badly:
+
+**a. The reload assertion can fail terminally rather than slowly.**
+`web/e2e/projects.spec.ts:199-200` reloads the page and then waits 5s for a status badge.
+`web/src/main.tsx` configures react-query with `retry: 1` and no refetch trigger, and
+`ItemDetailPage` renders its entire body behind `useProjectItem` — its error branch renders only
+`friendlyErrorMessage(...)`, no badge and no select. A reload fires roughly nine queries at once,
+including the org-wide `useSpaces`; if that one item query fails twice, nothing ever re-fires it
+and no timeout increase can help. The failure surface exists only because of the reload, and the
+reload is redundant: the very next test, `project item status change persists after page reload`,
+is the dedicated persistence test and asserts on the select's value, which is the more robust
+check.
+
+**b. `[class*="inline-flex"]:has-text("In Progress")` resolves correctly today by accident.**
+`:has-text` matches ancestors as well as the element itself, `.first()` does not skip hidden
+matches, and any button, chip or pill carrying `inline-flex` satisfies the class part. It happens
+to land on the header status `Badge` because that badge is first in DOM order. A layout change that
+puts an `inline-flex` wrapper above it would make this pass vacuously or fail spuriously, and
+neither would be obvious from the failure message.
+
+**Proper fix**: give the status badge a `data-testid` and assert on that; drop the reload from the
+first test and leave persistence to the second, which already proves it.
