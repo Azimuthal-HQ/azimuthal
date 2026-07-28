@@ -365,6 +365,22 @@ jobs:
           which gcc && gcc --version || \
             (sudo apt-get update -qq && sudo apt-get install -y -q build-essential)
 
+      # -count=1 is load-bearing, and it is here because leaving it out produced
+      # a hollow gate the first time this job had a warm build cache.
+      #
+      # Go caches TEST RESULTS in the same directory as compiled packages. On
+      # the first run whose source hash matched a previously saved cache, this
+      # step "passed" in three seconds without executing a single test: same
+      # binary, same tracked environment, so Go replayed the recorded result.
+      # That reasoning is sound for a pure function and wrong for this suite —
+      # the postgres these tests run against is not an input Go can see, and a
+      # green Test job that never opened a connection is worth nothing.
+      #
+      # -count=1 disables result caching only. The build cache above still does
+      # its job, which is to avoid recompiling 51 race-instrumented binaries.
+      # `make test-live` has always passed -count=1; CI simply never needed it
+      # while its build cache was permanently cold.
+      #
       # -p 1 stays, for a different reason than it was added for. Tests no
       # longer share one database, but internal/db's TestMigrateDown rolls the
       # SHARED schema at DATABASE_URL backward and forward again, and
@@ -379,6 +395,7 @@ jobs:
             -v \
             -race \
             -p 1 \
+            -count=1 \
             -coverprofile=coverage.out \
             -covermode=atomic \
             -coverpkg=./internal/... \
