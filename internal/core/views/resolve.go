@@ -125,6 +125,8 @@ type Page struct {
 // resolve against the viewer's readable spaces UNIONED with their shares. The
 // exception is recorded in docs/design/shared-surfaces.md beside the rule it
 // excepts.
+//
+//nolint:cyclop,funlen // the two module fan-outs and the merge belong in one place: the access union and the ordering contract are only checkable together
 func Resolve(ctx context.Context, store ResultStore, q Query, v Viewer, cursor string, limit int) (Page, error) {
 	if limit <= 0 {
 		limit = DefaultPageSize
@@ -324,7 +326,7 @@ func decodeCursor(s string) (cursorPos, error) {
 	}
 	id, err := uuid.Parse(string(raw[i+1:]))
 	if err != nil {
-		return cursorPos{}, fmt.Errorf("%w: %v", ErrBadCursor, err)
+		return cursorPos{}, fmt.Errorf("%w: %w", ErrBadCursor, err)
 	}
 	return cursorPos{Key: string(raw[:i]), ID: id}, nil
 }

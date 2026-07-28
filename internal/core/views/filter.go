@@ -191,7 +191,7 @@ func ParseQuery(raw []byte) (Query, error) {
 		// the caller the stable sentinel so the API layer can map it to one
 		// message without matching on encoding/json's wording.
 		if strings.Contains(err.Error(), "unknown field") {
-			return Query{}, fmt.Errorf("%w: %v", ErrUnknownField, err)
+			return Query{}, fmt.Errorf("%w: %w", ErrUnknownField, err)
 		}
 		return Query{}, fmt.Errorf("malformed filter document: %w", err)
 	}
@@ -231,7 +231,7 @@ func (s Sort) validate() error {
 	return nil
 }
 
-//nolint:gocognit,cyclop // one linear rule per field; splitting it hides the vocabulary
+//nolint:gocognit,cyclop,funlen // one linear rule per field; splitting it hides the vocabulary
 func (f *Filter) validate() error {
 	if len(f.Modules) == 0 {
 		return errors.New("at least one module is required")

@@ -25,6 +25,7 @@ package views
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -92,7 +93,7 @@ type viewResponse struct {
 func toViewResponse(v views.View, a views.Actor) (viewResponse, error) {
 	raw, err := v.Query.Encode()
 	if err != nil {
-		return viewResponse{}, err
+		return viewResponse{}, fmt.Errorf("encoding the view's filter document: %w", err)
 	}
 	return viewResponse{
 		ID: v.ID, OwnerID: v.OwnerID, OwnerName: v.OwnerName,

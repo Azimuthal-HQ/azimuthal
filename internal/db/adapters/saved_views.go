@@ -66,7 +66,7 @@ func viewFromRow(r generated.SavedView, ownerName string, teamName *string) (vie
 func (a *SavedViewAdapter) Create(ctx context.Context, v views.View) (views.View, error) {
 	raw, err := v.Query.Encode()
 	if err != nil {
-		return views.View{}, err
+		return views.View{}, fmt.Errorf("encoding the view's filter document: %w", err)
 	}
 	row, err := a.q.CreateSavedView(ctx, generated.CreateSavedViewParams{
 		OrgID:            v.OrgID,
@@ -99,7 +99,7 @@ func (a *SavedViewAdapter) Get(ctx context.Context, orgID, id uuid.UUID) (views.
 func (a *SavedViewAdapter) Update(ctx context.Context, v views.View) (views.View, error) {
 	raw, err := v.Query.Encode()
 	if err != nil {
-		return views.View{}, err
+		return views.View{}, fmt.Errorf("encoding the view's filter document: %w", err)
 	}
 	row, err := a.q.UpdateSavedView(ctx, generated.UpdateSavedViewParams{
 		ID:               v.ID,

@@ -191,7 +191,7 @@ func (d *Draft) validate(a Actor) error {
 func (s *Service) ActorFor(ctx context.Context, orgID, userID uuid.UUID, isOrgAdmin bool) (Actor, error) {
 	teams, err := s.store.EffectiveTeamIDs(ctx, orgID, userID)
 	if err != nil {
-		return Actor{}, err
+		return Actor{}, fmt.Errorf("resolving your teams: %w", err)
 	}
 	return Actor{UserID: userID, EffectiveTeamIDs: teams, IsOrgAdmin: isOrgAdmin}, nil
 }
@@ -204,18 +204,22 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, a Actor, d Draft)
 	if err := d.validate(a); err != nil {
 		return View{}, err
 	}
-	return s.store.Create(ctx, View{
+	v, err := s.store.Create(ctx, View{
 		OrgID: orgID, OwnerID: a.UserID,
 		Name: d.Name, Description: d.Description, Query: d.Query,
 		Visibility: d.Visibility, VisibilityTeamID: d.VisibilityTeamID,
 	})
+	if err != nil {
+		return View{}, fmt.Errorf("saving the view: %w", err)
+	}
+	return v, nil
 }
 
 // Update replaces a view's mutable surface. Owner only (org admin bypasses).
 func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, a Actor, d Draft) (View, error) {
 	existing, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("loading the view to update: %w", err)
 	}
 	if !existing.CanEdit(a) {
 		// A view the caller cannot even SEE must not be distinguishable from
@@ -237,14 +241,18 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, a Actor, d Dr
 	existing.Query = d.Query
 	existing.Visibility = d.Visibility
 	existing.VisibilityTeamID = d.VisibilityTeamID
-	return s.store.Update(ctx, existing)
+	updated, err := s.store.Update(ctx, existing)
+	if err != nil {
+		return View{}, fmt.Errorf("updating the view: %w", err)
+	}
+	return updated, nil
 }
 
 // Delete soft-deletes a view. Owner only (org admin bypasses).
 func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID, a Actor) error {
 	existing, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("loading the view to delete: %w", err)
 	}
 	if !existing.CanEdit(a) {
 		if !existing.CanSee(a) {
@@ -254,7 +262,7 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID, a Actor) erro
 	}
 	n, err := s.store.SoftDelete(ctx, orgID, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("deleting the view: %w", err)
 	}
 	if n == 0 {
 		return ErrNotFound
@@ -266,7 +274,7 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID, a Actor) erro
 func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID, a Actor) (View, error) {
 	v, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("loading the view: %w", err)
 	}
 	if !v.CanSee(a) {
 		return View{}, ErrNotFound
@@ -281,7 +289,7 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID, a Actor) (View, 
 func (s *Service) List(ctx context.Context, orgID uuid.UUID, a Actor) ([]View, error) {
 	rows, err := s.store.ListForViewer(ctx, orgID, a.UserID, a.EffectiveTeamIDs)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing views: %w", err)
 	}
 	ptrs := make([]*View, len(rows))
 	for i := range rows {
@@ -300,6 +308,8 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, a Actor) ([]View, e
 // the list endpoint. Validity is derived rather than stored: the spec's sketch
 // carried an is_valid column, which needs some writer to remember to flip it,
 // and a stored copy of derivable state is a stored copy that can go stale.
+//
+//nolint:cyclop // one linear pass per degradation rule; splitting it would scatter ADR-0009 case C1 across three functions
 func (s *Service) markValidity(ctx context.Context, orgID uuid.UUID, views []*View) error {
 	wanted := map[uuid.UUID]struct{}{}
 	for _, v := range views {
@@ -353,7 +363,7 @@ func (s *Service) markValidity(ctx context.Context, orgID uuid.UUID, views []*Vi
 func (s *Service) Results(ctx context.Context, orgID, id uuid.UUID, a Actor, v Viewer, cursor string, limit int) (Page, error) {
 	view, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
-		return Page{}, err
+		return Page{}, fmt.Errorf("loading the view to run: %w", err)
 	}
 	if !view.CanSee(a) {
 		return Page{}, ErrNotFound
@@ -385,10 +395,18 @@ type orgScopedStore struct {
 
 func (o orgScopedStore) ListTickets(ctx context.Context, p FanoutParams) ([]Result, error) {
 	p.OrgID = o.orgID
-	return o.inner.ListTickets(ctx, p)
+	rows, err := o.inner.ListTickets(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("beacon fan-out: %w", err)
+	}
+	return rows, nil
 }
 
 func (o orgScopedStore) ListProjectItems(ctx context.Context, p FanoutParams) ([]Result, error) {
 	p.OrgID = o.orgID
-	return o.inner.ListProjectItems(ctx, p)
+	rows, err := o.inner.ListProjectItems(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("vector fan-out: %w", err)
+	}
+	return rows, nil
 }
