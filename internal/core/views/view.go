@@ -70,6 +70,16 @@ type Store interface {
 	// LiveSpaceIDs returns which of the given space ids still exist. One
 	// query for a whole page of views.
 	LiveSpaceIDs(ctx context.Context, orgID uuid.UUID, spaceIDs []uuid.UUID) ([]uuid.UUID, error)
+	// EffectiveTeamIDs returns the caller's ADR-0007 team set — direct teams
+	// plus all descendants.
+	//
+	// It is one query per request on the view routes only. The alternative,
+	// widening the per-request access resolution to carry the team set, would
+	// put the product's hottest query and its case-23 constancy tracer in the
+	// blast radius of this feature. The expansion rule itself is not
+	// reimplemented here: it lives in the effective_team_ids schema function
+	// (migration 038), which is the same expansion ResolveAccessRows performs.
+	EffectiveTeamIDs(ctx context.Context, orgID, userID uuid.UUID) ([]uuid.UUID, error)
 }
 
 // Service owns the view lifecycle.

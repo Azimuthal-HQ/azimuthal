@@ -130,6 +130,48 @@ CREATE TRIGGER trg_saved_views_updated_at
     BEFORE UPDATE ON saved_views FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 
+-- effective_team_ids is ADR-0007's subject-side team expansion, named.
+--
+--     effective_teams(user) = direct_teams(user) ∪ all descendants
+--
+-- A saved view shared with a team has to answer "is this team in the caller's
+-- effective set", which is the same question space grants already ask. That
+-- rule is currently written inline inside ResolveAccessRows
+-- (internal/db/queries/space_grants.sql) as a pair of CTEs, and the body below
+-- is that expansion verbatim — the direct_teams CTE, then the GIN-indexed
+-- `t.path && direct` overlap that pulls in every descendant.
+--
+-- It is extracted here rather than copied into the saved-view queries because
+-- a second hand-written copy of an authorisation rule is how the two drift,
+-- and the direction they drift in is "one of them grants more". Naming it
+-- gives the next caller something to reuse instead of something to imitate.
+--
+-- ResolveAccessRows is deliberately NOT changed to call this. It is the
+-- hottest query in the product and the subject of the §2.5 case-23 constancy
+-- tracer; rewriting it to gain tidiness would put a performance-critical,
+-- security-critical query in the blast radius of a feature phase. That it
+-- still holds its own copy is recorded for a maintainer.
+--
+-- STABLE, not IMMUTABLE: it reads tables.
+CREATE FUNCTION effective_team_ids(p_org_id UUID, p_user_id UUID)
+RETURNS TABLE (team_id UUID)
+LANGUAGE sql
+STABLE
+AS $$
+    WITH direct_teams AS (
+        SELECT tm.team_id
+        FROM team_members tm
+        JOIN teams dt ON dt.id = tm.team_id AND dt.deleted_at IS NULL
+        WHERE tm.user_id = p_user_id AND tm.org_id = p_org_id
+    )
+    SELECT t.id
+    FROM teams t
+    WHERE t.org_id = p_org_id
+      AND t.deleted_at IS NULL
+      AND t.path && (SELECT COALESCE(array_agg(dt.team_id), '{}')::uuid[] FROM direct_teams dt)
+$$;
+
+
 -- saved_view_sort_key collapses whichever field a view sorts by into ONE
 -- comparable text value.
 --
@@ -195,6 +237,7 @@ $$;
 -- +goose StatementBegin
 
 DROP FUNCTION IF EXISTS saved_view_sort_key(TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, TEXT);
+DROP FUNCTION IF EXISTS effective_team_ids(UUID, UUID);
 DROP TRIGGER IF EXISTS trg_saved_views_updated_at ON saved_views;
 DROP TABLE IF EXISTS saved_views;
 

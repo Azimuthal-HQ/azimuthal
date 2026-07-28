@@ -97,6 +97,42 @@ func (q *Queries) GetSavedView(ctx context.Context, arg GetSavedViewParams) (Sav
 	return i, err
 }
 
+const listEffectiveTeamIDs = `-- name: ListEffectiveTeamIDs :many
+SELECT t.id FROM teams t
+WHERE t.id IN (SELECT e.team_id FROM effective_team_ids($1, $2) AS e(team_id))
+`
+
+type ListEffectiveTeamIDsParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// The caller's ADR-0007 effective team set, for one request. Delegates to the
+// named schema function (migration 038) rather than restating the expansion,
+// so this and space-grant resolution cannot drift into granting differently.
+// Selecting teams.id rather than the function output directly gives sqlc a
+// real column to type: it cannot infer the type of a set-returning
+// function's output column and falls back to interface{}.
+func (q *Queries) ListEffectiveTeamIDs(ctx context.Context, arg ListEffectiveTeamIDsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listEffectiveTeamIDs, arg.OrgID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveSpaceIDs = `-- name: ListLiveSpaceIDs :many
 SELECT id FROM spaces
 WHERE id = ANY($1::uuid[]) AND org_id = $2 AND deleted_at IS NULL

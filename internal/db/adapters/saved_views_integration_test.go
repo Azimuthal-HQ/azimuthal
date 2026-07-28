@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/views"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
@@ -371,4 +372,78 @@ func (o orgBound) ListTickets(ctx context.Context, p views.FanoutParams) ([]view
 func (o orgBound) ListProjectItems(ctx context.Context, p views.FanoutParams) ([]views.Result, error) {
 	p.OrgID = o.orgID
 	return o.a.ListProjectItems(ctx, p)
+}
+
+// TestEffectiveTeamIDs_AgreesWithGrantResolution is the anti-drift test for
+// the one rule this phase extracted rather than reimplemented.
+//
+// ADR-0007 expands on the SUBJECT side: a member of a parent team acts with
+// the authority of every team beneath it. That expansion is written inline in
+// ResolveAccessRows (space_grants.sql) and, since migration 038, also exists
+// as the named effective_team_ids function. Two spellings of an authorisation
+// rule drift, and the direction they drift in is "one of them grants more" —
+// so this pins them together on ADR-0007's own worked example.
+//
+// Fails-before: change the function's `t.path && direct` overlap to a plain
+// `t.id = ANY(direct)` (direct teams only, no descendants) and the parent
+// member's expansion loses the child team while the resolver still grants the
+// space — the two assertions then disagree, which is exactly the drift.
+func TestEffectiveTeamIDs_AgreesWithGrantResolution(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	ctx := context.Background()
+	org := testutil.CreateTestOrg(t, db.Pool)
+	parentMember := testutil.CreateTestUserWithRole(t, db.Pool, org.ID, "member")
+	childMember := testutil.CreateTestUserWithRole(t, db.Pool, org.ID, "member")
+
+	// Engineering -> Platform, the ADR-0007 example in miniature.
+	parentID, childID := uuid.New(), uuid.New()
+	_, err := db.Pool.Exec(ctx,
+		`INSERT INTO teams (id, org_id, slug, name, path) VALUES ($1,$2,$3,$4,ARRAY[$1]::uuid[])`,
+		parentID, org.ID, "eng-"+uuid.NewString()[:8], "Engineering")
+	require.NoError(t, err)
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO teams (id, org_id, parent_id, slug, name, path) VALUES ($1,$2,$3,$4,$5,ARRAY[$3,$1]::uuid[])`,
+		childID, org.ID, parentID, "plat-"+uuid.NewString()[:8], "Platform")
+	require.NoError(t, err)
+
+	addMember := func(u, team uuid.UUID) {
+		_, err := db.Pool.Exec(ctx,
+			`INSERT INTO team_members (org_id, team_id, user_id) VALUES ($1,$2,$3)`, org.ID, team, u)
+		require.NoError(t, err)
+	}
+	addMember(parentMember.ID, parentID)
+	addMember(childMember.ID, childID)
+
+	a := adapters.NewSavedViewAdapter(db.Pool)
+
+	// The expansion: parent member reaches both teams, child member only one.
+	// Containment rather than set equality: production provisioning also
+	// enrols every user in the org default team (ADR-0006 point 4), so an
+	// exact match would be asserting the fixture, not the expansion rule.
+	parentTeams, err := a.EffectiveTeamIDs(ctx, org.ID, parentMember.ID)
+	require.NoError(t, err)
+	require.Contains(t, parentTeams, parentID)
+	require.Contains(t, parentTeams, childID,
+		"a member of the parent team acts with the authority of every team beneath it")
+
+	childTeams, err := a.EffectiveTeamIDs(ctx, org.ID, childMember.ID)
+	require.NoError(t, err)
+	require.Contains(t, childTeams, childID)
+	require.NotContains(t, childTeams, parentID,
+		"a member of a leaf team gets that leaf and nothing above it — grants do not reach upward")
+
+	// And the access resolver, using its own inline copy of the rule, must
+	// reach the same conclusion about a space granted to the CHILD team.
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, parentMember.ID, "beacon")
+	testutil.SetSpaceVisibility(t, db.Pool, space.ID, "hidden")
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO space_grants (org_id, space_id, subject_type, subject_id, role, created_by)
+		 VALUES ($1,$2,'team',$3,'viewer',$4)`, org.ID, space.ID, childID, parentMember.ID)
+	require.NoError(t, err)
+
+	resolver := access.NewResolver(adapters.NewAccessAdapter(db.Pool))
+	res, err := resolver.Resolve(ctx, org.ID, parentMember.ID)
+	require.NoError(t, err)
+	require.True(t, res.CanReadSpace(space.ID),
+		"grant resolution must reach the same descendant team the extracted function does")
 }

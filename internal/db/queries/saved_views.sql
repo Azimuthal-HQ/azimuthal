@@ -218,3 +218,13 @@ ORDER BY
     CASE WHEN NOT @descending::boolean THEN k.sort_key END ASC,
     CASE WHEN NOT @descending::boolean THEN pi.id END ASC
 LIMIT @row_limit;
+
+-- name: ListEffectiveTeamIDs :many
+-- The caller's ADR-0007 effective team set, for one request. Delegates to the
+-- named schema function (migration 038) rather than restating the expansion,
+-- so this and space-grant resolution cannot drift into granting differently.
+-- Selecting teams.id rather than the function output directly gives sqlc a
+-- real column to type: it cannot infer the type of a set-returning
+-- function's output column and falls back to interface{}.
+SELECT t.id FROM teams t
+WHERE t.id IN (SELECT e.team_id FROM effective_team_ids(@org_id, @user_id) AS e(team_id));

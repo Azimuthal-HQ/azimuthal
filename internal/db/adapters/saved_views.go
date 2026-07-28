@@ -169,6 +169,17 @@ func (a *SavedViewAdapter) LiveSpaceIDs(ctx context.Context, orgID uuid.UUID, sp
 	return ids, nil
 }
 
+// EffectiveTeamIDs returns the caller's ADR-0007 team set, expanded by the
+// effective_team_ids schema function rather than by a second hand-written copy
+// of the rule.
+func (a *SavedViewAdapter) EffectiveTeamIDs(ctx context.Context, orgID, userID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := a.q.ListEffectiveTeamIDs(ctx, generated.ListEffectiveTeamIDsParams{OrgID: orgID, UserID: userID})
+	if err != nil {
+		return nil, fmt.Errorf("saved view adapter effective teams: %w", err)
+	}
+	return ids, nil
+}
+
 // nonNilUUIDs and nonNilStrings exist because the fan-out queries test
 // cardinality(...) = 0 to mean "this filter is not set". A nil slice reaches
 // pgx as NULL, and cardinality(NULL) is NULL rather than 0, which makes the
