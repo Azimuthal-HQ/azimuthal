@@ -922,3 +922,148 @@ in passing. D51 stands as written and still wants an answer.
 - **Go's `encoding/json` HTML-escapes a `json.RawMessage` it marshals**, and compacts it. An importer
   that round-trips documents through `json.Marshal` will silently alter their bytes. The `doc`
   package emits nodes through its own writer for exactly this reason.
+
+---
+
+# P4 — Saved views (migration 038)
+
+## 1. Discrepancies found and corrected
+
+### D56 — the section 4 migration table was stale for the fourth time
+
+It assigned `029_saved_views.sql` to this table. Migrations 029–037 were all on disk before P4
+started, taken by phases that were not in the plan, so saved views ship as **038**. Corrected in
+§4 in the same PR that found it.
+
+This is the fourth occurrence (see D52 and the two before it), and the pattern is now well enough
+established to state as a rule rather than a coincidence: **the migration table in a design
+document is a forecast, not a fact.** Read `migrations/` and take the next free number. Nothing is
+renumbered here; the sketch's number was never shipped.
+
+### D57 — the §4 sketch's `visibility_team_id` FK would destroy saved views
+
+The sketch declares:
+
+```sql
+visibility_team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
+CONSTRAINT saved_views_visibility_team_present
+    CHECK (visibility <> 'team' OR visibility_team_id IS NOT NULL)
+```
+
+On a nullable column, `ON DELETE CASCADE` deletes the **row**, so deleting a team would delete
+every saved view shared with it — somebody else's saved work, destroyed as a side effect of an
+unrelated administrative action. The CHECK then makes the gentler alternative impossible too: with
+it in place, nulling the column on team deletion is itself a constraint violation.
+
+Both are contrary to ADR-0009's own degradation rule (decision log **C1**): *"A saved view whose
+scope team or space was deleted is marked invalid, renders 'scope unavailable', and prompts its
+owner to re-scope. It never errors."*
+
+Migration 038 therefore uses `ON DELETE SET NULL` and **omits the CHECK**, because the
+`(visibility = 'team', visibility_team_id IS NULL)` state has to be *representable* — it is
+precisely C1's degraded state. The write-path invariant is enforced one layer up (the API refuses
+to create or update into it) and resolution requires `visibility_team_id IS NOT NULL` before a
+team audience can match, so a degraded view is visible to nobody but its owner. Fail closed, then
+prompt.
+
+`TestSavedViewStore_RoundTripAndTeamDegradation` fails if the FK is changed back to CASCADE.
+
+### D58 — the §4 sketch's `is_valid` column needs a writer that does not exist
+
+The sketch carries `is_valid BOOLEAN NOT NULL DEFAULT true` and says it "goes false when the scope
+team or space is deleted". Nothing says *who* sets it. A stored copy of derivable state needs some
+sweeper or cross-domain hook to remember to flip it, and its failure mode is stale in the
+safe-looking direction — marked valid while the scope is gone.
+
+Validity is **derived at read time** instead, for a whole page of views in one query
+(`ListLiveSpaceIDs`), so it cannot go stale and costs one constant query rather than a background
+job. The column is not created.
+
+### D59 — `shared-surfaces.md` said the route table holds 142 rows; it held 165
+
+Counted from `route_accounting_test.go` at the start of P4. It holds 172 after this phase's seven
+routes. Corrected, and the section now says what the count is *as of* a phase rather than
+"currently" — which is the wording that went stale.
+
+### D60 — the harness guards have a seam, and a whole feature can fall through it
+
+`TestHarness_NoDarkDependencies` skips a nil handler, commenting that "a nil handler means the
+surface is deliberately unmounted, which the route-accounting sweep already covers". It does not.
+`TestReadPathSweep_EveryRouteAccounted` walks the router built by `newTestServerOn` — the same
+router — so a handler left nil there contributes no routes to the walk, requires no accounting
+rows, and is invisible to both tests simultaneously.
+
+This is the dark-harness failure one level up: not a mounted handler missing a collaborator, but an
+entire feature that exists in production and in no test. **P4 walked into it live**: the seven
+saved-view routes were added and mounted in `cmd/server/main.go`, the sweep stayed green, and
+nothing reported that the routes were absent from every test.
+
+Closed by `TestHarness_NoUnmountedSurfaces`, which requires every `RouterConfig` handler field to
+be mounted in the harness or named in `unmountedInHarness` with a reason. `unmountedInHarness` is
+empty. Recorded in `shared-surfaces.md` §5.
+
+## 2. Decisions taken (justified in the phase report, recorded here)
+
+- **The filter document is a record, not a query language.** The §4 sketch models it as a list of
+  `{field, op, value}` predicates over an open operator set (`eq`, `in`, `gt`, `contains`, …).
+  That is a query language: it has a grammar, its field names come from the caller, and every
+  consumer needs an evaluator for it. The phase brief locked the opposite (2026-07-28), and
+  ADR-0011's reasoning about arbitrary scripting applies unchanged — a query you cannot reason
+  about statically is one you cannot index, explain, bound or migrate. What shipped is a closed
+  set of named fields, AND-ed with each other and OR-ed within themselves, defined in
+  `internal/core/views/filter.go` and nowhere else. §4 is corrected to describe it.
+  **ADR-0009 is untouched** — it never specified the document's shape, so this is not an ADR
+  change.
+
+- **`query` is `jsonb`, not `json`.** The opposite of migration 036's choice, for the opposite
+  reason. `pages.doc` is `json` because it holds user content that must round-trip
+  byte-identically (ADR-0012). A filter document is normalised configuration the server validates
+  field by field and re-serialises from its own structs, so no caller byte is preserved and there
+  is nothing to lose to key reordering. Stated in the migration so neither rule is cargo-culted
+  onto the other.
+
+- **`kinds` and `sprint_ids` are Vector-only, and rejected rather than ignored.** Verified against
+  the running database: `tickets` has neither a `kind` column nor a `sprint_id` column, while
+  `project_items` has both (plus `item_key`, `org_id`, `parent_id`). A filter naming either while
+  Beacon is in the module set can never match a ticket, so it is refused at write time — a view
+  that returns an empty Beacon half forever is a defect its author cannot see.
+
+- **No new capability for saved views; ownership governs.** Creating a private view reads nothing
+  the caller could not already read, so gating it would mean a capability every role holds.
+  Editing and deleting are the owner's, with the org-admin bypass. The brief said to stop and flag
+  rather than invent a capability if sharing seemed to need one; it does not, and nothing was
+  invented.
+
+- **No audit events.** The spec §6 audit list is teams, memberships, grants, space visibility,
+  owner team and shares — every one an access change. A saved view grants nothing: sharing one
+  shares a query, and each viewer still resolves it against their own access.
+
+## 3. Observed, out of scope
+
+- **D46 is not closed by P4, and its premise does not apply here.** Spec §5 says "One thing P4 must
+  build first": `SharedEntities` exposes `CascadeRootPaths()` but hides each cascade root's space
+  id, so `$shared_subtree_space_ids` cannot be populated. That is true, and it remains true. It is
+  also **not a blocker for P4 as scoped**: migration 026 constrains cascade to pages
+  (`entity_shares_cascade_pages_only`), and this phase's views read tickets and project items
+  only, so a share on either is always exactly one entity and `DirectIDs(type)` is complete.
+  **P6 search reads pages and will still need the accessor.** The §5 note is corrected to say
+  which phase actually needs it.
+
+- **`ResolveAccessRows` still holds its own inline copy of the ADR-0007 team expansion.** Migration
+  038 extracts that expansion into `effective_team_ids(org, user)` and the saved-view queries use
+  it, but the hot path was deliberately left alone: it is the product's most frequently executed
+  query and the subject of the §2.5 case-23 constancy tracer, and rewriting it for tidiness would
+  put a performance- and security-critical query in a feature phase's blast radius. The two are
+  pinned together by `TestEffectiveTeamIDs_AgreesWithGrantResolution`. **For a maintainer:**
+  `ResolveAccessRows` could adopt the function in a change that is only about that, with the
+  tracer re-run.
+
+- **sqlc has two limitations that shaped this SQL**, recorded so they are not rediscovered: it
+  cannot parse `COLLATE` inside a row constructor (it reports "edited query syntax is invalid"),
+  and it cannot infer the type of a column derived from a `CROSS JOIN LATERAL` — a `column:`
+  override does not reach it either, so the value arrives as `interface{}` and the adapter asserts
+  it explicitly rather than defaulting.
+
+- **Spec §7's frontend route table places views under `/:module/:spaceId/views/:viewId`.** A view
+  spans modules and containers and its API is org-scoped per ADR-0010, so a space-scoped route
+  cannot express one. The nav placement decision is in the phase report.
