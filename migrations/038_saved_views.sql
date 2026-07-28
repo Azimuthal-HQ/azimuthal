@@ -129,11 +129,72 @@ CREATE INDEX saved_views_team_idx ON saved_views (visibility_team_id)
 CREATE TRIGGER trg_saved_views_updated_at
     BEFORE UPDATE ON saved_views FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+
+-- saved_view_sort_key collapses whichever field a view sorts by into ONE
+-- comparable text value.
+--
+-- It exists so the two result fan-outs (internal/db/queries/saved_views.sql)
+-- can be static SQL. Without it each would need dynamic ORDER BY — or the same
+-- CASE expression pasted four times per query, once in the cursor predicate
+-- and once in the ORDER BY, for each of two directions, in each of two
+-- modules. Sixteen copies of one rule is sixteen chances for one of them to
+-- drift, and a drifted copy shows up as rows silently missing from page two.
+--
+-- Three properties the callers depend on:
+--
+--   * ONE TYPE FOR EVERY SORT FIELD. ADR-0009 requires cross-module results to
+--     be merged in the API layer, and a merge needs the two halves' sort
+--     positions to be comparable. Text is the only type all six fields
+--     collapse into.
+--
+--   * BYTE-COMPARABLE. Callers order with COLLATE "C" so PostgreSQL's order
+--     and Go's bytewise string comparison are the SAME order. A title sort
+--     under a linguistic collation would order differently in the database
+--     than in the merge, interleaving two correctly-sorted halves incorrectly.
+--
+--   * FIXED WIDTH PER FIELD. Timestamps render as YYYYMMDDHH24MISSUS, so
+--     lexicographic order is chronological order. Priority renders as a single
+--     ordinal digit, because the stored values sort alphabetically as
+--     high < low < medium < urgent, which is meaningless.
+--
+-- A NULL timestamp collapses to the empty string, sorting before every real
+-- value ascending and after every real value descending. Parameters are
+-- p_-prefixed so no name can be captured by a column of the calling query.
+CREATE FUNCTION saved_view_sort_key(
+    p_field       TEXT,
+    p_updated_at  TIMESTAMPTZ,
+    p_created_at  TIMESTAMPTZ,
+    p_due_at      TIMESTAMPTZ,
+    p_resolved_at TIMESTAMPTZ,
+    p_priority    TEXT,
+    p_title       TEXT
+) RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT CASE p_field
+        WHEN 'updated_at'  THEN COALESCE(to_char(p_updated_at  AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS'), '')
+        WHEN 'created_at'  THEN COALESCE(to_char(p_created_at  AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS'), '')
+        WHEN 'due_at'      THEN COALESCE(to_char(p_due_at      AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS'), '')
+        WHEN 'resolved_at' THEN COALESCE(to_char(p_resolved_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS'), '')
+        WHEN 'priority'    THEN CASE p_priority
+                                    WHEN 'urgent' THEN '0'
+                                    WHEN 'high'   THEN '1'
+                                    WHEN 'medium' THEN '2'
+                                    WHEN 'low'    THEN '3'
+                                    ELSE '9'
+                                END
+        WHEN 'title'       THEN lower(COALESCE(p_title, ''))
+        ELSE ''
+    END
+$$;
+
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
 
+DROP FUNCTION IF EXISTS saved_view_sort_key(TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, TEXT);
 DROP TRIGGER IF EXISTS trg_saved_views_updated_at ON saved_views;
 DROP TABLE IF EXISTS saved_views;
 
