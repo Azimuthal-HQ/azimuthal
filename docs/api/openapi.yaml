@@ -9399,6 +9399,364 @@ paths:
       summary: Reactivate org member (admin)
       tags:
       - admin
+  /orgs/{orgID}/views:
+    get:
+      description: Returns the caller's own views plus those shared with them (org
+        audience, or a team in their effective team set). Each carries is_owner and
+        is_valid.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Saved views
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid parameters
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an org member
+      security:
+      - BearerAuth: []
+      summary: List saved views
+      tags:
+      - views
+    post:
+      description: Creates a saved view owned by the caller. Any org member may create
+        one; it is private unless a visibility is given. Unknown fields in the query
+        document are rejected.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Saved view
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created view
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid parameters
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+      security:
+      - BearerAuth: []
+      summary: Create a saved view
+      tags:
+      - views
+  /orgs/{orgID}/views/{viewID}:
+    delete:
+      description: Owner only; org admins bypass.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Saved view ID (UUID)
+        in: path
+        name: viewID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not the owner
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or not visible to the caller
+      security:
+      - BearerAuth: []
+      summary: Delete a saved view
+      tags:
+      - views
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Saved view ID (UUID)
+        in: path
+        name: viewID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Saved view
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or not visible to the caller
+      security:
+      - BearerAuth: []
+      summary: Get a saved view
+      tags:
+      - views
+    patch:
+      description: Owner only; org admins bypass. A view the caller cannot see answers
+        404 rather than 403, so the endpoint does not confirm that somebody else's
+        private view exists.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Saved view ID (UUID)
+        in: path
+        name: viewID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Saved view
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Updated view
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not the owner
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or not visible to the caller
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+      security:
+      - BearerAuth: []
+      summary: Update a saved view
+      tags:
+      - views
+  /orgs/{orgID}/views/{viewID}/results:
+    get:
+      description: Resolves the view against the CALLER's readable spaces unioned
+        with their shared entities. Two people running the same view legitimately
+        see different rows. Cursor-paginated.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Saved view ID (UUID)
+        in: path
+        name: viewID
+        required: true
+        schema:
+          type: string
+      - description: Opaque cursor from a previous page
+        in: query
+        name: cursor
+        schema:
+          type: string
+      - description: Page size (default 50, max 200)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Results, next_cursor and has_more
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Malformed cursor
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or not visible to the caller
+      security:
+      - BearerAuth: []
+      summary: Run a saved view
+      tags:
+      - views
+  /orgs/{orgID}/views/preview:
+    post:
+      description: Runs an unsaved filter document through the identical path a saved
+        view uses, so the builder shows exactly what the saved view will return.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Opaque cursor from a previous page
+        in: query
+        name: cursor
+        schema:
+          type: string
+      - description: Page size (default 50, max 200)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Filter document under a query key
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Results, next_cursor and has_more
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+      security:
+      - BearerAuth: []
+      summary: Preview an unsaved query
+      tags:
+      - views
   /orgs/{orgID}/workflows:
     get:
       description: Returns all workflows belonging to the organization.

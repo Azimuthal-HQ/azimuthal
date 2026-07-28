@@ -185,6 +185,17 @@ func (d *Draft) validate(a Actor) error {
 	return d.Query.Validate()
 }
 
+// ActorFor assembles the calling user's Actor, expanding their teams once per
+// request. Handlers call this rather than reaching for the store themselves,
+// so the team expansion has exactly one entry point.
+func (s *Service) ActorFor(ctx context.Context, orgID, userID uuid.UUID, isOrgAdmin bool) (Actor, error) {
+	teams, err := s.store.EffectiveTeamIDs(ctx, orgID, userID)
+	if err != nil {
+		return Actor{}, err
+	}
+	return Actor{UserID: userID, EffectiveTeamIDs: teams, IsOrgAdmin: isOrgAdmin}, nil
+}
+
 // Create saves a new view owned by the actor.
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, a Actor, d Draft) (View, error) {
 	if d.Visibility == "" {
