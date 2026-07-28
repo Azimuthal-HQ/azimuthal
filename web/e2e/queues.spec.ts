@@ -285,7 +285,16 @@ test.describe('The queue builder', () => {
     const agent = await spacePersona(browser, admin, orgId, space.id, 'agent', 'q-author')
 
     await agent.page.goto(`/beacon/${space.id}/queues`)
-    await expect(agent.page.getByRole('heading', { name: 'Queues' })).toBeVisible({ timeout: 15000 })
+    // exact: true is load-bearing. Playwright's accessible-name match is a
+    // substring by default, so a bare 'Queues' also matches the empty state's
+    // "No queues in this space yet" and trips strict mode. It only shows up on
+    // a space that IS empty -- which is every space on CI's fresh database and
+    // almost none on a shared local one that has accumulated fixtures. This
+    // passed locally three times and failed on the first CI run for exactly
+    // that reason.
+    await expect(
+      agent.page.getByRole('heading', { name: 'Queues', exact: true }),
+    ).toBeVisible({ timeout: 15000 })
     await assertNoErrors(agent.page)
 
     // Empty first, so every count below is a change of state rather than a
