@@ -3,12 +3,18 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// spaceKeySeq makes fixture space keys unique by construction rather than by
+// probability. See the comment in CreateTestSpace for what it replaced.
+var spaceKeySeq atomic.Uint64
 
 // Org represents a test organization.
 type Org struct {
@@ -151,13 +157,22 @@ func CreateTestSpace(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, createdB
 		Name: fmt.Sprintf("Test %s", spaceType),
 		Type: spaceType,
 	}
-	// Derive a unique key from the space type (strip underscores, uppercase, max 6 chars)
-	// plus 2 random hex digits so multiple spaces of the same type don't collide.
+	// Derive a key from the space type (strip underscores, uppercase, max 4
+	// chars) plus a counter. Keys must match ^[A-Z0-9]{1,10}$, so four
+	// characters of prefix leave six for the counter — 36^6, or 2.1 billion
+	// values, which a test binary will not exhaust.
+	//
+	// This used to take two hex digits from a UUID, which is 256 distinct keys
+	// for the entire run. A test that creates a dozen spaces of one type inside
+	// one org is already past the birthday bound, and the failure it produced —
+	// a duplicate key on idx_spaces_org_key, from a fixture, in whichever test
+	// happened to draw the collision — read as an unrelated flake. A counter
+	// makes it unique by construction instead of unlikely.
 	base := strings.ToUpper(strings.ReplaceAll(spaceType, "_", ""))
-	if len(base) > 6 {
-		base = base[:6]
+	if len(base) > 4 {
+		base = base[:4]
 	}
-	key := base + strings.ToUpper(uuid.New().String()[:2])
+	key := base + strings.ToUpper(strconv.FormatUint(spaceKeySeq.Add(1), 36))
 	// owner_team_id is NOT NULL since migration 023: every space belongs to
 	// a team, defaulting to the org default team seeded by 022.
 	_, err := pool.Exec(context.Background(),
