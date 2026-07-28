@@ -334,3 +334,139 @@ func TestQueue_RefusesAVectorModuleQueue(t *testing.T) {
 			"the queue must be pinned to its own space, not to whatever the caller asked for")
 	})
 }
+
+// TestQueue_EditAndDelete covers the two mutations the CI-parity coverage run
+// reported at 0.0% across all three layers — handler, service and adapter.
+// Both are mounted routes carrying accounting rows, so they read as covered
+// while never having been reached. That is the same failure this phase already
+// found once on POST /views/preview, and it is worth stating plainly: an
+// accounting row proves a route is CLASSIFIED, never that it is exercised.
+func TestQueue_EditAndDelete(t *testing.T) {
+	ts := newTestServer(t)
+	spaceID := beaconSpaceForQueues(t, ts)
+	agent := personaOn(t, ts, spaceID, "agent")
+	contributor := personaOn(t, ts, spaceID, "contributor")
+	path := queuesPath(ts.OrgID, spaceID)
+
+	create := func(name string) uuid.UUID {
+		res := ts.postAs(t, agent, path, map[string]any{
+			"name": name, "query": json.RawMessage(queueQueryDoc),
+		})
+		require.Equal(t, http.StatusCreated, res.StatusCode, "%s", res.Body)
+		var out struct {
+			ID uuid.UUID `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		return out.ID
+	}
+
+	names := func(token string) []string {
+		res := ts.getAs(t, token, path)
+		require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
+		var out struct {
+			Queues []struct {
+				Name string `json:"name"`
+			} `json:"queues"`
+		}
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		got := make([]string, 0, len(out.Queues))
+		for _, q := range out.Queues {
+			got = append(got, q.Name)
+		}
+		return got
+	}
+
+	first := create("Escalations")
+	create("Waiting on customer")
+
+	t.Run("an agent edits name, description and filter", func(t *testing.T) {
+		edited := `{"v":1,"filter":{"modules":["beacon"],"priorities":["urgent"]},` +
+			`"sort":{"field":"created_at","dir":"asc"}}`
+		res := ts.patchAs(t, agent, path+"/"+first.String(), map[string]any{
+			"name": "Urgent escalations", "description": "Only the loud ones",
+			"query": json.RawMessage(edited),
+		})
+		require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
+
+		var out struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Position    int32  `json:"position"`
+			Query       struct {
+				Filter struct {
+					Priorities []string `json:"priorities"`
+					SpaceIDs   []string `json:"space_ids"`
+				} `json:"filter"`
+				Sort struct {
+					Field string `json:"field"`
+				} `json:"sort"`
+			} `json:"query"`
+		}
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		require.Equal(t, "Urgent escalations", out.Name)
+		require.Equal(t, "Only the loud ones", out.Description)
+		require.Equal(t, []string{"urgent"}, out.Query.Filter.Priorities)
+		require.Equal(t, "created_at", out.Query.Sort.Field)
+		// The binding survives an edit: the filter is re-pinned to this space
+		// even though the caller's document said nothing about spaces.
+		require.Equal(t, []string{spaceID.String()}, out.Query.Filter.SpaceIDs)
+		// Position is moved by the reorder endpoint and never by an edit —
+		// a per-queue position write is how an ordering ends up with two rows
+		// claiming one slot.
+		require.Equal(t, int32(0), out.Position)
+	})
+
+	t.Run("a contributor cannot edit", func(t *testing.T) {
+		res := ts.patchAs(t, contributor, path+"/"+first.String(), map[string]any{
+			"name": "Mine now", "query": json.RawMessage(queueQueryDoc),
+		})
+		require.Equal(t, http.StatusForbidden, res.StatusCode, "%s", res.Body)
+		require.Contains(t, names(agent), "Urgent escalations", "and it must not have changed")
+	})
+
+	t.Run("renaming onto another queue's name conflicts", func(t *testing.T) {
+		res := ts.patchAs(t, agent, path+"/"+first.String(), map[string]any{
+			"name": "Waiting on customer", "query": json.RawMessage(queueQueryDoc),
+		})
+		require.Equal(t, http.StatusConflict, res.StatusCode,
+			"the (space_id, name) unique index is what makes seeding idempotent; it applies to edits too: %s", res.Body)
+	})
+
+	t.Run("a queue in another space is not found rather than forbidden", func(t *testing.T) {
+		other := beaconSpaceForQueues(t, ts)
+		otherAgent := personaOn(t, ts, other, "agent")
+		res := ts.patchAs(t, otherAgent, queuesPath(ts.OrgID, other)+"/"+first.String(),
+			map[string]any{"name": "Reaching", "query": json.RawMessage(queueQueryDoc)})
+		require.Equal(t, http.StatusNotFound, res.StatusCode,
+			"the caller holds space-read on their own space only; distinguishing 'wrong space' from "+
+				"'no such queue' would answer questions about another space: %s", res.Body)
+	})
+
+	t.Run("a contributor cannot delete", func(t *testing.T) {
+		res := ts.deleteAs(t, contributor, path+"/"+first.String())
+		require.Equal(t, http.StatusForbidden, res.StatusCode, "%s", res.Body)
+		require.Len(t, names(agent), 2, "and nothing was removed")
+	})
+
+	t.Run("an agent deletes, and the queue leaves the list", func(t *testing.T) {
+		res := ts.deleteAs(t, agent, path+"/"+first.String())
+		require.Equal(t, http.StatusNoContent, res.StatusCode)
+		require.Equal(t, []string{"Waiting on customer"}, names(agent))
+	})
+
+	t.Run("deleting twice is not found", func(t *testing.T) {
+		res := ts.deleteAs(t, agent, path+"/"+first.String())
+		require.Equal(t, http.StatusNotFound, res.StatusCode, "%s", res.Body)
+	})
+
+	t.Run("a deleted name can be reused", func(t *testing.T) {
+		// The name index is partial on deleted_at, deliberately: a name is a
+		// label. The POSITION constraint is the opposite and is not partial,
+		// so a deleted queue keeps its slot.
+		res := ts.postAs(t, agent, path, map[string]any{
+			"name": "Urgent escalations", "query": json.RawMessage(queueQueryDoc),
+		})
+		require.Equal(t, http.StatusCreated, res.StatusCode,
+			"the name index is partial on deleted_at so a dead queue does not hold its name: %s", res.Body)
+	})
+}
