@@ -27,6 +27,9 @@ import {
 import { SpacePlaceholderPage } from './pages/space/SpacePlaceholderPage';
 import { SpaceSettingsPage } from './pages/space/SpaceSettingsPage';
 import { SpaceDirectoryPage } from './pages/spaces/SpaceDirectoryPage';
+import { ViewsListPage } from './pages/views/ViewsListPage';
+import { ViewDetailPage } from './pages/views/ViewDetailPage';
+import { ViewBuilderPage } from './pages/views/ViewBuilderPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { WorkflowAdminPage } from './pages/settings/WorkflowAdminPage';
 import { InviteAcceptPage } from './pages/auth/InviteAcceptPage';
@@ -63,6 +66,19 @@ export function App() {
           <Route path="home/:dashboardId" element={<HomeDashboardPage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="spaces" element={<SpaceDirectoryPage />} />
+
+          {/* Saved views (P4, ADR-0009). A TOP-LEVEL destination, not a space
+              sub-route: a view crosses modules and containers by design and its
+              API is org-scoped, so there is no space to hang it under and no
+              module that owns it. It sits beside Home for the same reason the
+              space directory does — both are org-scoped, neither is a product.
+              /views/new must exist for its own sake: SaveAsViewButton on the
+              ticket list and the backlog navigates straight to it. */}
+          <Route path="views" element={<ViewsListPage />} />
+          <Route path="views/new" element={<ViewBuilderPage />} />
+          <Route path="views/:viewId" element={<ViewDetailPage />} />
+          <Route path="views/:viewId/edit" element={<ViewBuilderPage />} />
+
           <Route path="settings" element={<SettingsPage />} />
           {/* Org settings moved to the admin panel; keep old links working. */}
           <Route path="settings/organization" element={<Navigate to="/admin/settings" replace />} />

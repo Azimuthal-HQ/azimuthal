@@ -8,6 +8,8 @@ import { Field, FieldLabel } from '../../components/ui/field';
 import { SegmentedControl } from '../../components/ui/segmented';
 import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
 import { TypeFilter } from '../../components/TypeFilter';
+import { SaveAsViewButton } from '../../components/views/SaveAsViewButton';
+import { vectorBacklogDraft } from '../../lib/views/draft';
 import {
   Dialog,
   DialogContent,
@@ -285,6 +287,20 @@ export function BacklogPage() {
     return entries;
   }, [filtered, sprintById]);
 
+  // The current filter state as a saved-view draft. The sprint grouping and
+  // the manual rank order are NOT part of it — a QueryDoc filters, it does not
+  // group, and `sort` has no rank field. See lib/views/draft.ts.
+  const viewDraft = useMemo(
+    () =>
+      vectorBacklogDraft({
+        spaceId,
+        spaceName: space?.name,
+        kinds: typeFilter,
+        text: search,
+      }),
+    [spaceId, space?.name, typeFilter, search],
+  );
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -292,10 +308,13 @@ export function BacklogPage() {
         <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
           Backlog
         </h1>
-        <Button onClick={() => setDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create Item
-        </Button>
+        <div className="flex items-center gap-2">
+          <SaveAsViewButton draft={viewDraft} />
+          <Button onClick={() => setDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create Item
+          </Button>
+        </div>
       </div>
 
       {/* Filter bar */}

@@ -12,12 +12,15 @@ import { MODULE_KEYS, MODULES } from './modules';
 export function ProductTabs() {
   const { pathname } = useLocation();
 
+  // Saved views are org-scoped and cross-module, so they sit under Home rather
+  // than becoming a fifth product tab — they are a destination, not a product.
   const isHomeActive =
     pathname === '/' ||
     pathname.startsWith('/home') ||
     pathname.startsWith('/settings') ||
     pathname.startsWith('/admin') ||
-    pathname.startsWith('/search');
+    pathname.startsWith('/search') ||
+    pathname.startsWith('/views');
 
   const tabClass = (active: boolean) =>
     cn(

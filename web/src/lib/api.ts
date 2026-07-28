@@ -6,6 +6,7 @@ import {
 import type { UseQueryOptions } from '@tanstack/react-query';
 import { getToken, setToken, setRefreshToken, getRefreshToken, removeToken, removeRefreshToken, getCurrentOrgId } from './auth';
 import type { CodexDoc } from './codex/schema';
+import type { QueryDoc, ViewModule } from './views/query';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -2156,6 +2157,15 @@ export const queryKeys = {
     ['entityAttachments', orgId, spaceId, entityType, entityId] as const,
   moveShareImpact: (orgId: string, spaceId: string, pageId: string) =>
     ['moveShareImpact', orgId, spaceId, pageId] as const,
+  // P4 saved views (ADR-0009, ADR-0010). One view and its result pages nest
+  // under ['views', orgId] so a single prefix invalidation after a create,
+  // edit or delete catches the list, the definition and every cached page —
+  // an edited query whose old results stayed on screen would be showing rows
+  // the view no longer selects.
+  views: (orgId: string) => ['views', orgId] as const,
+  view: (orgId: string, viewId: string) => ['views', orgId, viewId] as const,
+  viewResults: (orgId: string, viewId: string, cursor?: string, limit?: number) =>
+    ['views', orgId, viewId, 'results', cursor ?? '', limit ?? 0] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -3737,6 +3747,293 @@ export async function fetchSharedAttachmentObjectURL(
     `/orgs/${orgId}/shared/${entityType}/${entityId}/attachments/${attachmentId}`,
     'this attachment is unavailable',
   );
+}
+
+// ---------------------------------------------------------------------------
+// Saved views (P4, ADR-0009 + ADR-0010). A saved view stores a QUERY, never
+// results, and every read resolves it against the CALLING viewer's access.
+//
+// Three consequences the UI must not treat as faults:
+//
+//  1. Two people opening one shared view see different rows. That is the
+//     feature working. It is never a sync problem and never an error.
+//  2. `is_valid: false` means the view's scope is gone (its spaces or its
+//     audience team were deleted). The view still lists, still opens, and
+//     renders "scope unavailable" with a prompt to re-scope — an EmptyState
+//     with an action, never an error panel and never friendlyErrorMessage.
+//  3. The routes are org-scoped and org-member. There is no admin gate and no
+//     space capability to mirror client-side; who may edit a view is decided
+//     by ownership, which arrives pre-computed as `is_owner`.
+//
+// The filter vocabulary itself — QueryDoc and the helpers that decide what a
+// module selection permits — lives in ./views/query, mirroring how the Codex
+// document vocabulary lives in ./codex/schema. Import it from there.
+// ---------------------------------------------------------------------------
+
+export type ViewVisibility = 'private' | 'team' | 'org';
+
+export interface SavedView {
+  id: string;
+  owner_id: string;
+  owner_name?: string;
+  name: string;
+  description: string;
+  /** The stored filter document. See lib/views/query. */
+  query: QueryDoc;
+  visibility: ViewVisibility;
+  /** Non-null only for team visibility; null once that team is deleted. */
+  visibility_team_id: string | null;
+  team_name?: string;
+  /** Pre-computed server-side: the client never compares ids to the session. */
+  is_owner: boolean;
+  /** ADR-0009 case C1. False means "scope unavailable", not "broken". */
+  is_valid: boolean;
+  invalid_reason?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The create and update body. PATCH replaces the whole mutable surface. */
+export interface ViewRequest {
+  name: string;
+  description: string;
+  query: QueryDoc;
+  visibility: ViewVisibility;
+  /** Required for team visibility; send null otherwise. */
+  visibility_team_id: string | null;
+}
+
+/** One row of a resolved view, from either module. */
+export interface ViewResult {
+  module: ViewModule;
+  id: string;
+  key: string;
+  title: string;
+  space_id: string;
+  space_key: string;
+  space_name: string;
+  status: string;
+  priority: string;
+  assignee_id: string | null;
+  labels: string[];
+  /** Vector only. */
+  kind?: string;
+  /** Vector only. */
+  sprint_id?: string;
+  created_at: string;
+  updated_at: string;
+  due_at?: string;
+  resolved_at?: string;
+}
+
+/** One keyset-paginated page of results. */
+export interface ViewResultPage {
+  results: ViewResult[];
+  next_cursor: string;
+  has_more: boolean;
+}
+
+/**
+ * The names the API contract uses. Exported as aliases so a call site may spell
+ * either; they are the same types, not copies.
+ */
+export type { ViewResult as Result, ViewResultPage as ResultPage };
+
+/** The wire shape before null-coalescing. Go serialises an empty slice as null. */
+type RawViewResult = Omit<ViewResult, 'labels'> & { labels: string[] | null };
+interface RawResultPage {
+  results: RawViewResult[] | null;
+  next_cursor: string;
+  has_more: boolean;
+}
+
+/**
+ * toResultPage fills in what Go may serialise as null. `labels` is normalised
+ * per row rather than trusted: a row rendering `labels.map(...)` on null takes
+ * the whole page down, which is the failure class web/e2e/null-collections.spec.ts
+ * exists for.
+ */
+function toResultPage(raw: RawResultPage | null | undefined): ViewResultPage {
+  return {
+    results: (raw?.results ?? []).map((r) => ({ ...r, labels: r.labels ?? [] })),
+    next_cursor: raw?.next_cursor ?? '',
+    has_more: raw?.has_more ?? false,
+  };
+}
+
+/** The shared `?cursor=&limit=` suffix. Absent parameters produce no query. */
+function viewPageQuery(cursor?: string, limit?: number): string {
+  const params = new URLSearchParams();
+  if (cursor) params.set('cursor', cursor);
+  if (limit) params.set('limit', String(limit));
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
+async function fetchSavedViews(orgId: string): Promise<SavedView[]> {
+  const data = await apiFetch<{ views: SavedView[] | null }>(`/orgs/${orgId}/views`);
+  return data?.views ?? [];
+}
+
+async function fetchSavedView(orgId: string, viewId: string): Promise<SavedView> {
+  return apiFetch<SavedView>(`/orgs/${orgId}/views/${viewId}`);
+}
+
+async function createSavedView(orgId: string, req: ViewRequest): Promise<SavedView> {
+  return apiFetch<SavedView>(`/orgs/${orgId}/views`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function updateSavedView(
+  orgId: string,
+  viewId: string,
+  req: ViewRequest,
+): Promise<SavedView> {
+  return apiFetch<SavedView>(`/orgs/${orgId}/views/${viewId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+async function deleteSavedView(orgId: string, viewId: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/views/${viewId}`, { method: 'DELETE' });
+}
+
+async function fetchViewResults(
+  orgId: string,
+  viewId: string,
+  cursor?: string,
+  limit?: number,
+): Promise<ViewResultPage> {
+  const raw = await apiFetch<RawResultPage>(
+    `/orgs/${orgId}/views/${viewId}/results${viewPageQuery(cursor, limit)}`,
+  );
+  return toResultPage(raw);
+}
+
+async function previewViewResults(
+  orgId: string,
+  query: QueryDoc,
+  cursor?: string,
+  limit?: number,
+): Promise<ViewResultPage> {
+  const raw = await apiFetch<RawResultPage>(
+    `/orgs/${orgId}/views/preview${viewPageQuery(cursor, limit)}`,
+    { method: 'POST', body: JSON.stringify({ query }) },
+  );
+  return toResultPage(raw);
+}
+
+/** Every view whose definition reaches the caller: their own plus shared. */
+export function useSavedViews(orgId: string, opts?: QueryOpts<SavedView[]>) {
+  return useQuery<SavedView[], APIError>({
+    queryKey: queryKeys.views(orgId),
+    queryFn: () => fetchSavedViews(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+/**
+ * One saved view's definition. An invalid view resolves normally here — the
+ * degradation is reported in `is_valid`, not as a failed request — so this
+ * hook's error state means the view is genuinely missing or out of reach.
+ */
+export function useSavedView(orgId: string, viewId: string, opts?: QueryOpts<SavedView>) {
+  return useQuery<SavedView, APIError>({
+    queryKey: queryKeys.view(orgId, viewId),
+    queryFn: () => fetchSavedView(orgId, viewId),
+    enabled: !!orgId && !!viewId,
+    ...opts,
+  });
+}
+
+/**
+ * One page of a view's results, resolved for the calling viewer.
+ *
+ * Paging is keyset, exactly as the audit log's is: the caller owns the cursor
+ * and the stack of cursors that led to it, and passes the current one here.
+ * Pass `{ placeholderData: (prev) => prev }` to keep the visible page on screen
+ * while the next one loads instead of flashing an empty state.
+ */
+export function useViewResults(
+  orgId: string,
+  viewId: string,
+  cursor?: string,
+  limit?: number,
+  opts?: QueryOpts<ViewResultPage>,
+) {
+  return useQuery<ViewResultPage, APIError>({
+    queryKey: queryKeys.viewResults(orgId, viewId, cursor, limit),
+    queryFn: () => fetchViewResults(orgId, viewId, cursor, limit),
+    enabled: !!orgId && !!viewId,
+    ...opts,
+  });
+}
+
+export function useCreateView(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<SavedView, APIError, ViewRequest>({
+    mutationFn: (req) => createSavedView(orgId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.views(orgId) });
+    },
+  });
+}
+
+/** PATCH replaces the whole mutable surface, so the body is a full ViewRequest. */
+export interface UpdateViewVars {
+  viewId: string;
+  req: ViewRequest;
+}
+
+export function useUpdateView(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<SavedView, APIError, UpdateViewVars>({
+    mutationFn: ({ viewId, req }) => updateSavedView(orgId, viewId, req),
+    onSuccess: () => {
+      // The prefix key covers the list, this view and its cached result pages.
+      // Dropping the pages is the point: the edited query selects other rows.
+      queryClient.invalidateQueries({ queryKey: queryKeys.views(orgId) });
+    },
+  });
+}
+
+export function useDeleteView(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (viewId) => deleteSavedView(orgId, viewId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.views(orgId) });
+    },
+  });
+}
+
+export interface PreviewViewVars {
+  query: QueryDoc;
+  cursor?: string;
+  limit?: number;
+}
+
+/**
+ * The builder's live results, through the identical path a saved view uses —
+ * so what the builder shows is what the saved view will return.
+ *
+ * A mutation rather than a query, and deliberately uncached: the document
+ * changes on every keystroke, so a stable key would either collide across
+ * edits or accumulate one cache entry per intermediate state. It invalidates
+ * nothing — a preview changes no server state.
+ *
+ * A rejected document arrives as a 422 whose message is written server-side
+ * for people; pass it through friendlyErrorMessage and render it as-is rather
+ * than re-wording it.
+ */
+export function usePreviewResults(orgId: string) {
+  return useMutation<ViewResultPage, APIError, PreviewViewVars>({
+    mutationFn: ({ query, cursor, limit }) => previewViewResults(orgId, query, cursor, limit),
+  });
 }
 
 // Re-export create helpers for direct use
