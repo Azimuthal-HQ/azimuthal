@@ -36,6 +36,13 @@ type View struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 
+	// SpaceID and Position are the queue binding (migration 039). Both nil on
+	// an ordinary saved view; both set on a queue, together with
+	// VisibilitySpace. The database ties the three together so a half-queue
+	// cannot exist.
+	SpaceID  *uuid.UUID
+	Position *int32
+
 	// Derived, read-only, never stored.
 	OwnerName string
 	TeamName  string

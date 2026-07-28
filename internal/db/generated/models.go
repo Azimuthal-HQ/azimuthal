@@ -298,6 +298,8 @@ type SavedView struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	SpaceID          pgtype.UUID        `json:"space_id"`
+	Position         *int32             `json:"position"`
 }
 
 type Session struct {

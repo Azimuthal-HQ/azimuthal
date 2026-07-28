@@ -58,6 +58,11 @@ JOIN users u ON u.id = sv.owner_id
 LEFT JOIN teams tm ON tm.id = sv.visibility_team_id
 WHERE sv.org_id = @org_id
   AND sv.deleted_at IS NULL
+  -- Queues (migration 039) are space-bound saved views and are listed by the
+  -- space-scoped queue endpoint, whose middleware has already established that
+  -- the caller can read the space. Including them here would mean re-deriving
+  -- that audience per row against the caller's readable set.
+  AND sv.space_id IS NULL
   AND (
         sv.owner_id = @viewer_id
      OR sv.visibility = 'org'
@@ -240,3 +245,80 @@ LIMIT @row_limit;
 -- function's output column and falls back to interface{}.
 SELECT t.id FROM teams t
 WHERE t.id IN (SELECT e.team_id FROM effective_team_ids(@org_id, @user_id) AS e(team_id));
+
+-- name: ListQueuesForSpace :many
+-- A space's queues in display order. The route that reaches this is
+-- space-read guarded, so membership of the audience is already established --
+-- that is what lets a queue carry visibility 'space' without this query
+-- re-deriving who may see it.
+SELECT sv.*, u.display_name AS owner_name
+FROM saved_views sv
+JOIN users u ON u.id = sv.owner_id
+WHERE sv.org_id = @org_id
+  AND sv.space_id = @space_id
+  AND sv.deleted_at IS NULL
+ORDER BY sv.position ASC;
+
+-- name: GetQueue :one
+SELECT * FROM saved_views
+WHERE id = @id AND org_id = @org_id AND space_id = @space_id AND deleted_at IS NULL;
+
+-- name: NextQueuePosition :one
+-- The position a new queue takes: one past the last live queue in the space.
+-- COALESCE over the empty case gives the first queue position 0.
+SELECT COALESCE(MAX(sv.position) + 1, 0)::int AS next_position
+FROM saved_views sv
+WHERE sv.space_id = @space_id AND sv.deleted_at IS NULL;
+
+-- name: CreateQueue :one
+INSERT INTO saved_views (
+    org_id, owner_id, space_id, position, name, description, query, visibility
+) VALUES (
+    @org_id, @owner_id, @space_id, @position, @name, @description, @query, 'space'
+)
+RETURNING *;
+
+-- name: CreateQueueIfAbsent :execrows
+-- The idempotent half of "create the default queues". ON CONFLICT DO NOTHING
+-- against saved_views_space_name_key means pressing the button twice, or two
+-- agents pressing it at once, cannot produce duplicates -- the guarantee is a
+-- constraint rather than a check-then-insert race.
+INSERT INTO saved_views (
+    org_id, owner_id, space_id, position, name, description, query, visibility
+) VALUES (
+    @org_id, @owner_id, @space_id, @position, @name, @description, @query, 'space'
+)
+ON CONFLICT (space_id, name) WHERE space_id IS NOT NULL AND deleted_at IS NULL
+DO NOTHING;
+
+-- name: UpdateQueue :one
+UPDATE saved_views
+SET name = @name, description = @description, query = @query
+WHERE id = @id AND org_id = @org_id AND space_id = @space_id AND deleted_at IS NULL
+RETURNING *;
+
+-- name: SoftDeleteQueue :execrows
+UPDATE saved_views
+SET deleted_at = now()
+WHERE id = @id AND org_id = @org_id AND space_id = @space_id AND deleted_at IS NULL;
+
+-- name: SetQueuePosition :execrows
+-- One step of a reorder. Callers run several of these inside ONE transaction:
+-- saved_views_space_position_key is DEFERRABLE INITIALLY DEFERRED, so the
+-- intermediate states where two queues briefly share a position are legal
+-- until COMMIT. Renumbering through temporary slots to dodge the constraint
+-- is exactly what the deferral exists to avoid.
+UPDATE saved_views
+SET position = @position
+WHERE id = @id AND org_id = @org_id AND space_id = @space_id AND deleted_at IS NULL;
+
+-- name: ListSpaceWorkflowStatuses :many
+-- A space's workflow state names with their categories, in board order.
+-- Backs the default-queue set: "open" and "resolved" are not literals in this
+-- product, they are whichever states the space's workflow puts in the
+-- todo/in_progress and done categories.
+SELECT ws.name, ws.category
+FROM workflow_states ws
+JOIN spaces s ON s.workflow_id = ws.workflow_id AND s.deleted_at IS NULL
+WHERE s.id = @space_id
+ORDER BY ws.position ASC;
