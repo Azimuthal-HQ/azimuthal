@@ -13,8 +13,24 @@ concurrency:
 
 env:
   GO_VERSION: '1.26.5'
+  NODE_VERSION: '20'
   POSTGRES_VERSION: '16'
   BINARY_NAME: azimuthal
+
+  # Tool versions are pinned, and the pin IS the cache key.
+  #
+  # gosec and gitleaks were already pinned and cached. govulncheck and swag were
+  # installed with `@latest` on every run, which is the one genuinely unsound
+  # cache key this file had: the thing the key names can change without the key
+  # changing. Bumping a pin here changes the key, which is the point.
+  #
+  # Note what this does NOT pin: govulncheck fetches the vulnerability database
+  # at scan time, so the gate still sees today's advisories. Only the analyser
+  # is pinned, exactly as gosec already was.
+  GOSEC_VERSION: 'v2.26.1'
+  GITLEAKS_VERSION: '8.21.2'
+  GOVULNCHECK_VERSION: 'v1.6.0'
+  SWAG_VERSION: 'v2.0.0-rc5'
 
 jobs:
 
@@ -30,10 +46,11 @@ jobs:
   # annotations — a change there means an API change and runs the full
   # pipeline.
   #
-  # Mechanism: this job always runs; the `build` job is gated on its
-  # output, and every expensive job `needs: build`, so they cascade-skip.
-  # A job skipped by an `if:` still reports a (skipped) status, which
-  # satisfies branch-protection required checks.
+  # Mechanism: this job always runs, and every expensive job is gated on its
+  # output. Most of them inherit the gate through `needs: build`, which carries
+  # the `if:`; `test` carries its own copy because it no longer waits for build
+  # (see the note on that job). A job skipped by an `if:` still reports a
+  # (skipped) status, which satisfies branch-protection required checks.
   #
   # DO NOT convert this to workflow-level `paths-ignore`: if the workflow
   # never triggers, its required checks never report at all and branch
@@ -101,15 +118,29 @@ jobs:
 
 
   # ─────────────────────────────────────────────────────────────
-  # GATE 1: Build
+  # GATE 1: Build — and the one producer of the server binary
+  #
+  # This job used to compile a binary into /tmp and throw it away, while e2e,
+  # docker-e2e and container-scan each built their own. Three jobs ran
+  # `npm ci && npm run build`; four ran `go build ./... && go vet ./...`.
+  #
+  # Now it builds ONE linux binary with the real frontend embedded and hands it
+  # to every consumer as a run artifact. An artifact is not a cache: it has no
+  # key, it is produced by this run from this run's checkout, and it does not
+  # outlive the run. There is no input under which it can be stale.
+  #
+  # One consequence worth stating plainly: container-scan used to scan a binary
+  # built against a STUB frontend, so the bytes it scanned were not the bytes
+  # that ship. It now scans the same binary docker-e2e boots.
   # ─────────────────────────────────────────────────────────────
   build:
     name: Build
     needs: changes
-    # Skipping build cascade-skips every job that `needs` it (test, lint,
-    # frontend, sast, vuln-scan, container-scan, e2e, docs-check, docker-e2e). All
-    # of them still report a skipped status, which satisfies required
-    # checks. secret-scan does not depend on build and always runs.
+    # Skipping build cascade-skips every job that `needs` it (lint, frontend,
+    # sast, vuln-scan, container-scan, e2e, docs-check, docker-e2e). All of
+    # them still report a skipped status, which satisfies required checks.
+    # `test` carries its own copy of this condition; secret-scan does not
+    # depend on build and always runs.
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
@@ -124,12 +155,30 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
+      # setup-node's cache holds npm's DOWNLOAD cache, not the installed tree.
+      # This caches the tree, keyed on the lockfile that produced it.
+      #
+      # Exact match only — no restore-keys. A partial match would restore a
+      # node_modules built from a DIFFERENT lockfile and then skip `npm ci`,
+      # which is precisely the stale-cache false-green this pass exists to
+      # avoid. A lockfile change must miss, and a miss simply runs npm ci.
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: web/node_modules
+          key: node-modules-${{ runner.os }}-${{ env.NODE_VERSION }}-${{ hashFiles('web/package-lock.json') }}
+
+      - name: Install frontend dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: cd web && npm ci
+
       - name: Build frontend assets
-        run: cd web && npm ci && npm run build
+        run: cd web && npm run build
 
       - name: Download dependencies
         run: go mod download
@@ -137,24 +186,50 @@ jobs:
       - name: Verify dependencies
         run: go mod verify
 
-      - name: Build binary
-        run: go build -v -o /tmp/${{ env.BINARY_NAME }} ./cmd/server
+      # The one binary every downstream job uses. CGO_ENABLED=0 + GOOS=linux so
+      # it runs unchanged inside gcr.io/distroless/static, and -trimpath
+      # -ldflags="-s -w" to match what build/Dockerfile.ci expects. web/dist was
+      # built above, so go:embed picks up the real bundle.
+      - name: Build server binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -trimpath -ldflags="-s -w" -o ${{ env.BINARY_NAME }} ./cmd/server
 
       - name: Vet
         run: go vet ./...
 
+      - name: Upload server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-binary
+          path: ${{ env.BINARY_NAME }}
+          retention-days: 1
+          if-no-files-found: error
+
 
   # ─────────────────────────────────────────────────────────────
   # GATE 2: Test
+  #
+  # `needs: changes`, not `needs: build`. This job consumes nothing build
+  # produces — it compiles its own test binaries against a stub frontend — so
+  # the edge only added build's duration to the front of the longest job in the
+  # pipeline. It carries its own copy of the docs-only condition, so the fast
+  # path behaves exactly as before.
+  #
+  # The trade: a PR that does not compile now burns this job instead of
+  # cascade-skipping it. The tests fail on the same error a moment later, so
+  # what is spent is runner minutes, not signal.
   # ─────────────────────────────────────────────────────────────
   test:
     name: Test
-    needs: build
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # postgres + minio are started manually via docker (below) rather than a
     # services: block, so the Docker-wait/pull-retry steps stay portable across
-    # GitHub-hosted and any future self-managed runners. On ubuntu-latest the
-    # daemon is ready immediately, so the waits fall through quickly.
+    # GitHub-hosted and any future self-managed runners.
     env:
       DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
       STORAGE_ENDPOINT: http://localhost:9001
@@ -168,36 +243,66 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Set up Go before Docker wait — gives DinD daemon more time to start
-      # while we do non-Docker work (download modules, install goose, etc.)
+      # cache: false, then both Go caches by hand.
+      #
+      # setup-go's built-in cache keys GOMODCACHE *and* GOCACHE on the go.sum
+      # hash, so every Go job in this workflow shares one key. That is right for
+      # the module cache and useless for this job's build cache: -race,
+      # -covermode=atomic and -coverpkg each change the build-cache action ID,
+      # so nothing another job compiled is reusable here — and this job never
+      # got to write a cache of its own, because another job had already saved
+      # that key.
+      #
+      # Staleness is not a hazard for either. Go's build cache is
+      # content-addressed internally: a restored entry that does not match the
+      # current source is simply not used. A loose restore-key therefore costs a
+      # recompile and can never produce a wrong object.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache: false
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
+          restore-keys: gomod-${{ runner.os }}-${{ env.GO_VERSION }}-
+
+      - name: Cache the race-instrumented Go build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: gobuild-race-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('**/*.go', 'go.sum') }}
+          restore-keys: gobuild-race-${{ runner.os }}-${{ env.GO_VERSION }}-
 
       - name: Create stub frontend dist (for go:embed)
         run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
 
-      # Compile + vet before Docker wait — DinD startup is variable (10-180s on k3s);
-      # this gives the daemon ~90s of initialization time before we need it.
-      - name: Compile and vet (gives DinD extra startup time)
-        run: go build ./... && go vet ./...
-
-      # By now DinD has had ~90s to start — confirm it's ready.
+      # The `go build ./... && go vet ./...` that used to sit here existed only
+      # to give a DinD daemon time to start, and the build job already vets. It
+      # warmed nothing for the -race compile below, because a non-race object is
+      # not a race object.
       - name: Wait for Docker daemon
         run: |
-          echo "Waiting for Docker daemon..."
+          # On GitHub-hosted runners the daemon is up before the job starts, so
+          # this returns immediately. The 30s settle below is for DinD-style
+          # runners, where bridge networking comes up after the daemon and
+          # `docker pull` fails without it. It now costs only the runners that
+          # actually need it, instead of every run of every job.
+          if docker info >/dev/null 2>&1; then
+            echo "Docker daemon already up — no settle needed."
+            exit 0
+          fi
+          echo "Docker daemon not ready — waiting..."
           for i in $(seq 1 90); do
             docker info >/dev/null 2>&1 && echo "Docker daemon ready after $((i*2))s" && break
             sleep 2
           done
           docker info
-          # DinD bridge networking takes extra time after daemon starts.
-          # Without this sleep, docker pull fails immediately with network errors.
-          echo "Sleeping 30s for DinD bridge networking to settle..."
+          echo "Daemon needed waiting — sleeping 30s for bridge networking to settle..."
           sleep 30
-          echo "Proceeding with image pulls."
 
       # Pull images explicitly with retry BEFORE docker run.
       # docker run pulls synchronously and exits non-zero on pull failure.
@@ -247,6 +352,10 @@ jobs:
           curl -sf http://localhost:9001/minio/health/live || \
             (echo "❌ MinIO never became ready" && exit 1)
 
+      # Still required. testutil.NewTestDB no longer touches this database — it
+      # clones a template into a database of its own — but internal/db,
+      # internal/jobs and cmd/server each open DATABASE_URL directly and expect
+      # a migrated schema there.
       - name: Run migrations
         run: go run ./cmd/migrate
 
@@ -256,6 +365,28 @@ jobs:
           which gcc && gcc --version || \
             (sudo apt-get update -qq && sudo apt-get install -y -q build-essential)
 
+      # -count=1 is load-bearing, and it is here because leaving it out produced
+      # a hollow gate the first time this job had a warm build cache.
+      #
+      # Go caches TEST RESULTS in the same directory as compiled packages. On
+      # the first run whose source hash matched a previously saved cache, this
+      # step "passed" in three seconds without executing a single test: same
+      # binary, same tracked environment, so Go replayed the recorded result.
+      # That reasoning is sound for a pure function and wrong for this suite —
+      # the postgres these tests run against is not an input Go can see, and a
+      # green Test job that never opened a connection is worth nothing.
+      #
+      # -count=1 disables result caching only. The build cache above still does
+      # its job, which is to avoid recompiling 51 race-instrumented binaries.
+      # `make test-live` has always passed -count=1; CI simply never needed it
+      # while its build cache was permanently cold.
+      #
+      # -p 1 stays, for a different reason than it was added for. Tests no
+      # longer share one database, but internal/db's TestMigrateDown rolls the
+      # SHARED schema at DATABASE_URL backward and forward again, and
+      # internal/jobs and cmd/server read that same shared schema. Running those
+      # packages concurrently is a real race — between test packages, where
+      # -race would never see it.
       - name: Run tests with race detector
         env:
           CGO_ENABLED: "1"  # -race requires CGO; gcc installed in previous step
@@ -264,6 +395,7 @@ jobs:
             -v \
             -race \
             -p 1 \
+            -count=1 \
             -coverprofile=coverage.out \
             -covermode=atomic \
             -coverpkg=./internal/... \
@@ -358,11 +490,19 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: web/node_modules
+          key: node-modules-${{ runner.os }}-${{ env.NODE_VERSION }}-${{ hashFiles('web/package-lock.json') }}
+
       - name: Install dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: cd web && npm ci
 
       - name: Type-check
@@ -404,11 +544,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .gosec-bin
-          key: gosec-linux-amd64-v2.26.1
+          key: gosec-linux-amd64-${{ env.GOSEC_VERSION }}
 
       - name: Install gosec
         if: steps.gosec-cache.outputs.cache-hit != 'true'
-        run: GOBIN=$GITHUB_WORKSPACE/.gosec-bin go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1
+        run: GOBIN=$GITHUB_WORKSPACE/.gosec-bin go install github.com/securego/gosec/v2/cmd/gosec@${{ env.GOSEC_VERSION }}
 
       - name: Add gosec to PATH
         run: echo "$GITHUB_WORKSPACE/.gosec-bin" >> $GITHUB_PATH
@@ -461,8 +601,21 @@ jobs:
       - name: Create stub frontend dist (for go:embed)
         run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
 
+      # Same shape as gosec above: pinned version, version-keyed cache. The
+      # advisory database is still fetched live at scan time.
+      - name: Cache govulncheck binary
+        id: govulncheck-cache
+        uses: actions/cache@v4
+        with:
+          path: .govulncheck-bin
+          key: govulncheck-linux-amd64-${{ env.GOVULNCHECK_VERSION }}
+
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        if: steps.govulncheck-cache.outputs.cache-hit != 'true'
+        run: GOBIN=$GITHUB_WORKSPACE/.govulncheck-bin go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+
+      - name: Add govulncheck to PATH
+        run: echo "$GITHUB_WORKSPACE/.govulncheck-bin" >> $GITHUB_PATH
 
       - name: Run govulncheck
         run: govulncheck ./...
@@ -505,14 +658,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .gitleaks-bin
-          key: gitleaks-linux-amd64-8.21.2
+          key: gitleaks-linux-amd64-${{ env.GITLEAKS_VERSION }}
 
       - name: Install gitleaks
         if: steps.gitleaks-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p .gitleaks-bin
           curl -fsSL \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             | tar -xz -C .gitleaks-bin gitleaks
 
       - name: Run gitleaks
@@ -542,6 +695,11 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────
   # GATE 4D: Container scanning
+  #
+  # No Go and no Node here any more: the binary arrives from build, and the
+  # image is a distroless COPY of it. What this scans is now byte-identical to
+  # what docker-e2e boots, which was not true while it built its own binary
+  # against a stub frontend.
   # ─────────────────────────────────────────────────────────────
   container-scan:
     name: Container Scan
@@ -555,33 +713,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Download server binary
+        uses: actions/download-artifact@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          name: server-binary
 
-      - name: Create stub frontend dist (for go:embed)
-        run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
-
-      # Build binary on runner (avoids pulling golang:1.26-alpine from Docker Hub)
-      - name: Build binary (gives DinD extra startup time)
-        run: |
-          go build ./... && go vet ./...
-          CGO_ENABLED=0 GOOS=linux go build \
-            -trimpath \
-            -ldflags="-s -w" \
-            -o azimuthal \
-            ./cmd/server
+      # Artifacts travel as zips, and a zip does not carry the executable bit.
+      - name: Restore the executable bit
+        run: chmod +x ${{ env.BINARY_NAME }}
 
       - name: Wait for Docker daemon
         run: |
+          if docker info >/dev/null 2>&1; then
+            echo "Docker daemon already up — no settle needed."
+            exit 0
+          fi
+          echo "Docker daemon not ready — waiting..."
           for i in $(seq 1 90); do
             docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
             sleep 2
           done
           docker info
-          echo "Sleeping 30s for DinD bridge networking to settle..."
+          echo "Daemon needed waiting — sleeping 30s for bridge networking to settle..."
           sleep 30
 
       # Dockerfile.ci only needs distroless (GCR, no rate limit) — no Docker Hub pulls.
@@ -635,10 +788,19 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────
   # GATE 5: E2E Tests
+  #
+  # `needs: build` only. This job used to declare `needs: [build, test]` and
+  # consume nothing whatsoever from test — no downloaded artifact, no shared
+  # state, its own postgres, its own minio, its own migrations, its own binary.
+  # That one edge put 869s of unit tests in front of 332s of E2E on the
+  # critical path.
+  #
+  # The `needs: build` edge is real now: the server this drives IS the artifact
+  # build produced, rather than a fourth rebuild of it.
   # ─────────────────────────────────────────────────────────────
   e2e:
     name: E2E Tests (Playwright)
-    needs: [build, test]
+    needs: build
     runs-on: ubuntu-latest
     # No services: block — postgres + minio started manually after Docker-wait
     env:
@@ -655,7 +817,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Set up Go and Node before Docker wait — gives DinD daemon more time to start
+      # Go is still here for `go run ./cmd/migrate` below. The server migrates
+      # on boot as well, but the explicit run has the database ready before
+      # Playwright's webServer starts, rather than leaving the first
+      # `admin create-user` to race the health probe.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -665,25 +830,47 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
-      # Build frontend first — go:embed all:dist requires web/dist to exist before go build
-      - name: Build frontend
-        run: cd web && npm ci && npm run build
+      - name: Download server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: server-binary
+          path: /tmp/e2e-bin
 
-      - name: Compile and vet (gives DinD extra startup time)
-        run: go build ./... && go vet ./...
+      - name: Install the server binary
+        run: |
+          install -m 0755 /tmp/e2e-bin/${{ env.BINARY_NAME }} /tmp/azimuthal-test
+          /tmp/azimuthal-test --help >/dev/null
+
+      - name: Cache node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: web/node_modules
+          key: node-modules-${{ runner.os }}-${{ env.NODE_VERSION }}-${{ hashFiles('web/package-lock.json') }}
+
+      # node_modules is needed for Playwright itself. `npm run build` is NOT:
+      # the frontend is already inside the binary downloaded above.
+      - name: Install frontend dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: cd web && npm ci
 
       - name: Wait for Docker daemon
         run: |
+          if docker info >/dev/null 2>&1; then
+            echo "Docker daemon already up — no settle needed."
+            exit 0
+          fi
+          echo "Docker daemon not ready — waiting..."
           for i in $(seq 1 90); do
             docker info >/dev/null 2>&1 && echo "Docker daemon ready after $((i*2))s" && break
             sleep 2
           done
           docker info
-          echo "Sleeping 30s for DinD bridge networking to settle..."
+          echo "Daemon needed waiting — sleeping 30s for bridge networking to settle..."
           sleep 30
 
       - name: Pull container images (with retry)
@@ -735,14 +922,6 @@ jobs:
       - name: Run migrations
         run: go run ./cmd/migrate
 
-      - name: Build binary
-        run: |
-          go build \
-            -trimpath \
-            -ldflags="-s -w" \
-            -o /tmp/azimuthal-test \
-            ./cmd/server
-
       # Pre-install OS deps once via apt (cached as system state on the
       # runner image). Avoids `playwright install --with-deps` which runs
       # `apt-get update && apt-get install` of ~30 packages every single
@@ -759,6 +938,27 @@ jobs:
             libatspi2.0-0t64 libdbus-1-3 libxext6 libx11-6 libxcb1 libglib2.0-0t64
         timeout-minutes: 5
 
+      # Keyed on the exact @playwright/test version from the lockfile, because a
+      # browser build is only valid for the Playwright that expects it — a
+      # mismatched pair is precisely the failure this key exists to prevent, and
+      # a lockfile hash would churn the cache on every unrelated bump.
+      - name: Resolve the pinned Playwright version
+        id: playwright
+        run: |
+          VERSION=$(node -p "require('./web/package-lock.json').packages['node_modules/@playwright/test'].version")
+          echo "Playwright pinned at $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # Deliberately unconditional, cache hit or not. `playwright install`
+      # checks what is on disk against what this version needs and downloads
+      # only what is missing, so a cache that is somehow wrong gets corrected
+      # rather than trusted. On a hit it costs a couple of seconds.
       - name: Install Playwright browsers (no --with-deps)
         run: cd web && npx playwright install chromium
         timeout-minutes: 5
@@ -806,8 +1006,24 @@ jobs:
       - name: Create stub frontend dist (for go:embed)
         run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
 
+      # Pinned and cached for the same reason as gosec and govulncheck, and it
+      # matters more here than anywhere else: `make docs-check` regenerates the
+      # spec and diffs it against the committed file, so the generator's version
+      # is part of the expected output. Under `@latest`, a swag release could
+      # fail this gate on a pull request that changed nothing at all.
+      - name: Cache swag binary
+        id: swag-cache
+        uses: actions/cache@v4
+        with:
+          path: .swag-bin
+          key: swag-linux-amd64-${{ env.SWAG_VERSION }}
+
       - name: Install swag
-        run: go install github.com/swaggo/swag/v2/cmd/swag@latest
+        if: steps.swag-cache.outputs.cache-hit != 'true'
+        run: GOBIN=$GITHUB_WORKSPACE/.swag-bin go install github.com/swaggo/swag/v2/cmd/swag@${{ env.SWAG_VERSION }}
+
+      - name: Add swag to PATH
+        run: echo "$GITHUB_WORKSPACE/.swag-bin" >> $GITHUB_PATH
 
       # T1. This is the check that matters, and until now it existed only as a
       # local Makefile target. What ran here was a grep for four structural
@@ -862,6 +1078,10 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   # GATE 7: Docker image boots and serves the app
   # Audit ref: testing-audit.md §7.3 — would have caught v0.1.1 directly.
+  #
+  # No Go and no Node here either. The bundle assertion below is exactly why
+  # the shared artifact must be built against the real frontend rather than the
+  # stub: this job is what proves the shipped binary has one embedded.
   # ─────────────────────────────────────────────────────────────
   docker-e2e:
     name: Docker image boot
@@ -872,45 +1092,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Download server binary
+        uses: actions/download-artifact@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          name: server-binary
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
-
-      # Build real frontend first (needed for go:embed and the frontend bundle check)
-      - name: Build frontend assets
-        run: cd web && npm ci && npm run build
-
-      # Build binary with embedded real frontend — gives DinD time to start
-      - name: Build binary (gives DinD extra startup time)
-        run: |
-          go build ./... && go vet ./...
-          CGO_ENABLED=0 GOOS=linux go build \
-            -trimpath \
-            -ldflags="-s -w" \
-            -o azimuthal \
-            ./cmd/server
+      - name: Restore the executable bit
+        run: chmod +x ${{ env.BINARY_NAME }}
 
       - name: Wait for Docker daemon
         run: |
+          if docker info >/dev/null 2>&1; then
+            echo "Docker daemon already up — no settle needed."
+            exit 0
+          fi
+          echo "Docker daemon not ready — waiting..."
           for i in $(seq 1 90); do
-            docker info >/dev/null 2>&1 && echo "Docker daemon ready after $((i*2))s" && break
+            docker info >/dev/null 2>&1 && echo "Docker ready after $((i*2))s" && break
             sleep 2
           done
           docker info
-          echo "Sleeping 30s for DinD bridge networking to settle..."
+          echo "Daemon needed waiting — sleeping 30s for bridge networking to settle..."
           sleep 30
 
       # Dockerfile.ci only needs distroless (GCR) + postgres (Docker Hub).
-      # golang/node no longer needed — binary pre-built above.
+      # golang/node no longer needed — the binary comes from the build job.
       - name: Pull container images (with retry)
         run: |
           for img in postgres:16-alpine gcr.io/distroless/static:nonroot; do
