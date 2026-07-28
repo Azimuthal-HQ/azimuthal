@@ -3,6 +3,7 @@ package views
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -66,7 +67,7 @@ type queueResponse struct {
 func toQueueResponse(v views.View, canManage bool) (queueResponse, error) {
 	raw, err := v.Query.Encode()
 	if err != nil {
-		return queueResponse{}, err
+		return queueResponse{}, fmt.Errorf("encoding the queue's filter document: %w", err)
 	}
 	q := queueResponse{
 		ID: v.ID, Name: v.Name, Description: v.Description, Query: raw,

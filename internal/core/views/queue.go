@@ -130,12 +130,20 @@ func NewQueueService(store QueueStore) *QueueService { return &QueueService{stor
 
 // List returns a space's queues in display order.
 func (s *QueueService) List(ctx context.Context, orgID, spaceID uuid.UUID) ([]View, error) {
-	return s.store.ListQueues(ctx, orgID, spaceID)
+	rows, err := s.store.ListQueues(ctx, orgID, spaceID)
+	if err != nil {
+		return nil, fmt.Errorf("listing queues: %w", err)
+	}
+	return rows, nil
 }
 
 // Get returns one queue.
 func (s *QueueService) Get(ctx context.Context, orgID, spaceID, id uuid.UUID) (View, error) {
-	return s.store.GetQueue(ctx, orgID, spaceID, id)
+	v, err := s.store.GetQueue(ctx, orgID, spaceID, id)
+	if err != nil {
+		return View{}, fmt.Errorf("loading the queue: %w", err)
+	}
+	return v, nil
 }
 
 // scopeToSpace forces a queue's filter to its own space.
@@ -166,12 +174,16 @@ func (s *QueueService) Create(ctx context.Context, orgID, spaceID, ownerID uuid.
 	}
 	pos, err := s.store.NextQueuePosition(ctx, spaceID)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("finding the next queue position: %w", err)
 	}
-	return s.store.CreateQueue(ctx, View{
+	created, err := s.store.CreateQueue(ctx, View{
 		OrgID: orgID, OwnerID: ownerID, SpaceID: &spaceID, Position: &pos,
 		Name: d.Name, Description: d.Description, Query: q, Visibility: VisibilitySpace,
 	})
+	if err != nil {
+		return View{}, fmt.Errorf("creating the queue: %w", err)
+	}
+	return created, nil
 }
 
 // Update changes a queue's name, description and query. Position is moved by
@@ -180,7 +192,7 @@ func (s *QueueService) Create(ctx context.Context, orgID, spaceID, ownerID uuid.
 func (s *QueueService) Update(ctx context.Context, orgID, spaceID, id uuid.UUID, d Draft) (View, error) {
 	existing, err := s.store.GetQueue(ctx, orgID, spaceID, id)
 	if err != nil {
-		return View{}, err
+		return View{}, fmt.Errorf("loading the queue to update: %w", err)
 	}
 	d.Name = strings.TrimSpace(d.Name)
 	if d.Name == "" {
@@ -193,14 +205,18 @@ func (s *QueueService) Update(ctx context.Context, orgID, spaceID, id uuid.UUID,
 	existing.Name = d.Name
 	existing.Description = d.Description
 	existing.Query = q
-	return s.store.UpdateQueue(ctx, existing)
+	updated, err := s.store.UpdateQueue(ctx, existing)
+	if err != nil {
+		return View{}, fmt.Errorf("updating the queue: %w", err)
+	}
+	return updated, nil
 }
 
 // Delete soft-deletes a queue.
 func (s *QueueService) Delete(ctx context.Context, orgID, spaceID, id uuid.UUID) error {
 	n, err := s.store.DeleteQueue(ctx, orgID, spaceID, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("deleting the queue: %w", err)
 	}
 	if n == 0 {
 		return ErrQueueNotInSpace
@@ -217,7 +233,7 @@ func (s *QueueService) Delete(ctx context.Context, orgID, spaceID, id uuid.UUID)
 func (s *QueueService) Reorder(ctx context.Context, orgID, spaceID uuid.UUID, ordered []uuid.UUID) error {
 	current, err := s.store.ListQueues(ctx, orgID, spaceID)
 	if err != nil {
-		return err
+		return fmt.Errorf("loading the current order: %w", err)
 	}
 	if len(ordered) != len(current) {
 		return ErrReorderMismatch
@@ -236,7 +252,10 @@ func (s *QueueService) Reorder(ctx context.Context, orgID, spaceID uuid.UUID, or
 		}
 		seen[id] = struct{}{}
 	}
-	return s.store.ReorderQueues(ctx, orgID, spaceID, ordered)
+	if err := s.store.ReorderQueues(ctx, orgID, spaceID, ordered); err != nil {
+		return fmt.Errorf("reordering queues: %w", err)
+	}
+	return nil
 }
 
 // CreateDefaults creates whichever of the four default queues the space does
@@ -255,7 +274,7 @@ func (s *QueueService) Reorder(ctx context.Context, orgID, spaceID uuid.UUID, or
 func (s *QueueService) CreateDefaults(ctx context.Context, orgID, spaceID, ownerID uuid.UUID) (int, error) {
 	statuses, err := s.store.SpaceWorkflowStatuses(ctx, spaceID)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("reading the space workflow: %w", err)
 	}
 	var open, done []string
 	for _, st := range statuses {
@@ -271,7 +290,7 @@ func (s *QueueService) CreateDefaults(ctx context.Context, orgID, spaceID, owner
 	// starting point than "none".
 	pos, err := s.store.NextQueuePosition(ctx, spaceID)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("finding the next queue position: %w", err)
 	}
 	created := 0
 	for _, d := range DefaultQueues {
@@ -285,7 +304,7 @@ func (s *QueueService) CreateDefaults(ctx context.Context, orgID, spaceID, owner
 			Name: d.Name, Description: d.Description, Query: q, Visibility: VisibilitySpace,
 		})
 		if err != nil {
-			return created, err
+			return created, fmt.Errorf("seeding queue %q: %w", d.Name, err)
 		}
 		if inserted {
 			created++

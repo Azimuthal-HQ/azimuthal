@@ -96,7 +96,7 @@ func queueInsertParams(v views.View, raw []byte) generated.CreateQueueParams {
 func (a *SavedViewAdapter) CreateQueue(ctx context.Context, v views.View) (views.View, error) {
 	raw, err := v.Query.Encode()
 	if err != nil {
-		return views.View{}, err
+		return views.View{}, fmt.Errorf("encoding the queue's filter document: %w", err)
 	}
 	row, err := a.q.CreateQueue(ctx, queueInsertParams(v, raw))
 	if err != nil {
@@ -114,7 +114,7 @@ func (a *SavedViewAdapter) CreateQueue(ctx context.Context, v views.View) (views
 func (a *SavedViewAdapter) CreateQueueIfAbsent(ctx context.Context, v views.View) (bool, error) {
 	raw, err := v.Query.Encode()
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("encoding the queue's filter document: %w", err)
 	}
 	p := queueInsertParams(v, raw)
 	n, err := a.q.CreateQueueIfAbsent(ctx, generated.CreateQueueIfAbsentParams(p))
@@ -129,7 +129,7 @@ func (a *SavedViewAdapter) CreateQueueIfAbsent(ctx context.Context, v views.View
 func (a *SavedViewAdapter) UpdateQueue(ctx context.Context, v views.View) (views.View, error) {
 	raw, err := v.Query.Encode()
 	if err != nil {
-		return views.View{}, err
+		return views.View{}, fmt.Errorf("encoding the queue's filter document: %w", err)
 	}
 	row, err := a.q.UpdateQueue(ctx, generated.UpdateQueueParams{
 		ID: v.ID, OrgID: v.OrgID, SpaceID: pgUUID(v.SpaceID),
@@ -181,7 +181,7 @@ func (a *SavedViewAdapter) ReorderQueues(ctx context.Context, orgID, spaceID uui
 	qtx := a.q.WithTx(tx)
 	for i, id := range ordered {
 		n, err := qtx.SetQueuePosition(ctx, generated.SetQueuePositionParams{
-			ID: id, OrgID: orgID, SpaceID: pgUUID(&spaceID), Position: int32Ptr(int32(i)), //nolint:gosec // i is bounded by the caller's own queue list
+			ID: id, OrgID: orgID, SpaceID: pgUUID(&spaceID), Position: int32Ptr(int32(i)),
 		})
 		if err != nil {
 			return fmt.Errorf("queue adapter reorder: %w", err)
