@@ -287,6 +287,23 @@ var routeAccounting = map[string]string{
 	"DELETE /api/v1/orgs/{orgID}/views/{viewID}":      "org-member: delete a view; owner-only in-handler (org admin bypasses), 404 when not visible",
 	"GET /api/v1/orgs/{orgID}/views/{viewID}/results": "org-member: run a view; +ResolveShares, results resolve against the CALLER's readable spaces unioned with their shares",
 
+	// Beacon queues (P4 PR-B, ADR-0009). A queue is a saved view bound to a
+	// space, so reading one needs only space-readability — which IS a queue's
+	// audience (visibility 'space'). Every mutation is refined above the write
+	// floor by an in-handler CapManageQueue check, which is where that
+	// capability finally lands; ADR-0007 puts it at the agent role, so the
+	// persona a gate test must refuse is a CONTRIBUTOR, not a viewer.
+	//
+	// The results route additionally carries ResolveShares, for the same
+	// reason the saved-view results route does.
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/queues/":                  "space-read: a space's queues in display order",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/queues/":                 "space-write: create a queue; manage_queue in-handler",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/queues/defaults":         "space-write: create the missing default queues, idempotent; manage_queue in-handler",
+	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/queues/order":             "space-write: reorder in one transaction; manage_queue in-handler",
+	"PATCH /api/v1/orgs/{orgID}/spaces/{spaceID}/queues/{queueID}":       "space-write: edit a queue; manage_queue in-handler",
+	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/queues/{queueID}":      "space-write: delete a queue; manage_queue in-handler",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/queues/{queueID}/results": "space-read: run a queue; +ResolveShares, resolved per viewer so me-token queues mean each agent",
+
 	// Attachments — space-scoped (P3). Uploads/deletes gated by the write
 	// floor; reads by space-readability. Every route re-checks the
 	// attachment's entity lives in the URL space.

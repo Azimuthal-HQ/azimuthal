@@ -238,8 +238,11 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		AvatarHandler:       avatarHandler,
 		// Saved views (P4). One adapter satisfies both seams — the view rows
 		// and the two cross-space result fan-outs.
-		ViewHandler: viewsapi.NewHandler(views.NewService(savedViewAdapter, savedViewAdapter)),
-		SPAHandler:  nil,
+		ViewHandler: viewsapi.NewHandler(
+			views.NewService(savedViewAdapter, savedViewAdapter),
+			views.NewQueueService(savedViewAdapter),
+		),
+		SPAHandler: nil,
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
 			if err != nil {

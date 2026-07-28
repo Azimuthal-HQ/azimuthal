@@ -305,7 +305,10 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	// Saved views (P4, ADR-0009). One adapter satisfies both seams: the view
 	// rows and the two cross-space result fan-outs.
 	savedViewAdapter := adapters.NewSavedViewAdapter(pool)
-	viewHandler := viewsapi.NewHandler(views.NewService(savedViewAdapter, savedViewAdapter))
+	viewHandler := viewsapi.NewHandler(
+		views.NewService(savedViewAdapter, savedViewAdapter),
+		views.NewQueueService(savedViewAdapter),
+	)
 
 	// P2.5 administration: people lifecycle, invites, bulk grants, audit
 	// viewer. Invite delivery follows config — link mode returns the URL to

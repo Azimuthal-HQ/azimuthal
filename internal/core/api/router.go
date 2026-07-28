@@ -412,6 +412,24 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			Get("/spaces/{spaceID}/effective-access", cfg.GrantHandler.EffectiveAccess)
 	}
 
+	// Beacon queues (P4 PR-B, ADR-0009). Space-scoped: reading a queue needs
+	// only space-readability, which is exactly the audience a queue has
+	// (visibility 'space'). Every MUTATION is gated in-handler on
+	// CapManageQueue, so the write floor here is the ordinary one and the
+	// capability does the refining above it.
+	if cfg.ViewHandler != nil {
+		shareResolver := func(next http.Handler) http.Handler { return next }
+		if cfg.AccessResolver != nil {
+			shareResolver = ResolveShares(cfg.AccessResolver)
+		}
+		r.Route("/spaces/{spaceID}/queues", func(r chi.Router) {
+			r.Use(spaceGuard)
+			r.Use(readableGuard)
+			r.Use(writeFloor)
+			r.Mount("/", cfg.ViewHandler.QueueRoutes(shareResolver))
+		})
+	}
+
 	// Tickets
 	r.Route("/spaces/{spaceID}/tickets", func(r chi.Router) {
 		r.Use(spaceGuard)

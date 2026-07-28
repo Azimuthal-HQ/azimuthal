@@ -42,10 +42,16 @@ import (
 // Handler serves the saved-view routes.
 type Handler struct {
 	svc *views.Service
+	// queues is the P4 PR-B queue lifecycle. A queue is a saved view with a
+	// space binding, so it shares this handler and, crucially, the same
+	// resolution path — QueueResults calls svc.Preview.
+	queues *views.QueueService
 }
 
 // NewHandler creates a views Handler.
-func NewHandler(svc *views.Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *views.Service, queues *views.QueueService) *Handler {
+	return &Handler{svc: svc, queues: queues}
+}
 
 // Routes returns the saved-view router, mounted at /orgs/{orgID}/views.
 //
@@ -506,6 +512,10 @@ func (h *Handler) draft(w http.ResponseWriter, r *http.Request) (views.Draft, bo
 // human-readable sentence written server-side; anything else collapses to the
 // caller's fallback so no internal string reaches a user.
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error, fallback string) {
+	if status, code, msg, ok := queueErrorStatus(err); ok {
+		respond.Error(w, r, status, code, msg)
+		return
+	}
 	switch {
 	case errors.Is(err, views.ErrNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "saved view not found")
