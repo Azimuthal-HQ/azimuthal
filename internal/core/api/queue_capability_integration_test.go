@@ -274,3 +274,63 @@ func TestQueueResults_MeTokenResolvesPerAgent(t *testing.T) {
 	require.True(t, b[secondTicket])
 	require.False(t, b[firstTicket])
 }
+
+// TestQueue_RefusesAVectorModuleQueue closes the hole the space binding itself
+// creates.
+//
+// A queue's filter has its space_ids overwritten with the queue's own space, so
+// a Vector-module queue bound to a Beacon space can never match anything --
+// project_items live in Vector spaces. It would sit in the sidebar returning
+// nothing, forever, for a reason its author cannot see. Same defect class as
+// naming `kinds` alongside Beacon, same treatment: refused at write time.
+//
+// Fails-before: drop the HasModule(ModuleVector) check in bindToSpace and both
+// subtests get a 2xx for a queue that can never return a row.
+func TestQueue_RefusesAVectorModuleQueue(t *testing.T) {
+	ts := newTestServer(t)
+	spaceID := beaconSpaceForQueues(t, ts)
+	agent := personaOn(t, ts, spaceID, "agent")
+	path := queuesPath(ts.OrgID, spaceID)
+
+	vectorDoc := `{"v":1,"filter":{"modules":["vector"]},"sort":{"field":"updated_at","dir":"desc"}}`
+	bothDoc := `{"v":1,"filter":{"modules":["beacon","vector"]},"sort":{"field":"updated_at","dir":"desc"}}`
+
+	t.Run("vector only", func(t *testing.T) {
+		res := ts.postAs(t, agent, path, map[string]any{
+			"name": "Vector work", "query": json.RawMessage(vectorDoc),
+		})
+		require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode,
+			"a Vector queue in a Beacon space can never match: %s", res.Body)
+	})
+
+	t.Run("both modules", func(t *testing.T) {
+		res := ts.postAs(t, agent, path, map[string]any{
+			"name": "Everything", "query": json.RawMessage(bothDoc),
+		})
+		require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode,
+			"the Vector half could never match, so the whole queue is refused: %s", res.Body)
+	})
+
+	t.Run("beacon is accepted and pinned to the space", func(t *testing.T) {
+		// The binding is an authority, not a suggestion: a filter naming some
+		// OTHER space is rewritten to this one rather than honoured.
+		other := uuid.New().String()
+		doc := `{"v":1,"filter":{"modules":["beacon"],"space_ids":["` + other + `"]},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`
+		res := ts.postAs(t, agent, path, map[string]any{
+			"name": "Pinned", "query": json.RawMessage(doc),
+		})
+		require.Equal(t, http.StatusCreated, res.StatusCode, "%s", res.Body)
+
+		var out struct {
+			Query struct {
+				Filter struct {
+					SpaceIDs []string `json:"space_ids"`
+				} `json:"filter"`
+			} `json:"query"`
+		}
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		require.Equal(t, []string{spaceID.String()}, out.Query.Filter.SpaceIDs,
+			"the queue must be pinned to its own space, not to whatever the caller asked for")
+	})
+}

@@ -146,7 +146,31 @@ func (s *QueueService) Get(ctx context.Context, orgID, spaceID, id uuid.UUID) (V
 	return v, nil
 }
 
-// scopeToSpace forces a queue's filter to its own space.
+// ErrQueueModule reports a queue asking for a module its space cannot serve.
+var ErrQueueModule = errors.New("a Beacon queue reads Beacon tickets; it cannot query Vector items")
+
+// bindToSpace forces a queue's filter to its own space and refuses a module
+// set the binding makes meaningless.
+//
+// The space override is not a validation, it is an authority: a queue whose
+// results could leave the container the sidebar says it belongs to is a saved
+// view wearing a queue's clothes, and the space-read guard on the route would
+// no longer bound what it returns. There is no legitimate request this rewrites
+// into something the caller did not want.
+//
+// The MODULE check is the other half, and it exists because the override
+// creates the hole. Once space_ids is pinned to a Beacon space, a filter naming
+// the Vector module can never match anything -- project_items live in Vector
+// spaces -- so the queue would sit in the sidebar returning nothing, forever,
+// for a reason its author cannot see. That is the same defect class as naming
+// `kinds` alongside Beacon, and it gets the same treatment: refused at write
+// time rather than silently empty.
+//
+// It is written as "Beacon only" rather than "whatever this space's type is"
+// because queues are a Beacon surface in this phase -- the route is reached
+// from BeaconSidebar and the default set is ticket-shaped. When queues come to
+// Vector this becomes a comparison against the bound space's own type, which is
+// one query and a wider test, not a redesign.
 //
 // A queue that could name other spaces would be a saved view wearing a queue's
 // clothes: its results would leave the container the sidebar says it belongs
@@ -154,9 +178,13 @@ func (s *QueueService) Get(ctx context.Context, orgID, spaceID, id uuid.UUID) (V
 // returns. The binding is the authority here, so it overrides whatever the
 // caller sent rather than validating it — there is no legitimate request that
 // this rewrites into something the caller did not want.
-func scopeToSpace(q Query, spaceID uuid.UUID) Query {
+func bindToSpace(q Query, spaceID uuid.UUID) (Query, error) {
+	if q.Filter.HasModule(ModuleVector) {
+		return Query{}, ErrQueueModule
+	}
+	q.Filter.Modules = []Module{ModuleBeacon}
 	q.Filter.SpaceIDs = []uuid.UUID{spaceID}
-	return q
+	return q, nil
 }
 
 // Create adds a queue at the end of the space's order.
@@ -168,7 +196,10 @@ func (s *QueueService) Create(ctx context.Context, orgID, spaceID, ownerID uuid.
 	if len([]rune(d.Name)) > MaxNameLen {
 		return View{}, fmt.Errorf("a queue name may be at most %d characters", MaxNameLen)
 	}
-	q := scopeToSpace(d.Query, spaceID)
+	q, err := bindToSpace(d.Query, spaceID)
+	if err != nil {
+		return View{}, err
+	}
 	if err := q.Validate(); err != nil {
 		return View{}, err
 	}
@@ -198,7 +229,10 @@ func (s *QueueService) Update(ctx context.Context, orgID, spaceID, id uuid.UUID,
 	if d.Name == "" {
 		return View{}, ErrNameRequired
 	}
-	q := scopeToSpace(d.Query, spaceID)
+	q, err := bindToSpace(d.Query, spaceID)
+	if err != nil {
+		return View{}, err
+	}
 	if err := q.Validate(); err != nil {
 		return View{}, err
 	}

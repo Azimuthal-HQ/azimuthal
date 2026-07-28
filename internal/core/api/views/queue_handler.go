@@ -376,6 +376,8 @@ func queueErrorStatus(err error) (int, respond.ErrorCode, string, bool) {
 		return http.StatusConflict, respond.CodeConflict, views.ErrQueueNameTaken.Error(), true
 	case errors.Is(err, views.ErrReorderMismatch):
 		return http.StatusUnprocessableEntity, respond.CodeValidation, views.ErrReorderMismatch.Error(), true
+	case errors.Is(err, views.ErrQueueModule):
+		return http.StatusUnprocessableEntity, respond.CodeValidation, views.ErrQueueModule.Error(), true
 	}
 	return 0, "", "", false
 }

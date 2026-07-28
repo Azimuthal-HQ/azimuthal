@@ -3,6 +3,7 @@ import {
   Clock,
   Columns3,
   Compass,
+  ListFilter,
   ListTodo,
   Map,
   PenLine,
@@ -22,6 +23,7 @@ export type PlaceholderFeature =
   | 'sprints'
   | 'roadmap'
   | 'labels'
+  | 'queues'
   | 'settings'
   | 'search'
   | 'recent'
@@ -43,6 +45,7 @@ const FEATURES: Record<PlaceholderFeature, FeatureCopy> = {
   sprints: { icon: Zap, title: 'Sprints', description: null, nativeModule: 'vector' },
   roadmap: { icon: Map, title: 'Roadmap', description: null, nativeModule: 'vector' },
   labels: { icon: Tags, title: 'Labels', description: null, nativeModule: 'vector' },
+  queues: { icon: ListFilter, title: 'Queues', description: null, nativeModule: 'beacon' },
   settings: {
     icon: Settings,
     title: 'Space settings',

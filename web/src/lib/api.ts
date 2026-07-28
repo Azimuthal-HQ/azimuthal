@@ -2166,6 +2166,19 @@ export const queryKeys = {
   view: (orgId: string, viewId: string) => ['views', orgId, viewId] as const,
   viewResults: (orgId: string, viewId: string, cursor?: string, limit?: number) =>
     ['views', orgId, viewId, 'results', cursor ?? '', limit ?? 0] as const,
+  // P4 Beacon queues. Space-scoped rather than org-scoped: a queue belongs to
+  // one space and its ORDER is a property of that space, so the list and every
+  // queue's result pages nest under ['queues', orgId, spaceId] and one prefix
+  // invalidation after a create, edit, reorder or delete catches all of them.
+  // A reorder changes no query, but it does change the list this key holds.
+  queues: (orgId: string, spaceId: string) => ['queues', orgId, spaceId] as const,
+  queueResults: (
+    orgId: string,
+    spaceId: string,
+    queueId: string,
+    cursor?: string,
+    limit?: number,
+  ) => ['queues', orgId, spaceId, queueId, 'results', cursor ?? '', limit ?? 0] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -4039,6 +4052,253 @@ export interface PreviewViewVars {
 export function usePreviewResults(orgId: string) {
   return useMutation<ViewResultPage, APIError, PreviewViewVars>({
     mutationFn: ({ query, cursor, limit }) => previewViewResults(orgId, query, cursor, limit),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Beacon queues (P4). A queue IS a saved view — the same QueryDoc, the same
+// resolution path, the same ResultPage — bound to one Beacon space and ordered
+// among that space's queues. It is not a second kind of object, and nothing
+// here re-implements the view family's shapes; `toResultPage` and
+// `viewPageQuery` above are shared deliberately.
+//
+// Three things about this family the UI must get right:
+//
+//  1. `can_manage` IS THE ANSWER, and it arrives on the wire. The server gates
+//     every mutation on `manage_queue` (ADR-0007 puts it at the agent role), so
+//     a contributor lists queues perfectly well and gets `can_manage: false`.
+//     Render the create, edit, reorder and delete controls from that flag; do
+//     not reconstruct the capability rule client-side from a role.
+//  2. REORDER SENDS THE WHOLE ORDER. The body must be a permutation of the
+//     space's live queues — every one exactly once, nothing else. A partial or
+//     duplicated list is refused with 422 and changes nothing, which is the
+//     point: a half-order would silently interleave the queues nobody named.
+//  3. Results resolve PER VIEWER. An "Assigned to me" queue shows each agent
+//     their own work. Two agents seeing different rows is the feature; it is
+//     never stale data and never a sync problem.
+// ---------------------------------------------------------------------------
+
+/** One queue: a space-bound, ordered saved view. */
+export interface Queue {
+  id: string;
+  space_id: string;
+  /** Its slot in the space's order. Changed by reorder alone, never by update. */
+  position: number;
+  name: string;
+  description: string;
+  /** The stored filter document — the same one the view builder edits. */
+  query: QueryDoc;
+  owner_id: string;
+  owner_name?: string;
+  /**
+   * Pre-computed server-side from `manage_queue` on the space. The client never
+   * derives this from a role: see note 1 above.
+   */
+  can_manage: boolean;
+}
+
+/**
+ * The list response. `can_manage` is repeated at the top level so an EMPTY
+ * space still answers "may this reader add queues?" — a per-row flag cannot,
+ * because there are no rows.
+ */
+export interface QueueList {
+  queues: Queue[];
+  can_manage: boolean;
+}
+
+/**
+ * The create and update body. Deliberately narrower than `ViewRequest`: a
+ * queue's visibility is always the space it belongs to, and its position is
+ * moved by the reorder endpoint alone.
+ */
+export interface QueueRequest {
+  name: string;
+  description: string;
+  query: QueryDoc;
+}
+
+function queueBase(orgId: string, spaceId: string): string {
+  return `/orgs/${orgId}/spaces/${spaceId}/queues`;
+}
+
+/**
+ * Go serialises an empty slice as `null`, so both fields are coalesced rather
+ * than trusted — a component mapping over null takes the whole page down, which
+ * is the failure class web/e2e/null-collections.spec.ts exists for. The
+ * `can_manage` fallback is FALSE: a missing capability answer must hide the
+ * management controls, never offer them.
+ */
+interface RawQueueList {
+  queues: Queue[] | null;
+  can_manage: boolean | null;
+}
+
+async function fetchQueues(orgId: string, spaceId: string): Promise<QueueList> {
+  const data = await apiFetch<RawQueueList | null>(queueBase(orgId, spaceId));
+  return { queues: data?.queues ?? [], can_manage: data?.can_manage ?? false };
+}
+
+async function createQueue(orgId: string, spaceId: string, req: QueueRequest): Promise<Queue> {
+  return apiFetch<Queue>(queueBase(orgId, spaceId), {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function createDefaultQueues(orgId: string, spaceId: string): Promise<number> {
+  const data = await apiFetch<{ created: number | null }>(`${queueBase(orgId, spaceId)}/defaults`, {
+    method: 'POST',
+  });
+  return data?.created ?? 0;
+}
+
+/**
+ * Sets the whole order at once. `queueIds` must name every live queue in the
+ * space exactly once — see note 2 at the top of this section.
+ */
+async function reorderQueues(orgId: string, spaceId: string, queueIds: string[]): Promise<void> {
+  return apiFetch<void>(`${queueBase(orgId, spaceId)}/order`, {
+    method: 'PUT',
+    body: JSON.stringify({ queue_ids: queueIds }),
+  });
+}
+
+async function updateQueue(
+  orgId: string,
+  spaceId: string,
+  queueId: string,
+  req: QueueRequest,
+): Promise<Queue> {
+  return apiFetch<Queue>(`${queueBase(orgId, spaceId)}/${queueId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+async function deleteQueue(orgId: string, spaceId: string, queueId: string): Promise<void> {
+  return apiFetch<void>(`${queueBase(orgId, spaceId)}/${queueId}`, { method: 'DELETE' });
+}
+
+async function fetchQueueResults(
+  orgId: string,
+  spaceId: string,
+  queueId: string,
+  cursor?: string,
+  limit?: number,
+): Promise<ViewResultPage> {
+  const raw = await apiFetch<RawResultPage>(
+    `${queueBase(orgId, spaceId)}/${queueId}/results${viewPageQuery(cursor, limit)}`,
+  );
+  return toResultPage(raw);
+}
+
+/**
+ * A space's queues in display order, with the reader's management answer.
+ *
+ * Reading needs only space-readability, so this succeeds for a viewer as
+ * readily as for an agent — the difference lands in `can_manage`.
+ */
+export function useQueues(orgId: string, spaceId: string, opts?: QueryOpts<QueueList>) {
+  return useQuery<QueueList, APIError>({
+    queryKey: queryKeys.queues(orgId, spaceId),
+    queryFn: () => fetchQueues(orgId, spaceId),
+    enabled: !!orgId && !!spaceId,
+    ...opts,
+  });
+}
+
+/**
+ * One page of a queue's results, resolved for the calling viewer.
+ *
+ * Paging is keyset, exactly as `useViewResults` is: the caller owns the cursor
+ * and the stack of cursors that led to it. Pass
+ * `{ placeholderData: (prev) => prev }` to keep the visible page on screen
+ * while the next one loads instead of flashing an empty state.
+ */
+export function useQueueResults(
+  orgId: string,
+  spaceId: string,
+  queueId: string,
+  cursor?: string,
+  limit?: number,
+  opts?: QueryOpts<ViewResultPage>,
+) {
+  return useQuery<ViewResultPage, APIError>({
+    queryKey: queryKeys.queueResults(orgId, spaceId, queueId, cursor, limit),
+    queryFn: () => fetchQueueResults(orgId, spaceId, queueId, cursor, limit),
+    enabled: !!orgId && !!spaceId && !!queueId,
+    ...opts,
+  });
+}
+
+export function useCreateQueue(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Queue, APIError, QueueRequest>({
+    mutationFn: (req) => createQueue(orgId, spaceId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.queues(orgId, spaceId) });
+    },
+  });
+}
+
+/**
+ * The one-click starting set. Idempotent server-side (ON CONFLICT DO NOTHING
+ * per name), and it reports how many it actually created — which is how the UI
+ * can say "added 2" rather than claiming four every time.
+ */
+export function useCreateDefaultQueues(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<number, APIError, void>({
+    mutationFn: () => createDefaultQueues(orgId, spaceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.queues(orgId, spaceId) });
+    },
+  });
+}
+
+/**
+ * Writes the space's whole queue order in one transaction.
+ *
+ * The variable is the COMPLETE ordered list of queue ids. Callers build it from
+ * the full list they are showing and move one entry within it; sending only the
+ * pair that swapped is a 422 that changes nothing.
+ */
+export function useReorderQueues(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string[]>({
+    mutationFn: (queueIds) => reorderQueues(orgId, spaceId, queueIds),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.queues(orgId, spaceId) });
+    },
+  });
+}
+
+/** PATCH replaces the whole mutable surface, so the body is a full QueueRequest. */
+export interface UpdateQueueVars {
+  queueId: string;
+  req: QueueRequest;
+}
+
+export function useUpdateQueue(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Queue, APIError, UpdateQueueVars>({
+    mutationFn: ({ queueId, req }) => updateQueue(orgId, spaceId, queueId, req),
+    onSuccess: () => {
+      // The prefix key covers the list and every cached result page. Dropping
+      // the pages is the point: the edited query selects other rows.
+      queryClient.invalidateQueries({ queryKey: queryKeys.queues(orgId, spaceId) });
+    },
+  });
+}
+
+export function useDeleteQueue(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (queueId) => deleteQueue(orgId, spaceId, queueId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.queues(orgId, spaceId) });
+    },
   });
 }
 
