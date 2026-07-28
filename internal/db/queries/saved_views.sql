@@ -128,9 +128,18 @@ SELECT tk.id, tk.number, tk.title, tk.space_id, tk.status, tk.priority,
        tk.labels,
        s.key  AS space_key,
        s.name AS space_name,
+       au.display_name AS assignee_name,
        k.sort_key
 FROM tickets tk
 JOIN spaces s ON s.id = tk.space_id AND s.deleted_at IS NULL
+-- One LEFT JOIN, not a per-row lookup. Resolving the assignee's name by
+-- fetching each row's user separately is the shape spec §2.5 case 23 forbids
+-- outright, and the case-23 tracer would catch it; joining it here keeps the
+-- per-request query count constant regardless of how many rows come back.
+-- Deliberately unfiltered on the user's deleted_at: assignee_id is already on
+-- the wire, so the name reveals nothing further, and a deactivated assignee's
+-- work still needs to say who holds it.
+LEFT JOIN users au ON au.id = tk.assignee_id
 CROSS JOIN LATERAL (
     SELECT CAST(saved_view_sort_key(@sort_field, tk.updated_at, tk.created_at,
                                tk.due_at, tk.resolved_at, tk.priority,
@@ -184,9 +193,12 @@ SELECT pi.id, pi.number, pi.title, pi.space_id, pi.status, pi.priority,
        pi.resolved_at, pi.labels, pi.kind, pi.sprint_id, pi.item_key,
        s.key  AS space_key,
        s.name AS space_name,
+       au.display_name AS assignee_name,
        k.sort_key
 FROM project_items pi
 JOIN spaces s ON s.id = pi.space_id AND s.deleted_at IS NULL
+-- See the note on ListViewTickets: one join, never a per-row lookup.
+LEFT JOIN users au ON au.id = pi.assignee_id
 CROSS JOIN LATERAL (
     SELECT CAST(saved_view_sort_key(@sort_field, pi.updated_at, pi.created_at,
                                pi.due_at, pi.resolved_at, pi.priority,

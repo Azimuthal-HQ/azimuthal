@@ -3815,6 +3815,12 @@ export interface ViewResult {
   status: string;
   priority: string;
   assignee_id: string | null;
+  /**
+   * Joined in the fan-out, not looked up per row — a per-row lookup is the
+   * shape spec §2.5 case 23 forbids inside a list handler. Null when
+   * unassigned, and also when the id names no user.
+   */
+  assignee_name: string | null;
   labels: string[];
   /** Vector only. */
   kind?: string;

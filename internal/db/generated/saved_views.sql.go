@@ -257,9 +257,11 @@ SELECT pi.id, pi.number, pi.title, pi.space_id, pi.status, pi.priority,
        pi.resolved_at, pi.labels, pi.kind, pi.sprint_id, pi.item_key,
        s.key  AS space_key,
        s.name AS space_name,
+       au.display_name AS assignee_name,
        k.sort_key
 FROM project_items pi
 JOIN spaces s ON s.id = pi.space_id AND s.deleted_at IS NULL
+LEFT JOIN users au ON au.id = pi.assignee_id
 CROSS JOIN LATERAL (
     SELECT CAST(saved_view_sort_key($1, pi.updated_at, pi.created_at,
                                pi.due_at, pi.resolved_at, pi.priority,
@@ -314,24 +316,25 @@ type ListViewProjectItemsParams struct {
 }
 
 type ListViewProjectItemsRow struct {
-	ID         uuid.UUID          `json:"id"`
-	Number     int32              `json:"number"`
-	Title      string             `json:"title"`
-	SpaceID    uuid.UUID          `json:"space_id"`
-	Status     string             `json:"status"`
-	Priority   string             `json:"priority"`
-	AssigneeID pgtype.UUID        `json:"assignee_id"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
-	DueAt      pgtype.Timestamptz `json:"due_at"`
-	ResolvedAt pgtype.Timestamptz `json:"resolved_at"`
-	Labels     []string           `json:"labels"`
-	Kind       string             `json:"kind"`
-	SprintID   pgtype.UUID        `json:"sprint_id"`
-	ItemKey    string             `json:"item_key"`
-	SpaceKey   string             `json:"space_key"`
-	SpaceName  string             `json:"space_name"`
-	SortKey    interface{}        `json:"sort_key"`
+	ID           uuid.UUID          `json:"id"`
+	Number       int32              `json:"number"`
+	Title        string             `json:"title"`
+	SpaceID      uuid.UUID          `json:"space_id"`
+	Status       string             `json:"status"`
+	Priority     string             `json:"priority"`
+	AssigneeID   pgtype.UUID        `json:"assignee_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	DueAt        pgtype.Timestamptz `json:"due_at"`
+	ResolvedAt   pgtype.Timestamptz `json:"resolved_at"`
+	Labels       []string           `json:"labels"`
+	Kind         string             `json:"kind"`
+	SprintID     pgtype.UUID        `json:"sprint_id"`
+	ItemKey      string             `json:"item_key"`
+	SpaceKey     string             `json:"space_key"`
+	SpaceName    string             `json:"space_name"`
+	AssigneeName *string            `json:"assignee_name"`
+	SortKey      interface{}        `json:"sort_key"`
 }
 
 // The Vector half. Structurally identical to ListViewTickets — read that
@@ -347,6 +350,7 @@ type ListViewProjectItemsRow struct {
 // column (migration 031), whereas a ticket's reference is composed from the
 // space key and number by tickets.ComposeRef. One spelling each, and neither
 // is re-derived in the API layer.
+// See the note on ListViewTickets: one join, never a per-row lookup.
 func (q *Queries) ListViewProjectItems(ctx context.Context, arg ListViewProjectItemsParams) ([]ListViewProjectItemsRow, error) {
 	rows, err := q.db.Query(ctx, listViewProjectItems,
 		arg.SortField,
@@ -392,6 +396,7 @@ func (q *Queries) ListViewProjectItems(ctx context.Context, arg ListViewProjectI
 			&i.ItemKey,
 			&i.SpaceKey,
 			&i.SpaceName,
+			&i.AssigneeName,
 			&i.SortKey,
 		); err != nil {
 			return nil, err
@@ -410,9 +415,11 @@ SELECT tk.id, tk.number, tk.title, tk.space_id, tk.status, tk.priority,
        tk.labels,
        s.key  AS space_key,
        s.name AS space_name,
+       au.display_name AS assignee_name,
        k.sort_key
 FROM tickets tk
 JOIN spaces s ON s.id = tk.space_id AND s.deleted_at IS NULL
+LEFT JOIN users au ON au.id = tk.assignee_id
 CROSS JOIN LATERAL (
     SELECT CAST(saved_view_sort_key($1, tk.updated_at, tk.created_at,
                                tk.due_at, tk.resolved_at, tk.priority,
@@ -467,21 +474,22 @@ type ListViewTicketsParams struct {
 }
 
 type ListViewTicketsRow struct {
-	ID         uuid.UUID          `json:"id"`
-	Number     int32              `json:"number"`
-	Title      string             `json:"title"`
-	SpaceID    uuid.UUID          `json:"space_id"`
-	Status     string             `json:"status"`
-	Priority   string             `json:"priority"`
-	AssigneeID pgtype.UUID        `json:"assignee_id"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
-	DueAt      pgtype.Timestamptz `json:"due_at"`
-	ResolvedAt pgtype.Timestamptz `json:"resolved_at"`
-	Labels     []string           `json:"labels"`
-	SpaceKey   string             `json:"space_key"`
-	SpaceName  string             `json:"space_name"`
-	SortKey    interface{}        `json:"sort_key"`
+	ID           uuid.UUID          `json:"id"`
+	Number       int32              `json:"number"`
+	Title        string             `json:"title"`
+	SpaceID      uuid.UUID          `json:"space_id"`
+	Status       string             `json:"status"`
+	Priority     string             `json:"priority"`
+	AssigneeID   pgtype.UUID        `json:"assignee_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	DueAt        pgtype.Timestamptz `json:"due_at"`
+	ResolvedAt   pgtype.Timestamptz `json:"resolved_at"`
+	Labels       []string           `json:"labels"`
+	SpaceKey     string             `json:"space_key"`
+	SpaceName    string             `json:"space_name"`
+	AssigneeName *string            `json:"assignee_name"`
+	SortKey      interface{}        `json:"sort_key"`
 }
 
 // The Beacon half of a saved view's results.
@@ -531,6 +539,13 @@ type ListViewTicketsRow struct {
 // than as a row constructor. The row form is equivalent and shorter, but sqlc
 // cannot parse a COLLATE inside a row constructor — it reports "edited query
 // syntax is invalid" — so the expanded form is the one that compiles.
+// One LEFT JOIN, not a per-row lookup. Resolving the assignee's name by
+// fetching each row's user separately is the shape spec §2.5 case 23 forbids
+// outright, and the case-23 tracer would catch it; joining it here keeps the
+// per-request query count constant regardless of how many rows come back.
+// Deliberately unfiltered on the user's deleted_at: assignee_id is already on
+// the wire, so the name reveals nothing further, and a deactivated assignee's
+// work still needs to say who holds it.
 func (q *Queries) ListViewTickets(ctx context.Context, arg ListViewTicketsParams) ([]ListViewTicketsRow, error) {
 	rows, err := q.db.Query(ctx, listViewTickets,
 		arg.SortField,
@@ -571,6 +586,7 @@ func (q *Queries) ListViewTickets(ctx context.Context, arg ListViewTicketsParams
 			&i.Labels,
 			&i.SpaceKey,
 			&i.SpaceName,
+			&i.AssigneeName,
 			&i.SortKey,
 		); err != nil {
 			return nil, err

@@ -288,6 +288,66 @@ func TestViewsMatrix_ResultsResolvePerViewer(t *testing.T) {
 		"a shared view shares the DEFINITION, never the results: the hidden-space ticket must not cross")
 }
 
+// TestViewsMatrix_ResultsCarryTheAssigneeName pins the join added for the
+// results UI. The name has to come from the fan-out, because resolving it per
+// row is exactly the shape spec §2.5 case 23 forbids inside a list handler —
+// and the alternative the UI had before this was rendering a raw uuid.
+//
+// Fails-before: drop `LEFT JOIN users au` (and the selected column) from
+// ListViewTickets and assignee_name comes back null while assignee_id does not.
+func TestViewsMatrix_ResultsCarryTheAssigneeName(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	testutil.SetSpaceVisibility(t, ts.DB.Pool, space.ID, "org")
+
+	assignee := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	mk := func(n int32, title string, who *uuid.UUID) uuid.UUID {
+		id := uuid.New()
+		_, err := ts.DB.Pool.Exec(ctx,
+			`INSERT INTO tickets (id, space_id, number, title, reporter_id, status, priority, assignee_id)
+			 VALUES ($1,$2,$3,$4,$5,'open','high',$6)`, id, space.ID, n, title, ts.UserID, who)
+		require.NoError(t, err)
+		return id
+	}
+	assigned := mk(1, "has an owner", &assignee.ID)
+	unassigned := mk(2, "has none", nil)
+
+	id := createViewAs(t, ts, ts.Token, ts.OrgID, "Everything", "org", nil)
+	res := ts.getAs(t, ts.Token, viewsPath(ts.OrgID)+"/"+id.String()+"/results")
+	require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
+
+	var out struct {
+		Results []struct {
+			ID           uuid.UUID  `json:"id"`
+			AssigneeID   *uuid.UUID `json:"assignee_id"`
+			AssigneeName *string    `json:"assignee_name"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body, &out))
+
+	byID := map[uuid.UUID]struct {
+		id   *uuid.UUID
+		name *string
+	}{}
+	for _, r := range out.Results {
+		byID[r.ID] = struct {
+			id   *uuid.UUID
+			name *string
+		}{r.AssigneeID, r.AssigneeName}
+	}
+
+	got := byID[assigned]
+	require.NotNil(t, got.id)
+	require.NotNil(t, got.name, "an assigned row must carry the assignee's name, not just their id")
+	require.Equal(t, assignee.DisplayName, *got.name)
+
+	free := byID[unassigned]
+	require.Nil(t, free.id)
+	require.Nil(t, free.name, "an unassigned row carries neither")
+}
+
 // TestViewsMatrix_ScopeUnavailableDegradesRatherThanErrors pins ADR-0009 case
 // C1 through the API: a view whose every named space was deleted still lists
 // and still opens, marked invalid.

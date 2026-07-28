@@ -272,7 +272,14 @@ specifics of any individual finding belong there or in a published advisory, nev
 The working agreement every phase has operated under since P0:
 
 - Work on your **own branch**, named for the work. Open your **own PR**.
-- **Never push to `main`.** **Never force-push.** **Never merge your own PR.**
+- **Never push to `main`.** **Never merge your own PR.**
+- **Never force-push `main` or a shared branch.** `--force-with-lease` **is** permitted on your
+  own unmerged feature branch to push a restack — rebasing onto `main` and then updating the
+  branch is the workflow the linear-history rule below implies, and without this the two rules
+  contradict each other. Use `--force-with-lease`, never bare `--force`: the lease aborts the
+  push if the remote moved under you, which is the case the prohibition was protecting against.
+  (Amended 2026-07-28 in P4 PR-A, on a maintainer instruction, after the previous absolute
+  wording made a requested rebase impossible to complete without breaking a stated rule.)
 - **Never create or move tags.**
 - **Never edit the roadmap.** Correcting a fact is not the same as changing a plan — if reality
   and the plan disagree about the *future*, record the disagreement and flag it for the

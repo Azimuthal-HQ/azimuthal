@@ -51,17 +51,22 @@ type Result struct {
 	// SpaceName is carried because a cross-container result list has to say
 	// which container each row came from; a key prefix alone is not enough
 	// once two spaces in different teams are in one list.
-	SpaceName  string
-	Status     string
-	Priority   string
-	AssigneeID *uuid.UUID
-	Labels     []string
-	Kind       *string
-	SprintID   *uuid.UUID
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	DueAt      *time.Time
-	ResolvedAt *time.Time
+	SpaceName string
+	Status    string
+	Priority  string
+	// AssigneeID and AssigneeName travel together. The name is joined in the
+	// fan-out rather than looked up per row — a per-row lookup is the shape
+	// spec §2.5 case 23 forbids. Nil name with a non-nil id means the join
+	// found no user, which the UI shows as the id rather than as nothing.
+	AssigneeID   *uuid.UUID
+	AssigneeName *string
+	Labels       []string
+	Kind         *string
+	SprintID     *uuid.UUID
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	DueAt        *time.Time
+	ResolvedAt   *time.Time
 
 	// SortKey is the database's collapsed ordering value for this row. It is
 	// not part of the wire format — it exists so the merge can order two

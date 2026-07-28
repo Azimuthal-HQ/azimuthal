@@ -118,13 +118,16 @@ type resultResponse struct {
 	Status     string     `json:"status"`
 	Priority   string     `json:"priority"`
 	AssigneeID *uuid.UUID `json:"assignee_id"`
-	Labels     []string   `json:"labels"`
-	Kind       *string    `json:"kind,omitempty"`
-	SprintID   *uuid.UUID `json:"sprint_id,omitempty"`
-	CreatedAt  string     `json:"created_at"`
-	UpdatedAt  string     `json:"updated_at"`
-	DueAt      *string    `json:"due_at,omitempty"`
-	ResolvedAt *string    `json:"resolved_at,omitempty"`
+	// AssigneeName is joined in the fan-out so the UI never has to look a
+	// person up per row. Null when unassigned, or when the id names no user.
+	AssigneeName *string    `json:"assignee_name"`
+	Labels       []string   `json:"labels"`
+	Kind         *string    `json:"kind,omitempty"`
+	SprintID     *uuid.UUID `json:"sprint_id,omitempty"`
+	CreatedAt    string     `json:"created_at"`
+	UpdatedAt    string     `json:"updated_at"`
+	DueAt        *string    `json:"due_at,omitempty"`
+	ResolvedAt   *string    `json:"resolved_at,omitempty"`
 }
 
 func rfc3339Ptr(t *time.Time) *string {
@@ -145,7 +148,8 @@ func toResultResponses(rows []views.Result) []resultResponse {
 		out = append(out, resultResponse{
 			Module: string(r.Module), ID: r.ID, Key: r.Key, Title: r.Title,
 			SpaceID: r.SpaceID, SpaceKey: r.SpaceKey, SpaceName: r.SpaceName,
-			Status: r.Status, Priority: r.Priority, AssigneeID: r.AssigneeID,
+			Status: r.Status, Priority: r.Priority,
+			AssigneeID: r.AssigneeID, AssigneeName: r.AssigneeName,
 			Labels: labels, Kind: r.Kind, SprintID: r.SprintID,
 			CreatedAt:  r.CreatedAt.UTC().Format(time.RFC3339),
 			UpdatedAt:  r.UpdatedAt.UTC().Format(time.RFC3339),

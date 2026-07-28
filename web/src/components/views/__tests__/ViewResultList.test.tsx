@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import { ViewResultList } from '../ViewResultList';
+import { ViewResultList, ViewResultRow } from '../ViewResultList';
 import type { ViewResult } from '../../../lib/api';
 
 // P4: one list, both modules. A result row has to say where it came from and
@@ -26,6 +26,7 @@ function result(overrides: Partial<ViewResult>): ViewResult {
     status: 'in_progress',
     priority: 'urgent',
     assignee_id: null,
+    assignee_name: null,
     labels: [],
     created_at: '2026-07-01T00:00:00Z',
     updated_at: '2026-07-02T00:00:00Z',
@@ -98,5 +99,52 @@ describe('ViewResultList', () => {
 
     expect(screen.queryByTestId('view-result-row')).toBeNull();
     expect(screen.getByText('Nothing matches this view')).toBeInTheDocument();
+  });
+});
+
+describe('the assignee cell', () => {
+  // The name is joined in the fan-out (one LEFT JOIN, never a per-row lookup —
+  // §2.5 case 23). These pin the four states the cell can truthfully show, and
+  // in particular that a name-less id is NOT reported as unassigned: the two
+  // mean different things, and conflating them under-reports assigned work.
+  it('shows the name when the join found one', () => {
+    render(
+      <MemoryRouter>
+        <ViewResultRow result={result({ assignee_id: 'u-9', assignee_name: 'Ada Lovelace' })} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
+  });
+
+  it('says Unassigned only when there is no assignee at all', () => {
+    render(
+      <MemoryRouter>
+        <ViewResultRow result={result({ assignee_id: null, assignee_name: null })} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Unassigned')).toBeInTheDocument();
+  });
+
+  it('prefers You over the name for the current viewer', () => {
+    render(
+      <MemoryRouter>
+        <ViewResultRow
+          result={result({ assignee_id: 'me-1', assignee_name: 'Ada Lovelace' })}
+          meId="me-1"
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('You')).toBeInTheDocument();
+    expect(screen.queryByText('Ada Lovelace')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the short id when the id names no user, not to Unassigned', () => {
+    render(
+      <MemoryRouter>
+        <ViewResultRow result={result({ assignee_id: 'deadbeef-0000', assignee_name: null })} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('deadbeef')).toBeInTheDocument();
+    expect(screen.queryByText('Unassigned')).not.toBeInTheDocument();
   });
 });

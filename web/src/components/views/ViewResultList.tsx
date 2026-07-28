@@ -44,19 +44,33 @@ function humanStatus(status: string): string {
 /**
  * The assignee cell.
  *
- * A result row carries `assignee_id` and no name — the fan-out deliberately
- * joins nothing, so that a page of results costs the same whether it holds one
- * row or fifty. So this says the three things that can be said truthfully:
- * nobody, you, or somebody whose id is shown in the mono face. It never
- * fabricates a display name, and it never issues a per-row lookup — §2.5 case
- * 23 is about exactly that shape.
+ * The name arrives on the row: the two fan-outs LEFT JOIN it once, so a page of
+ * results costs the same whether it holds one row or fifty. Resolving it here
+ * instead — one request per row — is precisely the shape spec §2.5 case 23
+ * forbids inside a list handler, and this component must never grow one.
+ *
+ * `assignee_name` can still be null while `assignee_id` is not, when the id
+ * names no user (a hard-deleted account). That is shown as the short id rather
+ * than as "Unassigned", because the two mean different things and conflating
+ * them would quietly under-report assigned work.
  */
-function AssigneeCell({ assigneeId, meId }: { assigneeId: string | null; meId?: string }) {
+function AssigneeCell({
+  assigneeId,
+  assigneeName,
+  meId,
+}: {
+  assigneeId: string | null;
+  assigneeName: string | null;
+  meId?: string;
+}) {
   if (!assigneeId) {
     return <span className="text-[var(--color-text-muted)]">Unassigned</span>;
   }
   if (meId && assigneeId === meId) {
     return <span className="text-[var(--color-text)]">You</span>;
+  }
+  if (assigneeName) {
+    return <span className="text-[var(--color-text)]">{assigneeName}</span>;
   }
   return (
     <span
@@ -97,7 +111,11 @@ export function ViewResultRow({ result, meId }: { result: ViewResult; meId?: str
         {result.kind && <Badge variant="outline">{humanStatus(result.kind)}</Badge>}
         <PriorityPill priority={normalizePriority(result.priority)} />
         <Badge variant="secondary">{humanStatus(result.status)}</Badge>
-        <AssigneeCell assigneeId={result.assignee_id} meId={meId} />
+        <AssigneeCell
+          assigneeId={result.assignee_id}
+          assigneeName={result.assignee_name}
+          meId={meId}
+        />
         <span className="text-[var(--color-text-muted)]">
           {result.space_key ? `${result.space_key} · ` : ''}
           {result.space_name}
