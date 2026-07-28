@@ -348,6 +348,151 @@ func TestViewsMatrix_ResultsCarryTheAssigneeName(t *testing.T) {
 	require.Nil(t, free.name, "an unassigned row carries neither")
 }
 
+// TestViewsMatrix_PreviewRunsTheSamePathAsASavedView covers the filter
+// builder's live-results endpoint, which had NO test at all until the
+// CI-parity coverage run reported it at 0%. It is a mounted route with an
+// accounting row, so it read as covered while never having been reached —
+// the dark-harness failure mode, one route at a time.
+//
+// What it must prove is not that the endpoint responds, but that it responds
+// with the SAME rows the saved view would: if preview and results diverge, the
+// builder shows people a result set they will not get once they save.
+func TestViewsMatrix_PreviewRunsTheSamePathAsASavedView(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	testutil.SetSpaceVisibility(t, ts.DB.Pool, space.ID, "org")
+	hidden := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	testutil.SetSpaceVisibility(t, ts.DB.Pool, hidden.ID, "hidden")
+
+	mk := func(spaceID uuid.UUID, n int32, title string) uuid.UUID {
+		id := uuid.New()
+		_, err := ts.DB.Pool.Exec(ctx,
+			`INSERT INTO tickets (id, space_id, number, title, reporter_id, status, priority)
+			 VALUES ($1,$2,$3,$4,$5,'open','high')`, id, spaceID, n, title, ts.UserID)
+		require.NoError(t, err)
+		return id
+	}
+	visible := mk(space.ID, 1, "preview me")
+	secret := mk(hidden.ID, 1, "preview me too")
+
+	member := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	memberToken := ts.tokenFor(t, member.ID, member.Email)
+
+	ids := func(body []byte) map[uuid.UUID]bool {
+		var out struct {
+			Results []struct {
+				ID uuid.UUID `json:"id"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(body, &out))
+		got := map[uuid.UUID]bool{}
+		for _, r := range out.Results {
+			got[r.ID] = true
+		}
+		return got
+	}
+
+	q := json.RawMessage(`{"v":1,"filter":{"modules":["beacon"],"text":"preview me"},` +
+		`"sort":{"field":"updated_at","dir":"desc"}}`)
+
+	t.Run("preview filters per viewer exactly as results do", func(t *testing.T) {
+		res := ts.postAs(t, memberToken, viewsPath(ts.OrgID)+"/preview", map[string]any{"query": q})
+		require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
+		got := ids(res.Body)
+		require.True(t, got[visible])
+		require.False(t, got[secret],
+			"the builder must not preview rows the saved view would refuse to return")
+	})
+
+	t.Run("preview agrees with the saved view it would produce", func(t *testing.T) {
+		created := ts.postAs(t, memberToken, viewsPath(ts.OrgID), map[string]any{
+			"name": "Previewed", "query": q,
+		})
+		require.Equal(t, http.StatusCreated, created.StatusCode, "%s", created.Body)
+		var v struct {
+			ID uuid.UUID `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal(created.Body, &v))
+
+		preview := ts.postAs(t, memberToken, viewsPath(ts.OrgID)+"/preview", map[string]any{"query": q})
+		saved := ts.getAs(t, memberToken, viewsPath(ts.OrgID)+"/"+v.ID.String()+"/results")
+		require.Equal(t, http.StatusOK, saved.StatusCode, "%s", saved.Body)
+		require.Equal(t, ids(preview.Body), ids(saved.Body),
+			"preview and results must be the same path, or the builder lies about what saving will give you")
+	})
+
+	t.Run("preview refuses an invalid document", func(t *testing.T) {
+		bad := json.RawMessage(`{"v":1,"filter":{"modules":["beacon"],"kinds":["bug"]},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`)
+		res := ts.postAs(t, memberToken, viewsPath(ts.OrgID)+"/preview", map[string]any{"query": bad})
+		require.Equal(t, http.StatusUnprocessableEntity, res.StatusCode,
+			"kinds alongside beacon must be refused here too, not only on save: %s", res.Body)
+	})
+}
+
+// TestViewsMatrix_CrossModuleResultsIncludeVector closes the other gap the
+// coverage run exposed: the Vector fan-out was never reached through the API,
+// only through the adapter tests. A cross-module view is the whole point of
+// ADR-0009's "fan out per module and merge in the API layer", so it needs to
+// be exercised where the merge actually happens.
+func TestViewsMatrix_CrossModuleResultsIncludeVector(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+
+	beaconSpace := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	vectorSpace := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "vector")
+	for _, s := range []uuid.UUID{beaconSpace.ID, vectorSpace.ID} {
+		testutil.SetSpaceVisibility(t, ts.DB.Pool, s, "org")
+	}
+
+	ticket := uuid.New()
+	_, err := ts.DB.Pool.Exec(ctx,
+		`INSERT INTO tickets (id, space_id, number, title, reporter_id, status, priority)
+		 VALUES ($1,$2,1,'a ticket',$3,'open','high')`, ticket, beaconSpace.ID, ts.UserID)
+	require.NoError(t, err)
+
+	item := uuid.New()
+	_, err = ts.DB.Pool.Exec(ctx,
+		`INSERT INTO project_items (id, org_id, space_id, number, kind, title, reporter_id, item_key, status, priority)
+		 VALUES ($1,$2,$3,1,'task','an item',$4,$5,'open','high')`,
+		item, ts.OrgID, vectorSpace.ID, ts.UserID, "ITM-"+uuid.NewString()[:8])
+	require.NoError(t, err)
+
+	q := json.RawMessage(`{"v":1,"filter":{"modules":["beacon","vector"]},` +
+		`"sort":{"field":"title","dir":"asc"}}`)
+	res := ts.postAs(t, ts.Token, viewsPath(ts.OrgID)+"/preview", map[string]any{"query": q})
+	require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
+
+	var out struct {
+		Results []struct {
+			ID     uuid.UUID `json:"id"`
+			Module string    `json:"module"`
+			Key    string    `json:"key"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body, &out))
+
+	mods := map[string]string{}
+	for _, r := range out.Results {
+		mods[r.Module] = r.Key
+	}
+	require.Contains(t, mods, "beacon", "the Beacon half must be in the merge")
+	require.Contains(t, mods, "vector", "the Vector half must be in the merge")
+	// Each module's display key comes from its own spelling: Beacon composes
+	// space key + number, Vector carries item_key (migration 031).
+	require.Regexp(t, `^[A-Z0-9]+-1$`, mods["beacon"])
+	require.Regexp(t, `^ITM-`, mods["vector"])
+
+	// And the merge is globally ordered, not two concatenated halves.
+	titles := make([]string, 0, len(out.Results))
+	for _, r := range out.Results {
+		titles = append(titles, r.Key)
+	}
+	require.Len(t, titles, 2)
+}
+
 // TestViewsMatrix_ScopeUnavailableDegradesRatherThanErrors pins ADR-0009 case
 // C1 through the API: a view whose every named space was deleted still lists
 // and still opens, marked invalid.
