@@ -107,6 +107,7 @@ access. You can then log in at `http://localhost:8080/login` with these credenti
 | `AZIMUTHAL_ALLOW_REGISTRATION` | `false` | Open self-registration at `/auth/register`. Off by default since v0.3.2 — admins invite people from the Administration area instead. Instances relying on open registration must set this to `true` explicitly. |
 | `AZIMUTHAL_INVITE_DELIVERY` | `link` | How invite links reach people: `link` (the admin copies the one-time URL) or `email` (Azimuthal sends it — requires `SMTP_HOST` to be set explicitly; startup fails otherwise) |
 | `AZIMUTHAL_INVITE_TTL` | `168h` | Invite expiry window (Go duration format) |
+| `AZIMUTHAL_BCRYPT_COST` | `12` | Password hashing work factor. Twelve is a floor, not just a default: a configuration asking for less is refused at startup in every environment, `APP_ENV` included. The knob exists so you can raise it as hardware gets faster — expect roughly a doubling of login CPU cost per step. Existing passwords keep verifying at the cost they were stored with, so raising it is safe and takes effect as people next change their password. |
 
 ## Running Migrations Manually
 

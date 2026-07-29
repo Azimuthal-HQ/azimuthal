@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,12 +61,41 @@ type Config struct {
 	// Default false — behaviour is unchanged until an operator opts in.
 	TicketRefRequired bool
 
+	// BcryptCost is the password hashing work factor. Boot-time, and bounded
+	// below by MinBcryptCost — a configuration asking for less is refused at
+	// startup, in every environment. The floor is deliberately NOT relaxed by
+	// APP_ENV: APP_ENV is an ordinary environment variable that a production
+	// deployment can hold any value of, so an APP_ENV=test exemption would be
+	// a one-line downgrade of every password in the database. Test binaries
+	// get their cheap hashing from the linker knowing they are test binaries
+	// (internal/core/auth), not from configuration.
+	//
+	// The knob is therefore up-only: it exists so an operator can raise the
+	// cost as hardware gets faster.
+	BcryptCost int
+
 	// App
 	AppEnv     string
 	AppPort    int
 	AppBaseURL string
 	LogLevel   string
 }
+
+// Bcrypt work-factor bounds.
+//
+// These duplicate auth.MinBcryptCost / auth.DefaultBcryptCost and
+// bcrypt.MaxCost rather than importing them, so internal/config keeps its
+// property of importing nothing from internal/core. The duplication is made
+// safe by TestBcryptFloorMatchesAuthPackage, which fails the moment the two
+// disagree — without it this would be a copy waiting to drift.
+const (
+	// MinBcryptCost is the lowest work factor this server will accept.
+	MinBcryptCost = 12
+	// MaxBcryptCost is bcrypt's own ceiling.
+	MaxBcryptCost = 31
+	// DefaultBcryptCost is used when AZIMUTHAL_BCRYPT_COST is unset.
+	DefaultBcryptCost = 12
+)
 
 // Invite delivery modes.
 const (
@@ -100,6 +130,7 @@ func Load() (*Config, error) {
 	v.SetDefault("AZIMUTHAL_INVITE_DELIVERY", InviteDeliveryLink)
 	v.SetDefault("AZIMUTHAL_INVITE_TTL", "168h")
 	v.SetDefault("AZIMUTHAL_TICKET_REF_REQUIRED", false)
+	v.SetDefault("AZIMUTHAL_BCRYPT_COST", DefaultBcryptCost)
 
 	cfg := &Config{
 		DatabaseURL:       v.GetString("DATABASE_URL"),
@@ -124,6 +155,10 @@ func Load() (*Config, error) {
 	}
 
 	if err := cfg.parseDurations(v); err != nil {
+		return nil, err
+	}
+
+	if err := cfg.parseBcryptCost(v); err != nil {
 		return nil, err
 	}
 
@@ -153,6 +188,27 @@ func (c *Config) parseDurations(v *viper.Viper) error {
 		return fmt.Errorf("invalid AZIMUTHAL_INVITE_TTL %q: must be positive", inviteTTLStr)
 	}
 	c.InviteTTL = inviteTTL
+	return nil
+}
+
+// parseBcryptCost reads AZIMUTHAL_BCRYPT_COST as an integer.
+//
+// Deliberately strconv over v.GetInt: viper coerces an unparseable value to 0
+// silently, and 0 then fails the range check in validate() with "must be
+// between 12 and 31", which sends an operator who typed "twelve" looking for
+// a numeric bug that is not there. Range checking stays in validate() with
+// the other messages; this only rejects things that are not numbers.
+func (c *Config) parseBcryptCost(v *viper.Viper) error {
+	raw := strings.TrimSpace(v.GetString("AZIMUTHAL_BCRYPT_COST"))
+	if raw == "" {
+		c.BcryptCost = DefaultBcryptCost
+		return nil
+	}
+	cost, err := strconv.Atoi(raw)
+	if err != nil {
+		return fmt.Errorf("invalid AZIMUTHAL_BCRYPT_COST %q: must be an integer", raw)
+	}
+	c.BcryptCost = cost
 	return nil
 }
 
@@ -223,6 +279,13 @@ func (c *Config) validate() error {
 	default:
 		errs = append(errs, fmt.Sprintf("invalid AZIMUTHAL_INVITE_DELIVERY %q: must be %q or %q",
 			c.InviteDelivery, InviteDeliveryLink, InviteDeliveryEmail))
+	}
+
+	// No APP_ENV exemption, by design — see the BcryptCost field comment.
+	if c.BcryptCost < MinBcryptCost || c.BcryptCost > MaxBcryptCost {
+		errs = append(errs, fmt.Sprintf(
+			"invalid AZIMUTHAL_BCRYPT_COST %d: must be between %d and %d",
+			c.BcryptCost, MinBcryptCost, MaxBcryptCost))
 	}
 
 	if len(errs) > 0 {

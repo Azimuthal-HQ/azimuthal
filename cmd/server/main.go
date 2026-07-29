@@ -122,6 +122,14 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 	noop := func() {}
 	deps := &serverDeps{stopQueue: func(_ context.Context) error { return nil }}
 
+	// Before any resource is opened, so a refused work factor fails startup
+	// rather than a connection pool later. config.Load has already bounded the
+	// value; auth re-checks the floor because it is the package that owns it,
+	// and because a future caller might not come through config at all.
+	if err := auth.SetPasswordCost(cfg.BcryptCost); err != nil {
+		return nil, deps, noop, fmt.Errorf("configuring password hashing: %w", err)
+	}
+
 	pool, err := db.Connect(ctx, db.DefaultConfig(cfg.DatabaseURL))
 	if err != nil {
 		return nil, deps, noop, fmt.Errorf("connecting to database: %w", err)

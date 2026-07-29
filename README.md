@@ -125,6 +125,7 @@ go test ./...
 | `SMTP_HOST` | No | `localhost` | SMTP relay host |
 | `SMTP_PORT` | No | `1025` | SMTP relay port |
 | `LOG_LEVEL` | No | `info` | Log level (`debug`, `info`, `warn`, `error`) |
+| `AZIMUTHAL_BCRYPT_COST` | No | `12` | Password hashing work factor. 12 is a floor, not just a default — a lower value is refused at startup in every environment. Raise it as hardware gets faster. |
 
 ## Project Structure
 
