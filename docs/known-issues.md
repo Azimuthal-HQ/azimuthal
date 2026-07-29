@@ -726,3 +726,83 @@ readable-space array as its access control, and one accounting row for the new r
 
 Item 21 is a prerequisite for the feed being worth having: a "recent activity" list with no
 comments in it is a poor feed.
+
+---
+
+## 23. `POST /tickets/{id}/assign` performs no referential check, and its 500 discloses SQL
+
+**Severity**: High (information disclosure, and a cross-organisation write)
+**Status**: Open. Found by P5's coverage pass, confirmed live against real PostgreSQL. Deliberately
+**not fixed there**: a dashboards phase must not quietly rewrite the ticket assignment path, and
+two of the three parts need a policy decision rather than a patch.
+
+`internal/core/api/tickets/handler.go` `Assign` writes `assignee_id` with no check that the id
+names anybody this organisation knows. Three consequences, in increasing order of seriousness:
+
+**a. A nonexistent user answers 500 with the driver's message.** A well-formed uuid naming no user
+reaches the UPDATE, violates `tickets_assignee_id_fkey`, and `handleTicketError`'s default branch
+returns it to the caller:
+
+```
+ticket operation failed: assigning ticket: ticket adapter update: ERROR: insert or update on
+table "tickets" violates foreign key constraint "tickets_assignee_id_fkey" (SQLSTATE 23503)
+```
+
+Table name, constraint name and SQLSTATE, to any caller holding `edit_any_item`. A client error
+reported as a server fault, and internal wording that must not reach a user.
+
+**b. The disclosure mechanism is the fallback itself.** `handleTicketError`'s default arm formats
+the underlying error into the client-visible message —
+`fmt.Sprintf("ticket operation failed: %v", err)`. Every other 500 in the API uses a fixed string.
+Any future unmapped repository error will ship the same way.
+
+**c. A ticket can be assigned to a user in ANOTHER organisation.** `tickets.assignee_id` references
+the global `users` table, so the FK is satisfied and the write lands: HTTP 200, and the row now
+names somebody with no membership in the org and no access to the space. The notification enqueuer
+then targets that foreign user id. Confirmed live with a user seeded into a second organisation.
+
+**Why this is a gap rather than a new rule.** The grants surface already enforces exactly this
+obligation (`access.ErrSubjectNotOrgMember`, "grant subject is not a member of this organisation"),
+and so does the share audience (`ErrShareAudienceTeamNotFound`). Assignment is the one referential
+write that skips it.
+
+**What closing it takes.** (a) and (b) are mechanical: an org-membership check before the write
+returning 400, and a fixed fallback message. (c) is the same check. The weaker sibling case —
+assigning an org member who holds no grant on the ticket's space — returns 200 too; that one is
+arguably policy and wants a maintainer's decision alongside.
+
+No test was written asserting the current behaviour: pinning it would encode the defect.
+
+---
+
+## 24. Five handlers answer 500 where their own OpenAPI annotations promise 4xx
+
+**Severity**: Medium (a client is told to retry something that will never succeed)
+**Status**: Open. Found by P5's coverage pass; each one verified empirically with a throwaway probe
+and confirmed against the handler's own `@Failure` annotation. Not fixed — all are in non-test
+source outside P5's surface, and each is somebody's decision about their own error vocabulary.
+
+Every one has the same shape: a repository returns a bare `pgx.ErrNoRows` or a raw unique
+violation, the domain layer wraps it without mapping it to a sentinel, and the handler's error
+switch falls through to `default` → 500.
+
+| Where | Symptom | Documented as |
+|---|---|---|
+| `internal/core/wiki/page.go:143` (via `api/wiki/handler.go:839`) | `POST /wiki` with an unknown `parent_id` returns 500 and echoes *"fetching parent page: no rows in result set"* | 400/404 |
+| `api/wiki/document_handler.go:351` | a `doc` that is valid JSON but not a ProseMirror document returns 500 on both draft-save and publish | 400 "Malformed document" (`document_handler.go:90`, `:188`) |
+| `db/adapters/projects.go:109` | `ItemAdapter.UpdateStatus` does not map `ErrNoRows`, so a status change on an unknown item returns 500 | 404 (`api/projects/handler.go:621`) |
+| `db/adapters/projects.go:86, :280, :298` | the same omission on `ItemAdapter.Update`, `SprintAdapter.Update` and `SprintAdapter.UpdateStatus` — narrower, because the handlers pre-load, so it is a TOCTOU window rather than a plain 404-as-500 | 404 |
+| `db/adapters/projects.go:490` | `LabelAdapter.Create` does not map the `UNIQUE (org_id, name)` violation, so a duplicate label returns 500 — **and `handleProjectError`'s `ErrLabelDuplicate` arm is therefore dead code** | 409 (`api/projects/handler.go:1557`) |
+
+Every sibling getter in those same files maps `ErrNoRows` correctly, so these are omissions rather
+than design choices.
+
+**One related observation, lower confidence.** `MoveToSprint`, `MoveToBacklog` and `AssignToSprint`
+route through `ItemAdapter.UpdateSprint`, whose query is `:exec` and cannot report zero rows
+affected — so an item id naming nothing is silently accepted and the handler answers
+`200 {"message":"item moved to backlog"}`. Each declares `@Failure 404`. `DeleteRelation` and
+`DeleteLabel` share the shape and are plausibly meant to be idempotent, so this one is a
+maintainer's judgement rather than a clear defect.
+
+**None of these has a test asserting the current behaviour** — a test that pinned the 500 would
+encode the bug. Each fix wants a regression test written against the documented status.
