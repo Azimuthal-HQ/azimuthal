@@ -2822,6 +2822,14 @@ export function usePublishPage(spaceId: string, pageId: string) {
       queryClient.invalidateQueries({ queryKey: queryKeys.pageDocument(spaceId, pageId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.spaceDrafts(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.wikiRevisions(spaceId, pageId) });
+      // Publishing can CREATE tags: the server walks the document and adds a
+      // tag for every inline `#tag` in the body. Without this the chip a
+      // publish just produced does not appear until the next reload, because
+      // the reading surface remounts against the cached pre-publish list —
+      // which is empty, so it renders nothing at all and looks like the
+      // aggregation never ran.
+      queryClient.invalidateQueries({ queryKey: queryKeys.pageTags(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.orgTags(getCurrentOrgId()) });
     },
   });
 }

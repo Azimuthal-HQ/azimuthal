@@ -250,6 +250,21 @@ export function PageEditor({
           : {}),
         ...(overwrite ? { overwrite: true } : {}),
       });
+      // What was just published IS what is loaded now.
+      //
+      // Without this line, closing the editor re-creates the draft that
+      // publishing had just deleted. The leave-the-page effect below flushes
+      // any unsaved change on unmount, `onClose` unmounts this component, and
+      // `flushSave` compares against `loadedRef` — which still held the
+      // document as it was BEFORE the author typed. So it saw a difference,
+      // wrote a draft of the content that had just been published, and stamped
+      // it with the now-stale `base_version`.
+      //
+      // The author saw nothing wrong until the next time they opened the page:
+      // a draft they did not knowingly leave, marked stale, and a conflict
+      // dialogue telling them the page had been published by someone else since
+      // they started — where the someone else was them, seconds earlier.
+      loadedRef.current = JSON.stringify({ title, doc });
       setRefusal(null);
       setOverwriteAgreed(false);
       onClose();

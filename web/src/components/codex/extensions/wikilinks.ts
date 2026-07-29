@@ -260,8 +260,14 @@ function makeSuggestionRenderer(options: WikilinkOptions) {
   let items: WikiPage[] = [];
   let activeIndex = 0;
   let command: (page: WikiPage | null) => void = () => {};
+  // The last query and caret position, kept so a key press can re-push the
+  // popup's state. Arrow keys arrive through `onKeyDown`, which is handed only
+  // the event — without these, moving the highlight would have to push a state
+  // with no query and no position, which is indistinguishable from closing.
+  let query = '';
+  let rect: DOMRect | null = null;
 
-  const push = (query: string, rect: DOMRect | null) => {
+  const push = () => {
     options.onSuggestionChange({
       items,
       query,
@@ -294,7 +300,9 @@ function makeSuggestionRenderer(options: WikilinkOptions) {
       items = props.items as WikiPage[];
       activeIndex = 0;
       command = (page) => props.command(page as never);
-      push(props.query, rectOf(props));
+      query = props.query;
+      rect = rectOf(props);
+      push();
     },
     onUpdate: (props: SuggestionRenderProps) => {
       items = props.items as WikiPage[];
@@ -303,17 +311,22 @@ function makeSuggestionRenderer(options: WikilinkOptions) {
       // nothing on Enter.
       activeIndex = Math.min(activeIndex, Math.max(items.length - 1, 0));
       command = (page) => props.command(page as never);
-      push(props.query, rectOf(props));
+      query = props.query;
+      rect = rectOf(props);
+      push();
     },
     onKeyDown: (props: { event: KeyboardEvent }) => {
       if (props.event.key === 'ArrowDown') {
+        // Move the highlight and re-push. Pushing null here would advance the
+        // index behind a popup that had just been closed, so Enter would then
+        // select a row nobody could see.
         activeIndex = items.length === 0 ? 0 : (activeIndex + 1) % items.length;
-        options.onSuggestionChange(null);
+        push();
         return true;
       }
       if (props.event.key === 'ArrowUp') {
         activeIndex = items.length === 0 ? 0 : (activeIndex - 1 + items.length) % items.length;
-        options.onSuggestionChange(null);
+        push();
         return true;
       }
       if (props.event.key === 'Enter') {

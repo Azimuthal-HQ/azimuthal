@@ -259,6 +259,37 @@ describe('publishing', () => {
     fireEvent.click(screen.getByTestId('codex-publish'));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
+
+  it('does not re-create the draft that publishing just deleted', async () => {
+    // The regression this exists for, caught by an E2E journey rather than by
+    // reading: publishing clears the draft server-side, but leaving the editor
+    // flushes any unsaved change — and that flush compared against the document
+    // as it stood BEFORE the author typed. So closing after a publish wrote a
+    // draft of the content that had just been published, stamped with the
+    // now-stale base_version.
+    //
+    // The author saw nothing at the time. The next time they opened the page
+    // they were shown a draft they did not knowingly leave, marked stale, and a
+    // conflict dialogue saying the page had been published since they started —
+    // by them, seconds earlier.
+    //
+    // Asserting on saveDraftMutate is what makes this a real test: the publish
+    // succeeds either way, so nothing about the publish call itself
+    // distinguishes the two behaviours.
+    const { unmount } = renderEditor(documentPayload());
+
+    fireEvent.click(screen.getByTestId('fake-type'));
+    fireEvent.click(screen.getByTestId('codex-publish'));
+    await waitFor(() => expect(publishMutate).toHaveBeenCalled());
+
+    saveDraftMutate.mockClear();
+    unmount();
+
+    expect(
+      saveDraftMutate,
+      'closing after a publish must not write a draft of what was just published',
+    ).not.toHaveBeenCalled();
+  });
 });
 
 describe('the lost-content refusal (ADR-0012)', () => {
