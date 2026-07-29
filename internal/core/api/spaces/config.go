@@ -68,10 +68,12 @@ type BootConfig struct {
 // @Failure      401    {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404    {object}  api.SwaggerErrorResponse  "Not a member of this organization"
 // @Router       /orgs/{orgID}/config [get]
-func (h *Handler) BootConfig(w http.ResponseWriter, r *http.Request) {
-	// No orgID parse and no query: membership was settled by ResolveAccess
-	// before this handler ran, and the values do not depend on which org
-	// asked.
+func (h *Handler) BootConfig(w http.ResponseWriter, _ *http.Request) {
+	// The request is deliberately unread. Membership was settled by
+	// ResolveAccess before this handler ran, and the values do not depend on
+	// which org asked or on anything else the caller sent — that is the whole
+	// claim the doc comment above makes, so reading the request here would be
+	// the first sign it had stopped being true.
 	respond.JSON(w, http.StatusOK, BootConfig{
 		TicketRefRequired: h.ticketRef.Required,
 	})
