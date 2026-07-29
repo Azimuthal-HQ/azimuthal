@@ -187,76 +187,6 @@ touch or reference.
   a never-written localStorage key. Fixed in this PR (workstream D); see the PR body for
   runtime severity.
 
-### Added by the v0.4 workflow-tiers phase (migrations 046, 047)
-
-- **The workflow engine governs almost nothing at runtime, and the routes that do are not
-  the engine's.** An item's status can change through four routes, running three different
-  rule sets — or none:
-
-  | route | what validated it before this phase |
-  |---|---|
-  | `POST .../tickets/{id}/status` | a hardcoded Go map, `internal/core/tickets/status.go` |
-  | `POST .../projects/items/{id}/status` | **nothing** — `ItemService.UpdateItemStatus` wrote any string |
-  | `POST .../tickets/{id}/workflow-state` | the DB engine over `workflow_transitions` |
-  | `POST .../projects/items/{id}/workflow-state` | the DB engine |
-
-  `web/src/lib/api.ts` calls **only the first two**; a grep for `workflow-state` under
-  `web/src` returns nothing. So the `workflow_*` tables (migrations 016/019/029) describe a
-  machine with no client, while the routes users actually reach ran a duplicate rule set or
-  no rule set at all. The repository wins and no spec sentence asserted otherwise, so this is
-  recorded rather than corrected.
-
-  Consequence for later phases: **any rule about transitions must be enforced at a chokepoint
-  all four routes enter**, which is why `workflow.TierService.Gate` speaks status *text* as
-  well as state ids. A guard attached to the engine alone would be unreachable by every real
-  user and bypassable through the route they do use.
-
-- **`tickets.status` and `workflow_state_id` diverge permanently after any legacy `/status`
-  call**, because `UpdateTicketStatus` writes `status` alone. The engine then validates the
-  *next* transition from a stale state. This phase stops a gated transition adding to the
-  drift — the tier applier writes both columns — but does **not** repair rows that already
-  drifted, and does not reconcile the two state machines. Both are inherited defects, flagged
-  for a maintainer rather than fixed under a feature phase.
-
-- **The pre-existing org-scoped workflow routes do not scope `{workflowID}` to `{orgID}`.**
-  `GetWorkflow`, `UpdateWorkflow`, `DeleteWorkflow` and the state/transition routes resolve
-  the id and act on it, so a workflow in another org is reachable by id. Every route the
-  tiers phase adds calls `GetWorkflowInOrg` first and answers 404, so the new surface does
-  not widen the exposure; the existing routes are unchanged because changing them alters
-  live behaviour and needs its own regression pair.
-
-- **A new project item's default status is not a state in its own workflow.**
-  `project_items.status` defaults to `'open'` (migration 014) while the seeded project
-  workflow's states are `backlog`/`todo`/`in_progress`/`in_review`/`done` with `backlog`
-  as `is_initial` (migration 016). Nothing reconciles the two, so a freshly created item
-  sits at a status naming no state, and its **first** transition therefore resolves no
-  edge — meaning ADR-0011 guards, approvals and post-functions silently do not apply to
-  it. Every subsequent transition is gated normally.
-
-  This is pre-existing and orthogonal to the tiers: the same mismatch already meant a new
-  item's first move was unvalidated by the DB engine. It is recorded rather than fixed
-  because the fix is either a column-default change or a seed change, both of which touch
-  live data and neither of which belongs in a feature phase. `TestTierAPI_ItemPostFunction
-  CommitsWithTheStatus` documents the behaviour by moving the item onto a real state first.
-
-- **Reserved out-of-order migration numbers make goose refuse an existing database.**
-  `internal/db/migrate.go` calls `goose.UpContext` with no `AllowMissing`, so a database that
-  applied a HIGHER number before a LOWER one shipped will not migrate: goose reports
-  `found 1 missing migrations before current version 47: version 40`. This phase hit it
-  the moment migration 040 landed on `main` — every local database that had already run
-  046/047 stopped migrating.
-
-  Harmless for a fresh deploy, where 001–047 apply in order. It bites **developer and CI
-  databases that tracked a branch**, and it is a structural consequence of the parallel-track
-  reservation scheme (a phase takes 046/047 while 040–045 are still unshipped), not of any one
-  phase. The workaround is to recreate the database; the fix, if the project wants one, is
-  `goose.WithAllowMissing` — a decision about migration policy, so it is raised rather than
-  taken here.
-
-- **`npm run lint` is a required CI gate** (`.github/workflows/ci.yml`, the `Frontend` job),
-  contradicting `CLAUDE.md` §3's statement that it is not. The repository wins; §3's claim
-  predates #82. Treat eslint as blocking.
-
 ---
 
 ## 4. Standing instruction for later phases
@@ -1336,3 +1266,107 @@ configuration table still shows it as **Yes**, required.
 Untouched here because it is unrelated to this work and the table belongs to no one phase, but it
 is actively misleading to an operator setting up a deployment: the one row marked required that
 cannot be satisfied, because the variable it names is read by nothing.
+
+# v0.4 — Workflow tiers (ADR-0011, migrations 046 & 047)
+
+## 1. Discrepancies found and corrected
+
+- **CLAUDE.md §3's "`npm run lint` is not a gate" has been false since #82.** The `Frontend`
+  job runs it, with no baseline file and per-filename exemptions in `web/eslint.config.js`.
+  The repository wins; §3's factual claim is corrected in place, and the reasoning it records
+  about why a baseline would be an exemption ledger is kept.
+
+## 2. Decisions taken (justified in the phase report, recorded here)
+
+- **Tier enforcement lives at a chokepoint every status route enters, not on the workflow
+  engine.** See D71. A guard on the engine alone would have been unreachable by every real
+  user and bypassable through the route they do use.
+- **Guards are typed rows, not a `config` jsonb.** Migration 038's own test decides it: a
+  document is right when the invariant "is not expressible as a column constraint either way".
+  Here `team_id` is a real foreign key and "which parameter belongs to which kind" is a shape
+  CHECK, so columns win — 038's sentence pointing the other way.
+- **`ON DELETE SET NULL` on every guard subject, never CASCADE.** CASCADE would make deleting
+  a team silently *remove a restriction*. The degraded state is representable and
+  unsatisfiable, so it fails closed until an administrator re-scopes it.
+- **A pending approval does not move the item.** Moving to the target and back on decline
+  produces an item that is *closed pending approval*, which defeats the gate — every board,
+  queue and saved view reads status. It also keeps approvals from introducing a status value
+  those surfaces would have to enumerate.
+- **No new `Capability` for approving.** Authority is data — being a named approver, directly
+  or through an ADR-0007 effective team. A capability would have changed the access model,
+  which §5 makes a stop-and-raise decision, and "who approves change requests" is per-gate
+  rather than per-role anyway.
+
+## 3. Observed, out of scope
+
+### D71 — the workflow engine governs almost nothing at runtime, and the routes that do are not the engine's
+
+An item's status can change through four routes, running three different rule sets — or none:
+
+| route | what validated it before this phase |
+|---|---|
+| `POST .../tickets/{id}/status` | a hardcoded Go map, `internal/core/tickets/status.go` |
+| `POST .../projects/items/{id}/status` | **nothing** — `ItemService.UpdateItemStatus` wrote any string |
+| `POST .../tickets/{id}/workflow-state` | the DB engine over `workflow_transitions` |
+| `POST .../projects/items/{id}/workflow-state` | the DB engine |
+
+`web/src/lib/api.ts` calls **only the first two**; a grep for `workflow-state` under `web/src`
+returns nothing. So the `workflow_*` tables (migrations 016/019/029) describe a machine with no
+client, while the routes users actually reach ran a duplicate rule set or no rule set at all.
+No spec sentence asserted otherwise, so the repository wins and this is recorded rather than
+corrected.
+
+Consequence for later phases: **any rule about transitions must be enforced at a chokepoint all
+four routes enter**, which is why `workflow.TierService.Gate` speaks status *text* as well as
+state ids.
+
+Two inherited defects sit alongside it, both flagged rather than fixed under a feature phase.
+`tickets.status` and `workflow_state_id` **diverge permanently after any legacy `/status` call**,
+because `UpdateTicketStatus` writes `status` alone — and the engine then validates the *next*
+transition from a stale state. This phase stops a gated transition adding to the drift, but does
+not repair rows that already drifted, and does not reconcile the two state machines.
+
+### D72 — a new project item's default status is not a state in its own workflow
+
+`project_items.status` defaults to `'open'` (migration 014) while the seeded project workflow's
+states are `backlog`/`todo`/`in_progress`/`in_review`/`done` with `backlog` as `is_initial`
+(migration 016). Nothing reconciles the two, so a freshly created item sits at a status naming
+no state, and its **first** transition resolves no edge — meaning ADR-0011 guards, approvals and
+post-functions silently do not apply to it. Every subsequent transition is gated normally.
+
+Pre-existing and orthogonal to the tiers: the same mismatch already meant a new item's first
+move was unvalidated by the DB engine. Recorded rather than fixed because the fix is either a
+column-default change or a seed change, both of which touch live data and neither of which
+belongs in a feature phase. `TestTierAPI_ItemPostFunctionCommitsWithTheStatus` documents the
+behaviour by moving the item onto a real state first.
+
+### D73 — reserved out-of-order migration numbers make goose refuse an existing database
+
+`internal/db/migrate.go` calls `goose.UpContext` with no `AllowMissing`, so a database that
+applied a HIGHER number before a LOWER one shipped will not migrate:
+
+    found 1 missing migrations before current version 47: version 40
+
+This phase hit it the moment migration 040 landed on `main`: every local database that had
+already run 046/047 stopped migrating. Harmless for a fresh deploy, where 001–047 apply in
+order, and CI is unaffected for the same reason — but it bites **developer and CI databases that
+tracked a branch**, and it is a structural consequence of the parallel-track reservation scheme
+(a phase takes 046/047 while 040–045 are still unshipped) rather than of any one phase.
+
+The workaround is to recreate the database. The fix, if the project wants one, is
+`goose.WithAllowMissing` — a migration-policy decision, so it is raised rather than taken here.
+
+### D74 — the pre-existing org-scoped workflow routes do not scope `{workflowID}` to `{orgID}`
+
+`GetWorkflow`, `UpdateWorkflow`, `DeleteWorkflow` and the state/transition routes resolve the id
+and act on it, so a workflow in another org is reachable by id. Every route this phase adds calls
+`GetWorkflowInOrg` first and answers 404 (`TestTierAPI_TierRoutesAreScopedToTheOrg`), so the new
+surface does not widen the exposure; the existing routes are unchanged because changing them
+alters live behaviour and needs its own regression pair.
+
+### D75 — `is_default` is not unique per `(org_id, applies_to)`
+
+`workflows` carries only `UNIQUE (org_id, name)`, and `GetDefaultWorkflow` is `LIMIT 1` with no
+`ORDER BY`, so an org with two defaults for one entity type gets an arbitrary one — which this
+phase turns into "which approval policy applies". A partial unique index would close it, but
+could fail on existing data, so it is flagged rather than taken.
