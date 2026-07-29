@@ -205,6 +205,11 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		AccessTTL:  cfg.JWTExpiry,
 		RefreshTTL: cfg.JWTExpiry * 7,
 		Issuer:     "azimuthal",
+		// The customer portal signs a second token family with this same key
+		// (auth_signing_keys holds one row by construction), so the audience
+		// claim is the boundary between an agent's credential and an external
+		// requester's. See auth.AudienceInternal.
+		Audience: auth.AudienceInternal,
 	})
 
 	userAdapter := adapters.NewUserAdapter(pool, uuid.Nil)

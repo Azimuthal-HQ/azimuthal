@@ -22,7 +22,30 @@ type TokenConfig struct {
 	RefreshTTL time.Duration
 	// Issuer is the "iss" claim value (e.g. "azimuthal").
 	Issuer string
+	// Audience is the "aud" claim value stamped on every token this service
+	// mints, and the only audience it will accept back. Leave it empty and
+	// the audience machinery is inert — which is what the routing-only unit
+	// harness does, and what every deployment did before the customer portal
+	// existed. See AudienceInternal.
+	Audience string
 }
+
+// AudienceInternal is the "aud" claim carried by tokens that authenticate a
+// user of the internal product — the only tokens RequireAuth accepts.
+//
+// It exists because the customer portal introduced a second token family
+// signed by the SAME RSA key. `auth_signing_keys` holds one row and says so
+// (`CHECK (id = 1)`, migration 018), so a key per family is not available
+// without changing that decision; the audience claim is therefore not a
+// label but the entire boundary between an agent's credential and a
+// requester's.
+//
+// Both halves are required and neither is sufficient. Minting an `aud` and
+// not verifying it changes nothing, because golang-jwt skips audience
+// verification unless the parser is given jwt.WithAudience — which is why
+// `iss` has been minted since v0.1.11 and never once checked. Verifying
+// without minting rejects everything. parseToken below does the verifying.
+const AudienceInternal = "azimuthal-internal"
 
 // TokenPair holds an access token and a refresh token.
 type TokenPair struct {
@@ -122,6 +145,9 @@ func (s *JWTService) signToken(userID uuid.UUID, email, orgID, role, tokenType s
 			ID:        uuid.New().String(),
 		},
 	}
+	if s.cfg.Audience != "" {
+		claims.Audience = jwt.ClaimStrings{s.cfg.Audience}
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	signed, err := token.SignedString(s.cfg.PrivateKey)
 	if err != nil {
@@ -138,9 +164,51 @@ func (s *JWTService) parseToken(tokenString string) (*Claims, error) {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return s.cfg.PublicKey, nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}))
 	if err != nil || !token.Valid {
 		return nil, ErrInvalidToken
 	}
+	if err := s.checkAudience(claims.Audience); err != nil {
+		return nil, err
+	}
 	return claims, nil
+}
+
+// checkAudience rejects a token minted for a different token family.
+//
+// The rule is asymmetric on purpose, and the asymmetry is the whole design:
+//
+//   - A token carrying SOME OTHER audience is rejected. That is the portal
+//     boundary. A requester's token names the portal audience, so it fails
+//     here and can never reach RequireAuth, /notifications, /auth/me or any
+//     other route that reads auth.Claims.
+//
+//   - A token carrying NO audience is accepted. Those are the internal
+//     tokens minted before this claim existed, and rejecting them would sign
+//     out every user at the moment of deploy. That is precisely the failure
+//     ADR-0004 was written about — eleven releases of "everyone is logged out
+//     again" — so the upgrade is made non-disruptive the same way
+//     token_generation was in migration 024: the old shape decodes to the
+//     value that means "fine", and no session breaks.
+//
+// The leniency costs nothing, because an absent audience is not something an
+// attacker can choose. Minting any token at all requires the RSA private key
+// from `auth_signing_keys`; if that is available the audience claim is not
+// what is standing between the attacker and the product. The only tokens in
+// existence with no audience are ones this deployment issued itself, to its
+// own users, before the upgrade.
+//
+// The portal parser is strict in the direction this one is lenient — it
+// REQUIRES its audience — so the two families are mutually exclusive in both
+// directions even while legacy internal tokens are still in flight.
+func (s *JWTService) checkAudience(aud jwt.ClaimStrings) error {
+	if s.cfg.Audience == "" || len(aud) == 0 {
+		return nil
+	}
+	for _, a := range aud {
+		if a == s.cfg.Audience {
+			return nil
+		}
+	}
+	return ErrInvalidToken
 }
