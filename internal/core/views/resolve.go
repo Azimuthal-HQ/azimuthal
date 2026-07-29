@@ -97,6 +97,12 @@ type FanoutParams struct {
 	CursorKey   string
 	CursorID    uuid.UUID
 	Limit       int32
+	// GroupBy names the breakdown field for the two grouped fan-outs, and is
+	// empty for every other query. It lives on this struct rather than on a
+	// third parameter type for the reason stated above: the two tables differ
+	// in three columns, and a second struct would mean two places to add the
+	// next filter.
+	GroupBy string
 }
 
 // ResultStore is the read seam for the two fan-outs.

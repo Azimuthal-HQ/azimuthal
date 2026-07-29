@@ -12,6 +12,333 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const breakdownViewProjectItems = `-- name: BreakdownViewProjectItems :many
+SELECT g.bucket_key::text AS bucket_key,
+       g.bucket_label::text AS bucket_label,
+       count(*) AS bucket_count
+FROM project_items pi
+JOIN spaces s ON s.id = pi.space_id AND s.deleted_at IS NULL
+LEFT JOIN users au ON au.id = pi.assignee_id
+CROSS JOIN LATERAL (
+    SELECT
+        CASE $1::text
+            WHEN 'status'   THEN pi.status
+            WHEN 'priority' THEN pi.priority
+            WHEN 'assignee' THEN COALESCE(pi.assignee_id::text, '')
+            WHEN 'kind'     THEN COALESCE(pi.kind, '')
+            ELSE ''
+        END AS bucket_key,
+        CASE $1::text
+            WHEN 'status'   THEN pi.status
+            WHEN 'priority' THEN pi.priority
+            WHEN 'assignee' THEN COALESCE(au.display_name, '')
+            WHEN 'kind'     THEN COALESCE(pi.kind, '')
+            ELSE ''
+        END AS bucket_label
+) g
+WHERE pi.deleted_at IS NULL
+  AND s.org_id = $2
+  AND (pi.space_id = ANY($3::uuid[])
+       OR pi.id = ANY($4::uuid[]))
+  AND (cardinality($5::uuid[]) = 0 OR pi.space_id = ANY($5::uuid[]))
+  AND (cardinality($6::text[]) = 0 OR pi.status = ANY($6::text[]))
+  AND (cardinality($7::text[]) = 0 OR pi.priority = ANY($7::text[]))
+  AND (NOT $8::boolean
+       OR pi.assignee_id = ANY($9::uuid[])
+       OR ($10::boolean AND pi.assignee_id IS NULL))
+  AND (cardinality($11::text[]) = 0 OR pi.kind = ANY($11::text[]))
+  AND (cardinality($12::uuid[]) = 0 OR pi.sprint_id = ANY($12::uuid[]))
+  AND ($13::text = '' OR pi.title ILIKE $13::text)
+GROUP BY g.bucket_key, g.bucket_label
+ORDER BY count(*) DESC, g.bucket_key ASC
+`
+
+type BreakdownViewProjectItemsParams struct {
+	GroupBy           string      `json:"group_by"`
+	OrgID             uuid.UUID   `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
+	SharedItemIds     []uuid.UUID `json:"shared_item_ids"`
+	SpaceIds          []uuid.UUID `json:"space_ids"`
+	Statuses          []string    `json:"statuses"`
+	Priorities        []string    `json:"priorities"`
+	FilterAssignee    bool        `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
+	IncludeUnassigned bool        `json:"include_unassigned"`
+	Kinds             []string    `json:"kinds"`
+	SprintIds         []uuid.UUID `json:"sprint_ids"`
+	TextPattern       string      `json:"text_pattern"`
+}
+
+type BreakdownViewProjectItemsRow struct {
+	BucketKey   string `json:"bucket_key"`
+	BucketLabel string `json:"bucket_label"`
+	BucketCount int64  `json:"bucket_count"`
+}
+
+// The Vector half. 'kind' appears here and not in the ticket query because
+// project_items has the column and tickets does not â€” the same asymmetry the
+// filter vocabulary records, enforced the same way.
+func (q *Queries) BreakdownViewProjectItems(ctx context.Context, arg BreakdownViewProjectItemsParams) ([]BreakdownViewProjectItemsRow, error) {
+	rows, err := q.db.Query(ctx, breakdownViewProjectItems,
+		arg.GroupBy,
+		arg.OrgID,
+		arg.ReadableSpaceIds,
+		arg.SharedItemIds,
+		arg.SpaceIds,
+		arg.Statuses,
+		arg.Priorities,
+		arg.FilterAssignee,
+		arg.AssigneeIds,
+		arg.IncludeUnassigned,
+		arg.Kinds,
+		arg.SprintIds,
+		arg.TextPattern,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []BreakdownViewProjectItemsRow{}
+	for rows.Next() {
+		var i BreakdownViewProjectItemsRow
+		if err := rows.Scan(&i.BucketKey, &i.BucketLabel, &i.BucketCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const breakdownViewTickets = `-- name: BreakdownViewTickets :many
+SELECT g.bucket_key::text AS bucket_key,
+       g.bucket_label::text AS bucket_label,
+       count(*) AS bucket_count
+FROM tickets tk
+JOIN spaces s ON s.id = tk.space_id AND s.deleted_at IS NULL
+LEFT JOIN users au ON au.id = tk.assignee_id
+CROSS JOIN LATERAL (
+    SELECT
+        CASE $1::text
+            WHEN 'status'   THEN tk.status
+            WHEN 'priority' THEN tk.priority
+            WHEN 'assignee' THEN COALESCE(tk.assignee_id::text, '')
+            ELSE ''
+        END AS bucket_key,
+        CASE $1::text
+            WHEN 'status'   THEN tk.status
+            WHEN 'priority' THEN tk.priority
+            WHEN 'assignee' THEN COALESCE(au.display_name, '')
+            ELSE ''
+        END AS bucket_label
+) g
+WHERE tk.deleted_at IS NULL
+  AND s.org_id = $2
+  AND (tk.space_id = ANY($3::uuid[])
+       OR tk.id = ANY($4::uuid[]))
+  AND (cardinality($5::uuid[]) = 0 OR tk.space_id = ANY($5::uuid[]))
+  AND (cardinality($6::text[]) = 0 OR tk.status = ANY($6::text[]))
+  AND (cardinality($7::text[]) = 0 OR tk.priority = ANY($7::text[]))
+  AND (NOT $8::boolean
+       OR tk.assignee_id = ANY($9::uuid[])
+       OR ($10::boolean AND tk.assignee_id IS NULL))
+  AND ($11::text = '' OR tk.title ILIKE $11::text)
+GROUP BY g.bucket_key, g.bucket_label
+ORDER BY count(*) DESC, g.bucket_key ASC
+`
+
+type BreakdownViewTicketsParams struct {
+	GroupBy           string      `json:"group_by"`
+	OrgID             uuid.UUID   `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
+	SharedTicketIds   []uuid.UUID `json:"shared_ticket_ids"`
+	SpaceIds          []uuid.UUID `json:"space_ids"`
+	Statuses          []string    `json:"statuses"`
+	Priorities        []string    `json:"priorities"`
+	FilterAssignee    bool        `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
+	IncludeUnassigned bool        `json:"include_unassigned"`
+	TextPattern       string      `json:"text_pattern"`
+}
+
+type BreakdownViewTicketsRow struct {
+	BucketKey   string `json:"bucket_key"`
+	BucketLabel string `json:"bucket_label"`
+	BucketCount int64  `json:"bucket_count"`
+}
+
+// Counts grouped by one field, over the Beacon half of a saved view (P5).
+//
+// ONE STATIC QUERY FOR EVERY GROUPABLE FIELD, by the same device migration
+// 038's saved_view_sort_key uses for sorting: the choice is collapsed into one
+// expression rather than spread across one query per field. Four fields times
+// two modules would otherwise be eight near-identical queries, which is eight
+// chances for one of them to drift from the access predicate above it â€” and a
+// drifted copy of THAT is not a display bug.
+//
+// The bucket is (key, label) rather than one column because an assignee's key
+// is an opaque id and its label is a name, while a status is its own label.
+// Grouping by both is free: the label is functionally dependent on the key.
+//
+// The empty key is a REAL BUCKET, not a null to drop. Unassigned work is
+// exactly what a breakdown is for, and collapsing it away would make the
+// buckets stop summing to the count.
+//
+// ELSE ” is unreachable through the API â€” views.ParseGroupField refuses
+// anything outside the closed set before this runs, and 'kind' is refused
+// alongside Beacon so it never reaches this query at all. It is written as a
+// single bucket rather than as NULL so that a field added on one side only
+// produces one obviously-wrong tile rather than silently dropped rows.
+func (q *Queries) BreakdownViewTickets(ctx context.Context, arg BreakdownViewTicketsParams) ([]BreakdownViewTicketsRow, error) {
+	rows, err := q.db.Query(ctx, breakdownViewTickets,
+		arg.GroupBy,
+		arg.OrgID,
+		arg.ReadableSpaceIds,
+		arg.SharedTicketIds,
+		arg.SpaceIds,
+		arg.Statuses,
+		arg.Priorities,
+		arg.FilterAssignee,
+		arg.AssigneeIds,
+		arg.IncludeUnassigned,
+		arg.TextPattern,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []BreakdownViewTicketsRow{}
+	for rows.Next() {
+		var i BreakdownViewTicketsRow
+		if err := rows.Scan(&i.BucketKey, &i.BucketLabel, &i.BucketCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const countViewProjectItems = `-- name: CountViewProjectItems :one
+SELECT count(*)
+FROM project_items pi
+JOIN spaces s ON s.id = pi.space_id AND s.deleted_at IS NULL
+WHERE pi.deleted_at IS NULL
+  AND s.org_id = $1
+  AND (pi.space_id = ANY($2::uuid[])
+       OR pi.id = ANY($3::uuid[]))
+  AND (cardinality($4::uuid[]) = 0 OR pi.space_id = ANY($4::uuid[]))
+  AND (cardinality($5::text[]) = 0 OR pi.status = ANY($5::text[]))
+  AND (cardinality($6::text[]) = 0 OR pi.priority = ANY($6::text[]))
+  AND (NOT $7::boolean
+       OR pi.assignee_id = ANY($8::uuid[])
+       OR ($9::boolean AND pi.assignee_id IS NULL))
+  AND (cardinality($10::text[]) = 0 OR pi.kind = ANY($10::text[]))
+  AND (cardinality($11::uuid[]) = 0 OR pi.sprint_id = ANY($11::uuid[]))
+  AND ($12::text = '' OR pi.title ILIKE $12::text)
+`
+
+type CountViewProjectItemsParams struct {
+	OrgID             uuid.UUID   `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
+	SharedItemIds     []uuid.UUID `json:"shared_item_ids"`
+	SpaceIds          []uuid.UUID `json:"space_ids"`
+	Statuses          []string    `json:"statuses"`
+	Priorities        []string    `json:"priorities"`
+	FilterAssignee    bool        `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
+	IncludeUnassigned bool        `json:"include_unassigned"`
+	Kinds             []string    `json:"kinds"`
+	SprintIds         []uuid.UUID `json:"sprint_ids"`
+	TextPattern       string      `json:"text_pattern"`
+}
+
+// The Vector half. Structurally identical to CountViewTickets plus the two
+// Vector-only terms, exactly as the two list fan-outs differ.
+func (q *Queries) CountViewProjectItems(ctx context.Context, arg CountViewProjectItemsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countViewProjectItems,
+		arg.OrgID,
+		arg.ReadableSpaceIds,
+		arg.SharedItemIds,
+		arg.SpaceIds,
+		arg.Statuses,
+		arg.Priorities,
+		arg.FilterAssignee,
+		arg.AssigneeIds,
+		arg.IncludeUnassigned,
+		arg.Kinds,
+		arg.SprintIds,
+		arg.TextPattern,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countViewTickets = `-- name: CountViewTickets :one
+SELECT count(*)
+FROM tickets tk
+JOIN spaces s ON s.id = tk.space_id AND s.deleted_at IS NULL
+WHERE tk.deleted_at IS NULL
+  AND s.org_id = $1
+  AND (tk.space_id = ANY($2::uuid[])
+       OR tk.id = ANY($3::uuid[]))
+  AND (cardinality($4::uuid[]) = 0 OR tk.space_id = ANY($4::uuid[]))
+  AND (cardinality($5::text[]) = 0 OR tk.status = ANY($5::text[]))
+  AND (cardinality($6::text[]) = 0 OR tk.priority = ANY($6::text[]))
+  AND (NOT $7::boolean
+       OR tk.assignee_id = ANY($8::uuid[])
+       OR ($9::boolean AND tk.assignee_id IS NULL))
+  AND ($10::text = '' OR tk.title ILIKE $10::text)
+`
+
+type CountViewTicketsParams struct {
+	OrgID             uuid.UUID   `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
+	SharedTicketIds   []uuid.UUID `json:"shared_ticket_ids"`
+	SpaceIds          []uuid.UUID `json:"space_ids"`
+	Statuses          []string    `json:"statuses"`
+	Priorities        []string    `json:"priorities"`
+	FilterAssignee    bool        `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
+	IncludeUnassigned bool        `json:"include_unassigned"`
+	TextPattern       string      `json:"text_pattern"`
+}
+
+// The Beacon half of a saved view's count (P5).
+//
+// THE SAME PREDICATES AS ListViewTickets, MINUS THE PAGE. Read that query's
+// header first: the access union, the two arrays that ARE the access control,
+// and the ADR-0008 exception all apply here unchanged and for the same
+// reasons. What is gone is the sort key, the cursor and the limit, because a
+// count has no position and no page.
+//
+// It exists so a count gadget never becomes fetch-all-then-count in the
+// client. That form is bounded by MaxPageSize and would silently under-report
+// any view with more than two hundred results, which is precisely the view
+// somebody puts a count on.
+func (q *Queries) CountViewTickets(ctx context.Context, arg CountViewTicketsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countViewTickets,
+		arg.OrgID,
+		arg.ReadableSpaceIds,
+		arg.SharedTicketIds,
+		arg.SpaceIds,
+		arg.Statuses,
+		arg.Priorities,
+		arg.FilterAssignee,
+		arg.AssigneeIds,
+		arg.IncludeUnassigned,
+		arg.TextPattern,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createQueue = `-- name: CreateQueue :one
 INSERT INTO saved_views (
     org_id, owner_id, space_id, position, name, description, query, visibility
@@ -219,6 +546,95 @@ func (q *Queries) GetSavedView(ctx context.Context, arg GetSavedViewParams) (Sav
 		&i.Position,
 	)
 	return i, err
+}
+
+const getSavedViewsByIDs = `-- name: GetSavedViewsByIDs :many
+SELECT sv.id, sv.org_id, sv.owner_id, sv.name, sv.description, sv.query, sv.visibility, sv.visibility_team_id, sv.created_at, sv.updated_at, sv.deleted_at, sv.space_id, sv.position,
+       u.display_name AS owner_name,
+       tm.name        AS team_name
+FROM saved_views sv
+JOIN users u ON u.id = sv.owner_id
+LEFT JOIN teams tm ON tm.id = sv.visibility_team_id
+WHERE sv.org_id = $1
+  AND sv.deleted_at IS NULL
+  AND sv.space_id IS NULL
+  AND sv.id = ANY($2::uuid[])
+`
+
+type GetSavedViewsByIDsParams struct {
+	OrgID uuid.UUID   `json:"org_id"`
+	Ids   []uuid.UUID `json:"ids"`
+}
+
+type GetSavedViewsByIDsRow struct {
+	ID               uuid.UUID          `json:"id"`
+	OrgID            uuid.UUID          `json:"org_id"`
+	OwnerID          uuid.UUID          `json:"owner_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Query            []byte             `json:"query"`
+	Visibility       string             `json:"visibility"`
+	VisibilityTeamID pgtype.UUID        `json:"visibility_team_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	SpaceID          pgtype.UUID        `json:"space_id"`
+	Position         *int32             `json:"position"`
+	OwnerName        string             `json:"owner_name"`
+	TeamName         *string            `json:"team_name"`
+}
+
+// The live views among a set of ids, with NO audience filter.
+//
+// Audience-blind on purpose, and the one query in this file that is. Its
+// caller is the P5 dashboard loader, which has to tell "this gadget's view was
+// deleted" from "this gadget's view is not yours to see" â€” two different tiles
+// under ADR-0009 â€” and filtering by audience here would collapse both into
+// "absent". The audience is applied in Go by views.Audience.Reaches, which is
+// the same rule ListSavedViewsForViewer's WHERE clause spells in SQL.
+//
+// Space-bound rows (queues) are excluded for the same reason the generic list
+// excludes them: their audience is enforced by the space-read guard on the
+// route that serves them, and nothing outside that route may widen it. A queue
+// can therefore never be attached to a gadget.
+//
+// One query for a whole dashboard, whatever its gadget count. A dashboard that
+// resolved one view per gadget is exactly the per-item shape spec Â§2.5 case 23
+// forbids.
+func (q *Queries) GetSavedViewsByIDs(ctx context.Context, arg GetSavedViewsByIDsParams) ([]GetSavedViewsByIDsRow, error) {
+	rows, err := q.db.Query(ctx, getSavedViewsByIDs, arg.OrgID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetSavedViewsByIDsRow{}
+	for rows.Next() {
+		var i GetSavedViewsByIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Description,
+			&i.Query,
+			&i.Visibility,
+			&i.VisibilityTeamID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.SpaceID,
+			&i.Position,
+			&i.OwnerName,
+			&i.TeamName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listEffectiveTeamIDs = `-- name: ListEffectiveTeamIDs :many

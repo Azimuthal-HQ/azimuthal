@@ -93,6 +93,33 @@ type CustomFieldDef struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Dashboard struct {
+	ID               uuid.UUID          `json:"id"`
+	OrgID            uuid.UUID          `json:"org_id"`
+	OwnerID          uuid.UUID          `json:"owner_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Module           string             `json:"module"`
+	IsDefault        bool               `json:"is_default"`
+	IsSeeded         bool               `json:"is_seeded"`
+	Visibility       string             `json:"visibility"`
+	VisibilityTeamID pgtype.UUID        `json:"visibility_team_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type DashboardGadget struct {
+	ID          uuid.UUID          `json:"id"`
+	DashboardID uuid.UUID          `json:"dashboard_id"`
+	GadgetKey   string             `json:"gadget_key"`
+	Position    int32              `json:"position"`
+	ColSpan     int16              `json:"col_span"`
+	SavedViewID pgtype.UUID        `json:"saved_view_id"`
+	Config      []byte             `json:"config"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type EntityRelation struct {
 	ID        uuid.UUID          `json:"id"`
 	FromID    uuid.UUID          `json:"from_id"`

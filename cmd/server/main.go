@@ -68,6 +68,7 @@ import (
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	avatarapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/avatar"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	dashboardsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/dashboards"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
@@ -85,6 +86,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/dashboards"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
@@ -325,12 +327,19 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	sharedReader := sharesapi.NewServiceReader(wikiSvc, ticketSvc, itemSvc)
 	shareHandler := sharesapi.NewHandler(shareSvc, sharedReader).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy)
 
-	// Saved views (P4, ADR-0009). One adapter satisfies both seams: the view
-	// rows and the two cross-space result fan-outs.
+	// Saved views (P4, ADR-0009). One adapter satisfies three seams: the view
+	// rows, the two cross-space result fan-outs, and the P5 grouped fan-outs
+	// behind count and breakdown gadgets.
 	savedViewAdapter := adapters.NewSavedViewAdapter(pool)
-	viewHandler := viewsapi.NewHandler(
-		views.NewService(savedViewAdapter, savedViewAdapter),
-		views.NewQueueService(savedViewAdapter),
+	viewSvc := views.NewService(savedViewAdapter, savedViewAdapter, savedViewAdapter)
+	viewHandler := viewsapi.NewHandler(viewSvc, views.NewQueueService(savedViewAdapter))
+
+	// Dashboards (P5, ADR-0009). The dashboard service takes the saved-view
+	// service as its view lookup, so "may this caller see this view" has one
+	// answer site across both families.
+	dashboardHandler := dashboardsapi.NewHandler(
+		dashboards.NewService(adapters.NewDashboardAdapter(pool), viewSvc),
+		viewSvc,
 	)
 
 	// P2.5 administration: people lifecycle, invites, bulk grants, audit
@@ -419,6 +428,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		ViewHandler:         viewHandler,
 		PortalHandler:       portalHandler,
 		PortalService:       portalSvc,
+		DashboardHandler:    dashboardHandler,
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		QueueStatus:         queueStatus,
