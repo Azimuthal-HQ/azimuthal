@@ -13,9 +13,9 @@ import (
 )
 
 const createComment = `-- name: CreateComment :one
-INSERT INTO comments (id, entity_type, entity_id, parent_id, author_id, body)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at, entity_type, entity_id
+INSERT INTO comments (id, entity_type, entity_id, parent_id, author_id, body, visibility)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7::text, ''), 'internal'))
+RETURNING id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at, entity_type, entity_id, visibility, author_requester_id
 `
 
 type CreateCommentParams struct {
@@ -23,10 +23,30 @@ type CreateCommentParams struct {
 	EntityType string      `json:"entity_type"`
 	EntityID   uuid.UUID   `json:"entity_id"`
 	ParentID   pgtype.UUID `json:"parent_id"`
-	AuthorID   uuid.UUID   `json:"author_id"`
+	AuthorID   pgtype.UUID `json:"author_id"`
 	Body       string      `json:"body"`
+	Visibility string      `json:"visibility"`
 }
 
+// CreateComment writes an AGENT comment.
+//
+// THE EMPTY STRING MEANS INTERNAL, and the COALESCE is what makes that true
+// rather than a convention. sqlc turns visibility into a required Go
+// parameter, so migration 045's column DEFAULT can never fire on this
+// statement — every insert sends a value, including the zero value. Without
+// the COALESCE a caller that simply forgot the field would send "", which
+// satisfies no branch of comments_visibility_valid and fails the write.
+//
+// Failing loudly would be defensible; defaulting to the safe value is better,
+// because the two mistakes are not symmetric. A forgotten field that becomes
+// 'internal' is a comment the customer has to wait for. A forgotten field
+// that became 'public' would be a disclosure. The zero value must therefore
+// be the private one, and this is where that is enforced for every caller at
+// once instead of in each handler.
+//
+// A requester's own reply does NOT come through here — see
+// CreateRequesterComment in portal.sql, which is a separate statement so that
+// the author columns cannot be mixed up.
 func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (Comment, error) {
 	row := q.db.QueryRow(ctx, createComment,
 		arg.ID,
@@ -35,6 +55,7 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 		arg.ParentID,
 		arg.AuthorID,
 		arg.Body,
+		arg.Visibility,
 	)
 	var i Comment
 	err := row.Scan(
@@ -49,12 +70,14 @@ func (q *Queries) CreateComment(ctx context.Context, arg CreateCommentParams) (C
 		&i.DeletedAt,
 		&i.EntityType,
 		&i.EntityID,
+		&i.Visibility,
+		&i.AuthorRequesterID,
 	)
 	return i, err
 }
 
 const getCommentByID = `-- name: GetCommentByID :one
-SELECT id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at, entity_type, entity_id FROM comments WHERE id = $1 AND deleted_at IS NULL
+SELECT id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at, entity_type, entity_id, visibility, author_requester_id FROM comments WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetCommentByID(ctx context.Context, id uuid.UUID) (Comment, error) {
@@ -72,6 +95,8 @@ func (q *Queries) GetCommentByID(ctx context.Context, id uuid.UUID) (Comment, er
 		&i.DeletedAt,
 		&i.EntityType,
 		&i.EntityID,
+		&i.Visibility,
+		&i.AuthorRequesterID,
 	)
 	return i, err
 }
@@ -79,27 +104,32 @@ func (q *Queries) GetCommentByID(ctx context.Context, id uuid.UUID) (Comment, er
 const listCommentReplies = `-- name: ListCommentReplies :many
 SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
        c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
-       u.display_name AS author_name, u.avatar_url AS author_avatar
+       c.visibility, c.author_requester_id,
+       COALESCE(u.display_name, r.display_name, '') AS author_name,
+       u.avatar_url AS author_avatar
 FROM comments c
-JOIN users u ON u.id = c.author_id
+LEFT JOIN users u ON u.id = c.author_id
+LEFT JOIN requesters r ON r.id = c.author_requester_id
 WHERE c.parent_id = $1 AND c.deleted_at IS NULL
 ORDER BY c.created_at ASC
 `
 
 type ListCommentRepliesRow struct {
-	ID           uuid.UUID          `json:"id"`
-	EntityType   string             `json:"entity_type"`
-	EntityID     uuid.UUID          `json:"entity_id"`
-	ItemID       pgtype.UUID        `json:"item_id"`
-	PageID       pgtype.UUID        `json:"page_id"`
-	ParentID     pgtype.UUID        `json:"parent_id"`
-	AuthorID     uuid.UUID          `json:"author_id"`
-	Body         string             `json:"body"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	AuthorName   string             `json:"author_name"`
-	AuthorAvatar *string            `json:"author_avatar"`
+	ID                uuid.UUID          `json:"id"`
+	EntityType        string             `json:"entity_type"`
+	EntityID          uuid.UUID          `json:"entity_id"`
+	ItemID            pgtype.UUID        `json:"item_id"`
+	PageID            pgtype.UUID        `json:"page_id"`
+	ParentID          pgtype.UUID        `json:"parent_id"`
+	AuthorID          pgtype.UUID        `json:"author_id"`
+	Body              string             `json:"body"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	Visibility        string             `json:"visibility"`
+	AuthorRequesterID pgtype.UUID        `json:"author_requester_id"`
+	AuthorName        string             `json:"author_name"`
+	AuthorAvatar      *string            `json:"author_avatar"`
 }
 
 func (q *Queries) ListCommentReplies(ctx context.Context, parentID pgtype.UUID) ([]ListCommentRepliesRow, error) {
@@ -123,6 +153,8 @@ func (q *Queries) ListCommentReplies(ctx context.Context, parentID pgtype.UUID) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Visibility,
+			&i.AuthorRequesterID,
 			&i.AuthorName,
 			&i.AuthorAvatar,
 		); err != nil {
@@ -139,9 +171,12 @@ func (q *Queries) ListCommentReplies(ctx context.Context, parentID pgtype.UUID) 
 const listCommentsByEntity = `-- name: ListCommentsByEntity :many
 SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
        c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
-       u.display_name AS author_name, u.avatar_url AS author_avatar
+       c.visibility, c.author_requester_id,
+       COALESCE(u.display_name, r.display_name, '') AS author_name,
+       u.avatar_url AS author_avatar
 FROM comments c
-JOIN users u ON u.id = c.author_id
+LEFT JOIN users u ON u.id = c.author_id
+LEFT JOIN requesters r ON r.id = c.author_requester_id
 WHERE c.entity_type = $1 AND c.entity_id = $2 AND c.parent_id IS NULL AND c.deleted_at IS NULL
 ORDER BY c.created_at ASC
 `
@@ -152,21 +187,33 @@ type ListCommentsByEntityParams struct {
 }
 
 type ListCommentsByEntityRow struct {
-	ID           uuid.UUID          `json:"id"`
-	EntityType   string             `json:"entity_type"`
-	EntityID     uuid.UUID          `json:"entity_id"`
-	ItemID       pgtype.UUID        `json:"item_id"`
-	PageID       pgtype.UUID        `json:"page_id"`
-	ParentID     pgtype.UUID        `json:"parent_id"`
-	AuthorID     uuid.UUID          `json:"author_id"`
-	Body         string             `json:"body"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	AuthorName   string             `json:"author_name"`
-	AuthorAvatar *string            `json:"author_avatar"`
+	ID                uuid.UUID          `json:"id"`
+	EntityType        string             `json:"entity_type"`
+	EntityID          uuid.UUID          `json:"entity_id"`
+	ItemID            pgtype.UUID        `json:"item_id"`
+	PageID            pgtype.UUID        `json:"page_id"`
+	ParentID          pgtype.UUID        `json:"parent_id"`
+	AuthorID          pgtype.UUID        `json:"author_id"`
+	Body              string             `json:"body"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	Visibility        string             `json:"visibility"`
+	AuthorRequesterID pgtype.UUID        `json:"author_requester_id"`
+	AuthorName        string             `json:"author_name"`
+	AuthorAvatar      *string            `json:"author_avatar"`
 }
 
+// ListCommentsByEntity is the AGENT-side thread: every comment on the entity,
+// internal and public alike, with the visibility carried so the UI can mark
+// which ones the customer can read.
+//
+// THE AUTHOR JOINS ARE LEFT, AND MUST STAY LEFT. Migration 045 made
+// author_id nullable so a requester's reply can be attributed to a
+// requesters row instead of a users row. The INNER JOIN this replaced would
+// have dropped every requester message from the agent's view of the
+// conversation — silently, with the agent seeing a thread that appeared to
+// have no customer in it.
 func (q *Queries) ListCommentsByEntity(ctx context.Context, arg ListCommentsByEntityParams) ([]ListCommentsByEntityRow, error) {
 	rows, err := q.db.Query(ctx, listCommentsByEntity, arg.EntityType, arg.EntityID)
 	if err != nil {
@@ -188,6 +235,8 @@ func (q *Queries) ListCommentsByEntity(ctx context.Context, arg ListCommentsByEn
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Visibility,
+			&i.AuthorRequesterID,
 			&i.AuthorName,
 			&i.AuthorAvatar,
 		); err != nil {
@@ -211,7 +260,7 @@ func (q *Queries) SoftDeleteComment(ctx context.Context, id uuid.UUID) error {
 }
 
 const updateComment = `-- name: UpdateComment :one
-UPDATE comments SET body = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at, entity_type, entity_id
+UPDATE comments SET body = $2, updated_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id, item_id, page_id, parent_id, author_id, body, created_at, updated_at, deleted_at, entity_type, entity_id, visibility, author_requester_id
 `
 
 type UpdateCommentParams struct {
@@ -234,6 +283,8 @@ func (q *Queries) UpdateComment(ctx context.Context, arg UpdateCommentParams) (C
 		&i.DeletedAt,
 		&i.EntityType,
 		&i.EntityID,
+		&i.Visibility,
+		&i.AuthorRequesterID,
 	)
 	return i, err
 }

@@ -65,17 +65,19 @@ type BoardColumnStatus struct {
 }
 
 type Comment struct {
-	ID         uuid.UUID          `json:"id"`
-	ItemID     pgtype.UUID        `json:"item_id"`
-	PageID     pgtype.UUID        `json:"page_id"`
-	ParentID   pgtype.UUID        `json:"parent_id"`
-	AuthorID   uuid.UUID          `json:"author_id"`
-	Body       string             `json:"body"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt  pgtype.Timestamptz `json:"deleted_at"`
-	EntityType string             `json:"entity_type"`
-	EntityID   uuid.UUID          `json:"entity_id"`
+	ID                uuid.UUID          `json:"id"`
+	ItemID            pgtype.UUID        `json:"item_id"`
+	PageID            pgtype.UUID        `json:"page_id"`
+	ParentID          pgtype.UUID        `json:"parent_id"`
+	AuthorID          pgtype.UUID        `json:"author_id"`
+	Body              string             `json:"body"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	EntityType        string             `json:"entity_type"`
+	EntityID          uuid.UUID          `json:"entity_id"`
+	Visibility        string             `json:"visibility"`
+	AuthorRequesterID pgtype.UUID        `json:"author_requester_id"`
 }
 
 type CustomFieldDef struct {
@@ -292,6 +294,29 @@ type ProjectItemSequence struct {
 	LastNumber int64     `json:"last_number"`
 }
 
+type Requester struct {
+	ID                uuid.UUID          `json:"id"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	Email             string             `json:"email"`
+	DisplayName       string             `json:"display_name"`
+	IsActive          bool               `json:"is_active"`
+	SessionGeneration int32              `json:"session_generation"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	LastSeenAt        pgtype.Timestamptz `json:"last_seen_at"`
+}
+
+type RequesterMagicLink struct {
+	ID            uuid.UUID          `json:"id"`
+	RequesterID   uuid.UUID          `json:"requester_id"`
+	PortalID      uuid.UUID          `json:"portal_id"`
+	TokenHash     string             `json:"token_hash"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt    pgtype.Timestamptz `json:"consumed_at"`
+	InvalidatedAt pgtype.Timestamptz `json:"invalidated_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type SavedView struct {
 	ID               uuid.UUID          `json:"id"`
 	OrgID            uuid.UUID          `json:"org_id"`
@@ -306,6 +331,18 @@ type SavedView struct {
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
 	SpaceID          pgtype.UUID        `json:"space_id"`
 	Position         *int32             `json:"position"`
+}
+
+type ServiceDeskPortal struct {
+	ID        uuid.UUID          `json:"id"`
+	SpaceID   uuid.UUID          `json:"space_id"`
+	PortalKey string             `json:"portal_key"`
+	Name      string             `json:"name"`
+	Intro     string             `json:"intro"`
+	Enabled   bool               `json:"enabled"`
+	CreatedBy uuid.UUID          `json:"created_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Session struct {
@@ -411,7 +448,7 @@ type Ticket struct {
 	Description     string             `json:"description"`
 	Status          string             `json:"status"`
 	Priority        string             `json:"priority"`
-	ReporterID      uuid.UUID          `json:"reporter_id"`
+	ReporterID      pgtype.UUID        `json:"reporter_id"`
 	AssigneeID      pgtype.UUID        `json:"assignee_id"`
 	Labels          []string           `json:"labels"`
 	DueAt           pgtype.Timestamptz `json:"due_at"`
@@ -422,6 +459,7 @@ type Ticket struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
 	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
+	RequesterID     pgtype.UUID        `json:"requester_id"`
 }
 
 type User struct {

@@ -204,10 +204,11 @@ func TestRelationAdapter_CreateListDelete(t *testing.T) {
 	}
 	require.NoError(t, itemAdapter.Create(ctx, item))
 
+	reporterPtr := user.ID
 	tkt := &tickets.Ticket{
 		ID: uuid.New(), SpaceID: spaceB.ID,
 		Title: "Target ticket", Status: tickets.StatusOpen, Priority: tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporterPtr,
 	}
 	require.NoError(t, ticketAdapter.Create(ctx, tkt))
 
@@ -253,10 +254,11 @@ func TestRelationAdapter_ListByItem_FallsBackToTicket(t *testing.T) {
 	relationAdapter := adapters.NewRelationAdapter(queries)
 	ctx := context.Background()
 
+	reporterPtr := user.ID
 	tkt := &tickets.Ticket{
 		ID: uuid.New(), SpaceID: spaceA.ID,
 		Title: "Source ticket", Status: tickets.StatusOpen, Priority: tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporterPtr,
 	}
 	require.NoError(t, ticketAdapter.Create(ctx, tkt))
 

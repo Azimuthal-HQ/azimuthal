@@ -22,10 +22,11 @@ func TestTicketAdapter_Delete(t *testing.T) {
 	adapter := adapters.NewTicketAdapter(queries)
 	ctx := context.Background()
 
+	reporterPtr := user.ID
 	tkt := &tickets.Ticket{
 		ID: uuid.New(), SpaceID: space.ID,
 		Title: "To delete", Status: tickets.StatusOpen, Priority: tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporterPtr,
 	}
 	require.NoError(t, adapter.Create(ctx, tkt))
 
@@ -50,15 +51,17 @@ func TestTicketAdapter_ListByAssignee(t *testing.T) {
 	ctx := context.Background()
 
 	assignee := user.ID
+	reporterID := user.ID
 	assigned := &tickets.Ticket{
 		ID: uuid.New(), SpaceID: space.ID,
 		Title: "Assigned ticket", Status: tickets.StatusOpen, Priority: tickets.PriorityMedium,
-		ReporterID: user.ID, AssigneeID: &assignee,
+		ReporterID: &reporterID, AssigneeID: &assignee,
 	}
+	reporterPtr := user.ID
 	unassigned := &tickets.Ticket{
 		ID: uuid.New(), SpaceID: space.ID,
 		Title: "Unassigned ticket", Status: tickets.StatusOpen, Priority: tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporterPtr,
 	}
 	require.NoError(t, adapter.Create(ctx, assigned))
 	require.NoError(t, adapter.Create(ctx, unassigned))
@@ -78,10 +81,11 @@ func TestTicketAdapter_Search(t *testing.T) {
 	adapter := adapters.NewTicketAdapter(queries)
 	ctx := context.Background()
 
+	reporterPtr := user.ID
 	tkt := &tickets.Ticket{
 		ID: uuid.New(), SpaceID: space.ID,
 		Title: "Login button broken", Status: tickets.StatusOpen, Priority: tickets.PriorityHigh,
-		ReporterID: user.ID,
+		ReporterID: &reporterPtr,
 	}
 	require.NoError(t, adapter.Create(ctx, tkt))
 

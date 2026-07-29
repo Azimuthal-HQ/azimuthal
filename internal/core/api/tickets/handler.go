@@ -258,7 +258,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
-	if !access.CanEditEntity(r.Context(), spaceID, existing.ReporterID) {
+	if !access.CanEditEntity(r.Context(), spaceID, creatorOf(existing)) {
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
@@ -314,13 +314,13 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
-	if !access.CanEditEntity(r.Context(), spaceID, existing.ReporterID) {
+	if !access.CanEditEntity(r.Context(), spaceID, creatorOf(existing)) {
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
 		return
 	}
 
 	claims := auth.ClaimsFromContext(r.Context())
-	actorID := existing.ReporterID
+	actorID := creatorOf(existing)
 	if claims != nil {
 		actorID = claims.UserID
 	}
@@ -610,6 +610,24 @@ func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("parsing space ID: %w", err)
 	}
 	return id, nil
+}
+
+// creatorOf reports the internal user who raised a ticket, for the
+// edit_own_items half of access.CanEditEntity.
+//
+// A PORTAL-RAISED TICKET HAS NO INTERNAL CREATOR, and uuid.Nil is the correct
+// answer rather than a placeholder. CanEditEntity grants on
+// `createdBy == res.UserID || Can(CapEditAnyItem, ...)`, and a resolved
+// caller's UserID is never uuid.Nil, so the ownership half simply never
+// matches for a portal ticket and editing it requires edit_any_item — which
+// is right, because nobody inside the organisation raised it and "their own"
+// does not apply to anyone. Substituting the assignee or the space creator
+// here would silently hand ownership to somebody who never asked for it.
+func creatorOf(t *tickets.Ticket) uuid.UUID {
+	if t == nil || t.ReporterID == nil {
+		return uuid.Nil
+	}
+	return *t.ReporterID
 }
 
 func handleTicketError(w http.ResponseWriter, r *http.Request, err error) {
