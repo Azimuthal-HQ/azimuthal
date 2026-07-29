@@ -14,6 +14,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -30,19 +31,35 @@ type Handler struct {
 	// TestHarness_NoDarkDependencies.
 	tiers   *tiergate.Gate
 	applier workflow.TransitionApplier
+	// tierStore and tierSvc back the ADR-0011 configuration CRUD and the
+	// approval decision surface; auditLog records both.
+	tierStore workflow.TierStore
+	tierSvc   *workflow.TierService
+	auditLog  audit.Logger
 }
 
 // WithWorkflowTiers attaches the ADR-0011 tier gate and the transactional
 // applier.
-func (h *Handler) WithWorkflowTiers(g *tiergate.Gate, a workflow.TransitionApplier) *Handler {
+func (h *Handler) WithWorkflowTiers(
+	g *tiergate.Gate, a workflow.TransitionApplier, store workflow.TierStore, svc *workflow.TierService,
+) *Handler {
 	h.tiers = g
 	h.applier = a
+	h.tierStore = store
+	h.tierSvc = svc
+	return h
+}
+
+// WithAuditLogger attaches an audit logger. Tier configuration changes and
+// approval decisions are recorded through it.
+func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
+	h.auditLog = l
 	return h
 }
 
 // NewHandler creates a Handler.
 func NewHandler(q *generated.Queries, repo workflow.Repository, eng workflow.Engine) *Handler {
-	return &Handler{q: q, repo: repo, eng: eng}
+	return &Handler{q: q, repo: repo, eng: eng, auditLog: audit.NewLogger()}
 }
 
 // OrgRoutes mounts org-scoped workflow CRUD under /orgs/{orgID}/workflows.
@@ -61,6 +78,7 @@ func (h *Handler) OrgRoutes(adminGuard func(http.Handler) http.Handler) chi.Rout
 	r.Get("/{workflowID}/transitions", h.ListTransitions)
 	r.With(adminGuard).Post("/{workflowID}/transitions", h.CreateTransition)
 	r.With(adminGuard).Delete("/{workflowID}/transitions/{transitionID}", h.DeleteTransition)
+	h.registerTierOrgRoutes(r, adminGuard)
 	return r
 }
 
@@ -69,6 +87,7 @@ func (h *Handler) SpaceRoutes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.GetSpaceWorkflow)
 	r.Get("/states", h.GetSpaceWorkflowStates)
+	h.registerTierSpaceRoutes(r)
 	return r
 }
 

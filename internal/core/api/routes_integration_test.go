@@ -174,7 +174,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// status — a route that skipped them would be the bypass the chokepoint
 	// exists to close.
 	tierStore := adapters.NewWorkflowTierAdapter(queries)
-	tierGate := tiergate.New(workflow.NewTierService(tierStore), tierStore)
+	tierSvc := workflow.NewTierService(tierStore)
+	tierGate := tiergate.New(tierSvc, tierStore)
 	transitionTx := adapters.NewWorkflowTransitionTxAdapter(pool)
 
 	// v0.3 access control, wired exactly as production (cmd/server/main.go),
@@ -283,7 +284,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(adapters.NewSpaceCreateAdapter(db.Pool)).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
 		NotificationHandler: notificationsapi.NewHandler(queries),
-		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx),
+		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
 		ShareHandler:        shareHandler,

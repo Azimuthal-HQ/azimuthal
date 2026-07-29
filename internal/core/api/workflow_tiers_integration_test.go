@@ -26,7 +26,9 @@ type tierAPIFixture struct {
 	spaceID  uuid.UUID
 	ticketID uuid.UUID
 	tier     *adapters.WorkflowTierAdapter
-	edge     uuid.UUID // open -> in_progress on the space's workflow
+	// edge is open -> in_progress on the space's workflow.
+	edge       uuid.UUID
+	workflowID uuid.UUID
 }
 
 func setupTierAPI(t *testing.T) *tierAPIFixture {
@@ -72,11 +74,12 @@ func setupTierAPI(t *testing.T) *tierAPIFixture {
 	require.Equal(t, "open", created["status"], "new tickets start open")
 
 	return &tierAPIFixture{
-		ts:       ts,
-		spaceID:  spaceID,
-		ticketID: uuid.MustParse(created["id"].(string)),
-		tier:     adapters.NewWorkflowTierAdapter(generated.New(ts.DB.Pool)),
-		edge:     edge,
+		ts:         ts,
+		spaceID:    spaceID,
+		ticketID:   uuid.MustParse(created["id"].(string)),
+		tier:       adapters.NewWorkflowTierAdapter(generated.New(ts.DB.Pool)),
+		edge:       edge,
+		workflowID: def.ID,
 	}
 }
 

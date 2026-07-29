@@ -187,6 +187,48 @@ touch or reference.
   a never-written localStorage key. Fixed in this PR (workstream D); see the PR body for
   runtime severity.
 
+### Added by the v0.4 workflow-tiers phase (migrations 046, 047)
+
+- **The workflow engine governs almost nothing at runtime, and the routes that do are not
+  the engine's.** An item's status can change through four routes, running three different
+  rule sets — or none:
+
+  | route | what validated it before this phase |
+  |---|---|
+  | `POST .../tickets/{id}/status` | a hardcoded Go map, `internal/core/tickets/status.go` |
+  | `POST .../projects/items/{id}/status` | **nothing** — `ItemService.UpdateItemStatus` wrote any string |
+  | `POST .../tickets/{id}/workflow-state` | the DB engine over `workflow_transitions` |
+  | `POST .../projects/items/{id}/workflow-state` | the DB engine |
+
+  `web/src/lib/api.ts` calls **only the first two**; a grep for `workflow-state` under
+  `web/src` returns nothing. So the `workflow_*` tables (migrations 016/019/029) describe a
+  machine with no client, while the routes users actually reach ran a duplicate rule set or
+  no rule set at all. The repository wins and no spec sentence asserted otherwise, so this is
+  recorded rather than corrected.
+
+  Consequence for later phases: **any rule about transitions must be enforced at a chokepoint
+  all four routes enter**, which is why `workflow.TierService.Gate` speaks status *text* as
+  well as state ids. A guard attached to the engine alone would be unreachable by every real
+  user and bypassable through the route they do use.
+
+- **`tickets.status` and `workflow_state_id` diverge permanently after any legacy `/status`
+  call**, because `UpdateTicketStatus` writes `status` alone. The engine then validates the
+  *next* transition from a stale state. This phase stops a gated transition adding to the
+  drift — the tier applier writes both columns — but does **not** repair rows that already
+  drifted, and does not reconcile the two state machines. Both are inherited defects, flagged
+  for a maintainer rather than fixed under a feature phase.
+
+- **The pre-existing org-scoped workflow routes do not scope `{workflowID}` to `{orgID}`.**
+  `GetWorkflow`, `UpdateWorkflow`, `DeleteWorkflow` and the state/transition routes resolve
+  the id and act on it, so a workflow in another org is reachable by id. Every route the
+  tiers phase adds calls `GetWorkflowInOrg` first and answers 404, so the new surface does
+  not widen the exposure; the existing routes are unchanged because changing them alters
+  live behaviour and needs its own regression pair.
+
+- **`npm run lint` is a required CI gate** (`.github/workflows/ci.yml`, the `Frontend` job),
+  contradicting `CLAUDE.md` §3's statement that it is not. The repository wins; §3's claim
+  predates #82. Treat eslint as blocking.
+
 ---
 
 ## 4. Standing instruction for later phases

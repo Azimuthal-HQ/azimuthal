@@ -1,0 +1,764 @@
+package workflows
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
+	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+)
+
+// This file carries the ADR-0011 tier surface: the org-scoped configuration
+// CRUD an administrator uses to attach guards, approvers and post-functions to
+// a transition, and the space-scoped approval surface an approver uses to
+// decide one.
+//
+// # Two scopes, two guard classes, and why
+//
+// CONFIGURATION is org-scoped and org-admin, because that is where workflows
+// already live: a workflow is an org object shared by every space bound to it,
+// so a space admin editing one would be editing other spaces' rules. The
+// existing workflow mutations are org-admin for the same reason, and
+// TestReadPathSweep_GuardClassMatchesMiddleware verifies that claim against the
+// real middleware chain rather than taking the accounting row on trust.
+//
+// DECISIONS are space-scoped, because an approval is about one item in one
+// space. Authority to decide is not a capability at all: it is being named,
+// directly or through a team, on the transition. See workflow.CanDecide.
+//
+// # Every route here re-scopes {workflowID} to {orgID}
+//
+// The pre-existing workflow routes resolve {workflowID} without checking it
+// belongs to {orgID}, which makes a workflow in another org reachable by id.
+// That is reported as an inherited finding rather than changed here, because
+// changing it alters existing behaviour. Every route in THIS file calls
+// requireWorkflowInOrg first, so the new surface does not widen the exposure.
+
+// registerTierOrgRoutes adds the per-transition configuration surface to the
+// org-scoped workflow router.
+//
+// Registered as explicit routes rather than a chi Mount: the existing router
+// already declares DELETE /{workflowID}/transitions/{transitionID}, and chi
+// panics when a Mount collides with an existing path.
+//
+// Reads are open to org members — an ordinary user benefits from seeing why a
+// transition is restricted — and every mutation carries adminGuard.
+func (h *Handler) registerTierOrgRoutes(r chi.Router, adminGuard func(http.Handler) http.Handler) {
+	const base = "/{workflowID}/transitions/{transitionID}"
+
+	r.Get(base+"/guards", h.ListGuards)
+	r.With(adminGuard).Post(base+"/guards", h.CreateGuard)
+	r.With(adminGuard).Delete(base+"/guards/{guardID}", h.DeleteGuard)
+
+	r.Get(base+"/post-functions", h.ListPostFunctions)
+	r.With(adminGuard).Post(base+"/post-functions", h.CreatePostFunction)
+	r.With(adminGuard).Delete(base+"/post-functions/{postFunctionID}", h.DeletePostFunction)
+
+	r.Get(base+"/approvers", h.ListApprovers)
+	r.With(adminGuard).Post(base+"/approvers", h.CreateApprover)
+	r.With(adminGuard).Delete(base+"/approvers/{approverID}", h.DeleteApprover)
+}
+
+// registerTierSpaceRoutes adds the approval surface to the space-scoped
+// workflow router.
+func (h *Handler) registerTierSpaceRoutes(r chi.Router) {
+	r.Get("/approvals", h.ListPendingApprovals)
+	r.Post("/approvals/{approvalID}/decide", h.DecideApproval)
+}
+
+// ─── Request bodies ───────────────────────────────────────────────────────────
+
+type createGuardRequest struct {
+	GuardClass string     `json:"guard_class"`
+	Kind       string     `json:"kind"`
+	Position   int32      `json:"position"`
+	Capability *string    `json:"capability,omitempty"`
+	TeamID     *uuid.UUID `json:"team_id,omitempty"`
+	FieldKey   *string    `json:"field_key,omitempty"`
+}
+
+type createPostFunctionRequest struct {
+	Kind           string     `json:"kind"`
+	Position       int32      `json:"position"`
+	AssigneeUserID *uuid.UUID `json:"assignee_user_id,omitempty"`
+	FieldKey       *string    `json:"field_key,omitempty"`
+	FieldValue     *string    `json:"field_value,omitempty"`
+}
+
+type createApproverRequest struct {
+	SubjectType string    `json:"subject_type"`
+	SubjectID   uuid.UUID `json:"subject_id"`
+}
+
+type decideApprovalRequest struct {
+	Decision string `json:"decision"`
+}
+
+// ─── Guards ───────────────────────────────────────────────────────────────────
+
+// ListGuards returns the conditions and validators on a transition.
+//
+// @Summary      List transition guards
+// @Description  Returns the ADR-0011 conditions and validators attached to a workflow transition.
+// @Tags         workflows
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID         path      string  true  "Organization ID"
+// @Param        workflowID    path      string  true  "Workflow ID"
+// @Param        transitionID  path      string  true  "Transition ID"
+// @Success      200  {array}   workflow.Guard            "Guards"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards [get]
+func (h *Handler) ListGuards(w http.ResponseWriter, r *http.Request) {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
+		return
+	}
+	guards, err := h.tierStore.GuardsForTransition(r.Context(), transitionID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list guards")
+		return
+	}
+	// Go marshals a nil slice as null; the client's list fetchers coalesce, but
+	// an empty array is the honest wire form and null-collections.spec.ts hunts
+	// the other one.
+	if guards == nil {
+		guards = []workflow.Guard{}
+	}
+	respond.JSON(w, http.StatusOK, guards)
+}
+
+// CreateGuard attaches a condition or validator to a transition.
+//
+// @Summary      Create transition guard
+// @Description  Attaches an ADR-0011 condition or validator to a workflow transition. The vocabulary is closed.
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID         path      string              true  "Organization ID"
+// @Param        workflowID    path      string              true  "Workflow ID"
+// @Param        transitionID  path      string              true  "Transition ID"
+// @Param        body          body      createGuardRequest  true  "Guard definition"
+// @Success      201  {object}  workflow.Guard            "Created guard"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Validation error"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards [post]
+func (h *Handler) CreateGuard(w http.ResponseWriter, r *http.Request) {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
+		return
+	}
+	var req createGuardRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+
+	g := workflow.Guard{
+		TransitionID: transitionID,
+		Class:        workflow.GuardClass(req.GuardClass),
+		Kind:         workflow.GuardKind(req.Kind),
+		Position:     req.Position,
+		TeamID:       req.TeamID,
+	}
+	if req.Capability != nil {
+		c := access.Capability(*req.Capability)
+		g.Capability = &c
+	}
+	if req.FieldKey != nil {
+		f := workflow.FieldKey(*req.FieldKey)
+		g.FieldKey = &f
+	}
+
+	// The closed vocabulary is enforced here, before anything is written, so a
+	// caller gets a sentence naming what is permitted rather than a constraint
+	// violation. Migration 046's CHECKs refuse the same set one layer down.
+	if err := workflow.ValidateGuard(g); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+		return
+	}
+
+	created, err := h.tierStore.CreateGuard(r.Context(), g)
+	if err != nil {
+		if errors.Is(err, workflow.ErrNotFound) {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "transition not found")
+			return
+		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create guard")
+		return
+	}
+	h.logTierEvent(r, audit.EventTypeWorkflowGuardCreated, "workflow_guard", created.ID, map[string]string{
+		"transition_id": transitionID.String(),
+		"guard_class":   string(created.Class),
+		"kind":          string(created.Kind),
+	})
+	respond.JSON(w, http.StatusCreated, created)
+}
+
+// DeleteGuard removes a condition or validator.
+//
+// @Summary      Delete transition guard
+// @Description  Removes an ADR-0011 condition or validator from a workflow transition.
+// @Tags         workflows
+// @Security     BearerAuth
+// @Param        orgID         path  string  true  "Organization ID"
+// @Param        workflowID    path  string  true  "Workflow ID"
+// @Param        transitionID  path  string  true  "Transition ID"
+// @Param        guardID       path  string  true  "Guard ID"
+// @Success      204  "Deleted"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards/{guardID} [delete]
+func (h *Handler) DeleteGuard(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.resolveTransition(w, r); !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "guardID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid guard ID")
+		return
+	}
+	if err := h.tierStore.DeleteGuard(r.Context(), id); err != nil {
+		if errors.Is(err, workflow.ErrNotFound) {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "guard not found")
+			return
+		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to delete guard")
+		return
+	}
+	h.logTierEvent(r, audit.EventTypeWorkflowGuardDeleted, "workflow_guard", id, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── Post-functions ───────────────────────────────────────────────────────────
+
+// ListPostFunctions returns the actions a transition performs.
+//
+// @Summary      List transition post-functions
+// @Description  Returns the ADR-0011 post-functions attached to a workflow transition. The set is fixed in code.
+// @Tags         workflows
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID         path      string  true  "Organization ID"
+// @Param        workflowID    path      string  true  "Workflow ID"
+// @Param        transitionID  path      string  true  "Transition ID"
+// @Success      200  {array}   workflow.PostFunction     "Post-functions"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions [get]
+func (h *Handler) ListPostFunctions(w http.ResponseWriter, r *http.Request) {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
+		return
+	}
+	pfs, err := h.tierStore.PostFunctionsForTransition(r.Context(), transitionID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list post-functions")
+		return
+	}
+	if pfs == nil {
+		pfs = []workflow.PostFunction{}
+	}
+	respond.JSON(w, http.StatusOK, pfs)
+}
+
+// CreatePostFunction attaches an action to a transition.
+//
+// @Summary      Create transition post-function
+// @Description  Attaches one of the fixed ADR-0011 post-functions to a transition. The set is defined in code and cannot be extended by configuration.
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID         path      string                     true  "Organization ID"
+// @Param        workflowID    path      string                     true  "Workflow ID"
+// @Param        transitionID  path      string                     true  "Transition ID"
+// @Param        body          body      createPostFunctionRequest  true  "Post-function definition"
+// @Success      201  {object}  workflow.PostFunction     "Created post-function"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Validation error"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions [post]
+func (h *Handler) CreatePostFunction(w http.ResponseWriter, r *http.Request) {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
+		return
+	}
+	var req createPostFunctionRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+
+	p := workflow.PostFunction{
+		TransitionID:   transitionID,
+		Kind:           workflow.PostFunctionKind(req.Kind),
+		Position:       req.Position,
+		AssigneeUserID: req.AssigneeUserID,
+		FieldValue:     req.FieldValue,
+	}
+	if req.FieldKey != nil {
+		f := workflow.PostFieldKey(*req.FieldKey)
+		p.FieldKey = &f
+	}
+	if err := workflow.ValidatePostFunction(p); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+		return
+	}
+
+	created, err := h.tierStore.CreatePostFunction(r.Context(), p)
+	if err != nil {
+		if errors.Is(err, workflow.ErrNotFound) {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "transition not found")
+			return
+		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create post-function")
+		return
+	}
+	h.logTierEvent(r, audit.EventTypeWorkflowPostFunctionCreated, "workflow_post_function", created.ID, map[string]string{
+		"transition_id": transitionID.String(),
+		"kind":          string(created.Kind),
+	})
+	respond.JSON(w, http.StatusCreated, created)
+}
+
+// DeletePostFunction removes an action from a transition.
+//
+// @Summary      Delete transition post-function
+// @Description  Removes an ADR-0011 post-function from a workflow transition.
+// @Tags         workflows
+// @Security     BearerAuth
+// @Param        orgID           path  string  true  "Organization ID"
+// @Param        workflowID      path  string  true  "Workflow ID"
+// @Param        transitionID    path  string  true  "Transition ID"
+// @Param        postFunctionID  path  string  true  "Post-function ID"
+// @Success      204  "Deleted"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions/{postFunctionID} [delete]
+func (h *Handler) DeletePostFunction(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.resolveTransition(w, r); !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "postFunctionID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid post-function ID")
+		return
+	}
+	if err := h.tierStore.DeletePostFunction(r.Context(), id); err != nil {
+		if errors.Is(err, workflow.ErrNotFound) {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "post-function not found")
+			return
+		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to delete post-function")
+		return
+	}
+	h.logTierEvent(r, audit.EventTypeWorkflowPostFunctionDeleted, "workflow_post_function", id, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── Approvers ────────────────────────────────────────────────────────────────
+
+// ListApprovers returns who must approve a transition.
+//
+// @Summary      List transition approvers
+// @Description  Returns the users and teams that may approve a workflow transition.
+// @Tags         workflows
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID         path      string  true  "Organization ID"
+// @Param        workflowID    path      string  true  "Workflow ID"
+// @Param        transitionID  path      string  true  "Transition ID"
+// @Success      200  {array}   workflow.Approver         "Approvers"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers [get]
+func (h *Handler) ListApprovers(w http.ResponseWriter, r *http.Request) {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
+		return
+	}
+	approvers, err := h.tierStore.ApproversForTransition(r.Context(), transitionID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list approvers")
+		return
+	}
+	if approvers == nil {
+		approvers = []workflow.Approver{}
+	}
+	respond.JSON(w, http.StatusOK, approvers)
+}
+
+// CreateApprover adds a user or team to a transition's approver set.
+//
+// @Summary      Create transition approver
+// @Description  Adds a user or team that may approve a workflow transition. Any one approver may decide.
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID         path      string                 true  "Organization ID"
+// @Param        workflowID    path      string                 true  "Workflow ID"
+// @Param        transitionID  path      string                 true  "Transition ID"
+// @Param        body          body      createApproverRequest  true  "Approver subject"
+// @Success      201  {object}  workflow.Approver         "Created approver"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Validation error"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Failure      409  {object}  api.SwaggerErrorResponse  "Already an approver"
+// @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers [post]
+func (h *Handler) CreateApprover(w http.ResponseWriter, r *http.Request) {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
+		return
+	}
+	var req createApproverRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+
+	ap := workflow.Approver{
+		TransitionID: transitionID,
+		SubjectType:  workflow.ApproverSubjectType(req.SubjectType),
+		SubjectID:    req.SubjectID,
+	}
+	if err := workflow.ValidateApprover(ap); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+		return
+	}
+
+	created, err := h.tierStore.CreateApprover(r.Context(), ap)
+	if err != nil {
+		switch {
+		case errors.Is(err, workflow.ErrApproverExists):
+			respond.Error(w, r, http.StatusConflict, respond.CodeConflict,
+				"that subject is already an approver for this transition")
+		case errors.Is(err, workflow.ErrNotFound):
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "transition not found")
+		default:
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create approver")
+		}
+		return
+	}
+	h.logTierEvent(r, audit.EventTypeWorkflowApproverCreated, "workflow_approver", created.ID, map[string]string{
+		"transition_id": transitionID.String(),
+		"subject_type":  string(created.SubjectType),
+		"subject_id":    created.SubjectID.String(),
+	})
+	respond.JSON(w, http.StatusCreated, created)
+}
+
+// DeleteApprover removes a subject from a transition's approver set.
+//
+// @Summary      Delete transition approver
+// @Description  Removes a user or team from a workflow transition's approver set.
+// @Tags         workflows
+// @Security     BearerAuth
+// @Param        orgID         path  string  true  "Organization ID"
+// @Param        workflowID    path  string  true  "Workflow ID"
+// @Param        transitionID  path  string  true  "Transition ID"
+// @Param        approverID    path  string  true  "Approver ID"
+// @Success      204  "Deleted"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers/{approverID} [delete]
+func (h *Handler) DeleteApprover(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.resolveTransition(w, r); !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "approverID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid approver ID")
+		return
+	}
+	if err := h.tierStore.DeleteApprover(r.Context(), id); err != nil {
+		if errors.Is(err, workflow.ErrNotFound) {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "approver not found")
+			return
+		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to delete approver")
+		return
+	}
+	h.logTierEvent(r, audit.EventTypeWorkflowApproverDeleted, "workflow_approver", id, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── Approvals ────────────────────────────────────────────────────────────────
+
+// ListPendingApprovals returns everything awaiting a decision in a space.
+//
+// Space-read: anyone who can see the space's items can see that one is waiting.
+// The list is the surface the board reads to mark an item blocked, so hiding it
+// from non-approvers would make the block invisible to the person it affects.
+//
+// @Summary      List pending approvals
+// @Description  Returns the workflow transitions awaiting an approval decision in a space.
+// @Tags         workflows
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID"
+// @Param        spaceID  path      string  true  "Space ID"
+// @Success      200  {array}   workflow.Approval         "Pending approvals"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/workflow/approvals [get]
+func (h *Handler) ListPendingApprovals(w http.ResponseWriter, r *http.Request) {
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
+		return
+	}
+	if h.tierStore == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow tier evaluation is not configured on this server")
+		return
+	}
+	approvals, err := h.tierStore.PendingApprovalsForSpace(r.Context(), spaceID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list approvals")
+		return
+	}
+	if approvals == nil {
+		approvals = []workflow.Approval{}
+	}
+	respond.JSON(w, http.StatusOK, approvals)
+}
+
+// DecideApproval records an approver's verdict and, on approval, applies the
+// transition the request captured.
+//
+// Authority is DATA, not a capability: the actor may decide because an
+// administrator named them, or a team they are an ADR-0007 effective member of,
+// on this transition. No Capability constant governs it, and none was added —
+// "who approves change requests" is per-gate rather than per-role, and adding
+// one would have changed the capability model, which CLAUDE.md §5 makes a
+// stop-and-raise decision.
+//
+// On approval the captured transition is applied through the same transactional
+// applier a direct transition uses, so its post-functions commit with the status
+// or not at all. On a decline nothing is applied: the item never left its source
+// status, which is what "decline returns the item to the source status" means
+// when the gate blocks rather than moves.
+//
+// @Summary      Decide an approval
+// @Description  Approves or declines a pending workflow transition. Only a configured approver may decide.
+// @Tags         workflows
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID       path      string                 true  "Organization ID"
+// @Param        spaceID     path      string                 true  "Space ID"
+// @Param        approvalID  path      string                 true  "Approval ID"
+// @Param        body        body      decideApprovalRequest  true  "approved or declined"
+// @Success      200  {object}  workflow.Approval         "The recorded decision"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Validation error"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      403  {object}  api.SwaggerErrorResponse  "Not an approver"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Failure      409  {object}  api.SwaggerErrorResponse  "Already decided"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/workflow/approvals/{approvalID}/decide [post]
+func (h *Handler) DecideApproval(w http.ResponseWriter, r *http.Request) {
+	spaceID, approvalID, claims, orgID, ok := h.decideInputs(w, r)
+	if !ok {
+		return
+	}
+
+	var req decideApprovalRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	decision, err := workflow.ParseDecision(req.Decision)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+		return
+	}
+
+	decided, effects, err := h.tierSvc.Decide(r.Context(), workflow.DecideRequest{
+		OrgID:      orgID,
+		ApprovalID: approvalID,
+		ActorID:    claims.UserID,
+		Decision:   decision,
+	})
+	if err != nil {
+		respondDecideError(w, r, err)
+		return
+	}
+
+	// A decline records the verdict and applies nothing: the item never moved.
+	if decision != workflow.DecisionApproved {
+		h.logApprovalDecision(r, decided)
+		respond.JSON(w, http.StatusOK, decided)
+		return
+	}
+
+	if err := h.applier.ApplyTransition(r.Context(), workflow.ApplyInput{
+		EntityType:   decided.EntityType,
+		EntityID:     decided.EntityID,
+		OrgID:        orgID,
+		SpaceID:      spaceID,
+		ActorID:      claims.UserID,
+		ToStatus:     decided.ToStatus,
+		ToStateID:    decided.ToStateID,
+		TransitionID: decided.TransitionID,
+		ApprovalID:   &decided.ID,
+		Effects:      effects,
+	}); err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"the approval was recorded but the transition could not be applied")
+		return
+	}
+	h.logApprovalDecision(r, decided)
+	respond.JSON(w, http.StatusOK, decided)
+}
+
+// decideInputs resolves and validates everything DecideApproval needs before it
+// can act, answering the request itself on any failure.
+func (h *Handler) decideInputs(w http.ResponseWriter, r *http.Request) (
+	spaceID, approvalID uuid.UUID, claims *auth.Claims, orgID uuid.UUID, ok bool,
+) {
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
+		return
+	}
+	approvalID, err = uuid.Parse(chi.URLParam(r, "approvalID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid approval ID")
+		return
+	}
+	if h.tiers == nil || h.applier == nil || h.tierSvc == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow tier evaluation is not configured on this server")
+		return
+	}
+	claims = auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return
+	}
+	orgID, err = uuid.Parse(claims.OrgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return
+	}
+	return spaceID, approvalID, claims, orgID, true
+}
+
+func respondDecideError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, workflow.ErrNotAnApprover):
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden,
+			"you are not an approver for this transition")
+	case errors.Is(err, workflow.ErrApprovalAlreadyDecided):
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict,
+			"this approval has already been decided")
+	case errors.Is(err, workflow.ErrNotFound):
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "approval not found")
+	case errors.Is(err, workflow.ErrInvalidTransition):
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict,
+			"the transition this approval was requested for no longer exists")
+	case errors.Is(err, workflow.ErrPostFunctionUnknown), errors.Is(err, workflow.ErrPostFunctionMalformed):
+		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation,
+			"this transition is configured with an action this server cannot perform, so it was not applied")
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to record the decision")
+	}
+}
+
+// ─── Shared helpers ───────────────────────────────────────────────────────────
+
+// resolveTransition parses {transitionID} and proves the transition belongs to a
+// workflow that belongs to {orgID}.
+//
+// Every tier route calls it. The pre-existing workflow routes resolve
+// {workflowID} without an org check — reported as an inherited finding — and
+// this is how the new surface avoids inheriting it.
+func (h *Handler) resolveTransition(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	if h.tierStore == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow tier evaluation is not configured on this server")
+		return uuid.Nil, false
+	}
+
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org ID")
+		return uuid.Nil, false
+	}
+	workflowID, err := workflowIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid workflow ID")
+		return uuid.Nil, false
+	}
+	transitionID, err := transitionIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid transition ID")
+		return uuid.Nil, false
+	}
+
+	if _, err := h.q.GetWorkflowInOrg(r.Context(), generated.GetWorkflowInOrgParams{
+		ID: workflowID, OrgID: orgID,
+	}); err != nil {
+		// 404 rather than 403: a workflow in another org must not be
+		// distinguishable from one that does not exist.
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "workflow not found")
+		return uuid.Nil, false
+	}
+
+	transition, err := h.q.GetWorkflowTransition(r.Context(), transitionID)
+	if err != nil || transition.WorkflowID != workflowID {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "transition not found")
+		return uuid.Nil, false
+	}
+	return transitionID, true
+}
+
+// logTierEvent records a configuration change. Convention A — the handler
+// mutates, then audits — because tier configuration carries no atomicity
+// contract: one row changes, and a lost audit row does not make a partially
+// applied change.
+func (h *Handler) logTierEvent(r *http.Request, t audit.EventType, kind string, id uuid.UUID, meta map[string]string) {
+	if h.auditLog == nil {
+		return
+	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		return
+	}
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: t, ActorID: claims.UserID.String(), OrgID: claims.OrgID,
+		ResourceType: kind, ResourceID: id.String(), Metadata: meta,
+	})
+}
+
+func (h *Handler) logApprovalDecision(r *http.Request, a workflow.Approval) {
+	meta := map[string]string{
+		"entity_type": string(a.EntityType),
+		"entity_id":   a.EntityID.String(),
+		"from_status": a.FromStatus,
+		"to_status":   a.ToStatus,
+	}
+	if a.Decision != nil {
+		meta["decision"] = string(*a.Decision)
+	}
+	h.logTierEvent(r, audit.EventTypeWorkflowApprovalDecided, "approval", a.ID, meta)
+}
