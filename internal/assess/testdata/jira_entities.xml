@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A synthetic Jira entity export, built from the documented shape of
+  entities.xml: an <entity-engine-xml> root over a flat, interleaved sequence
+  of rows whose element name is the OfBiz entity name.
+
+  It is deliberately not tidy. It carries the cases the assessor must get right:
+  a project key that needs no coercion beside one that does, an issue type with
+  a hyphen, a priority outside the four Azimuthal allows, a comment with a role
+  restriction beside unrestricted ones, custom fields spanning all three
+  verdicts, saved filters spanning all three JQL classifications, a field
+  supplied as a child element rather than an attribute, and entity types the
+  assessor does not classify at all.
+-->
+<entity-engine-xml>
+
+  <Project id="10000" key="DOCS" name="Documentation" lead="alice" originalkey="DOCS"/>
+  <Project id="10001" key="PLAT" name="Platform" lead="bob" originalkey="PLAT"/>
+
+  <IssueType id="1" name="Task"/>
+  <IssueType id="2" name="Sub-task"/>
+  <IssueType id="3" name="Bug"/>
+  <Status id="1" name="Open"/>
+  <Status id="3" name="In Progress"/>
+  <Priority id="1" name="Blocker"/>
+  <Priority id="3" name="Medium"/>
+
+  <Issue id="10100" key="DOCS-1" project="10000" number="1" type="1" status="1" priority="3"
+         reporter="alice" assignee="bob" summary="Write the getting-started guide"
+         created="2026-01-04 09:12:00" updated="2026-02-01 11:00:00"/>
+
+  <Issue id="10101" key="DOCS-2" project="10000" number="2" type="2" status="3" priority="1"
+         reporter="alice" assignee="alice" summary="Split the install section">
+    <description>The install section has grown past what one page should carry.
+
+It should become three: prerequisites, install, verify.</description>
+  </Issue>
+
+  <Issue id="10102" key="PLAT-1" project="10001" number="1" type="3" status="1" priority="3"
+         reporter="bob" summary="Connection pool exhausted under load"/>
+
+  <Action id="10200" issue="10100" type="comment" author="bob" created="2026-01-05 10:00:00"
+          body="Started on this."/>
+  <Action id="10201" issue="10101" type="comment" author="alice" created="2026-01-06 10:00:00">
+    <body>Agreed — I will take the prerequisites page.</body>
+  </Action>
+  <Action id="10202" issue="10102" type="comment" author="alice" rolelevel="10002"
+          created="2026-01-07 10:00:00" body="Internal: the pool size was never tuned for the new host."/>
+  <Action id="10203" issue="10100" type="history" author="bob" created="2026-01-08 10:00:00"/>
+
+  <CustomField id="10600" name="Story Points" customfieldtypekey="com.atlassian.jira.plugin.system.customfieldtypes:float"/>
+  <CustomField id="10601" name="Team" customfieldtypekey="com.atlassian.jira.plugin.system.customfieldtypes:multiuserpicker"/>
+  <CustomField id="10602" name="Region" customfieldtypekey="com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect"/>
+  <CustomField id="10603" name="Risk Score" customfieldtypekey="com.onresolve.jira.groovy.groovyrunner:scripted-field"/>
+
+  <CustomFieldValue id="11077" issue="10100" customfield="10600" numbervalue="3"/>
+  <CustomFieldValue id="11078" issue="10101" customfield="10600" numbervalue="5"/>
+  <CustomFieldValue id="11079" issue="10102" customfield="10602" textvalue="EMEA"/>
+
+  <FileAttachment id="12000" issue="10101" filename="wireframe.png" mimetype="image/png"
+                  filesize="20481" author="alice"/>
+  <FileAttachment id="12001" issue="10102" filename="heap-dump.txt" mimetype="text/plain"
+                  filesize="90210" author="bob"/>
+
+  <ApplicationUser id="1" userKey="alice" lowerUserName="alice"/>
+  <ApplicationUser id="2" userKey="bob" lowerUserName="bob"/>
+  <ApplicationUser id="3" userKey="carol" lowerUserName="carol"/>
+
+  <OSGroup id="1" groupName="jira-users"/>
+  <OSGroup id="2" groupName="platform-team"/>
+  <OSMembership id="1" userName="alice" groupName="jira-users"/>
+  <OSMembership id="2" userName="bob" groupName="jira-users"/>
+  <OSMembership id="3" userName="bob" groupName="platform-team"/>
+
+  <IssueLink id="13000" linktype="10000" source="10100" destination="10101"/>
+  <IssueLink id="13001" linktype="10001" source="10102" destination="10100"/>
+
+  <Worklog id="14000" issue="10100" author="bob" timeworked="3600"/>
+
+  <!-- Saved filters: one fully expressible, one partial, one not. -->
+  <SearchRequest id="15000" name="My open docs work" author="alice"
+                 request="project = DOCS AND status = Open AND assignee = currentUser()"/>
+  <SearchRequest id="15001" name="Anything mentioning pooling" author="bob"
+                 request="text ~ &quot;pool&quot;"/>
+  <SearchRequest id="15002" name="Recently created" author="alice"
+                 request="project IN (DOCS, PLAT) AND created &gt;= -30d ORDER BY created DESC"/>
+
+  <!-- Entity types the assessor does not classify. They must still be counted. -->
+  <OSPropertyEntry id="20000" entityName="ApplicationUser" entityId="1" propertyKey="user.avatar.id"/>
+  <OSPropertyEntry id="20001" entityName="ApplicationUser" entityId="2" propertyKey="user.avatar.id"/>
+  <ColumnLayout id="20100" username="alice"/>
+  <FieldLayoutScheme id="20200" name="Default Field Configuration Scheme"/>
+  <NodeAssociation sourceNodeId="10100" sourceNodeEntity="Issue" sinkNodeId="10500"
+                   sinkNodeEntity="Component" associationType="IssueComponent"/>
+  <Component id="10500" project="10000" name="guides"/>
+  <Version id="10700" project="10001" name="1.4.0"/>
+
+</entity-engine-xml>

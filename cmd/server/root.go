@@ -25,6 +25,7 @@ func init() {
 	rootCmd.AddCommand(backupCmd)
 	rootCmd.AddCommand(restoreCmd)
 	rootCmd.AddCommand(adminCmd)
+	rootCmd.AddCommand(assessCmd)
 }
 
 // Execute runs the root command. Called from main().
