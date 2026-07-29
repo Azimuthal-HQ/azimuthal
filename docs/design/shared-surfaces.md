@@ -393,11 +393,16 @@ and refuses a page where `doc IS NOT NULL` with 409 rather than writing half a r
 **Where:** `web/src/components/codex/`.
 
 ```ts
-codexExtensions(): AnyExtension[]        // extensions/index.ts — the registered vocabulary
+codexExtensions(opts?): AnyExtension[]   // extensions/index.ts — the registered vocabulary
 registeredTypes(exts): {nodes, marks}    // derived from a real ProseMirror schema
 <CodexEditor …>                          // the editing surface
 <CodexDocRenderer …>                     // the reading surface: the same thing, not editable
 <PagePicker …>                           // the only "choose a page in this space" control
+filterPages / findPageByTitle            // pageSearch.ts — the one page lookup
+codexMeasureClasses                      // editorStyles.ts — the one document measure
+markdownPasteContent(text)               // lib/codex/markdownPaste.ts — the one paste converter
+tagBrowsePath(spaceId, label)            // tagLinks.ts — where a tag chip goes
+<PageTags …>                             // the only tag chip and tag editor
 ```
 
 Built for issue #15 PR-B on the model in section 9.
@@ -414,7 +419,17 @@ Built for issue #15 PR-B on the model in section 9.
 > The concrete case is not hypothetical: StarterKit ships `underline`, which `schema.json` does
 > not name, so it is explicitly disabled. Re-enabling it is a one-word change.
 
-Four things about it that are easy to get wrong:
+The vocabulary guard has a **fourth link**, added with the Obsidian affordances: `projectedAttrs`
+in `schema.json` names the ATTRIBUTES `doc.ToMarkdown` reads. An attribute that drifts fails
+differently from a type — nothing breaks, the page publishes, the document stores correctly, and
+the content quietly stops being findable. `schema.test.ts` holds the TypeScript mirror equal to
+that manifest, `extensions.test.ts` asks the real ProseMirror schema whether it declares every
+attribute the manifest names, and `projection_attrs_test.go` projects a document carrying each one
+and looks for its effect — with a mutation pass that removes the attribute and requires the
+expectation to break, so a case that asserts nothing about its attribute fails as a test rather
+than passing as coverage.
+
+Nine things about it that are easy to get wrong:
 
 - **The reading surface is the editor with `editable: false`.** Not a second renderer. A separate
   read path drifts, and the first thing to drift is the labelling of preserved blocks — which is
@@ -428,8 +443,29 @@ Four things about it that are easy to get wrong:
   document stores correctly, and the content quietly stops being findable.
 - **`base_version` is fixed for the life of an editing session,** including through an overwrite.
   The preservation ids were minted against that version and publish re-derives it to resolve them.
+- **There is one page lookup, in `pageSearch.ts`.** `filterPages` and `findPageByTitle` back the
+  picker, the `[[` autocomplete and the create-on-click dialogue. Permission filtering is
+  *inherited* — the candidate list is the space's page list, which the API already filtered — so
+  there is no second client-side check and, deliberately, no second server search. Resolution is
+  exact-match and case-insensitive: a prefix match would silently link `[[Runbook]]` to "Runbook
+  archive (2019)", and a link that goes somewhere the author did not name is worse than one that
+  goes nowhere and offers to create the page.
+- **There is one document measure, `codexMeasureClasses`,** and it wraps the reader, the editor and
+  the drafts list alike. The reader used to be pinned to a fixed 76ch while the editor had no
+  constraint at all, so the same paragraph broke in different places on either side of one click.
+  The clamp itself is the `--codex-measure` token; below it the surface is fluid.
+- **A pasted markdown block is converted by `markdownPasteContent`, and its dialect is TESTED, not
+  asserted.** `internal/core/wiki/doc/markdown_corpus.json` holds one sample of each construct with
+  the document it must produce, generated from the server's own goldmark converter; the Go and the
+  TypeScript converters are each checked against those bytes. Anything outside the corpus stays
+  plain text — never a preservation placeholder, because an id minted in the browser resolves to
+  nothing and publish refuses the entire write.
+- **A link mark has three states, not two.** `href` leaves Azimuthal, `page_id` resolves to a page,
+  and `target_title` names a page nobody has written yet. Never invent an href for the third: it
+  would render as a link that goes nowhere.
 
-**Current consumers** — `web/src/pages/codex/WikiPage.tsx`, `web/src/pages/codex/DraftsPage.tsx`.
+**Current consumers** — `web/src/pages/codex/WikiPage.tsx`, `web/src/pages/codex/DraftsPage.tsx`,
+`web/src/pages/codex/TagPage.tsx`.
 Any later rich-text surface — a Beacon ticket description, a Vector item body — extends this set
 and this schema rather than starting a second one.
 

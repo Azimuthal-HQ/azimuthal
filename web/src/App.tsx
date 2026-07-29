@@ -15,6 +15,7 @@ import { TicketDetailPage } from './pages/beacon/TicketDetailPage';
 import { ReportsPage } from './pages/beacon/ReportsPage';
 import { WikiPage } from './pages/codex/WikiPage';
 import { DraftsPage } from './pages/codex/DraftsPage';
+import { TagPage } from './pages/codex/TagPage';
 import { ItemDetailPage } from './pages/vector/ItemDetailPage';
 import {
   ModuleBacklogRoute,
@@ -137,6 +138,11 @@ export function App() {
           {/* Real since issue #15: GET …/wiki/drafts shipped in PR #73 and the
               sidebar has linked here since the navigation collapse. */}
           <Route path="drafts" element={<ErrorBoundary><DraftsPage /></ErrorBoundary>} />
+          {/* The tag browse (U4). It sits under a space because every Codex
+              route does — the space id is the reader's context, not the
+              query's scope, which spans every space they can read. See
+              components/codex/tagLinks.ts. */}
+          <Route path="tags/:label" element={<ErrorBoundary><TagPage /></ErrorBoundary>} />
           <Route path="settings" element={<ErrorBoundary><SpaceSettingsPage /></ErrorBoundary>} />
           {/* Unknown sub-routes keep the space chrome and render the branded
               empty state, never a blank body. */}

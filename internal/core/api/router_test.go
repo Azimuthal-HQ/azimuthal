@@ -26,6 +26,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -697,6 +698,28 @@ func (m *mockLabelRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*projects.L
 }
 func (m *mockLabelRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
 
+// mockTagRepo stands in for the tag store in the ROUTING tests, which assert
+// that a path reaches a handler and nothing about what it stores. The real
+// behaviour is covered against a real database in the tags integration tests —
+// see internal/core/api/wiki_tags_integration_test.go.
+type mockTagRepo struct{}
+
+func (m *mockTagRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]tags.Tag, error) { return nil, nil }
+func (m *mockTagRepo) GetByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (tags.Tag, error) {
+	return tags.Tag{}, tags.ErrNotFound
+}
+func (m *mockTagRepo) Upsert(_ context.Context, orgID uuid.UUID, slug, name string) (tags.Tag, error) {
+	return tags.Tag{ID: uuid.New(), OrgID: orgID, Slug: slug, Name: name}, nil
+}
+func (m *mockTagRepo) ForPage(_ context.Context, _ uuid.UUID) ([]tags.Tag, error) { return nil, nil }
+func (m *mockTagRepo) ReplacePageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error {
+	return nil
+}
+func (m *mockTagRepo) AddPageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error { return nil }
+func (m *mockTagRepo) PagesWithTag(_ context.Context, _ uuid.UUID, _ []uuid.UUID) ([]tags.TaggedPage, error) {
+	return nil, nil
+}
+
 // ---- Test helpers ----
 
 func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
@@ -741,14 +764,16 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 
 	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
 	ticketHandler := ticketsapi.NewHandler(ticketSvc)
+	tagSvc := tags.NewService(&mockTagRepo{})
 	wikiDocs := wiki.NewDocumentService(
 		newMockDocumentStore(mockPages),
 		&mockDocumentTx{},
 		// The refusing image store is what a deployment without object storage
 		// really gets, so the routes behave here as they would there.
 		wiki.UnavailableImageStore{},
+		tagSvc,
 	)
-	wikiHandler := wikiapi.NewHandler(wikiSvc, wikiDocs)
+	wikiHandler := wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc)
 	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
 	spaceHandler := spacesapi.NewHandler(nil)

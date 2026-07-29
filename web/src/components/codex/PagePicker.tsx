@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from '../ui/dialog';
 import { useCodexDocumentContext } from './CodexDocumentContext';
+import { filterPages } from './pageSearch';
 
 interface PagePickerProps {
   title: string;
@@ -32,14 +33,10 @@ export function PagePicker({ title, selectedId, onSelect, onClose }: PagePickerP
   const { pages, pageId } = useCodexDocumentContext();
   const [query, setQuery] = useState('');
 
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    // A page cannot refer to itself: an include would be a cycle, and a link
-    // would go nowhere the reader is not already.
-    const candidates = pages.filter((p) => p.id !== pageId);
-    if (!q) return candidates.slice(0, 50);
-    return candidates.filter((p) => p.title.toLowerCase().includes(q)).slice(0, 50);
-  }, [pages, pageId, query]);
+  // The filtering lives in pageSearch.ts, not here. The `[[` autocomplete has
+  // to offer the same candidates by the same rules — including the
+  // cannot-refer-to-itself one — and two implementations of that would drift.
+  const matches = useMemo(() => filterPages(pages, query, pageId), [pages, pageId, query]);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

@@ -78,4 +78,9 @@ server
 
 # Local golangci-lint cache (set via GOLANGCI_LINT_CACHE when parallel
 # sessions share a checkout — never committed).
-.golangci-cache/
+#
+# The glob rather than the exact name: a per-worktree cache wants a
+# per-worktree directory, and `.golangci-cache-<topic>/` did not match the bare
+# form. 4431 cache files reached a commit here before this was widened, because
+# `git add -A` has no opinion about what a directory is for.
+.golangci-cache*/

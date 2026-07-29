@@ -60,6 +60,25 @@
   --sidebar-width-collapsed: 64px;
   --topnav-height: 56px;
 
+  /* ── Codex measure ──────────────────────────────────
+     The upper bound on a document's line length, in the
+     reader and the editor alike. Below it the document
+     is fluid: it fills whatever width the window gives
+     it and reflows live as that changes.
+
+     `ch` rather than px, so the clamp tracks the reading
+     font instead of a guess about it. 120ch is roughly
+     1070px at the body's Inter, which lands just inside
+     the shell's own 1280px ceiling — an ultra-wide
+     monitor therefore stops at a comfortable measure
+     rather than running to the shell's hard edge, while
+     a laptop never reaches the clamp at all and stays
+     fluid.
+
+     Tune this and both surfaces move together. That is
+     the whole reason it is a token and not a class. */
+  --codex-measure: 120ch;
+
   /* ── Module identity (theme-invariant) ──────────────
      Hue with matching text means state; hue with neutral
      text means provenance. Chip text is always

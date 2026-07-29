@@ -1,0 +1,672 @@
+{
+  "_comment": [
+    "The shared markdown corpus: one sample of each construct the Codex",
+    "markdown dialect covers, with the document it must produce.",
+    "",
+    "Two converters read this file. internal/core/wiki/doc's",
+    "markdown_corpus_test.go checks the SERVER's converter (goldmark with",
+    "GFM, which turns a legacy markdown page into a document on first",
+    "edit). web/src/lib/codex/markdownPaste.test.ts checks the EDITOR's",
+    "paste converter. Neither is checked against the other's reputation;",
+    "both are checked against these bytes.",
+    "",
+    "That is the whole reason the file exists. There were already two",
+    "markdown dialects in this system — the server's converter and",
+    "TipTap's type-time input rules — and a paste path is a third place",
+    "the same text can enter a document. Three implementations that agree",
+    "by inspection agree until somebody edits one of them.",
+    "",
+    "A construct absent from this corpus is a construct the paste",
+    "converter does not claim. It stays plain text, which loses nothing:",
+    "the source markdown is still there to be read and fixed by hand.",
+    "",
+    "The `doc` values were GENERATED from the server's converter rather",
+    "than written by hand, so the corpus records what goldmark actually",
+    "produces. Regenerate rather than hand-edit if the server's dialect",
+    "ever legitimately changes."
+  ],
+  "cases": [
+    {
+      "name": "heading-1",
+      "why": "the commonest construct in a pasted README",
+      "markdown": "# Runbook",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": {
+              "level": 1
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Runbook"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "heading-3",
+      "why": "levels are an attribute, so every level must not need its own case",
+      "markdown": "### Escalation path",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": {
+              "level": 3
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Escalation path"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "paragraph",
+      "why": "the baseline: prose with no markers stays one paragraph",
+      "markdown": "Just a sentence.",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Just a sentence."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "paragraph-soft-break",
+      "why": "a wrapped line is one paragraph joined by a SPACE, not a newline",
+      "markdown": "One line\nand its continuation.",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "One line and its continuation."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "bold",
+      "why": "",
+      "markdown": "Some **strong** text.",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Some "
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "bold"
+                  }
+                ],
+                "text": "strong"
+              },
+              {
+                "type": "text",
+                "text": " text."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "italic-star",
+      "why": "",
+      "markdown": "Some *emphasis* here.",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Some "
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "italic"
+                  }
+                ],
+                "text": "emphasis"
+              },
+              {
+                "type": "text",
+                "text": " here."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "italic-underscore",
+      "why": "the other spelling must produce the same mark",
+      "markdown": "Some _emphasis_ here.",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Some "
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "italic"
+                  }
+                ],
+                "text": "emphasis"
+              },
+              {
+                "type": "text",
+                "text": " here."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "strike",
+      "why": "GFM, not CommonMark — the server enables the GFM extension",
+      "markdown": "Some ~~removed~~ text.",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Some "
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "strike"
+                  }
+                ],
+                "text": "removed"
+              },
+              {
+                "type": "text",
+                "text": " text."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-code",
+      "why": "",
+      "markdown": "Call `doSomething()` first.",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "Call "
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "code"
+                  }
+                ],
+                "text": "doSomething()"
+              },
+              {
+                "type": "text",
+                "text": " first."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "link",
+      "why": "",
+      "markdown": "See [the runbook](https://example.com/r) for more.",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "See "
+              },
+              {
+                "type": "text",
+                "marks": [
+                  {
+                    "type": "link",
+                    "attrs": {
+                      "href": "https://example.com/r"
+                    }
+                  }
+                ],
+                "text": "the runbook"
+              },
+              {
+                "type": "text",
+                "text": " for more."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "bullet-list",
+      "why": "",
+      "markdown": "- first\n- second",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "first"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "second"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "ordered-list",
+      "why": "",
+      "markdown": "1. first\n2. second",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "attrs": {
+              "start": 1
+            },
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "first"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "second"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "ordered-list-offset",
+      "why": "the start attribute must survive, or a numbered list renumbers itself",
+      "markdown": "3. third\n4. fourth",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "orderedList",
+            "attrs": {
+              "start": 3
+            },
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "third"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "fourth"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "task-list",
+      "why": "GFM checkboxes, mixed — any checkbox makes the whole list a task list",
+      "markdown": "- [ ] undone\n- [x] done",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "taskList",
+            "content": [
+              {
+                "type": "taskItem",
+                "attrs": {
+                  "checked": false
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "undone"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "taskItem",
+                "attrs": {
+                  "checked": true
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "done"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "blockquote",
+      "why": "",
+      "markdown": "\u003e quoted line",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "blockquote",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "quoted line"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "fenced-code-language",
+      "why": "the language is read by the projection, so it must round-trip",
+      "markdown": "```go\nx := 1\n```",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "codeBlock",
+            "attrs": {
+              "language": "go"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "x := 1\n"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "fenced-code-plain",
+      "why": "",
+      "markdown": "```\nplain\n```",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "codeBlock",
+            "attrs": {
+              "language": ""
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "plain\n"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "thematic-break",
+      "why": "",
+      "markdown": "---",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "horizontalRule"
+          }
+        ]
+      }
+    },
+    {
+      "name": "table",
+      "why": "GFM pipe table: first row is the header, every cell holds a paragraph",
+      "markdown": "| a | b |\n| --- | --- |\n| 1 | 2 |",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "tableRow",
+                "content": [
+                  {
+                    "type": "tableHeader",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableHeader",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "b"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "content": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "1"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "2"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "prose-with-a-hash",
+      "why": "NOT markdown: an issue number is the commonest hash in ordinary prose",
+      "markdown": "See issue #42 in the tracker.",
+      "doc": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "See issue #42 in the tracker."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

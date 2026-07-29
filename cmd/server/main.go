@@ -86,6 +86,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/views"
@@ -295,7 +296,11 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		attachmentHandler = attachmentsapi.NewHandler(attachmentSvc, shareSvc)
 		pageImages = attachmentSvc
 	}
-	wikiDocs := wiki.NewDocumentService(queries, contentTx, pageImages)
+	// Codex tags (migration 040). One service serves both callers: the tag
+	// endpoints on the wiki handler, and the publish path's aggregation of a
+	// document's inline `#tag` tokens.
+	tagSvc := tags.NewService(adapters.NewTagAdapter(queries, pool))
+	wikiDocs := wiki.NewDocumentService(queries, contentTx, pageImages, tagSvc)
 
 	// The shared-entity reader projects each module entity into a
 	// container-free view (no space, tree, siblings, or comments).
@@ -347,7 +352,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc),
-		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),

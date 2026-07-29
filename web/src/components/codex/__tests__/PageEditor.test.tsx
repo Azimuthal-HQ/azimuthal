@@ -47,6 +47,15 @@ vi.mock('../../../lib/api', async (importOriginal) => {
 
 // The editor surface is exercised by its own tests; here it is a seam that
 // lets a change be injected without driving ProseMirror.
+// The tags row beside the title is page metadata with its own surface, its own
+// queries and its own tests (PageTags.test.tsx). Stubbed here for the same
+// reason CodexEditor is: this file is about autosave, publishing and the
+// refusals between them, and a real PageTags would put three unmocked queries
+// into every one of those tests.
+vi.mock('../PageTags', () => ({
+  PageTags: () => <div data-testid="codex-page-tags-stub" />,
+}));
+
 vi.mock('../CodexEditor', () => ({
   CodexEditor: ({ onChange }: { onChange: (doc: CodexDoc) => void }) => (
     <button
@@ -249,6 +258,37 @@ describe('publishing', () => {
     renderEditor(documentPayload(), { onClose });
     fireEvent.click(screen.getByTestId('codex-publish'));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('does not re-create the draft that publishing just deleted', async () => {
+    // The regression this exists for, caught by an E2E journey rather than by
+    // reading: publishing clears the draft server-side, but leaving the editor
+    // flushes any unsaved change — and that flush compared against the document
+    // as it stood BEFORE the author typed. So closing after a publish wrote a
+    // draft of the content that had just been published, stamped with the
+    // now-stale base_version.
+    //
+    // The author saw nothing at the time. The next time they opened the page
+    // they were shown a draft they did not knowingly leave, marked stale, and a
+    // conflict dialogue saying the page had been published since they started —
+    // by them, seconds earlier.
+    //
+    // Asserting on saveDraftMutate is what makes this a real test: the publish
+    // succeeds either way, so nothing about the publish call itself
+    // distinguishes the two behaviours.
+    const { unmount } = renderEditor(documentPayload());
+
+    fireEvent.click(screen.getByTestId('fake-type'));
+    fireEvent.click(screen.getByTestId('codex-publish'));
+    await waitFor(() => expect(publishMutate).toHaveBeenCalled());
+
+    saveDraftMutate.mockClear();
+    unmount();
+
+    expect(
+      saveDraftMutate,
+      'closing after a publish must not write a draft of what was just published',
+    ).not.toHaveBeenCalled();
   });
 });
 

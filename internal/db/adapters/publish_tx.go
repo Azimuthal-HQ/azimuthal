@@ -65,6 +65,18 @@ func (a *ContentTxAdapter) PublishPageTx(ctx context.Context, in wiki.PublishPag
 		return generated.Page{}, fmt.Errorf("publish page: clearing draft: %w", err)
 	}
 
+	// The inline tags the body carries (migration 040). ADD, never replace: the
+	// page-level tag list is the authority, and a body that no longer mentions
+	// `#foo` is not a request to untag the page.
+	for _, tagID := range in.TagIDs {
+		if err := qtx.AddPageTag(ctx, generated.AddPageTagParams{
+			PageID: in.PageID,
+			TagID:  tagID,
+		}); err != nil {
+			return generated.Page{}, fmt.Errorf("publish page: tagging: %w", err)
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return generated.Page{}, fmt.Errorf("publish page: commit: %w", err)
 	}

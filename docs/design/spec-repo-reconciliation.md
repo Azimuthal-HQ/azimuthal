@@ -1067,3 +1067,73 @@ empty. Recorded in `shared-surfaces.md` §5.
 - **Spec §7's frontend route table places views under `/:module/:spaceId/views/:viewId`.** A view
   spans modules and containers and its API is org-scoped per ADR-0010, so a space-scoped route
   cannot express one. The nav placement decision is in the phase report.
+
+### D61 — the dead-link state cannot be rendered without either a permission oracle or a new read path
+
+The Obsidian-affordances brief decided that a wikilink whose target id no longer resolves renders
+in a distinct dead-link style, on the reasoning that "deletion is knowable; access-denial is not —
+do not conflate the two states". The same brief also requires that "a link must render identically
+regardless of whether the current reader can access the target. No permission oracle."
+
+Both are right, and together they are not satisfiable by the client. The reading surface's page
+list is **space-scoped** (`useWikiPages(spaceId)`), so "this page_id is not in the list" covers
+three different situations at once: the page was deleted, the page was moved to another space, and
+the page is in a space this reader cannot see. Styling on that basis would mark a perfectly good
+moved link as dead, and — because the answer would differ per reader — would be exactly the oracle
+the second rule forbids.
+
+This phase therefore ships the unresolved-link half in full (a link carrying `target_title` renders
+dashed and dimmed, and clicking it offers to create the page, or to open an existing one of that
+name rather than blind-creating a duplicate) and **does not ship the deleted-target style**. A
+resolved link renders identically for every reader and navigates; if the target is gone the
+navigation 404s, which is the navigate-then-404 behaviour S1 established for notifications and
+which the brief cites approvingly for the access case.
+
+Doing it properly needs the server to say so, and it *can* be said without an oracle: deleted-ness
+is an org-wide fact, not a per-reader one, so a document response could carry
+`link_targets: {<page_id>: "live" | "deleted"}` computed independently of the caller. That is a new
+cross-space read path (ADR-0010) and a wire-format addition, which is more than an input affordance
+should decide on its own.
+
+**For a maintainer:** either accept navigate-then-404 as the whole answer for both states, or
+commission the reader-independent resolution field. The decision is which of the two brief rules
+yields, and it is not one to take in passing.
+
+### D62 — `[[` autocomplete is space-scoped, so three of the decided wikilink semantics cannot arise
+
+The brief's wikilink decisions include "Autocomplete always shows space context per candidate",
+"bare-title resolution prefers the current space, then disambiguates via the picker", and that
+duplicate titles across spaces are legal and must be handled. They assume the candidate list spans
+spaces.
+
+It does not, and deliberately: the brief also says to "reuse the PagePicker's search path — same
+permission filtering; do not write a second page search", and `PagePicker` filters the space's
+already-loaded page list client-side. There is no cross-space page search in the product, and
+adding one is a route-shape question ADR-0010 governs rather than a detail of an input affordance.
+
+So the candidates are the current space's pages, the same set the page-include macro and the
+internal-link button have always offered. There is consequently never cross-space ambiguity to
+disambiguate. The candidate rows still carry a space label — a constant string today — because the
+SHAPE is the load-bearing part: a page reference is only unambiguous with its space, and a list
+that omitted the column would need redesigning rather than extending on the day the scope widens.
+
+**For a maintainer:** widening this means a cross-space page search endpoint filtered against the
+caller's readable set, at which point the three decisions above become reachable as written and
+`pageSearch.ts` is where the widening lands.
+
+### D63 — `useWikiDiff` declared a response shape the server has never returned
+
+`web/src/lib/api.ts` typed `GET …/wiki/{pageID}/diff` as `{ diff: string }`. The endpoint has
+returned `{from_version, to_version, title_diff, content_diff}` since it was written. Nothing
+noticed because no component ever called the hook.
+
+Worse than the mismatch: `title_diff` and `content_diff` were produced by `diffmatchpatch`'s
+`DiffPrettyText`, which wraps insertions and deletions in ANSI **terminal** colour codes. Over a
+JSON API consumed by a browser those are not colour, they are unprintable bytes in the middle of
+the text — the endpoint could not have been rendered by any client.
+
+Both are corrected here rather than flagged: the wire format is now structured segments
+(`{op, text}`), which is what a surface needs in order to decide how to show a change, and the
+hook's type matches. It is recorded because it is the second time a Codex endpoint has shipped
+with a client binding that never matched it, and because "no consumer" is what let it happen —
+an endpoint nothing calls is not covered by the fact that everything else is green.

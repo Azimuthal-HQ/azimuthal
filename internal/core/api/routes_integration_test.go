@@ -44,6 +44,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/views"
@@ -182,7 +183,12 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// its image store. Deliberately NOT wiki.UnavailableImageStore — the image
 	// paths have to be reachable here or the tests that upload one would pass
 	// against a refusal, which is the dark-harness failure in a new disguise.
-	wikiDocs := wiki.NewDocumentService(queries, contentTx, attachmentSvc)
+	// Codex tags (migration 040), wired as production. The same service instance
+	// serves the tag endpoints and the publish path's inline-tag aggregation,
+	// exactly as in main.go — two instances would work but would not be what is
+	// being tested.
+	tagSvc := tags.NewService(adapters.NewTagAdapter(queries, pool))
+	wikiDocs := wiki.NewDocumentService(queries, contentTx, attachmentSvc, tagSvc)
 
 	// P2.5 administration surface, wired as production. Registration is
 	// enabled here because several suites exercise the register flow; the
@@ -216,7 +222,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithAuditLogger(auditLog).
 			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
 			WithSuggestions(tickets.NewSuggestionService(ticketAdapter)),
-		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
+		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
 			WithAuditLogger(auditLog).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).

@@ -482,6 +482,36 @@ func inlineMarkdown(obj object, depth int) (string, error) {
 	return b.String(), nil
 }
 
+// inlineAtomMarkdown renders the inline nodes that carry no children — the ones
+// whose whole content is an attribute. Split from [inlineChildMarkdown] so that
+// function stays about the text/atom/unknown distinction rather than growing an
+// arm per atom.
+func inlineAtomMarkdown(childType string, obj object) string {
+	switch childType {
+	case "hardBreak":
+		// Two trailing spaces then a newline: markdown's hard break.
+		return "  \n"
+	case "statusLozenge":
+		label, _ := obj.attrString("text")
+		return "`" + label + "`"
+	case NodeInlineTag:
+		// The tag's own text, with the hash, so the projection carries it into
+		// the generated search_vector — an inline tag that contributed nothing
+		// to the index would be a tag you cannot find by name.
+		label, _ := obj.attrString(AttrTagLabel)
+		if label == "" {
+			return ""
+		}
+		return "#" + label
+	case "image":
+		var b strings.Builder
+		writeImageMarkdown(&b, obj)
+		return b.String()
+	default:
+		return ""
+	}
+}
+
 // inlineChildMarkdown renders one inline child. The default arm emits the child's
 // plain text, so an inline type with no projection — including preserved inline
 // content — still reaches the search index.
@@ -502,16 +532,8 @@ func inlineChildMarkdown(child json.RawMessage) (string, error) {
 			_ = json.Unmarshal(raw, &text)
 		}
 		return applyMarks(obj, text)
-	case "hardBreak":
-		// Two trailing spaces then a newline: markdown's hard break.
-		return "  \n", nil
-	case "statusLozenge":
-		label, _ := obj.attrString("text")
-		return "`" + label + "`", nil
-	case "image":
-		var b strings.Builder
-		writeImageMarkdown(&b, obj)
-		return b.String(), nil
+	case "hardBreak", "statusLozenge", NodeInlineTag, "image":
+		return inlineAtomMarkdown(childType, obj), nil
 	default:
 		return PlainText(child), nil
 	}
@@ -540,10 +562,44 @@ func applyMarks(obj object, text string) (string, error) {
 			text = wrapper.delimiter + text + wrapper.delimiter
 		}
 	}
-	if link, ok := present["link"]; ok {
-		text = "[" + text + "](" + linkTarget(link) + ")"
+	if link, ok := present[MarkLink]; ok {
+		if target, resolved := linkTarget(link); resolved {
+			text = "[" + text + "](" + target + ")"
+		} else {
+			text += unresolvedLinkSuffix(link, text)
+		}
 	}
 	return text, nil
+}
+
+// unresolvedLinkSuffix names the page an unresolved wikilink was aiming at,
+// when that is not already the link's own text.
+//
+// An unresolved link has no destination, so it projects as its own text rather
+// than as `[text]()` — a markdown link with an empty target would render as
+// broken in every legacy reader and would claim a destination that does not
+// exist.
+//
+// The target title still has to reach the index, though, and for the aliased
+// form it is the only place it exists: `[[Runbook|the rota]]` stores "the rota"
+// as its text, so a projection of the text alone would make a page that
+// explicitly references "Runbook" unfindable by that word. That is the
+// projection's own version of silent data loss, which this file refuses
+// everywhere else.
+//
+// The shape follows `[Included page: <id>]` rather than any markdown link
+// syntax, for the same reason: it is a label describing a reference, not a
+// destination a reader could follow.
+func unresolvedLinkSuffix(link object, text string) string {
+	target, ok := link.attrString(AttrLinkTargetTitle)
+	if !ok {
+		return ""
+	}
+	target = strings.TrimSpace(target)
+	if target == "" || strings.EqualFold(target, strings.TrimSpace(text)) {
+		return ""
+	}
+	return " [New page: " + target + "]"
 }
 
 // markSet indexes a node's marks by type.
@@ -567,17 +623,28 @@ func markSet(obj object) (map[string]object, error) {
 	return present, nil
 }
 
-// linkTarget renders a link mark's destination. An internal page link carries the
-// page id rather than an href, because a page's URL depends on the space it is
-// being read in and the document must not bake one in.
-func linkTarget(link object) string {
-	if href, ok := link.attrString("href"); ok && href != "" {
-		return href
+// linkTarget renders a link mark's destination, reporting whether it has one.
+//
+// A link mark can be in three states, and they are not variants of each other:
+//
+//	href set          an external link, projected as itself
+//	page_id set       a resolved internal link. The page id rather than a URL,
+//	                  because a page's URL depends on the space it is being read
+//	                  in and the document must not bake one in.
+//	target_title set  an UNRESOLVED wikilink: the author named a page that does
+//	                  not exist yet. There is no destination, so there is nothing
+//	                  to project — the caller emits the link's text alone.
+//
+// The false return covers the third state and a malformed link with no
+// destination at all, which projects the same way for the same reason.
+func linkTarget(link object) (string, bool) {
+	if href, ok := link.attrString(AttrLinkHref); ok && href != "" {
+		return href, true
 	}
-	if pageID, ok := link.attrString("page_id"); ok {
-		return "page:" + pageID
+	if pageID, ok := link.attrString(AttrLinkPageID); ok && pageID != "" {
+		return "page:" + pageID, true
 	}
-	return ""
+	return "", false
 }
 
 // writePrefixed writes body with prefix on every line, which is how blockquote

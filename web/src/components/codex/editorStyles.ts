@@ -7,6 +7,26 @@
  * diverge. Everything here is a shell token: no hard-coded hex, so the
  * document follows the theme instead of pinning itself to one.
  */
+/**
+ * The document's measure: fluid, with a clamp.
+ *
+ * One string for the reader, the editor and the drafts list, for the same
+ * reason `editorSurfaceClasses` is one string — the reading view and the
+ * editing view are the same document, and a width that differed between them
+ * would mean every line broke somewhere else the moment you pressed Edit.
+ * Before this, they differed as much as two surfaces can: the reader was pinned
+ * to a fixed 76ch and the editor had no constraint at all.
+ *
+ * `w-full` with a `max-width` is what makes it fluid rather than fixed — the
+ * element takes the width it is given and stops growing at the clamp, which is
+ * a CSS property rather than a resize listener, so it reflows during a drag
+ * with nothing subscribed to anything.
+ *
+ * The clamp itself is `--codex-measure` in `tokens.css`, which is where the
+ * number and the reasoning for it live.
+ */
+export const codexMeasureClasses = 'mx-auto w-full max-w-[var(--codex-measure)]';
+
 export const editorSurfaceClasses = [
   '[&_.ProseMirror]:outline-none',
   '[&_.ProseMirror]:text-[var(--color-text)]',
@@ -44,6 +64,21 @@ export const editorSurfaceClasses = [
   '[&_.ProseMirror_th]:border [&_.ProseMirror_th]:border-[var(--color-border)] [&_.ProseMirror_th]:bg-[var(--color-surface-hover)] [&_.ProseMirror_th]:px-2 [&_.ProseMirror_th]:py-1 [&_.ProseMirror_th]:text-left [&_.ProseMirror_th]:text-[var(--color-text-muted)] [&_.ProseMirror_th]:font-semibold',
   '[&_.ProseMirror_td]:border [&_.ProseMirror_td]:border-[var(--color-border)] [&_.ProseMirror_td]:px-2 [&_.ProseMirror_td]:py-1 [&_.ProseMirror_td]:align-top',
   '[&_.ProseMirror_.selectedCell]:bg-[color-mix(in_srgb,var(--module-codex)_18%,transparent)]',
+
+  // An unresolved wikilink: a page named but not yet written.
+  //
+  // Dashed and dimmed rather than the ordinary link colour, because it is not
+  // an ordinary link — following it does not go anywhere, it offers to create
+  // the page. Visibly different is the whole point: an author skimming their
+  // own draft should be able to see at a glance which references are still
+  // promises.
+  //
+  // Keyed on `data-unresolved`, which the link mark renders from its
+  // `target_title` attribute. A class would be lost the moment ProseMirror
+  // re-rendered the mark from its attributes.
+  '[&_.ProseMirror_a[data-unresolved]]:text-[var(--color-text-muted)]',
+  '[&_.ProseMirror_a[data-unresolved]]:decoration-dashed [&_.ProseMirror_a[data-unresolved]]:underline-offset-4',
+  '[&_.ProseMirror_a[data-unresolved]]:cursor-pointer',
 
   // Preserved formatting: the mark has no node view, so this dotted underline
   // is the only thing that tells a reader the styling was kept rather than

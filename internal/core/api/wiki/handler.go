@@ -16,6 +16,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 )
 
@@ -32,21 +33,22 @@ type ShareQueries interface {
 type Handler struct {
 	svc      *wiki.Service
 	docs     *wiki.DocumentService
+	tags     *tags.Service
 	auditLog audit.Logger
 	shares   ShareQueries
 }
 
 // NewHandler creates a wiki Handler.
 //
-// docs is a required argument rather than a With* option, and deliberately so.
-// An optional collaborator that is missing does not fail — the surface reports
-// itself disabled and answers 404, which is right in production and silent in a
-// test harness: every assertion against the document routes would pass against a
-// tidy 404 and the endpoints would read as covered (CLAUDE.md section 2, "No dark
-// harness"). A required argument does not compile when it is forgotten, which is
-// a stronger guarantee than a guard test.
-func NewHandler(svc *wiki.Service, docs *wiki.DocumentService) *Handler {
-	return &Handler{svc: svc, docs: docs, auditLog: audit.NewLogger()}
+// docs and tagSvc are required arguments rather than With* options, and
+// deliberately so. An optional collaborator that is missing does not fail — the
+// surface reports itself disabled and answers 404, which is right in production
+// and silent in a test harness: every assertion against those routes would pass
+// against a tidy 404 and the endpoints would read as covered (CLAUDE.md section
+// 2, "No dark harness"). A required argument does not compile when it is
+// forgotten, which is a stronger guarantee than a guard test.
+func NewHandler(svc *wiki.Service, docs *wiki.DocumentService, tagSvc *tags.Service) *Handler {
+	return &Handler{svc: svc, docs: docs, tags: tagSvc, auditLog: audit.NewLogger()}
 }
 
 // WithAuditLogger attaches an audit logger to the handler.
@@ -77,8 +79,13 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/{pageID}/share-impact", h.ShareImpact)
 	r.Get("/{pageID}/revisions", h.ListRevisions)
 	r.Get("/{pageID}/revisions/{version}", h.GetRevision)
+	r.Post("/{pageID}/revisions/{version}/restore", h.RestoreRevision)
 	r.Get("/{pageID}/diff", h.DiffRevisions)
 	r.Get("/{pageID}/render", h.RenderPage)
+	// Page-level tags (migration 040). Read is the space's, writing one is the
+	// same permission as editing the page.
+	r.Get("/{pageID}/tags", h.ListPageTags)
+	r.Put("/{pageID}/tags", h.SetPageTags)
 	// The document surface (issue #15, ADR-0012). /drafts is registered before
 	// /{pageID} paths for readability only — chi matches static segments ahead of
 	// parameters regardless.
