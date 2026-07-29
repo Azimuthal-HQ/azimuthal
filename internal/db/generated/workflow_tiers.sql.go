@@ -12,6 +12,83 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const applyProjectItemEffects = `-- name: ApplyProjectItemEffects :exec
+UPDATE project_items SET
+    assignee_id = CASE WHEN $1::boolean THEN $2::uuid ELSE assignee_id END,
+    due_at      = CASE WHEN $3::boolean   THEN $4::timestamptz ELSE due_at END,
+    labels      = CASE WHEN $5::boolean   THEN $6::text[] ELSE labels END,
+    updated_at  = now()
+WHERE id = $7 AND deleted_at IS NULL
+`
+
+type ApplyProjectItemEffectsParams struct {
+	SetAssignee bool               `json:"set_assignee"`
+	AssigneeID  pgtype.UUID        `json:"assignee_id"`
+	SetDueAt    bool               `json:"set_due_at"`
+	DueAt       pgtype.Timestamptz `json:"due_at"`
+	SetLabels   bool               `json:"set_labels"`
+	Labels      []string           `json:"labels"`
+	ID          uuid.UUID          `json:"id"`
+}
+
+func (q *Queries) ApplyProjectItemEffects(ctx context.Context, arg ApplyProjectItemEffectsParams) error {
+	_, err := q.db.Exec(ctx, applyProjectItemEffects,
+		arg.SetAssignee,
+		arg.AssigneeID,
+		arg.SetDueAt,
+		arg.DueAt,
+		arg.SetLabels,
+		arg.Labels,
+		arg.ID,
+	)
+	return err
+}
+
+const applyTicketEffects = `-- name: ApplyTicketEffects :exec
+
+
+UPDATE tickets SET
+    assignee_id = CASE WHEN $1::boolean THEN $2::uuid ELSE assignee_id END,
+    due_at      = CASE WHEN $3::boolean   THEN $4::timestamptz ELSE due_at END,
+    labels      = CASE WHEN $5::boolean   THEN $6::text[] ELSE labels END,
+    updated_at  = now()
+WHERE id = $7 AND deleted_at IS NULL
+`
+
+type ApplyTicketEffectsParams struct {
+	SetAssignee bool               `json:"set_assignee"`
+	AssigneeID  pgtype.UUID        `json:"assignee_id"`
+	SetDueAt    bool               `json:"set_due_at"`
+	DueAt       pgtype.Timestamptz `json:"due_at"`
+	SetLabels   bool               `json:"set_labels"`
+	Labels      []string           `json:"labels"`
+	ID          uuid.UUID          `json:"id"`
+}
+
+// ─── Applying post-function effects ───────────────────────────────────────────
+// The two queries below apply every planned effect in ONE statement, inside the
+// transaction that writes the status.
+//
+// Each field carries an explicit `set_*` flag rather than relying on the value
+// being NULL, because for these columns NULL is a real value a post-function can
+// mean: `assign_to` with no user means UNASSIGN, and `set_field due_at` with no
+// value means CLEAR THE DUE DATE. Collapsing "do not touch" and "set to NULL"
+// into one nullable parameter is the partial-PATCH tri-state defect that
+// silently wiped every item's due_at in this repository once already. The flag
+// is the same {Set, Value} discipline optionalField encodes in Go.
+func (q *Queries) ApplyTicketEffects(ctx context.Context, arg ApplyTicketEffectsParams) error {
+	_, err := q.db.Exec(ctx, applyTicketEffects,
+		arg.SetAssignee,
+		arg.AssigneeID,
+		arg.SetDueAt,
+		arg.DueAt,
+		arg.SetLabels,
+		arg.Labels,
+		arg.ID,
+	)
+	return err
+}
+
 const countPendingApprovalsForTransition = `-- name: CountPendingApprovalsForTransition :one
 SELECT COUNT(*)::bigint FROM workflow_approvals
 WHERE transition_id = $1 AND decided_at IS NULL

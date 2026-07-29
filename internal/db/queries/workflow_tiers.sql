@@ -196,3 +196,32 @@ WHERE workflow_id = $1 AND from_state_id = $2 AND to_state_id = $3;
 -- phase adds uses THIS query instead, so the new tier surface does not widen
 -- the exposure.
 SELECT * FROM workflows WHERE id = $1 AND org_id = $2;
+
+-- ─── Applying post-function effects ───────────────────────────────────────────
+
+-- The two queries below apply every planned effect in ONE statement, inside the
+-- transaction that writes the status.
+--
+-- Each field carries an explicit `set_*` flag rather than relying on the value
+-- being NULL, because for these columns NULL is a real value a post-function can
+-- mean: `assign_to` with no user means UNASSIGN, and `set_field due_at` with no
+-- value means CLEAR THE DUE DATE. Collapsing "do not touch" and "set to NULL"
+-- into one nullable parameter is the partial-PATCH tri-state defect that
+-- silently wiped every item's due_at in this repository once already. The flag
+-- is the same {Set, Value} discipline optionalField encodes in Go.
+
+-- name: ApplyTicketEffects :exec
+UPDATE tickets SET
+    assignee_id = CASE WHEN @set_assignee::boolean THEN sqlc.narg(assignee_id)::uuid ELSE assignee_id END,
+    due_at      = CASE WHEN @set_due_at::boolean   THEN sqlc.narg(due_at)::timestamptz ELSE due_at END,
+    labels      = CASE WHEN @set_labels::boolean   THEN @labels::text[] ELSE labels END,
+    updated_at  = now()
+WHERE id = @id AND deleted_at IS NULL;
+
+-- name: ApplyProjectItemEffects :exec
+UPDATE project_items SET
+    assignee_id = CASE WHEN @set_assignee::boolean THEN sqlc.narg(assignee_id)::uuid ELSE assignee_id END,
+    due_at      = CASE WHEN @set_due_at::boolean   THEN sqlc.narg(due_at)::timestamptz ELSE due_at END,
+    labels      = CASE WHEN @set_labels::boolean   THEN @labels::text[] ELSE labels END,
+    updated_at  = now()
+WHERE id = @id AND deleted_at IS NULL;

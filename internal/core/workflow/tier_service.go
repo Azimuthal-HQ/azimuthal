@@ -100,6 +100,17 @@ type GateResult struct {
 	// tiers therefore do not apply.
 	TransitionID *uuid.UUID
 
+	// ToStateID is the workflow state the target status names, so a caller
+	// writing the status can keep workflow_state_id in step with it. Nil when
+	// no edge was resolved.
+	//
+	// Keeping the two columns together matters: the legacy /status routes write
+	// `status` alone, which is how an item's workflow_state_id comes to point at
+	// the state it was in two transitions ago. This does not repair the rows
+	// that already drifted — that is recorded as an inherited defect — but it
+	// stops a gated transition adding to them.
+	ToStateID *uuid.UUID
+
 	// Refused names the guard that refused. The caller answers 4xx with
 	// Refused.Reason, which is written for a person.
 	Refused *Refusal
@@ -131,6 +142,8 @@ func (s *TierService) Gate(ctx context.Context, req GateRequest) (GateResult, er
 		return GateResult{}, nil
 	}
 
+	toStateID := transition.ToStateID
+
 	actor, err := s.resolveActor(ctx, req)
 	if err != nil {
 		return GateResult{}, err
@@ -145,7 +158,7 @@ func (s *TierService) Gate(ctx context.Context, req GateRequest) (GateResult, er
 		return GateResult{}, fmt.Errorf("gate: loading guards: %w", err)
 	}
 	if refusal := Evaluate(guards, GuardValidatorClass, actor, req.Entity); refusal != nil {
-		return GateResult{TransitionID: &transition.ID, Refused: refusal}, nil
+		return GateResult{TransitionID: &transition.ID, ToStateID: &toStateID, Refused: refusal}, nil
 	}
 
 	approvers, err := s.store.ApproversForTransition(ctx, transition.ID)
@@ -157,14 +170,14 @@ func (s *TierService) Gate(ctx context.Context, req GateRequest) (GateResult, er
 		if err != nil {
 			return GateResult{}, err
 		}
-		return GateResult{TransitionID: &transition.ID, Pending: pending}, nil
+		return GateResult{TransitionID: &transition.ID, ToStateID: &toStateID, Pending: pending}, nil
 	}
 
 	effects, err := s.planEffects(ctx, transition.ID)
 	if err != nil {
 		return GateResult{}, err
 	}
-	return GateResult{TransitionID: &transition.ID, Effects: effects}, nil
+	return GateResult{TransitionID: &transition.ID, ToStateID: &toStateID, Effects: effects}, nil
 }
 
 // planEffects loads and plans a transition's post-functions. An action this

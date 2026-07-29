@@ -32,6 +32,7 @@ import (
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	viewsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/views"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
@@ -167,6 +168,15 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	workflowAdapter := adapters.NewWorkflowAdapter(queries)
 	workflowEngine := workflow.NewDBEngine(workflowAdapter)
 
+	// ADR-0011 workflow tiers. tierGate is the single chokepoint every status
+	// route enters; transitionTx is Convention B, used only by transitions that
+	// carry post-functions. Both are passed to every handler that can change a
+	// status — a route that skipped them would be the bypass the chokepoint
+	// exists to close.
+	tierStore := adapters.NewWorkflowTierAdapter(queries)
+	tierGate := tiergate.New(workflow.NewTierService(tierStore), tierStore)
+	transitionTx := adapters.NewWorkflowTransitionTxAdapter(pool)
+
 	// v0.3 access control, wired exactly as production (cmd/server/main.go),
 	// including the DB-backed audit logger so audit rows are testable.
 	teamAdapter := adapters.NewTeamAdapter(pool)
@@ -258,7 +268,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		TicketHandler: ticketsapi.NewHandler(ticketSvc).
 			WithAuditLogger(auditLog).
 			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
-			WithSuggestions(tickets.NewSuggestionService(ticketAdapter)),
+			WithSuggestions(tickets.NewSuggestionService(ticketAdapter)).
+			WithWorkflowTiers(tierGate, transitionTx),
 		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
 			WithAuditLogger(auditLog).

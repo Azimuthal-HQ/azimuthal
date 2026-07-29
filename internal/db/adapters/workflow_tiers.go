@@ -507,3 +507,22 @@ func mapSlice[R any, T any](rows []R, f func(R) T) []T {
 	}
 	return out
 }
+
+// WorkflowIDForSpace reports which workflow a space uses, implementing
+// tiergate.WorkflowResolver.
+//
+// A space with no workflow assigned returns workflow.ErrNotFound rather than a
+// zero id, so the caller can tell "none configured" from "lookup failed". That
+// distinction matters: assignment happens outside the space-create transaction
+// and is explicitly best-effort, so an unassigned space is a supported live
+// state and must mean "no tiers apply", never "refuse".
+func (a *WorkflowTierAdapter) WorkflowIDForSpace(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
+	row, err := a.q.GetSpaceWorkflow(ctx, spaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, workflow.ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("workflow tier adapter workflow for space: %w", err)
+	}
+	return row.ID, nil
+}

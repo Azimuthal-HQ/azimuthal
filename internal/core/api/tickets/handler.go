@@ -13,9 +13,11 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 )
 
@@ -33,11 +35,30 @@ type Handler struct {
 	// from svc because it reads across spaces, which no space-scoped ticket
 	// route does — see tickets.SuggestionStore.
 	suggestions *tickets.SuggestionService
+	// tiers evaluates ADR-0011 conditions, validators and approvals for a
+	// status change; applier writes the change and its post-function effects in
+	// one transaction.
+	//
+	// Both are pointer/interface kinds and therefore covered by
+	// TestHarness_NoDarkDependencies, which fails by field name the moment the
+	// harness stops mirroring cmd/server/main.go. A nil gate does NOT skip the
+	// tiers — see TransitionStatus.
+	tiers   *tiergate.Gate
+	applier workflow.TransitionApplier
 }
 
 // NewHandler creates a ticket Handler.
 func NewHandler(svc *tickets.TicketService) *Handler {
 	return &Handler{svc: svc, auditLog: audit.NewLogger()}
+}
+
+// WithWorkflowTiers attaches the ADR-0011 tier gate and the transactional
+// applier. Both are required in any wiring that mounts the status route; see
+// the field comments.
+func (h *Handler) WithWorkflowTiers(g *tiergate.Gate, a workflow.TransitionApplier) *Handler {
+	h.tiers = g
+	h.applier = a
+	return h
 }
 
 // WithAuditLogger attaches an audit logger to the handler.
@@ -380,20 +401,179 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := h.svc.TransitionStatus(r.Context(), id, req.Status)
+	// The hardcoded state machine still decides LEGALITY, exactly as before.
+	// The tiers only add restrictions on top of it, so a transition this
+	// machine rejects is still rejected the same way, with the same error.
+	current, getErr := h.svc.Get(r.Context(), id)
+	if getErr != nil {
+		handleTicketError(w, r, getErr)
+		return
+	}
+	if err := tickets.ValidateTransition(current.Status, req.Status); err != nil {
+		handleTicketError(w, r, err)
+		return
+	}
+
+	// Resolved here rather than at the top of the handler so a missing ticket
+	// still answers 404 before anything else, exactly as it did before this
+	// phase. RequireAuth makes the nil case unreachable in the mounted router;
+	// the handler unit tests reach it directly.
+	claims, orgID, ok := actorFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	gated, ok := h.gateTicketTransition(w, r, orgID, spaceID, claims.UserID, current, req.Status)
+	if !ok {
+		return
+	}
+
+	h.applyTicketTransition(w, r, ticketTransition{
+		ticketID: id, spaceID: spaceID, orgID: orgID,
+		actorID: claims.UserID, actorOrgID: claims.OrgID,
+		status: req.Status, gated: gated,
+	})
+}
+
+// ticketTransition carries the resolved inputs of one status change from
+// TransitionStatus to the write below, so neither function has to reread them.
+type ticketTransition struct {
+	ticketID uuid.UUID
+	spaceID  uuid.UUID
+	orgID    uuid.UUID
+	actorID  uuid.UUID
+	// actorOrgID is the wire-string org id the audit event carries.
+	actorOrgID string
+	status     tickets.Status
+	gated      workflow.GateResult
+}
+
+// applyTicketTransition writes the status change the gate permitted.
+//
+// With no post-functions this is the single UPDATE it has always been, and the
+// audit row is written the way it has always been written (Convention A). Only
+// a transition carrying effects is an atomicity contract, and only that one
+// takes the transaction — see workflow.TransitionApplier for why that
+// distinction is deliberate rather than an inconsistency.
+func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, t ticketTransition) {
+	if len(t.gated.Effects) == 0 {
+		ticket, err := h.svc.TransitionStatus(r.Context(), t.ticketID, t.status)
+		if err != nil {
+			handleTicketError(w, r, err)
+			return
+		}
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeTicketStatusChange, ActorID: t.actorID.String(),
+			OrgID: t.actorOrgID, ResourceType: "ticket", ResourceID: t.ticketID.String(),
+			Metadata: map[string]string{"to": string(t.status)},
+		})
+		respond.JSON(w, http.StatusOK, ticket)
+		return
+	}
+
+	if err := h.applier.ApplyTransition(r.Context(), workflow.ApplyInput{
+		EntityType:   workflow.ApprovalEntityTicket,
+		EntityID:     t.ticketID,
+		OrgID:        t.orgID,
+		SpaceID:      t.spaceID,
+		ActorID:      t.actorID,
+		ToStatus:     string(t.status),
+		ToStateID:    t.gated.ToStateID,
+		TransitionID: t.gated.TransitionID,
+		Effects:      t.gated.Effects,
+	}); err != nil {
+		// The transaction rolled back, so the status did not change either. The
+		// message says so, because "failed" without "nothing happened" leaves a
+		// user wondering which half landed.
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"the transition could not be completed and no change was made")
+		return
+	}
+
+	ticket, err := h.svc.Get(r.Context(), t.ticketID)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
 	}
-	claims := auth.ClaimsFromContext(r.Context())
-	if claims != nil {
-		_ = h.auditLog.Log(r.Context(), audit.Event{
-			Type: audit.EventTypeTicketStatusChange, ActorID: claims.UserID.String(),
-			OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
-			Metadata: map[string]string{"to": string(req.Status)},
-		})
-	}
 	respond.JSON(w, http.StatusOK, ticket)
+}
+
+// gateTicketTransition runs the ADR-0011 tiers and reports whether the
+// transition may proceed.
+//
+// It answers the request itself in every case that stops the transition — a
+// validator refusal, a pending approval, or a misconfigured post-function — so
+// the caller only has to distinguish "carry on" from "already handled".
+func (h *Handler) gateTicketTransition(
+	w http.ResponseWriter, r *http.Request,
+	orgID, spaceID, actorID uuid.UUID, current *tickets.Ticket, target tickets.Status,
+) (workflow.GateResult, bool) {
+	// A missing gate is a wiring fault, never a reason to skip the tiers. It
+	// answers 500 rather than transitioning ungated: an approval an operator
+	// configured must not be bypassable by a deployment that forgot to wire it.
+	// TestHarness_NoDarkDependencies keeps this branch unreachable in tests, and
+	// cmd/server/main.go keeps it unreachable in production.
+	if h.tiers == nil || h.applier == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow tier evaluation is not configured on this server")
+		return workflow.GateResult{}, false
+	}
+
+	gated, err := h.tiers.Evaluate(r.Context(), tiergate.Request{
+		OrgID:         orgID,
+		SpaceID:       spaceID,
+		EntityType:    workflow.ApprovalEntityTicket,
+		EntityID:      current.ID,
+		ActorID:       actorID,
+		CurrentStatus: string(current.Status),
+		TargetStatus:  string(target),
+		Entity: workflow.EntitySnapshot{
+			AssigneeID:  current.AssigneeID,
+			DueAt:       current.DueAt,
+			Description: current.Description,
+			Labels:      current.Labels,
+		},
+	})
+	if err != nil {
+		handleTierError(w, r, err)
+		return workflow.GateResult{}, false
+	}
+	if tiergate.Refused(w, r, gated) || tiergate.Pending(w, gated) {
+		return workflow.GateResult{}, false
+	}
+	return gated, true
+}
+
+// actorFromRequest resolves the caller's claims and org id, answering 401 and
+// reporting false when either is absent.
+func actorFromRequest(w http.ResponseWriter, r *http.Request) (*auth.Claims, uuid.UUID, bool) {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return nil, uuid.Nil, false
+	}
+	orgID, err := uuid.Parse(claims.OrgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return nil, uuid.Nil, false
+	}
+	return claims, orgID, true
+}
+
+// handleTierError maps a tier failure onto a response.
+//
+// A post-function this build cannot perform aborts the transition with a named
+// error rather than committing without it: a workflow that silently skipped a
+// configured action would be worse than one that refused, because nothing would
+// report the omission.
+func handleTierError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, workflow.ErrPostFunctionUnknown), errors.Is(err, workflow.ErrPostFunctionMalformed):
+		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation,
+			"this transition is configured with an action this server cannot perform, so it was not applied")
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to evaluate the transition")
+	}
 }
 
 // Assign assigns a ticket to a user.
