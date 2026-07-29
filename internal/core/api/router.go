@@ -157,6 +157,14 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			r.Get("/", cfg.SpaceHandler.GetOrg)
 			r.With(orgAdminGuard(cfg)).Patch("/", cfg.SpaceHandler.UpdateOrg)
 
+			// Boot-time deployment flags the UI needs. Org-scoped for the
+			// membership 404 this subtree gets from ResolveAccess, NOT because
+			// the values are per-org — they are process-wide. What may appear
+			// on that wire is decided by the BootConfig struct itself; read
+			// the comment on it before adding a field
+			// (internal/core/api/spaces/config.go).
+			r.Get("/config", cfg.SpaceHandler.BootConfig)
+
 			// Teams (org admin administers; members read).
 			if cfg.TeamHandler != nil {
 				r.Route("/teams", func(r chi.Router) {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { TeamsAdminPage } from '../TeamsAdminPage';
@@ -17,6 +17,12 @@ const TEAM = {
   is_default: false, description: null,
 };
 
+// vi.mock factories are hoisted above module-scope declarations, so the
+// required-mode switch these tests flip has to be hoisted with them.
+// vi.hoisted is the sanctioned way; a plain `let` here throws
+// "Cannot access before initialization" inside the factory.
+const deployment = vi.hoisted(() => ({ ticketRefRequired: false }));
+
 vi.mock('../../../lib/api', () => ({
   friendlyErrorMessage: (_e: unknown, f: string) => f,
   useTeams: () => ({ data: [TEAM], isLoading: false, error: null }),
@@ -28,6 +34,7 @@ vi.mock('../../../lib/api', () => ({
   useTeamMembers: () => ({ data: [], isLoading: false }),
   // A3: the create, edit and delete surfaces now carry a TicketRefField.
   useTicketRefSuggestions: () => ({ data: [], isLoading: false, error: null }),
+  useTicketRefRequired: () => deployment.ticketRefRequired,
 }));
 
 vi.mock('../../../lib/auth', () => ({
@@ -144,5 +151,55 @@ describe('TeamsAdminPage — the optional ticket reference (A3)', () => {
     expect(deleteMutate.mock.calls[0][0]).toEqual({ id: 't1', ticketRef: 'ORG-9' });
     // Confirming ends the second step, so the field goes away with it.
     expect(screen.queryByTestId('team-delete-ticket-ref')).toBeNull();
+  });
+});
+
+// B5: under AZIMUTHAL_TICKET_REF_REQUIRED the dialogs pre-empt the server's
+// 400 instead of letting the operator discover the requirement from a failed
+// request. Both directions matter: the required=false half is what proves the
+// shipped behaviour of every deployment that never set the flag is untouched.
+describe('TeamsAdminPage — required mode gates the submits (B5)', () => {
+  afterEach(() => {
+    deployment.ticketRefRequired = false;
+  });
+
+  it('leaves create enabled with an empty reference when the deployment does not require one', () => {
+    deployment.ticketRefRequired = false;
+    renderPage();
+
+    fireEvent.click(screen.getByTestId('team-create-button'));
+    fireEvent.change(screen.getByTestId('team-create-name'), { target: { value: 'DevOps' } });
+
+    expect(screen.getByTestId('team-create-submit')).toBeEnabled();
+  });
+
+  it('disables create until a reference is typed when the deployment requires one', () => {
+    deployment.ticketRefRequired = true;
+    createMutate.mockReset();
+    renderPage();
+
+    fireEvent.click(screen.getByTestId('team-create-button'));
+    fireEvent.change(screen.getByTestId('team-create-name'), { target: { value: 'DevOps' } });
+    expect(screen.getByTestId('team-create-submit')).toBeDisabled();
+
+    // Whitespace is not a reference: the server trims before deciding.
+    fireEvent.change(screen.getByTestId('team-create-ticket-ref'), { target: { value: '   ' } });
+    expect(screen.getByTestId('team-create-submit')).toBeDisabled();
+
+    fireEvent.change(screen.getByTestId('team-create-ticket-ref'), { target: { value: 'CHG-1' } });
+    expect(screen.getByTestId('team-create-submit')).toBeEnabled();
+
+    fireEvent.click(screen.getByTestId('team-create-submit'));
+    expect(createMutate).toHaveBeenCalledTimes(1);
+    expect(createMutate.mock.calls[0][0].ticketRef).toBe('CHG-1');
+  });
+
+  it('marks the create field required so the label stops saying optional', () => {
+    deployment.ticketRefRequired = true;
+    renderPage();
+
+    fireEvent.click(screen.getByTestId('team-create-button'));
+
+    expect(screen.getByTestId('team-create-ticket-ref')).toBeRequired();
   });
 });

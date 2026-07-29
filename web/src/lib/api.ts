@@ -2312,6 +2312,7 @@ export const queryKeys = {
   memberSearch: (orgId: string, q: string) => ['memberSearch', orgId, q] as const,
   ticketRefSuggestions: (orgId: string, q: string) =>
     ['ticketRefSuggestions', orgId, q] as const,
+  deploymentConfig: (orgId: string) => ['deploymentConfig', orgId] as const,
   invites: (orgId: string) => ['invites', orgId] as const,
   accessMatrix: (orgId: string) => ['accessMatrix', orgId] as const,
   auditLog: (orgId: string, filter: AuditFilter) => ['auditLog', orgId, filter] as const,
@@ -3586,6 +3587,58 @@ export function useMemberSearch(orgId: string, q: string, opts?: QueryOpts<Perso
  * does not ask, so the two pickers behave identically from the operator's
  * side.
  */
+/**
+ * DeploymentConfig is GET /orgs/{orgId}/config — the boot-time flags the
+ * server publishes to org members. The Go type is spaces.BootConfig; the name
+ * differs here on purpose, because `BoardConfig` already exists in this file
+ * and one letter of difference in a 4000-line module is a bug waiting to
+ * happen.
+ *
+ * The server decides what may appear here through an explicit allowlist in
+ * code. Do not widen this interface speculatively — a field the server does
+ * not send is a lie about the contract.
+ */
+export interface DeploymentConfig {
+  ticket_ref_required: boolean;
+}
+
+async function fetchDeploymentConfig(orgId: string): Promise<DeploymentConfig> {
+  return apiFetch<DeploymentConfig>(`/orgs/${orgId}/config`);
+}
+
+/**
+ * useDeploymentConfig reads the deployment's boot-time flags.
+ *
+ * `staleTime: Infinity` is load-bearing rather than tuning. These values are
+ * read once at server start and cannot change while the server is running —
+ * that is the design of AZIMUTHAL_TICKET_REF_REQUIRED, not an accident — so a
+ * refetch can never return anything new. Unexported: every consumer wants one
+ * flag, and going through a selector keeps the fail-safe in exactly one place.
+ */
+function useDeploymentConfig(orgId: string) {
+  return useQuery<DeploymentConfig, APIError>({
+    queryKey: queryKeys.deploymentConfig(orgId),
+    queryFn: () => fetchDeploymentConfig(orgId),
+    enabled: !!orgId,
+    staleTime: Infinity,
+  });
+}
+
+/**
+ * useTicketRefRequired reports whether this deployment demands a ticket
+ * reference on administrative changes. Callers pass it to TicketRefField's
+ * `required` prop and use it to gate their own submit button.
+ *
+ * It fails safe to FALSE while loading or on error, and the direction matters.
+ * The server enforces the requirement either way and is the authority; a
+ * client that guessed `true` on a failed fetch would lock every administrative
+ * dialog on the instance behind a field the operator may not even need.
+ * Guessing `false` costs one 400 with a message that says exactly what to do.
+ */
+export function useTicketRefRequired(orgId: string): boolean {
+  return useDeploymentConfig(orgId).data?.ticket_ref_required ?? false;
+}
+
 export function useTicketRefSuggestions(
   orgId: string,
   q: string,

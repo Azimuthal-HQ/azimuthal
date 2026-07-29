@@ -189,9 +189,15 @@ Every route carries **exactly one** guard class:
 router — never a hand-maintained list — and fails **bidirectionally**: on any route present in the
 router but missing from the table, and on any table row whose route no longer exists. It also
 asserts at least 90 routes were enumerated, so a broken walk cannot pass vacuously. The table
-holds **172 rows** as of P4, keyed `"METHOD /path"` — mostly under `/api/v1`, except `/health`,
-`/ready`, `/api/docs` and `/api/docs/openapi.yaml`. (It said 142 here until P4 counted them; the
-repository wins.)
+holds **185 rows** as of the backend test-speed and pre-cutover pass, keyed `"METHOD /path"` —
+mostly under `/api/v1`, except `/health`, `/ready`, `/api/docs` and `/api/docs/openapi.yaml`.
+
+**Count the map; do not quote that number.** It has been wrong three times: 142 until P4 counted
+them, 172 until this pass did, and 172 was already stale before this pass started — P4 PR-B's queue
+rows, the Codex UX pass, and this one all landed after the sentence was last written. A figure three
+consecutive phases have had to correct does not belong in prose, and it is recorded here only
+because deleting it outright would leave a reader wondering whether the table is ten rows or two
+hundred. The repository wins; `routeAccounting` is the repository.
 
 Note what the test does and does not do: it proves every route is **classified**, not that each
 route's middleware chain matches the class it claims. The classification is a human assertion the
@@ -579,6 +585,73 @@ it), not loaded from a CDN.
 > screen with no explanation. On a connected one it is third-party code, resolved from a floating
 > version tag, executing in an authenticated administrator's browser on the origin that holds their
 > session. `TestDocsEndpoint_LoadsNoExternalAssets` fails on any absolute URL in the page.
+
+---
+
+## 15. `ticketref.Policy` — the operator ticket reference, in one place
+
+**Where:** `internal/core/api/ticketref/` (Go), `ticketRefQuery` and `IdWithTicketRef` in
+`web/src/lib/api.ts`, `TicketRefField` in `web/src/components/` (browser).
+
+Six handler packages record an operator-supplied reference on their audit events — `admin`,
+`teams`, `spaces`, `invites`, and, since the pre-cutover pass, `grants` and `shares`. They all
+share one `ticketref.Policy` value, built once in `cmd/server/main.go` from
+`AZIMUTHAL_TICKET_REF_REQUIRED` and threaded in with `WithTicketRefPolicy`.
+
+**Do not write a second length cap, a second required check, or a second transport.** The
+reference travels as the `ticket_ref` query parameter on every mutation, because the ones that
+most need it carry no body at all (team delete, space delete, member removal, grant revoke, share
+revoke are all DELETE). Bulk-apply is the single exception and keeps its shipped body field; both
+paths go through the same `Policy`, which is what stops them drifting.
+
+**Two invariants, both with tests, both easy to break by accident:**
+
+| Invariant | Why | The test |
+|---|---|---|
+| Resolve **after** the authorisation gate | Turning the flag on must not change a single authorisation outcome. Resolve-first turns every 403 and 404 into a 400 for reference-less requests, which silently rewrites the endpoint matrix. It is worst on `/shares`, which carries no space guard — the handler does the whole 404-then-403 split itself, so nothing upstream would still answer correctly. | `TestTicketRefRequired_AuthorisationAnswersBeforeTheReference` |
+| Resolve **before** the write | Under a required policy a missing reference has to mean *nothing happened*; a 400 after the service call leaves an unreferenced change committed, which is the outcome the requirement exists to prevent. Assert it by re-reading the resource, never by the status code alone. | `TestTicketRefRequired_MissingReference_RejectsAndWritesNothing`, `TestTicketRefRequired_GrantsAndShares_RejectAndWriteNothing` |
+
+`invites` resolves *before* its 404 lookup. That is safe only because the whole `/invites` subtree
+sits behind `RequireOrgAdmin404`, and it is not the pattern to copy.
+
+**The structural guard.** A `ticketref.Policy` is a value field, so `TestHarness_NoDarkDependencies`
+cannot see it — a handler can gain a reference gate that no test ever exercises under the required
+posture, which is exactly how `grants` and `shares` went uncovered. `TestHarness_EveryTicketRefHandlerIsUnderTheRequiredPolicy`
+closes it: every handler carrying a Policy must also be mounted in `newTicketRefRequiredServer`
+with `Required` true, and it fails by field name.
+
+**Not everything that writes an audit event takes one.** `writeShareRevokedTx` in
+`internal/db/adapters/content_tx.go` writes `share.revoked` from inside a page move or delete —
+the system enforcing ADR-0008, not an operator administrative change — and deliberately stores SQL
+NULL. `TestShare_RevokeOnDelete_WritesNoTicketRef` pins both halves.
+
+---
+
+## 16. `GET /orgs/{orgID}/config` — the only boot-flag surface
+
+**Where:** `internal/core/api/spaces/config.go` (`BootConfig`), `useTicketRefRequired` in
+`web/src/lib/api.ts`.
+
+One endpoint publishes the boot-time flags the browser needs. **The `BootConfig` struct is the
+allowlist** — there is no filtering step between it and the wire, deliberately, because a filter
+is a thing to get wrong whereas a hand-written struct is a decision someone had to type.
+
+`config.Config` holds `DatabaseURL`, `StorageSecretKey` and `JWTPrivateKeyPath` a few fields away
+from the flags that belong here. So: never populate this by reflecting over `config.Config`
+(reflection turns an allowlist into a deny-list that publishes whatever the next person adds), and
+never give a field `omitempty` (a zero value would vanish from the wire in tests while shipping in
+production). Both dodges are failures in `TestBootConfig_JSONTagsAreTheAllowlist`, which reads the
+type rather than a response — the integration key-set test passes for both, which is why the pair
+exists.
+
+The handler reads the same `ticketref.Policy` the mutating handlers enforce, not a second copy of
+the flag: an endpoint reporting "not required" while the mutations refuse is worse than no
+endpoint. The `orgID` in the path authorises the read and does not scope the values; they are
+process-wide. If they ever become per-org, that is a migration and a different endpoint.
+
+On the client, `useTicketRefRequired` fails safe to **false**. The server enforces the requirement
+either way and is the authority; guessing `true` on a failed fetch would lock every administrative
+dialog on the instance behind a field the operator may not need.
 
 ---
 

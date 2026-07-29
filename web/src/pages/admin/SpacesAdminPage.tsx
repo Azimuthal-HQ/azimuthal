@@ -8,6 +8,7 @@ import {
   useSpaceContentsSummary,
   useSpaces,
   useTeams,
+  useTicketRefRequired,
   useUpdateSpace,
   type Space,
   type SpaceVisibility,
@@ -126,6 +127,7 @@ function SpaceRow({ orgId, space, onEdit, onDelete }: {
 }
 
 function EditSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Space; onClose: () => void }) {
+  const ticketRefRequired = useTicketRefRequired(orgId);
   const teams = useTeams(orgId);
   const update = useUpdateSpace(orgId, space.id);
   const [name, setName] = useState(space.name);
@@ -201,6 +203,7 @@ function EditSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Spac
             orgId={orgId}
             value={ticketRef}
             onChange={setTicketRef}
+            required={ticketRefRequired}
             testId="admin-space-ticket-ref"
             hint="Recorded on the audit event for this change."
           />
@@ -209,7 +212,9 @@ function EditSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Spac
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
-            disabled={update.isPending || !name.trim()}
+            disabled={
+              update.isPending || !name.trim() || (ticketRefRequired && !ticketRef.trim())
+            }
             data-testid="admin-space-save"
             onClick={() => {
               setError(null);
@@ -247,6 +252,7 @@ function EditSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Spac
  * "Support (14 tickets, 3 pages)".
  */
 function DeleteSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Space; onClose: () => void }) {
+  const ticketRefRequired = useTicketRefRequired(orgId);
   const summary = useSpaceContentsSummary(orgId, space.id);
   const del = useDeleteSpace(orgId);
   const [ticketRef, setTicketRef] = useState('');
@@ -275,12 +281,16 @@ function DeleteSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Sp
             {!summary.isLoading && !contents && 'Its contents could not be counted — it may still contain work.'}
           </DialogDescription>
         </DialogHeader>
-        {/* Optional, and never a gate — the delete button below stays enabled
-            whether or not a reference is given. */}
+        {/* Optional, and not a gate, unless the deployment sets
+            AZIMUTHAL_TICKET_REF_REQUIRED — in which case the delete button
+            waits for a reference, because the server refuses the request
+            without one. With the flag off (the default) the button stays
+            enabled whether or not a reference is given. */}
         <TicketRefField
           orgId={orgId}
           value={ticketRef}
           onChange={setTicketRef}
+          required={ticketRefRequired}
           disabled={del.isPending}
           testId="admin-space-delete-ticket-ref"
           hint="Recorded on the audit event for this deletion."
@@ -290,7 +300,7 @@ function DeleteSpaceDialog({ orgId, space, onClose }: { orgId: string; space: Sp
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
             variant="destructive"
-            disabled={del.isPending}
+            disabled={del.isPending || (ticketRefRequired && !ticketRef.trim())}
             data-testid="admin-space-delete-confirm"
             onClick={() => {
               setError(null);

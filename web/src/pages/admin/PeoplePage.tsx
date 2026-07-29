@@ -13,6 +13,7 @@ import {
   useUploadUserAvatar,
   useRevokeInvite,
   useTeams,
+  useTicketRefRequired,
   useUpdatePerson,
   type CreatedInvite,
   type Invite,
@@ -149,12 +150,13 @@ export function PeoplePage() {
 }
 
 function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; isSelf: boolean }) {
+  const ticketRefRequired = useTicketRefRequired(orgId);
   const [menuOpen, setMenuOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<'deactivate' | 'remove' | null>(null);
-  // Optional operator reference for the two audited destructive actions.
-  // Cleared whenever the confirmation opens so one row's reference never
-  // leaks into the next action.
+  // The operator reference for the two audited destructive actions. Cleared
+  // whenever the confirmation opens so one row's reference never leaks into
+  // the next action. Optional unless the deployment requires one.
   const [ticketRef, setTicketRef] = useState('');
   const lifecycle = usePersonLifecycle(orgId);
   const update = useUpdatePerson(orgId);
@@ -408,13 +410,16 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
                 : 'Their membership, team memberships, and space access are removed. Their account and everything they authored survive, with attribution intact.'}
             </DialogDescription>
           </DialogHeader>
-          {/* Optional and never a gate: the confirmation button below stays
-              enabled whether or not a reference is given, so the two-step
+          {/* Optional, and not a gate, unless the deployment sets
+              AZIMUTHAL_TICKET_REF_REQUIRED — in which case the confirmation
+              button waits for a reference, because the server would refuse the
+              request without one. With the flag off (the default) the two-step
               confirmation keeps exactly the semantics it shipped with. */}
           <TicketRefField
             orgId={orgId}
             value={ticketRef}
             onChange={setTicketRef}
+            required={ticketRefRequired}
             disabled={busy}
             testId="person-ticket-ref"
             hint="Recorded on the audit event for this change."
@@ -423,7 +428,7 @@ function PersonRow({ orgId, person, isSelf }: { orgId: string; person: Person; i
             <Button variant="outline" onClick={() => setConfirming(null)}>Cancel</Button>
             <Button
               variant="destructive"
-              disabled={busy}
+              disabled={busy || (ticketRefRequired && !ticketRef.trim())}
               data-testid="person-confirm-action"
               onClick={() => {
                 if (confirming === 'deactivate') {
@@ -544,6 +549,7 @@ function PendingInvites({ orgId, invites }: { orgId: string; invites: Invite[] }
 }
 
 function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; onClose: () => void }) {
+  const ticketRefRequired = useTicketRefRequired(orgId);
   const teams = useTeams(orgId);
   const createInvites = useCreateInvites(orgId);
   const [emailsRaw, setEmailsRaw] = useState('');
@@ -623,6 +629,7 @@ function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; 
               orgId={orgId}
               value={ticketRef}
               onChange={setTicketRef}
+              required={ticketRefRequired}
               testId="invite-ticket-ref"
               hint="Recorded on the audit event for every invite in this batch."
             />
@@ -658,7 +665,11 @@ function InviteDialog({ orgId, open, onClose }: { orgId: string; open: boolean; 
             <>
               <Button variant="outline" onClick={() => { reset(); onClose(); }}>Cancel</Button>
               <Button
-                disabled={emails.length === 0 || createInvites.isPending}
+                disabled={
+                  emails.length === 0 ||
+                  createInvites.isPending ||
+                  (ticketRefRequired && !ticketRef.trim())
+                }
                 data-testid="invite-submit"
                 onClick={() => {
                   setError(null);

@@ -1137,3 +1137,132 @@ Both are corrected here rather than flagged: the wire format is now structured s
 hook's type matches. It is recorded because it is the second time a Codex endpoint has shipped
 with a client binding that never matched it, and because "no consumer" is what let it happen —
 an endpoint nothing calls is not covered by the fact that everything else is green.
+
+---
+
+# Backend test speed and the pre-cutover bundle (no migration)
+
+## 1. Discrepancies found and corrected
+
+### D64 — `shared-surfaces.md` §5 said the route accounting table held 172 rows; it holds 185
+
+The sentence has now been wrong three times: it said 142 until P4 counted them, 172 until this pass
+did, and 172 was already stale before this branch existed — P4 PR-B's seven queue rows landed after
+it was written, the Codex UX pass (migration 040) net-added five, and this pass adds one
+(`GET /api/v1/orgs/{orgID}/config`). 179 at this branch's merge base, 184 on `main`, 185 here.
+
+Corrected to 185, and the sentence now tells the reader to count the map rather than quote the
+number. A count that three consecutive phases have had to fix is a count that should not be
+restated in prose at all, and the next phase to touch the table should not have to discover that
+for itself.
+
+### D65 — known-issues #19 claimed no test depends on two servers having different signing keys
+
+The entry states that "no test asserts that two servers have different signing keys, and if one did
+it would fail loudly rather than pass weakly", and used that to argue the hoist was risk-free.
+
+One does. `TestJWTService_WrongKey` in `internal/core/auth` issues a token from one service and
+requires a second to reject it. The entry examined `internal/core/api` — the package it was
+proposing to change — and generalised to the repository. Handing that test the shared key twice
+would have left it green while asserting nothing, which is the exact failure mode the entry was
+reasoning about, one package over.
+
+Corrected in the entry. The test now calls `freshTestKey` explicitly, twice, with the reason
+written beside it, so the next person to see two keygen calls in a hoisted file does not tidy them
+away.
+
+### D66 — `AZIMUTHAL_TICKET_REF_REQUIRED` was documented nowhere
+
+Not in `README.md`, not in `docs/self-hosting.md`, not in `.env.example` — while being the flag an
+entire administrative feature (A2/A3, and now B3–B5) is built around, and the flag this pass builds
+an HTTP endpoint to expose to the browser. An operator could not have discovered it except by
+reading `internal/config/config.go`.
+
+Documented in all three, with the self-hosting entry saying what turning it on actually costs: a
+restart, and a 400 on every administrative mutation that arrives without a reference.
+
+### D67 — the admin CLI silently discarded `AZIMUTHAL_BCRYPT_COST`
+
+`azimuthal admin create-user` and `azimuthal admin reset-password` both load configuration and both
+hash passwords, but neither builds a server, so neither reached the boot-time step that pushes the
+configured work factor into `internal/core/auth`. An operator who raised the cost got the raised
+one from the API and the old one from the CLI, writing hashes of two different strengths into the
+same table, with nothing anywhere reporting it.
+
+Found by the adversarial review of this pass's own first commit, not by a test — which is the point
+of the fix. Every command now loads through one `loadConfig` that loads *and* applies, and
+`TestCmdServer_NoDirectConfigLoad` fails on any file in the package that reaches past it to
+`config.Load`. Modelled on `web/src/lib/no-direct-fetch.test.ts`, which enforces the same shape of
+rule on the frontend's single API client.
+
+## 2. Decisions taken (justified in the phase report, recorded here)
+
+- **The bcrypt work factor is chosen by `testing.Testing()`, not by configuration.** A test binary
+  hashes at `bcrypt.MinCost`; anything built by `go build` hashes at the configured cost, which
+  `internal/config` and `auth.SetPasswordCost` both refuse to let below 12. The rejected
+  alternative was an `APP_ENV=test` exemption on the config floor: APP_ENV is an ordinary
+  environment variable a production deployment can hold any value of, so that exemption would have
+  been a one-line downgrade of every stored password.
+  `TestLoad_BcryptCost_FloorNotRelaxedByAppEnv` is the regression test for the design that was not
+  taken. A build tag was the other candidate and would be the strongest ship-time guarantee, but it
+  needs a second build dimension in the Makefile, `ci.yml` and `.golangci.yml`, and a forgotten
+  `-tags` reverts the saving silently.
+
+- **The ticket reference is resolved AFTER the authorisation gate on grants and shares.** The
+  argument is not information leakage — resolve-first makes the 400 uniform, which leaks less. It
+  is that turning `AZIMUTHAL_TICKET_REF_REQUIRED` on must not change any authorisation outcome:
+  resolve-first replaces every 403 and 404 with a 400 for reference-less requests, which rewrites
+  the endpoint matrix on a flag that is supposed to be about audit records. `invites` resolves
+  first and is safe only because its subtree sits behind `RequireOrgAdmin404`; that is recorded
+  rather than copied.
+
+- **The in-transaction `share.revoked` events carry no ticket reference.** Revoke-on-move and
+  revoke-on-delete are the system enforcing ADR-0008, not operator administrative changes;
+  demanding a change reference for them would put a change-management gate on ordinary authoring.
+  A maintainer who would rather they inherit the causing mutation's reference should say so — it is
+  a much larger change (a reference on ticket, page and item mutations) and was not taken here.
+
+- **`GET /orgs/{orgID}/config` is org-scoped for the membership 404, not because the values are
+  per-org.** They are process-wide. The alternative, `GET /api/v1/config` with a `user-scoped`
+  class, would be readable by any authenticated principal including one with no org membership at
+  all. The URL therefore implies a scoping the values do not have; that trade is stated on the
+  handler. If the flags ever become per-org, that is a migration and a different endpoint.
+
+## 3. Observed, out of scope
+
+### D68 — required mode is unusable from ten admin surfaces, and this pass did not fix them
+
+`SpaceSettingsPage`'s grants panel and `ShareDialog` have no `TicketRefField` at all, so with the
+flag on they now 400 — B3 gave those endpoints a gate the UI cannot satisfy. Separately, eight
+existing controls mutate through handlers that *already* required a reference and send none: the
+`PeoplePage` org-role select, its primary-team select, "Sign out everywhere", "Reactivate", invite
+Resend, invite Revoke, and the `TeamsAdminPage` member add and remove. Wiring the `required` prop
+cannot help a surface that has no field to wire.
+
+**This is the remaining work before the flag can be flipped in a real deployment.** The S10
+orchestration is proven end to end
+(`TestTicketRefRequired_TeamWithAutoSpaces_OneReferenceCoversTheWholeOrchestration`); the admin UI
+as a whole is not. It is UI work with its own blast radius rather than something to fold in under
+this item's fence.
+
+### D69 — the E2E harness cannot exercise required mode
+
+`web/playwright.config.ts` forwards an explicit allow-list of variables to the spawned server and
+`AZIMUTHAL_TICKET_REF_REQUIRED` is not on it, so the E2E server always runs permissive. There is
+one `webServer` for the whole suite, so adding the flag would turn required mode on for every spec
+at once, and several issue reference-less administrative mutations — they would all 400.
+
+The cutover is therefore proven at the integration layer, against the real router and the real
+database, rather than in the browser. **For a maintainer:** the alternative is a second Playwright
+project with its own `webServer` and port, which doubles the slowest gate in CI to cover what the
+Go integration tests already cover.
+
+### D70 — `README.md` still lists `JWT_SECRET` as a required variable
+
+There is no such variable. known-issues #7 records that JWT signing moved to an RS256 key persisted
+in the database in migration 018, and that "there is no `JWT_SECRET` to configure". The README's
+configuration table still shows it as **Yes**, required.
+
+Untouched here because it is unrelated to this work and the table belongs to no one phase, but it
+is actively misleading to an operator setting up a deployment: the one row marked required that
+cannot be satisfied, because the variable it names is read by nothing.
