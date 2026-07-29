@@ -136,18 +136,18 @@ func (r *Result) writeLedger(b *strings.Builder) {
 }
 
 func writeFindings(b *strings.Builder, c *Class) {
-	any := false
+	printed := false
 	for _, f := range c.Findings {
 		if f.Count == 0 {
 			continue
 		}
-		any = true
+		printed = true
 		fmt.Fprintf(b, "- **%d %s** — %s\n", f.Count, f.Verdict.Label(), f.Reason)
 		if len(f.Detail) > 0 {
 			fmt.Fprintf(b, "  - %s\n", strings.Join(f.Detail, ", "))
 		}
 	}
-	if !any {
+	if !printed {
 		b.WriteString("- nothing of this kind in the export\n")
 	}
 	b.WriteString("\n")

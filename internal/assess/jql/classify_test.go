@@ -26,21 +26,21 @@ import (
 func TestVocabulary_MatchesTheRealFilterDocument(t *testing.T) {
 	t.Parallel()
 
-	real := make(map[string]struct{})
+	defined := make(map[string]struct{})
 	rt := reflect.TypeOf(views.Filter{})
 	for i := range rt.NumField() {
 		tag := rt.Field(i).Tag.Get("json")
 		name := strings.Split(tag, ",")[0]
 		if name != "" && name != "-" {
-			real[name] = struct{}{}
+			defined[name] = struct{}{}
 		}
 	}
 
 	// "modules" is chosen when the view is created, not by a JQL clause, so it
 	// is the one filter field no mapping targets.
-	require.Contains(t, real, "modules")
+	require.Contains(t, defined, "modules")
 	targetable := map[string]struct{}{}
-	for name := range real {
+	for name := range defined {
 		if name != "modules" {
 			targetable[name] = struct{}{}
 		}

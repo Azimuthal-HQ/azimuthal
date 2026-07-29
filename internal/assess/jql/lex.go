@@ -128,33 +128,42 @@ func lexWord(runes []rune, start int) (token, int) {
 	i := start
 	depth := 0
 	for i < len(runes) {
-		r := runes[i]
-		if r == '[' {
-			depth++
-			i++
-			continue
-		}
-		if r == ']' && depth > 0 {
-			depth--
-			i++
-			continue
-		}
-		// A function's argument list is part of the word, so currentUser() and
-		// membersOf("team") survive as single tokens.
-		if r == '(' && i > start {
-			consumed := consumeCall(runes, i)
-			if consumed > i {
-				i = consumed
-				continue
-			}
-		}
-		if depth == 0 && (unicode.IsSpace(r) || strings.ContainsRune("(),", r) ||
-			strings.ContainsRune(operatorRunes, r)) {
+		next, done := stepWord(runes, start, i, &depth)
+		if done {
 			break
 		}
-		i++
+		i = next
 	}
 	return token{kind: tokWord, text: string(runes[start:i])}, i
+}
+
+// stepWord advances one position inside a bare word, reporting whether the word
+// has ended. depth tracks a cf[...] bracket.
+func stepWord(runes []rune, start, i int, depth *int) (next int, done bool) {
+	switch r := runes[i]; {
+	case r == '[':
+		*depth++
+		return i + 1, false
+	case r == ']' && *depth > 0:
+		*depth--
+		return i + 1, false
+	case r == '(' && i > start:
+		// A function's argument list is part of the word, so currentUser() and
+		// membersOf("team") survive as single tokens.
+		if consumed := consumeCall(runes, i); consumed > i {
+			return consumed, false
+		}
+		return i, true
+	case *depth == 0 && endsWord(r):
+		return i, true
+	default:
+		return i + 1, false
+	}
+}
+
+func endsWord(r rune) bool {
+	return unicode.IsSpace(r) || strings.ContainsRune("(),", r) ||
+		strings.ContainsRune(operatorRunes, r)
 }
 
 // consumeCall consumes a balanced parenthesised argument list starting at open.

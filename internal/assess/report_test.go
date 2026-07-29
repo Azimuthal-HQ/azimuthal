@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,7 +27,7 @@ func checkGolden(t *testing.T, name string, got []byte) {
 		require.NoError(t, os.WriteFile(path, got, 0o600))
 		return
 	}
-	want, err := os.ReadFile(path)
+	want, err := os.ReadFile(path) //nolint:gosec // G304 — a testdata path built in-test
 	require.NoError(t, err, "golden file missing; run: go test ./internal/assess/ -update")
 
 	// Normalise line endings so a checkout with autocrlf does not fail here.
@@ -141,7 +142,7 @@ func TestStreaming_MemoryDoesNotTrackTheExportSize(t *testing.T) {
 	require.NoError(t, res.Ledger.Reconcile())
 
 	runtime.ReadMemStats(&after)
-	growth := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	growth := heapDelta(before.HeapAlloc, after.HeapAlloc)
 
 	// Generous in absolute terms but a small fraction of the export: a parser
 	// that buffered would land at or above `total`, an order of magnitude out.
@@ -233,4 +234,26 @@ func confluenceGen(pages int) io.Reader {
 				i+1000, i, i+50000, i+50000, body)
 		},
 	}
+}
+
+// heapDelta computes after-before without an unchecked uint64 to int64 cast.
+//
+// HeapAlloc can legitimately fall between samples, so the signed result is
+// derived from the unsigned pair rather than by converting each side. The
+// magnitude is clamped to MaxInt64 so the conversion is provably in range: a
+// heap that really moved by more than eight exabytes is not a case this test
+// needs to distinguish, and clamping keeps it a failure rather than a wrapped
+// negative that would read as a pass.
+func heapDelta(before, after uint64) int64 {
+	if after >= before {
+		return clampToInt64(after - before)
+	}
+	return -clampToInt64(before - after)
+}
+
+func clampToInt64(v uint64) int64 {
+	if v > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(v)
 }

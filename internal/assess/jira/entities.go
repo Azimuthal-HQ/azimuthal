@@ -242,12 +242,18 @@ func decodeRow(dec *xml.Decoder, start xml.StartElement) (Row, error) {
 	return row, nil
 }
 
+// childFieldReader tracks the one field currently being read out of a row's
+// child elements.
+type childFieldReader struct {
+	row     *Row
+	depth   int
+	current string
+	text    strings.Builder
+}
+
 // readChildFields folds child elements into the row's fields.
 func readChildFields(dec *xml.Decoder, row *Row) error {
-	depth := 0
-	var current string
-	var text strings.Builder
-
+	r := childFieldReader{row: row}
 	for {
 		tok, err := dec.Token()
 		if errors.Is(err, io.EOF) {
@@ -256,35 +262,50 @@ func readChildFields(dec *xml.Decoder, row *Row) error {
 		if err != nil {
 			return fmt.Errorf("reading %s row: %w", row.Type, err)
 		}
-		switch el := tok.(type) {
-		case xml.StartElement:
-			depth++
-			if depth == 1 {
-				current = el.Name.Local
-				text.Reset()
-			}
-		case xml.CharData:
-			// Accumulated at any depth inside the field, so a value carrying
-			// markup (a description with inline HTML) contributes its text
-			// rather than reading as empty.
-			if depth >= 1 {
-				text.Write(el)
-			}
-		case xml.EndElement:
-			if depth == 0 {
-				return nil // the row's own end element
-			}
-			if depth == 1 && current != "" {
-				// An attribute of the same name wins; a child element only
-				// fills a field the attributes did not already set.
-				if _, taken := row.Fields[current]; !taken {
-					row.Fields[current] = text.String()
-				}
-				current = ""
-			}
-			depth--
+		if done := r.consume(tok); done {
+			return nil
 		}
 	}
+}
+
+// consume folds one token in, reporting whether the row ended.
+func (r *childFieldReader) consume(tok xml.Token) bool {
+	switch el := tok.(type) {
+	case xml.StartElement:
+		r.depth++
+		if r.depth == 1 {
+			r.current = el.Name.Local
+			r.text.Reset()
+		}
+	case xml.CharData:
+		// Accumulated at any depth inside the field, so a value carrying markup
+		// (a description with inline HTML) contributes its text rather than
+		// reading as empty.
+		if r.depth >= 1 {
+			r.text.Write(el)
+		}
+	case xml.EndElement:
+		if r.depth == 0 {
+			return true // the row's own end element
+		}
+		r.closeField()
+		r.depth--
+	}
+	return false
+}
+
+// closeField stores the field just finished, if one was open.
+//
+// An attribute of the same name wins; a child element only fills a field the
+// attributes did not already set.
+func (r *childFieldReader) closeField() {
+	if r.depth != 1 || r.current == "" {
+		return
+	}
+	if _, taken := r.row.Fields[r.current]; !taken {
+		r.row.Fields[r.current] = r.text.String()
+	}
+	r.current = ""
 }
 
 // passthroughCharset lets the decoder proceed on a declared encoding it does

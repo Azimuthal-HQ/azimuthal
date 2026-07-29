@@ -97,7 +97,7 @@ func TestSubstrateFacts_MatchTheMigrations(t *testing.T) {
 
 	root := repoRoot(t)
 	read := func(name string) string {
-		b, err := os.ReadFile(filepath.Join(root, "migrations", name))
+		b, err := os.ReadFile(filepath.Join(root, "migrations", name)) //nolint:gosec // G304 — a repository path built in-test
 		require.NoError(t, err)
 		return string(b)
 	}

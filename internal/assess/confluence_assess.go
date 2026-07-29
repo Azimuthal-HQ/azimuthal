@@ -42,9 +42,9 @@ func newConfluenceCollector() *confluenceCollector {
 	return &confluenceCollector{macros: confluence.NewBodyCensus()}
 }
 
-// AssessConfluence reads a Confluence entities.xml and folds it into the
+// assessConfluenceStream reads a Confluence entities.xml and folds it into the
 // ledger.
-func AssessConfluence(r io.Reader, l *Ledger, keys *KeyRegistry) (*confluence.Census, error) {
+func assessConfluenceStream(r io.Reader, l *Ledger, keys *KeyRegistry) (*confluence.Census, error) {
 	c := newConfluenceCollector()
 	census, err := c.scan(r)
 	if err != nil {

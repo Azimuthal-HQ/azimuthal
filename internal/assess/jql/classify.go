@@ -201,50 +201,74 @@ func splitOrderBy(tokens []token) (body, orderBy []token) {
 // splitClauses breaks the query body on connectives, tracking OR, NOT and
 // parenthesisation.
 func splitClauses(tokens []token) []group {
-	var groups []group
-	var cur group
-	depth := 0
-
-	flush := func(nextOR, nextNeg bool) {
-		if len(cur.tokens) > 0 {
-			groups = append(groups, cur)
-		}
-		cur = group{joinedByOR: nextOR, negated: nextNeg}
-	}
-
-	// valueList tracks parens that belong to an IN list rather than to
-	// grouping. "project IN (ABC, DEF)" is a value list — exactly what a
-	// space_ids filter holds — and reporting it as unrepresentable nesting
-	// would put a structural failure on the single most common JQL shape there
-	// is. Only parens that group sub-expressions are structural.
-	valueList := false
-
+	var s splitter
 	for _, t := range tokens {
-		switch {
-		case t.kind == tokLParen:
-			depth++
-			if valueList {
-				break
-			}
-			cur.grouped = true
-		case t.kind == tokRParen:
-			depth--
-			if depth == 0 {
-				valueList = false
-			}
-		case depth == 0 && isConnective(t):
-			flush(strings.EqualFold(t.text, "OR") || t.text == "||", false)
-		case depth == 0 && isNot(t) && len(cur.tokens) == 0:
-			cur.negated = true
-		default:
-			if depth == 0 && !t.quoted && strings.EqualFold(t.text, "IN") {
-				valueList = true
-			}
-			cur.tokens = append(cur.tokens, t)
-		}
+		s.feed(t)
 	}
-	flush(false, false)
-	return groups
+	s.flush(false, false)
+	return s.groups
+}
+
+// splitter walks a token stream, cutting it into clauses at top-level
+// connectives.
+//
+// valueList tracks parens that belong to an IN list rather than to grouping.
+// "project IN (ABC, DEF)" is a value list — exactly what a space_ids filter
+// holds — and reporting it as unrepresentable nesting would put a structural
+// failure on the single most common JQL shape there is. Only parens that group
+// sub-expressions are structural.
+type splitter struct {
+	groups    []group
+	cur       group
+	depth     int
+	valueList bool
+}
+
+func (s *splitter) flush(nextOR, nextNeg bool) {
+	if len(s.cur.tokens) > 0 {
+		s.groups = append(s.groups, s.cur)
+	}
+	s.cur = group{joinedByOR: nextOR, negated: nextNeg}
+}
+
+func (s *splitter) feed(t token) {
+	switch {
+	case t.kind == tokLParen:
+		s.openParen()
+	case t.kind == tokRParen:
+		s.closeParen()
+	case s.top() && isConnective(t):
+		s.flush(isOR(t), false)
+	case s.top() && isNot(t) && len(s.cur.tokens) == 0:
+		s.cur.negated = true
+	default:
+		s.appendToken(t)
+	}
+}
+
+func (s *splitter) openParen() {
+	s.depth++
+	s.cur.grouped = s.cur.grouped || !s.valueList
+}
+
+func (s *splitter) closeParen() {
+	s.depth--
+	s.valueList = s.valueList && s.depth != 0
+}
+
+func (s *splitter) appendToken(t token) {
+	s.valueList = s.valueList || (s.top() && isIN(t))
+	s.cur.tokens = append(s.cur.tokens, t)
+}
+
+func (s *splitter) top() bool { return s.depth == 0 }
+
+func isOR(t token) bool {
+	return strings.EqualFold(t.text, "OR") || t.text == "||"
+}
+
+func isIN(t token) bool {
+	return !t.quoted && strings.EqualFold(t.text, "IN")
 }
 
 // classifyClause is the per-clause decision.

@@ -12,7 +12,7 @@ import (
 
 func readFixture(t *testing.T, name string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", name))
+	b, err := os.ReadFile(filepath.Join("testdata", name)) //nolint:gosec // G304 — a testdata path built in-test
 	require.NoError(t, err)
 	return string(b)
 }

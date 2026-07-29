@@ -287,29 +287,46 @@ func (o *Object) readProperty(dec *xml.Decoder, el xml.StartElement) error {
 		case xml.CharData:
 			text.Write(inner)
 		case xml.StartElement:
-			if strings.EqualFold(inner.Name.Local, "id") {
-				id, readErr := readElementText(dec)
-				if readErr != nil {
-					return readErr
-				}
-				refID = strings.TrimSpace(id)
-				continue
+			id, err := readNestedID(dec, inner, name)
+			if err != nil {
+				return err
 			}
-			if err := dec.Skip(); err != nil {
-				return fmt.Errorf("skipping inside property %q: %w", name, err)
+			if id != "" {
+				refID = id
 			}
 		case xml.EndElement:
-			if name == "" {
-				return nil
-			}
-			if refID != "" {
-				o.Refs[name] = refID
-				return nil
-			}
-			o.Props[name] = text.String()
+			o.storeProperty(name, refID, text.String())
 			return nil
 		}
 	}
+}
+
+// readNestedID reads a reference property's nested <id>, skipping anything
+// else. An empty return means the element was not an id.
+func readNestedID(dec *xml.Decoder, el xml.StartElement, propName string) (string, error) {
+	if strings.EqualFold(el.Name.Local, "id") {
+		id, err := readElementTextTrimmed(dec)
+		if err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	if err := dec.Skip(); err != nil {
+		return "", fmt.Errorf("skipping inside property %q: %w", propName, err)
+	}
+	return "", nil
+}
+
+// storeProperty files a finished property as a reference or a scalar.
+func (o *Object) storeProperty(name, refID, text string) {
+	if name == "" {
+		return
+	}
+	if refID != "" {
+		o.Refs[name] = refID
+		return
+	}
+	o.Props[name] = text
 }
 
 // readCollection reads a collection's element references.
@@ -327,18 +344,12 @@ func (o *Object) readCollection(dec *xml.Decoder, el xml.StartElement) error {
 		}
 		switch inner := tok.(type) {
 		case xml.StartElement:
-			if strings.EqualFold(inner.Name.Local, "element") {
-				id, readErr := readElementID(dec)
-				if readErr != nil {
-					return readErr
-				}
-				if id != "" {
-					ids = append(ids, id)
-				}
-				continue
+			id, err := readCollectionMember(dec, inner, name)
+			if err != nil {
+				return err
 			}
-			if err := dec.Skip(); err != nil {
-				return fmt.Errorf("skipping inside collection %q: %w", name, err)
+			if id != "" {
+				ids = append(ids, id)
 			}
 		case xml.EndElement:
 			if name != "" && len(ids) > 0 {
@@ -347,6 +358,18 @@ func (o *Object) readCollection(dec *xml.Decoder, el xml.StartElement) error {
 			return nil
 		}
 	}
+}
+
+// readCollectionMember reads one <element> of a collection, skipping anything
+// else. An empty return means no id was found.
+func readCollectionMember(dec *xml.Decoder, el xml.StartElement, collName string) (string, error) {
+	if strings.EqualFold(el.Name.Local, "element") {
+		return readElementID(dec)
+	}
+	if err := dec.Skip(); err != nil {
+		return "", fmt.Errorf("skipping inside collection %q: %w", collName, err)
+	}
+	return "", nil
 }
 
 // readElementID reads a collection element's referenced id, tolerating an

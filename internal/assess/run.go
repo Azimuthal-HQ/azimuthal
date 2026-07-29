@@ -116,7 +116,7 @@ func (r *Result) totalRows() int {
 func runJira(path string, res *Result, keys *KeyRegistry) error {
 	a, err := archive.Open(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening the Jira export: %w", err)
 	}
 	defer func() { _ = a.Close() }()
 
@@ -126,7 +126,7 @@ func runJira(path string, res *Result, keys *KeyRegistry) error {
 	}
 	defer func() { _ = entry.Close() }()
 
-	census, filters, err := AssessJira(entry, res.Ledger, keys)
+	census, filters, err := assessJiraStream(entry, res.Ledger, keys)
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func runJira(path string, res *Result, keys *KeyRegistry) error {
 func runConfluence(path string, res *Result, keys *KeyRegistry) error {
 	a, err := archive.Open(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("opening the Confluence export: %w", err)
 	}
 	defer func() { _ = a.Close() }()
 
@@ -155,7 +155,7 @@ func runConfluence(path string, res *Result, keys *KeyRegistry) error {
 	}
 	defer func() { _ = entry.Close() }()
 
-	census, err := AssessConfluence(entry, res.Ledger, keys)
+	census, err := assessConfluenceStream(entry, res.Ledger, keys)
 	if err != nil {
 		return err
 	}
@@ -177,7 +177,7 @@ func RunReaders(jiraXML, confluenceXML io.Reader) (*Result, error) {
 	keys := NewKeyRegistry()
 
 	if jiraXML != nil {
-		census, filters, err := AssessJira(jiraXML, res.Ledger, keys)
+		census, filters, err := assessJiraStream(jiraXML, res.Ledger, keys)
 		if err != nil {
 			return nil, err
 		}
@@ -189,7 +189,7 @@ func RunReaders(jiraXML, confluenceXML io.Reader) (*Result, error) {
 		})
 	}
 	if confluenceXML != nil {
-		census, err := AssessConfluence(confluenceXML, res.Ledger, keys)
+		census, err := assessConfluenceStream(confluenceXML, res.Ledger, keys)
 		if err != nil {
 			return nil, err
 		}

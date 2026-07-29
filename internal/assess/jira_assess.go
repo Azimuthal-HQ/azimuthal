@@ -69,12 +69,12 @@ func newJiraCollector() *jiraCollector {
 	}
 }
 
-// AssessJira reads a Jira entities.xml and folds it into the ledger.
+// assessJiraStream reads a Jira entities.xml and folds it into the ledger.
 //
 // The census is the authority on how many entities exist; the collectors decide
 // where each lands. Reconcile then checks the two agree, so a classifier that
 // forgets a case fails a test rather than shrinking the totals.
-func AssessJira(r io.Reader, l *Ledger, keys *KeyRegistry) (*jira.Census, []jql.Query, error) {
+func assessJiraStream(r io.Reader, l *Ledger, keys *KeyRegistry) (*jira.Census, []jql.Query, error) {
 	c := newJiraCollector()
 	census, err := c.scan(r)
 	if err != nil {
@@ -428,10 +428,10 @@ func (c *jiraCollector) unclassifiedNames(census *jira.Census) []string {
 			out = append(out, fmt.Sprintf("%s (%d)", name, census.Entities[name]))
 		}
 	}
-	const cap = 40
-	if len(out) > cap {
-		rest := len(out) - cap
-		out = append(out[:cap], fmt.Sprintf("… and %d more entity types", rest))
+	const limit = 40
+	if len(out) > limit {
+		rest := len(out) - limit
+		out = append(out[:limit], fmt.Sprintf("… and %d more entity types", rest))
 	}
 	return out
 }
