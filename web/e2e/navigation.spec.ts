@@ -69,7 +69,7 @@ test.describe('Navigation', () => {
     expect(afterReload).toBe(toggled)
   })
 
-  test('API routes return JSON — never HTML', async ({ page, request }) => {
+  test('API routes return JSON — never HTML', async ({ request }) => {
     // These must always be JSON regardless of auth state
     const jsonRoutes = ['/health', '/api/v1/health']
     for (const route of jsonRoutes) {

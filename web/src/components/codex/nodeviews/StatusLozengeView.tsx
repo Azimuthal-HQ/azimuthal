@@ -73,8 +73,8 @@ export function StatusLozengeView({ node, updateAttributes, editor, selected }: 
             className="absolute left-0 top-full z-50 mt-1 flex w-56 flex-col gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-2 shadow-[var(--shadow-lg)]"
           >
             <input
-              // eslint-disable-next-line jsx-a11y/no-autofocus -- the popover is
-              // opened by an explicit click; focusing it is what the click asked for.
+              // autoFocus is deliberate: the popover is opened by an explicit
+              // click; focusing it is what the click asked for.
               autoFocus
               value={text}
               onChange={(e) => updateAttributes({ text: e.target.value })}

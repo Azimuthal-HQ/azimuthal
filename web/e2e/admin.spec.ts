@@ -47,7 +47,7 @@ async function createSpaceViaAPI(page: import('@playwright/test').Page, name: st
 
 test.describe('Administration area', () => {
   test('is invisible to non-admins: no menu entry, 404 page, 404 API', async ({ page }) => {
-    const member = await loginAs(page, createMemberViaCLI())
+    await loginAs(page, createMemberViaCLI())
 
     // No Administration entry in the avatar menu.
     await page.getByTestId('avatar-menu').click()

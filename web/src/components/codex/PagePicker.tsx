@@ -56,8 +56,8 @@ export function PagePicker({ title, selectedId, onSelect, onClose }: PagePickerP
             aria-hidden="true"
           />
           <input
-            // eslint-disable-next-line jsx-a11y/no-autofocus -- a picker opened
-            // by an explicit action should be typeable immediately.
+            // autoFocus is deliberate: a picker opened by an explicit action
+            // should be typeable immediately.
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}

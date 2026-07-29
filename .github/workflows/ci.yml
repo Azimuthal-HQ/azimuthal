@@ -475,10 +475,19 @@ jobs:
   # editor-vocabulary equality, whose failure mode is silent data loss). A
   # guard nobody runs on a pull request guards nothing, so they run here.
   #
-  # `npm run lint` is deliberately NOT in this job — see docs/known-issues.md.
-  # eslint reports 46 errors on main today, so adding it now would either fail
-  # every pull request or need a baseline file, and a baseline is the
-  # exemption ledger this pass has spent its time deleting.
+  # `npm run lint` joined this job in the eslint closing pass. It was left out
+  # when the job was created because eslint did not pass on main — 48 errors,
+  # and the only ways to gate on it that day were to fail every pull request or
+  # to add a baseline file, which is the exemption ledger this project deletes
+  # rather than writes. The errors are gone now (known-issues #17), so the gate
+  # goes on. Where a rule was turned off instead of satisfied, it is off in
+  # web/eslint.config.js as a scoped override with the file list and the reason
+  # written next to it — visible in the config a reviewer reads, not hidden in a
+  # generated ledger nobody re-reads.
+  #
+  # It costs about 8s and shares this job's node_modules, so it adds no new
+  # checkout, no new install, and nothing to the critical path — `frontend` is
+  # not the longest branch of the graph.
   # ─────────────────────────────────────────────────────────────
   frontend:
     name: Frontend
@@ -507,6 +516,11 @@ jobs:
 
       - name: Type-check
         run: cd web && npm run type-check
+
+      # `eslint .` exits non-zero on any error. Do not add --max-warnings slack
+      # and do not add a baseline file: see docs/known-issues.md #17.
+      - name: Lint
+        run: cd web && npm run lint
 
       - name: Unit tests
         run: cd web && npm run test:unit
