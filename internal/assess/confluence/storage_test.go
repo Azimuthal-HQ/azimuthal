@@ -221,4 +221,3 @@ func TestScanBody_EmptyBodyIsEmptyNotTruncated(t *testing.T) {
 	require.False(t, c.Truncated)
 	require.Zero(t, c.Total())
 }
-

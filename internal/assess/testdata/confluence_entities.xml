@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A synthetic Confluence space export, built from the documented shape of
+  entities.xml: a <hibernate-generic> root over a flat sequence of <object>
+  rows that reference each other by id.
+
+  It carries the cases the assessor must get right: two spaces, one whose key
+  is already valid and one that violates every part of ^[A-Z0-9]{1,10}$; a
+  space key that collides with a Jira project key in the sibling fixture; a
+  live page beside a historical revision of it; bodies reached only through the
+  bodyContents indirection; macros spanning clean, approximated and preserved;
+  a body containing Confluence's ambiguous "]] >" rewrite; and object classes
+  the assessor does not classify.
+-->
+<hibernate-generic datetime="2026-07-29 10:00:00">
+
+  <object class="Space" package="com.atlassian.confluence.spaces">
+    <id name="id">12345</id>
+    <property name="key"><![CDATA[DOCS]]></property>
+    <property name="name"><![CDATA[Documentation]]></property>
+  </object>
+
+  <object class="Space" package="com.atlassian.confluence.spaces">
+    <id name="id">12346</id>
+    <property name="key"><![CDATA[my-team-notes]]></property>
+    <property name="name"><![CDATA[My Team Notes]]></property>
+  </object>
+
+  <object class="Page" package="com.atlassian.confluence.pages">
+    <id name="id">98</id>
+    <property name="title"><![CDATA[Getting started]]></property>
+    <property name="version">3</property>
+    <property name="contentStatus">current</property>
+    <property name="space" class="Space" package="com.atlassian.confluence.spaces">
+      <id name="id">12345</id>
+    </property>
+    <collection name="bodyContents" class="java.util.Collection">
+      <element class="BodyContent" package="com.atlassian.confluence.core">
+        <id name="id">54321</id>
+      </element>
+    </collection>
+    <collection name="historicalVersions" class="java.util.Collection">
+      <element class="Page" package="com.atlassian.confluence.pages"><id name="id">97</id></element>
+    </collection>
+  </object>
+
+  <object class="Page" package="com.atlassian.confluence.pages">
+    <id name="id">97</id>
+    <property name="title"><![CDATA[Getting started]]></property>
+    <property name="version">2</property>
+    <property name="contentStatus">historical</property>
+    <property name="originalVersion" class="Page" package="com.atlassian.confluence.pages">
+      <id name="id">98</id>
+    </property>
+  </object>
+
+  <object class="Page" package="com.atlassian.confluence.pages">
+    <id name="id">99</id>
+    <property name="title"><![CDATA[Architecture notes]]></property>
+    <property name="version">1</property>
+    <property name="contentStatus">current</property>
+    <property name="space" class="Space" package="com.atlassian.confluence.spaces">
+      <id name="id">12346</id>
+    </property>
+    <collection name="bodyContents" class="java.util.Collection">
+      <element class="BodyContent" package="com.atlassian.confluence.core">
+        <id name="id">54322</id>
+      </element>
+    </collection>
+  </object>
+
+  <object class="BodyContent" package="com.atlassian.confluence.core">
+    <id name="id">54321</id>
+    <property name="body"><![CDATA[<p>Welcome to the docs.&nbsp;Start here.</p>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p>This page is maintained by the docs team.</p></ac:rich-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="toc"/>
+<ac:link><ri:page ri:content-title="Architecture notes" ri:space-key="my-team-notes"/></ac:link>
+<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[go build ./...]] ></ac:plain-text-body></ac:structured-macro>
+<table><tr><td>a</td><td>b</td></tr></table>]]></property>
+    <property name="content" class="Page" package="com.atlassian.confluence.pages">
+      <id name="id">98</id>
+    </property>
+  </object>
+
+  <object class="BodyContent" package="com.atlassian.confluence.core">
+    <id name="id">54322</id>
+    <property name="body"><![CDATA[<h1>Architecture</h1>
+<ac:structured-macro ac:name="drawio"><ac:parameter ac:name="diagramName">topology</ac:parameter></ac:structured-macro>
+<ac:structured-macro ac:name="tip"><ac:rich-text-body><p>Read the ADRs first.</p></ac:rich-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="jira"><ac:parameter ac:name="key">PLAT-1</ac:parameter></ac:structured-macro>
+<ac:image><ri:attachment ri:filename="topology.png"/></ac:image>
+<ac:task-list><ac:task><ac:task-status>incomplete</ac:task-status><ac:task-body>Review the pool sizing</ac:task-body></ac:task></ac:task-list>]]></property>
+    <property name="content" class="Page" package="com.atlassian.confluence.pages">
+      <id name="id">99</id>
+    </property>
+  </object>
+
+  <object class="Comment" package="com.atlassian.confluence.core">
+    <id name="id">3001</id>
+    <property name="title"><![CDATA[Re: Getting started]]></property>
+  </object>
+  <object class="Comment" package="com.atlassian.confluence.core">
+    <id name="id">3002</id>
+    <property name="title"><![CDATA[Re: Architecture notes]]></property>
+  </object>
+
+  <object class="Attachment" package="com.atlassian.confluence.pages">
+    <id name="id">777</id>
+    <property name="fileName"><![CDATA[topology.png]]></property>
+    <property name="containerContent" class="Page" package="com.atlassian.confluence.pages">
+      <id name="id">99</id>
+    </property>
+  </object>
+
+  <object class="ConfluenceUserImpl" package="com.atlassian.confluence.user">
+    <id name="key">alice</id>
+    <property name="name"><![CDATA[alice]]></property>
+  </object>
+  <object class="ConfluenceUserImpl" package="com.atlassian.confluence.user">
+    <id name="key">bob</id>
+    <property name="name"><![CDATA[bob]]></property>
+  </object>
+
+  <object class="InternalGroup" package="com.atlassian.confluence.user">
+    <id name="id">501</id>
+    <property name="name"><![CDATA[confluence-users]]></property>
+  </object>
+  <object class="HibernateMembership" package="com.atlassian.confluence.user">
+    <id name="id">601</id>
+  </object>
+
+  <object class="Labelling" package="com.atlassian.confluence.labels">
+    <id name="id">701</id>
+    <property name="name"><![CDATA[runbook]]></property>
+  </object>
+
+  <!-- Object classes the assessor does not classify. Still counted. -->
+  <object class="SpacePermission" package="com.atlassian.confluence.security">
+    <id name="id">801</id>
+    <property name="type"><![CDATA[VIEWSPACE]]></property>
+  </object>
+  <object class="ContentProperty" package="com.atlassian.confluence.content">
+    <id name="id">901</id>
+    <property name="name"><![CDATA[editor]]></property>
+  </object>
+  <object class="PageTemplate" package="com.atlassian.confluence.pages.templates">
+    <id name="id">1001</id>
+  </object>
+
+</hibernate-generic>

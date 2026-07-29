@@ -127,6 +127,15 @@ type Class struct {
 	Observed int `json:"observed"`
 	// Findings partition Observed. Order is normalised by Reconcile.
 	Findings []Finding `json:"findings"`
+	// Derived marks a class that counts distinct values rather than source
+	// rows — "how many issue types are there", not "how many rows were read".
+	//
+	// The distinction is what makes the ledger's arithmetic checkable. Only
+	// row-based classes may be summed against the parser's row total, because
+	// counting three issue types alongside four hundred issues and comparing
+	// the sum to the file's row count would compare two different things and
+	// fail for a reason that is not a defect.
+	Derived bool `json:"derived,omitempty"`
 	// Notes carry context that is not a bucket — format assumptions, or a
 	// pointer to the substrate that decided the mapping.
 	Notes []string `json:"notes,omitempty"`
@@ -186,6 +195,38 @@ func (l *Ledger) Total() int {
 		total += c.Observed
 	}
 	return total
+}
+
+// RowTotal sums Observed across the row-based classes only.
+//
+// This is the number that must equal what the parser counted. It is the ledger's
+// strongest claim: every row read out of the export landed in exactly one class,
+// and none was counted twice.
+func (l *Ledger) RowTotal() int {
+	total := 0
+	for _, c := range l.Classes {
+		if !c.Derived {
+			total += c.Observed
+		}
+	}
+	return total
+}
+
+// ReconcileRows checks the row-based classes against what the parser actually
+// read, and is the check a remainder class cannot satisfy vacuously.
+//
+// A class computed as "everything left over" always sums to itself, so
+// Reconcile alone would pass however wrong the classification was. Comparing
+// against the parser's independent row count is what makes the arithmetic real:
+// under-counting means rows vanished, over-counting means a row was claimed by
+// two classes and the headline percentages are inflated.
+func (l *Ledger) ReconcileRows(parsedRows int) error {
+	if got := l.RowTotal(); got != parsedRows {
+		return fmt.Errorf(
+			"%w: the parser read %d rows but the ledger's row-based classes account for %d",
+			ErrUnreconciled, parsedRows, got)
+	}
+	return nil
 }
 
 // TotalBy sums one bucket across every class.

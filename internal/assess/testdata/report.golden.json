@@ -1,0 +1,628 @@
+{
+  "headline": {
+    "total": 77,
+    "clean": 34,
+    "approximated": 22,
+    "preserved": 2,
+    "unmappable": 19,
+    "clean_pct": 44.15584415584416,
+    "approximated_pct": 28.571428571428573,
+    "preserved_pct": 2.5974025974025974,
+    "lost_pct": 24.675324675324674
+  },
+  "sources": [
+    {
+      "kind": "jira",
+      "path": "(stream)",
+      "rows": 46,
+      "attachments": 0,
+      "attachment_bytes": 0,
+      "unknown_types": [
+        "Action",
+        "ApplicationUser",
+        "ColumnLayout",
+        "Component",
+        "CustomField",
+        "CustomFieldValue",
+        "FieldLayoutScheme",
+        "FileAttachment",
+        "Issue",
+        "IssueLink",
+        "IssueType",
+        "NodeAssociation",
+        "OSGroup",
+        "OSMembership",
+        "OSPropertyEntry",
+        "Priority",
+        "Project",
+        "SearchRequest",
+        "Status",
+        "Version",
+        "Worklog"
+      ]
+    },
+    {
+      "kind": "confluence",
+      "path": "(stream)",
+      "rows": 18,
+      "attachments": 0,
+      "attachment_bytes": 0,
+      "unknown_types": [
+        "Attachment",
+        "BodyContent",
+        "Comment",
+        "ConfluenceUserImpl",
+        "ContentProperty",
+        "HibernateMembership",
+        "InternalGroup",
+        "Labelling",
+        "Page",
+        "PageTemplate",
+        "Space",
+        "SpacePermission"
+      ]
+    }
+  ],
+  "ledger": {
+    "classes": [
+      {
+        "name": "Jira projects → spaces",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 2,
+            "reason": "the project key already satisfies the space key format ^[A-Z0-9]{1,10}$"
+          }
+        ]
+      },
+      {
+        "name": "Jira issues → project items",
+        "observed": 3,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 3,
+            "reason": "every issue becomes a project item; the fidelity questions are its type, status, priority and custom fields, assessed separately"
+          }
+        ],
+        "notes": [
+          "item_key is \u003cSPACE_KEY\u003e-\u003cnumber\u003e and assigned by the database at insert time; CreateProjectItemParams has no number or item_key field, so an import cannot preserve original Jira keys through the service path",
+          "kind is validated by the item-types service, not by a CHECK or FK (D49, migration 032) — an importer writing straight to the repository would create items whose type does not exist"
+        ]
+      },
+      {
+        "name": "Jira issue types → item kinds",
+        "observed": 3,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 2,
+            "reason": "matches one of the four seeded kinds (task, story, bug, epic)"
+          },
+          {
+            "verdict": "approximated",
+            "count": 1,
+            "reason": "the name does not satisfy the slug format ^[a-z0-9][a-z0-9_]*$ and must be coerced — the hyphen is the usual cause, so \"Sub-task\" becomes \"sub_task\"",
+            "detail": [
+              "Sub-task → sub_task"
+            ]
+          }
+        ],
+        "derived": true
+      },
+      {
+        "name": "Jira statuses → workflow states",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 2,
+            "reason": "workflow states are user-defined per space and status is stored as free text, so a status name arrives as written"
+          }
+        ],
+        "derived": true,
+        "notes": [
+          "status is free text on both tickets and project_items (migration 016), so any status name carries across; what does not carry is Jira's separate resolution field, which Azimuthal does not model"
+        ]
+      },
+      {
+        "name": "Jira priorities → priority",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 1,
+            "reason": "already one of the four CHECK-constrained values"
+          },
+          {
+            "verdict": "approximated",
+            "count": 1,
+            "reason": "priority is CHECK-constrained to urgent, high, medium and low on both tables, so any other Jira priority must be mapped onto one of them by hand",
+            "detail": [
+              "Blocker"
+            ]
+          }
+        ],
+        "derived": true
+      },
+      {
+        "name": "Jira custom fields → custom field defs",
+        "observed": 4,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 1,
+            "reason": "the Jira type has a direct equivalent among text, number, date and single_select",
+            "detail": [
+              "float (1)"
+            ]
+          },
+          {
+            "verdict": "approximated",
+            "count": 1,
+            "reason": "the value survives but its type changes — multi-value pickers collapse to text, a datetime loses its time of day",
+            "detail": [
+              "multiuserpicker (1)"
+            ]
+          },
+          {
+            "verdict": "unmappable",
+            "count": 2,
+            "reason": "no implemented type covers it; cascading selects and app-provided calculated or scripted fields have no equivalent",
+            "detail": [
+              "cascadingselect (1)",
+              "scripted-field (1)"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Jira custom field values",
+        "observed": 3,
+        "findings": [
+          {
+            "verdict": "approximated",
+            "count": 3,
+            "reason": "a value survives exactly as well as its field definition does, and definitions are assessed above; values attached to an unmappable field are lost with it"
+          }
+        ]
+      },
+      {
+        "name": "Jira comments",
+        "observed": 3,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 2,
+            "reason": "an unrestricted comment maps onto the comments table, including its author, timestamps and threading"
+          },
+          {
+            "verdict": "unmappable",
+            "count": 1,
+            "reason": "the comment carries a Jira group or project-role visibility restriction; the comments table has no visibility column at all, so importing it would make a restricted comment readable by everyone who can read the item"
+          }
+        ],
+        "notes": [
+          "comments.body is TEXT and Jira comment bodies are wiki markup or ADF; either way the body arrives as text rather than as a rendered document"
+        ]
+      },
+      {
+        "name": "Jira activity rows (non-comment)",
+        "observed": 1,
+        "findings": [
+          {
+            "verdict": "unmappable",
+            "count": 1,
+            "reason": "Action rows that are not comments are Jira's own activity records; Azimuthal writes its own audit log and has no place to put another system's"
+          }
+        ]
+      },
+      {
+        "name": "Jira attachments",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 2,
+            "reason": "attachments hang off a project_item (migration 027 allows page, ticket and project_item), and the blobs travel in the archive's data/attachments tree"
+          }
+        ]
+      },
+      {
+        "name": "Jira users → people",
+        "observed": 3,
+        "findings": [
+          {
+            "verdict": "approximated",
+            "count": 3,
+            "reason": "users match on email; an export whose users carry Cloud accountIds rather than addresses cannot be matched at all, and unmatched users must be invited before their authorship resolves"
+          }
+        ]
+      },
+      {
+        "name": "Jira groups → teams",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "approximated",
+            "count": 2,
+            "reason": "a group becomes a team, but Jira group membership grants permission directly while an Azimuthal team reaches spaces through grants, so the permissions themselves must be re-expressed"
+          }
+        ]
+      },
+      {
+        "name": "Jira group memberships",
+        "observed": 3,
+        "findings": [
+          {
+            "verdict": "approximated",
+            "count": 3,
+            "reason": "a membership survives only for a user who matched by email; the rest are dropped with their user"
+          }
+        ]
+      },
+      {
+        "name": "Jira issue links",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "unmappable",
+            "count": 2,
+            "reason": "Azimuthal models a parent/child hierarchy on project_items but has no typed link graph, so blocks/relates-to/duplicates links have nowhere to go"
+          }
+        ]
+      },
+      {
+        "name": "Jira worklogs",
+        "observed": 1,
+        "findings": [
+          {
+            "verdict": "unmappable",
+            "count": 1,
+            "reason": "there is no time-tracking model, so worklogs are lost entirely"
+          }
+        ]
+      },
+      {
+        "name": "Jira reference data (issue types, statuses, priorities)",
+        "observed": 7,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 7,
+            "reason": "these rows are the names behind an issue's type, status and priority ids; they are not imported as entities but are read to resolve the three classes above"
+          }
+        ]
+      },
+      {
+        "name": "Other Jira entities",
+        "observed": 7,
+        "findings": [
+          {
+            "verdict": "unmappable",
+            "count": 7,
+            "reason": "entity types this assessment does not classify — configuration, schemes, history and plugin rows. They are counted so the totals reconcile, and named below so nothing is silently omitted",
+            "detail": [
+              "ColumnLayout (1)",
+              "Component (1)",
+              "FieldLayoutScheme (1)",
+              "NodeAssociation (1)",
+              "OSPropertyEntry (2)",
+              "Version (1)"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Jira saved filters (JQL)",
+        "observed": 3,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 1,
+            "reason": "every clause maps onto the saved-view filter vocabulary and the query's shape is flat"
+          },
+          {
+            "verdict": "approximated",
+            "count": 1,
+            "reason": "the filter translates but narrows — a text clause becomes a title-only substring match, or a type/sprint clause restricts the view to Vector"
+          },
+          {
+            "verdict": "unmappable",
+            "count": 1,
+            "reason": "at least one clause or the query's shape has no representation: date predicates, negation, comparison operators, history operators, cross-field OR and grouping are all outside the vocabulary"
+          }
+        ]
+      },
+      {
+        "name": "Confluence spaces → spaces",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 1,
+            "reason": "the space key already satisfies ^[A-Z0-9]{1,10}$"
+          },
+          {
+            "verdict": "approximated",
+            "count": 1,
+            "reason": "Confluence allows lowercase, punctuated and longer space keys than ^[A-Z0-9]{1,10}$ accepts, so the key must be coerced — and two keys that differed only in the stripped characters stop being distinct",
+            "detail": [
+              "my-team-notes → MYTEAMNOTE"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Confluence pages → Codex pages",
+        "observed": 3,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 2,
+            "reason": "a live page maps onto a Codex page; how much of its body survives is assessed in the macro class below"
+          },
+          {
+            "verdict": "approximated",
+            "count": 1,
+            "reason": "historical revisions and trashed pages are separate Page objects; Azimuthal keeps page_revisions, so history can be carried, but the revision model is not Confluence's and version comments and per-revision authorship may not line up"
+          }
+        ],
+        "notes": [
+          "2 of these are live pages (contentStatus=current); the rest are historical revisions and trashed content, which a space export carries as separate Page objects",
+          "a page whose document has no matching page_revisions row refuses overwrite, so an import must write the revision alongside the document rather than after it"
+        ]
+      },
+      {
+        "name": "Confluence blog posts",
+        "observed": 0,
+        "findings": null
+      },
+      {
+        "name": "Confluence comments",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 2,
+            "reason": "page comments map onto the comments table, which accepts a page as its entity and models threading through parent_id"
+          }
+        ]
+      },
+      {
+        "name": "Confluence attachments",
+        "observed": 1,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 1,
+            "reason": "attachments hang off a page, which migration 027 allows as an attachment entity type"
+          }
+        ]
+      },
+      {
+        "name": "Confluence labels",
+        "observed": 1,
+        "findings": [
+          {
+            "verdict": "unmappable",
+            "count": 1,
+            "reason": "pages carry no labels; project_items.labels exists but pages have no equivalent column, so page labels have nowhere to go"
+          }
+        ]
+      },
+      {
+        "name": "Confluence macros → Codex nodes",
+        "observed": 6,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 3,
+            "reason": "the macro has a first-class Codex node and arrives as native content",
+            "detail": [
+              "code (1)",
+              "info (1)",
+              "toc (1)"
+            ]
+          },
+          {
+            "verdict": "approximated",
+            "count": 1,
+            "reason": "a Codex node holds it but not everything about it — a panel's custom title and colour, an excerpt include's partial transclusion",
+            "detail": [
+              "tip (1)"
+            ]
+          },
+          {
+            "verdict": "preserved",
+            "count": 2,
+            "reason": "no implemented node covers it, so ADR-0012 keeps it verbatim in an unknownContent carrier: it survives a round trip and can be rendered later, but nothing understands it today",
+            "detail": [
+              "drawio (1)",
+              "jira (1)"
+            ]
+          }
+        ],
+        "derived": true,
+        "notes": [
+          "1 body fragments contain Confluence's \"]] \u003e\" rewrite of a CDATA terminator; the rewrite is ambiguous, so content that genuinely contained \"]] \u003e\" cannot be told apart from content that contained \"]]\u003e\"",
+          "1 page bodies could not be parsed to the end; what they did contain is counted above"
+        ]
+      },
+      {
+        "name": "Confluence users → people",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "approximated",
+            "count": 2,
+            "reason": "users match on email; a ConfluenceUserImpl carrying only a user key and no address cannot be matched, and unmatched authors must be invited before their authorship resolves"
+          }
+        ]
+      },
+      {
+        "name": "Confluence groups → teams",
+        "observed": 1,
+        "findings": [
+          {
+            "verdict": "approximated",
+            "count": 1,
+            "reason": "a group becomes a team, but space permissions must be re-expressed as grants — Azimuthal reaches spaces through grants, never through group rows"
+          }
+        ]
+      },
+      {
+        "name": "Confluence group memberships",
+        "observed": 1,
+        "findings": [
+          {
+            "verdict": "approximated",
+            "count": 1,
+            "reason": "a membership survives only for a user who matched by email"
+          }
+        ]
+      },
+      {
+        "name": "Confluence body content",
+        "observed": 2,
+        "findings": [
+          {
+            "verdict": "clean",
+            "count": 2,
+            "reason": "a BodyContent object is the page body itself; it is not a separate entity in Azimuthal, where the document lives on the page row"
+          }
+        ]
+      },
+      {
+        "name": "Other Confluence objects",
+        "observed": 3,
+        "findings": [
+          {
+            "verdict": "unmappable",
+            "count": 3,
+            "reason": "object classes this assessment does not classify — permissions, content properties, templates and plugin objects. They are counted so the totals reconcile, and named below so nothing is silently omitted",
+            "detail": [
+              "ContentProperty (1)",
+              "PageTemplate (1)",
+              "SpacePermission (1)"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "key_collisions": [
+    {
+      "key": "DOCS",
+      "origins": [
+        {
+          "Source": "Confluence space",
+          "Original": "DOCS",
+          "Coerced": "DOCS",
+          "Coercion": false,
+          "Items": 0
+        },
+        {
+          "Source": "Jira project",
+          "Original": "DOCS",
+          "Coerced": "DOCS",
+          "Coercion": false,
+          "Items": 2
+        }
+      ],
+      "cross_export": true,
+      "items": 2
+    }
+  ],
+  "key_coercions": [
+    {
+      "Source": "Confluence space",
+      "Original": "my-team-notes",
+      "Coerced": "MYTEAMNOTE",
+      "Coercion": true,
+      "Items": 0
+    }
+  ],
+  "filters": [
+    {
+      "raw": "project = DOCS AND status = Open AND assignee = currentUser()",
+      "clauses": [
+        {
+          "raw": "project = DOCS",
+          "field": "project",
+          "operator": "=",
+          "verdict": "expressible",
+          "filter_field": "space_ids",
+          "reason": "project maps to a space; the space_ids filter takes the ids the keys resolve to"
+        },
+        {
+          "raw": "status = Open",
+          "field": "status",
+          "operator": "=",
+          "verdict": "expressible",
+          "filter_field": "statuses",
+          "reason": "statuses is free text on both tables, so a status name carries across as written"
+        },
+        {
+          "raw": "assignee = currentUser()",
+          "field": "assignee",
+          "operator": "=",
+          "verdict": "expressible",
+          "filter_field": "assignees",
+          "reason": "currentUser() maps exactly onto the \"me\" token, which the filter resolves per viewer at query time"
+        }
+      ],
+      "verdict": "expressible"
+    },
+    {
+      "raw": "text ~ \"pool\"",
+      "clauses": [
+        {
+          "raw": "text ~ \"pool\"",
+          "field": "text",
+          "operator": "~",
+          "verdict": "partial",
+          "filter_field": "text",
+          "reason": "text searches the title only — Jira's text search also covers description, comments and attachments, so the translated filter matches strictly fewer rows"
+        }
+      ],
+      "verdict": "partial"
+    },
+    {
+      "raw": "project IN (DOCS, PLAT) AND created \u003e= -30d ORDER BY created DESC",
+      "clauses": [
+        {
+          "raw": "project IN DOCS , PLAT",
+          "field": "project",
+          "operator": "in",
+          "verdict": "expressible",
+          "filter_field": "space_ids",
+          "reason": "project maps to a space; the space_ids filter takes the ids the keys resolve to"
+        },
+        {
+          "raw": "created \u003e= -30d",
+          "field": "created",
+          "operator": "\u003e=",
+          "verdict": "not_expressible",
+          "reason": "the vocabulary has no comparison operators — fields hold value lists matched for equality, so \u003e, \u003c, \u003e= and \u003c= have nothing to translate to"
+        }
+      ],
+      "verdict": "not_expressible"
+    }
+  ],
+  "assumptions": [
+    "Jira: the entity export is XML (entities.xml with an \u003centity-engine-xml\u003e root), not JSON. Atlassian publishes the archive layout but explicitly declines to document the XML, so entity and field names here follow the OfBiz entity model and may differ on a Cloud instance, which runs a fork.",
+    "Jira: field names are OfBiz field-names, not SQL column names — Action.type not actiontype, Issue.key not pkey. A parser written from the database schema documentation reads nothing.",
+    "Jira: fields are read from both XML attributes and child elements, because a value carrying newlines cannot live in an attribute. Which form a given field takes has not been verified against a real export.",
+    "Jira: issue type, status and priority are id references, resolved here against the IssueType, Status and Priority rows in the same file; an id with no matching row is reported as the id itself rather than dropped. Resolution is Jira's own separate field and has no Azimuthal equivalent at all.",
+    "Jira: comment visibility is read from Action.level (group) and Action.rolelevel (project role). Both empty means unrestricted.",
+    "Jira: saved filters are read from SearchRequest rows. The JQL text is taken from a \"request\" field, falling back to \"query\".",
+    "Confluence: the root element \u003chibernate-generic\u003e is established by the parsers that read this format in production, not by Atlassian documentation.",
+    "Confluence: a page's body is reached through its bodyContents collection to a BodyContent object. Historical revisions and trashed pages are separate Page objects, separated here by contentStatus.",
+    "Confluence: storage-format bodies carry the ac: and ri: prefixes without declaring them, so they are matched by prefix as well as by namespace URI.",
+    "Confluence: a body's own \"]]\u003e\" is rewritten to \"]] \u003e\" because nested CDATA is illegal. The rewrite is ambiguous and is counted rather than undone.",
+    "Both: attachment blobs are counted from the zip directory by path prefix, not matched to their metadata rows. An attachment whose blob is missing from the archive would not be detected here.",
+    "Both: an export is read as bytes whatever encoding it declares, so element and attribute names are trusted to be ASCII. Non-ASCII values from a legacy-encoded export may be mojibake."
+  ]
+}
