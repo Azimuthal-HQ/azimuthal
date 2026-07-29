@@ -379,6 +379,15 @@ func TestGuardCapabilities_AreRealCapabilities(t *testing.T) {
 		require.True(t, access.RoleSpaceAdmin.Grants(c),
 			"guard capability %q is not held by space_admin — it is not a space-scoped capability, or the constant is stale", c)
 	}
+
+	// The exported accessor is what the HTTP layer snapshots, and it must not
+	// hand out the package's own slice: a caller appending to it would widen the
+	// guard vocabulary at runtime.
+	exported := GuardCapabilities()
+	require.Equal(t, guardCapabilities, exported)
+	exported[0] = access.CapReadItems
+	require.NotEqual(t, access.CapReadItems, guardCapabilities[0],
+		"GuardCapabilities must return a copy, not the package's slice")
 }
 
 // The wire values are what migration 046's CHECK constraints list and what the

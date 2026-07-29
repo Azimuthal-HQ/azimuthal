@@ -508,3 +508,13 @@ func joinQuoted(vs []string) string {
 	}
 	return s
 }
+
+// GuardCapabilities returns the closed subset of the capability model a
+// GuardActorHasCapability guard may name.
+//
+// Exported so the HTTP layer can snapshot exactly these and no more. A caller
+// that handed the evaluator the actor's whole capability set would let a future
+// guard kind read a capability nobody reviewed as a workflow input.
+func GuardCapabilities() []access.Capability {
+	return append([]access.Capability(nil), guardCapabilities...)
+}
