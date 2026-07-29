@@ -485,3 +485,147 @@ func TestTierAdapter_CarriesUnknownKindsThrough(t *testing.T) {
 		workflow.Actor{UserID: f.userID}, workflow.EntitySnapshot{AssigneeID: &f.userID})
 	require.NotNil(t, refusal, "and the evaluator must then refuse it")
 }
+
+// ─── Workflow-level reads ─────────────────────────────────────────────────────
+
+// The *ForWorkflow reads exist so one round trip populates the whole admin
+// editor. They have no HTTP consumer until PR-B, so they are covered here at the
+// store layer, where the contract actually lives.
+func TestTierAdapter_WorkflowLevelReadsSpanEveryTransition(t *testing.T) {
+	f := setupTiers(t)
+	ctx := context.Background()
+
+	transitions, err := adapters.NewWorkflowAdapter(f.q).ListTransitions(ctx, f.workflowID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(transitions), 2, "the seeded ticket workflow has several edges")
+
+	// One row of each kind, on two DIFFERENT edges, so a read that returned only
+	// the first transition's rows would fail.
+	first, second := transitions[0].ID, transitions[1].ID
+
+	_, err = f.tier.CreateGuard(ctx, workflow.Guard{
+		TransitionID: first, Class: workflow.GuardValidatorClass, Kind: workflow.GuardActorIsAssignee,
+	})
+	require.NoError(t, err)
+	_, err = f.tier.CreateGuard(ctx, workflow.Guard{
+		TransitionID: second, Class: workflow.GuardConditionClass,
+		Kind: workflow.GuardFieldRequired, FieldKey: ptr(workflow.FieldDueAt),
+	})
+	require.NoError(t, err)
+
+	_, err = f.tier.CreatePostFunction(ctx, workflow.PostFunction{
+		TransitionID: first, Kind: workflow.PostAssignTo, AssigneeUserID: &f.userID,
+	})
+	require.NoError(t, err)
+	_, err = f.tier.CreatePostFunction(ctx, workflow.PostFunction{
+		TransitionID: second, Kind: workflow.PostSetField,
+		FieldKey: ptr(workflow.PostFieldLabels), FieldValue: ptr("escalated"),
+	})
+	require.NoError(t, err)
+
+	_, err = f.tier.CreateApprover(ctx, workflow.Approver{
+		TransitionID: first, SubjectType: workflow.ApproverUser, SubjectID: f.userID,
+	})
+	require.NoError(t, err)
+	_, err = f.tier.CreateApprover(ctx, workflow.Approver{
+		TransitionID: second, SubjectType: workflow.ApproverTeam, SubjectID: f.teamID,
+	})
+	require.NoError(t, err)
+
+	guards, err := f.tier.GuardsForWorkflow(ctx, f.workflowID)
+	require.NoError(t, err)
+	require.Len(t, guards, 2)
+
+	pfs, err := f.tier.PostFunctionsForWorkflow(ctx, f.workflowID)
+	require.NoError(t, err)
+	require.Len(t, pfs, 2)
+
+	approvers, err := f.tier.ApproversForWorkflow(ctx, f.workflowID)
+	require.NoError(t, err)
+	require.Len(t, approvers, 2)
+	for _, ap := range approvers {
+		require.NotEmpty(t, ap.SubjectName, "the workflow-level read resolves display names too")
+		require.False(t, ap.SubjectMissing)
+	}
+
+	// A different workflow's rows must not leak in.
+	other, err := adapters.NewWorkflowAdapter(f.q).GetDefaultWorkflow(ctx, f.orgID, "project_items")
+	require.NoError(t, err)
+	guards, err = f.tier.GuardsForWorkflow(ctx, other.ID)
+	require.NoError(t, err)
+	require.Empty(t, guards, "the read must be scoped to the workflow it names")
+}
+
+// ApprovalsForEntity is the item's own history: every request ever made about
+// it, decided and pending alike, newest first. A declined request is kept, so
+// the record of who asked and who refused survives the item moving on.
+func TestTierAdapter_ApprovalsForEntityKeepsHistory(t *testing.T) {
+	f := setupTiers(t)
+	ctx := context.Background()
+	entityID := uuid.New()
+
+	request := workflow.Approval{
+		TransitionID: &f.openToInProgress,
+		EntityType:   workflow.ApprovalEntityTicket,
+		EntityID:     entityID,
+		SpaceID:      f.spaceID,
+		FromStatus:   "open",
+		ToStatus:     "in_progress",
+		RequestedBy:  f.userID,
+	}
+
+	first, err := f.tier.CreateApproval(ctx, request)
+	require.NoError(t, err)
+	_, err = f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined)
+	require.NoError(t, err)
+
+	second, err := f.tier.CreateApproval(ctx, request)
+	require.NoError(t, err)
+
+	history, err := f.tier.ApprovalsForEntity(ctx, workflow.ApprovalEntityTicket, entityID)
+	require.NoError(t, err)
+	require.Len(t, history, 2, "a declined request is kept, not replaced")
+
+	// Newest first.
+	require.Equal(t, second.ID, history[0].ID)
+	require.True(t, history[0].IsPending())
+	require.Equal(t, first.ID, history[1].ID)
+	require.False(t, history[1].IsPending())
+	require.Equal(t, workflow.DecisionDeclined, *history[1].Decision)
+	require.NotEmpty(t, history[1].DecidedByName, "the decider is resolved for display")
+
+	// Another entity's history is empty.
+	other, err := f.tier.ApprovalsForEntity(ctx, workflow.ApprovalEntityTicket, uuid.New())
+	require.NoError(t, err)
+	require.Empty(t, other)
+}
+
+// Deciding an approval that does not exist reports not-found rather than
+// "already decided" — the follow-up read is what tells the two apart.
+func TestTierAdapter_DecidingAMissingApprovalIsNotFound(t *testing.T) {
+	f := setupTiers(t)
+	_, err := f.tier.DecideApproval(context.Background(), uuid.New(), f.userID, workflow.DecisionApproved)
+	require.ErrorIs(t, err, workflow.ErrNotFound)
+}
+
+// A space with no workflow reports ErrNotFound, which the gate reads as
+// "nothing applies" rather than as a failure.
+func TestTierAdapter_WorkflowIDForSpaceReportsNoneDistinctly(t *testing.T) {
+	f := setupTiers(t)
+	ctx := context.Background()
+
+	// setupTiers deliberately does NOT bind a workflow to its space — assignment
+	// is a separate, best-effort step in production — so the unassigned case is
+	// the fixture's starting state, and it must be distinguishable from a lookup
+	// failure rather than surfacing as a zero id.
+	_, err := f.tier.WorkflowIDForSpace(ctx, f.spaceID)
+	require.ErrorIs(t, err, workflow.ErrNotFound,
+		"an unassigned space must report ErrNotFound, which the gate reads as \"nothing applies\"")
+
+	require.NoError(t, adapters.NewWorkflowAdapter(f.q).
+		AssignDefaultWorkflowToSpace(ctx, f.orgID, "beacon", f.spaceID))
+
+	got, err := f.tier.WorkflowIDForSpace(ctx, f.spaceID)
+	require.NoError(t, err)
+	require.Equal(t, f.workflowID, got)
+}

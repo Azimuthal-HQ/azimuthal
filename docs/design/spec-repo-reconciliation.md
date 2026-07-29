@@ -225,6 +225,20 @@ touch or reference.
   not widen the exposure; the existing routes are unchanged because changing them alters
   live behaviour and needs its own regression pair.
 
+- **A new project item's default status is not a state in its own workflow.**
+  `project_items.status` defaults to `'open'` (migration 014) while the seeded project
+  workflow's states are `backlog`/`todo`/`in_progress`/`in_review`/`done` with `backlog`
+  as `is_initial` (migration 016). Nothing reconciles the two, so a freshly created item
+  sits at a status naming no state, and its **first** transition therefore resolves no
+  edge — meaning ADR-0011 guards, approvals and post-functions silently do not apply to
+  it. Every subsequent transition is gated normally.
+
+  This is pre-existing and orthogonal to the tiers: the same mismatch already meant a new
+  item's first move was unvalidated by the DB engine. It is recorded rather than fixed
+  because the fix is either a column-default change or a seed change, both of which touch
+  live data and neither of which belongs in a feature phase. `TestTierAPI_ItemPostFunction
+  CommitsWithTheStatus` documents the behaviour by moving the item onto a real state first.
+
 - **`npm run lint` is a required CI gate** (`.github/workflows/ci.yml`, the `Frontend` job),
   contradicting `CLAUDE.md` §3's statement that it is not. The repository wins; §3's claim
   predates #82. Treat eslint as blocking.

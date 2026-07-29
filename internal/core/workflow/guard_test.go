@@ -412,3 +412,17 @@ func TestGuardVocabulary_WireValuesAreUniqueAndSnakeCase(t *testing.T) {
 		add("field key", string(v))
 	}
 }
+
+// A Refusal doubles as an error so call sites that only need the sentence can
+// treat it as one.
+func TestRefusal_IsAnError(t *testing.T) {
+	t.Parallel()
+
+	g := Guard{ID: uuid.New(), Class: GuardValidatorClass, Kind: GuardActorIsAssignee}
+	r := Evaluate([]Guard{g}, GuardValidatorClass, actorWith(uuid.New(), nil), EntitySnapshot{})
+	require.NotNil(t, r)
+
+	var err error = r
+	require.EqualError(t, err, r.Reason)
+	require.Contains(t, err.Error(), "assignee")
+}

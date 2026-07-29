@@ -448,28 +448,6 @@ func (q *Queries) GetTransitionByStates(ctx context.Context, arg GetTransitionBy
 	return i, err
 }
 
-const getTransitionGuard = `-- name: GetTransitionGuard :one
-SELECT id, transition_id, guard_class, kind, position, capability, team_id, field_key, created_at, updated_at FROM workflow_transition_guards WHERE id = $1
-`
-
-func (q *Queries) GetTransitionGuard(ctx context.Context, id uuid.UUID) (WorkflowTransitionGuard, error) {
-	row := q.db.QueryRow(ctx, getTransitionGuard, id)
-	var i WorkflowTransitionGuard
-	err := row.Scan(
-		&i.ID,
-		&i.TransitionID,
-		&i.GuardClass,
-		&i.Kind,
-		&i.Position,
-		&i.Capability,
-		&i.TeamID,
-		&i.FieldKey,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getWorkflowInOrg = `-- name: GetWorkflowInOrg :one
 SELECT id, org_id, name, description, is_default, applies_to, created_at, updated_at FROM workflows WHERE id = $1 AND org_id = $2
 `

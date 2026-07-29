@@ -33,8 +33,6 @@ RETURNING *;
 -- name: DeleteTransitionGuard :execrows
 DELETE FROM workflow_transition_guards WHERE id = $1;
 
--- name: GetTransitionGuard :one
-SELECT * FROM workflow_transition_guards WHERE id = $1;
 
 -- ─── Tier 3: post-functions ───────────────────────────────────────────────────
 

@@ -370,3 +370,80 @@ func TestTierAPI_ItemStatusRouteIsGated(t *testing.T) {
 		"the Vector status route must honour the guard: %s", r.Body)
 	require.Equal(t, "backlog", statusNow(), "a refused item transition must write nothing")
 }
+
+// The Vector half of the transactional apply. Both entity kinds go through the
+// same adapter, and each has its own UPDATE, so covering only tickets would
+// leave the item path's write unexercised.
+func TestTierAPI_ItemPostFunctionCommitsWithTheStatus(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+	require.NoError(t, ts.WorkflowAdapter.SeedDefaultWorkflows(ctx, ts.OrgID))
+
+	owner := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, owner.ID, "vector")
+	require.NoError(t, ts.WorkflowAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "vector", space.ID))
+
+	def, err := ts.WorkflowAdapter.GetDefaultWorkflow(ctx, ts.OrgID, "project_items")
+	require.NoError(t, err)
+	states, err := ts.WorkflowAdapter.ListStates(ctx, def.ID)
+	require.NoError(t, err)
+	byName := map[string]uuid.UUID{}
+	for _, st := range states {
+		byName[st.Name] = st.ID
+	}
+	transitions, err := ts.WorkflowAdapter.ListTransitions(ctx, def.ID)
+	require.NoError(t, err)
+	var edge uuid.UUID
+	for _, tr := range transitions {
+		if tr.FromStateID == byName["backlog"] && tr.ToStateID == byName["todo"] {
+			edge = tr.ID
+		}
+	}
+	require.NotEqual(t, uuid.Nil, edge)
+
+	base := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s", ts.OrgID, space.ID)
+	r := ts.post(t, base+"/projects/items", map[string]any{
+		"title": "Item with effects", "kind": "task", "priority": "medium",
+	}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "%s", r.Body)
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(r.Body, &created))
+	itemID := uuid.MustParse(created["id"].(string))
+
+	tier := adapters.NewWorkflowTierAdapter(generated.New(ts.DB.Pool))
+	assignee := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	_, err = tier.CreatePostFunction(ctx, workflow.PostFunction{
+		TransitionID: edge, Kind: workflow.PostAssignTo, AssigneeUserID: &assignee.ID, Position: 0,
+	})
+	require.NoError(t, err)
+	_, err = tier.CreatePostFunction(ctx, workflow.PostFunction{
+		TransitionID: edge, Kind: workflow.PostSetField,
+		FieldKey: ptrTo(workflow.PostFieldLabels), FieldValue: ptrTo("escalated,urgent"), Position: 1,
+	})
+	require.NoError(t, err)
+
+	// A new project item starts at status 'open' (migration 014's column
+	// default), which is NOT a state in the seeded project workflow
+	// (backlog/todo/in_progress/in_review/done, migration 016). So its FIRST
+	// move resolves no edge and no tiers apply — recorded as a finding, not
+	// worked around. Move it onto a real state before testing the guarded edge.
+	r = ts.post(t, fmt.Sprintf("%s/projects/items/%s/status", base, itemID),
+		map[string]any{"status": "backlog"}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
+
+	r = ts.post(t, fmt.Sprintf("%s/projects/items/%s/status", base, itemID),
+		map[string]any{"status": "todo"}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
+
+	var status string
+	var gotAssignee *uuid.UUID
+	var labels []string
+	require.NoError(t, ts.DB.Pool.QueryRow(ctx,
+		`SELECT status, assignee_id, labels FROM project_items WHERE id = $1`, itemID).
+		Scan(&status, &gotAssignee, &labels))
+	require.Equal(t, "todo", status)
+	require.NotNil(t, gotAssignee)
+	require.Equal(t, assignee.ID, *gotAssignee)
+	require.Equal(t, []string{"escalated", "urgent"}, labels,
+		"both post-functions committed with the status, in order")
+}
