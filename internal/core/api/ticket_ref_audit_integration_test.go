@@ -637,10 +637,15 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 			WithAuditLogger(auditLog).
 			WithTicketRefPolicy(required),
 		// Accepts no reference of its own — here so the share tests have a
-		// real entity to share. See the doc comment above.
+		// real entity to share. See the doc comment above. It carries every
+		// collaborator newTestServerOn gives it: mounting the handler mounts
+		// the whole ticket subtree, and a nil one here would be a dark
+		// dependency TestHarness_NoDarkDependencies cannot see, because that
+		// test walks newTestServer only.
 		TicketHandler: ticketsapi.NewHandler(ticketSvc).
 			WithAuditLogger(auditLog).
-			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
+			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
+			WithSuggestions(tickets.NewSuggestionService(adapters.NewTicketAdapter(queries))),
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
 			if err != nil {

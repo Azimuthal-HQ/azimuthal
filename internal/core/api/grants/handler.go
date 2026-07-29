@@ -25,16 +25,23 @@ type Handler struct {
 
 	// ticketRef is the boot-time ticket-reference policy. Every mutation
 	// below resolves the reference AFTER its authorisation gate and BEFORE
-	// its write.
+	// its write. Both halves of that order are load-bearing.
 	//
-	// Both halves of that order are load-bearing. After the gate, because a
-	// 400 saying "ticket_ref is required" for a space the caller cannot
-	// manage would answer differently from a 403 or a 404 and become an
-	// existence oracle for grants on spaces they cannot see. Before the
-	// write, because under a required policy a missing reference has to mean
-	// nothing happened — a 400 returned after h.grants.Create would leave an
-	// unreferenced grant live, which is exactly what the requirement exists
-	// to prevent. The zero value is the permissive default.
+	// AFTER the gate, because turning AZIMUTHAL_TICKET_REF_REQUIRED on must
+	// not change a single authorisation outcome. Resolve-first would answer a
+	// caller who lacks manage_grants with 400 "ticket_ref is required"
+	// instead of 403, and a caller naming a grant in another space with 400
+	// instead of 404 — the authorisation answer replaced by a validation one,
+	// for every reference-less request, on a flag flip that is supposed to be
+	// about audit records. It is also the order all four handlers that
+	// shipped this first already use (see spaces.Delete and teams.Update).
+	//
+	// BEFORE the write, because under a required policy a missing reference
+	// has to mean nothing happened: a 400 returned after h.grants.Create
+	// would leave an unreferenced grant live, which is exactly what the
+	// requirement exists to prevent.
+	//
+	// The zero value is the permissive default.
 	ticketRef ticketref.Policy
 }
 

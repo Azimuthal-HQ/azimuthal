@@ -72,15 +72,19 @@ type Handler struct {
 	// resolve the reference AFTER their authorisation gate and BEFORE their
 	// write.
 	//
-	// The order matters more here than anywhere else in the application. This
-	// route family carries no space guard at all — resolveManageable and
-	// authorizeShareManagement do the whole read-then-manage split in the
-	// handler, 404 when the entity's space is unreadable so existence never
-	// leaks and 403 only once it is readable. A ticket_ref 400 raised above
-	// that would answer a caller who cannot see the entity differently from
-	// one naming a nonexistent id, which is the ADR-0008 leak the split
-	// exists to prevent. Resolving before the write is what makes a
-	// required-mode 400 mean nothing happened. The zero value is permissive.
+	// The order matters more here than anywhere else in the application, and
+	// it is the only place a test can prove it. This route family carries no
+	// space guard: resolveManageable and authorizeShareManagement perform the
+	// whole read-then-manage split inside the handler — 404 when the entity's
+	// space is unreadable so existence never leaks, 403 only once it is
+	// readable. Resolving first would replace BOTH of those answers with a
+	// flat 400 for every reference-less request, so turning
+	// AZIMUTHAL_TICKET_REF_REQUIRED on would silently rewrite the entire
+	// authorisation surface of the share routes. Elsewhere middleware would
+	// still answer first; here nothing would.
+	//
+	// Resolving before the write is what makes a required-mode 400 mean
+	// nothing happened. The zero value is permissive.
 	ticketRef ticketref.Policy
 }
 

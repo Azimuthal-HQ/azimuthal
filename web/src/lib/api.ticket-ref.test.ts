@@ -20,7 +20,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { installLocalStorageStub } from '../test/localStorageStub';
 import {
   queryKeys,
+  useCreateGrant,
   useCreateInvites,
+  useCreateShare,
   useCreateSpace,
   useCreateTeam,
   useCreateTeamWithSpaces,
@@ -31,8 +33,11 @@ import {
   useRemovePerson,
   useRemoveTeamMember,
   useResendInvite,
+  useRevokeGrant,
   useRevokeInvite,
+  useRevokeShare,
   useTicketRefSuggestions,
+  useUpdateGrant,
   useUpdatePerson,
   useUpdateProjectItem,
   useUpdateSpace,
@@ -205,15 +210,84 @@ describe('ticket_ref on administrative mutations', () => {
 
   it('carries one reference across every request the team+spaces composite makes', async () => {
     const { result } = renderHook(() => useCreateTeamWithSpaces('o1'), { wrapper });
-    result.current.mutate({ slug: 'ops', name: 'Ops', modules: ['beacon'], ticketRef: REF });
-    // team create, space create, grant create — in that order.
-    const [team, space, grant] = await requests(3);
-    expect(team.url).toBe(`/api/v1/orgs/o1/teams?ticket_ref=${REF}`);
-    expect(space.url).toBe(`/api/v1/orgs/o1/spaces?ticket_ref=${REF}`);
-    // The grant endpoint accepts no ticket_ref; it must not grow a stray one.
-    expect(grant.url).toBe('/api/v1/orgs/o1/spaces/x/grants');
-    // modules is a client-side concept and never reaches the wire.
-    expect(team.body).toEqual({ slug: 'ops', name: 'Ops' });
+    // Two modules, so the per-module loop runs more than once: a reference
+    // dropped on the second module only is invisible to a one-module test.
+    result.current.mutate({
+      slug: 'ops',
+      name: 'Ops',
+      modules: ['beacon', 'codex'],
+      ticketRef: REF,
+    });
+    // One team create, then space + grant per module, in that order. Asserting
+    // the ordered list rather than "contains ticket_ref" is what makes a
+    // missing one on any single leg fail by position.
+    const captured = await requests(5);
+    expect(captured.map((c) => c.url)).toEqual([
+      `/api/v1/orgs/o1/teams?ticket_ref=${REF}`,
+      `/api/v1/orgs/o1/spaces?ticket_ref=${REF}`,
+      `/api/v1/orgs/o1/spaces/x/grants?ticket_ref=${REF}`,
+      `/api/v1/orgs/o1/spaces?ticket_ref=${REF}`,
+      `/api/v1/orgs/o1/spaces/x/grants?ticket_ref=${REF}`,
+    ]);
+    // modules is a client-side concept and never reaches the wire, and the
+    // reference is transport rather than payload on the grant leg too.
+    expect(captured[0].body).toEqual({ slug: 'ops', name: 'Ops' });
+    expect(captured[2].body).toEqual({
+      subject_type: 'team',
+      subject_id: 'x',
+      role: 'contributor',
+    });
+  });
+
+  it('appends an encoded reference to the grant mutations', async () => {
+    const create = renderHook(() => useCreateGrant('o1', 's1'), { wrapper });
+    create.result.current.mutate({
+      subject_type: 'user',
+      subject_id: 'u1',
+      role: 'viewer',
+      ticketRef: REF,
+    });
+    let [req] = await requests();
+    expect(req.url).toBe(`/api/v1/orgs/o1/spaces/s1/grants?ticket_ref=${REF}`);
+    expect(req.method).toBe('POST');
+    // The reference rides the URL, never the payload.
+    expect(req.body).toEqual({ subject_type: 'user', subject_id: 'u1', role: 'viewer' });
+
+    calls = [];
+    const update = renderHook(() => useUpdateGrant('o1', 's1'), { wrapper });
+    update.result.current.mutate({ grantId: 'g1', role: 'contributor', ticketRef: REF });
+    [req] = await requests();
+    expect(req.url).toBe(`/api/v1/orgs/o1/spaces/s1/grants/g1?ticket_ref=${REF}`);
+    expect(req.method).toBe('PATCH');
+    expect(req.body).toEqual({ role: 'contributor' });
+
+    calls = [];
+    const revoke = renderHook(() => useRevokeGrant('o1', 's1'), { wrapper });
+    revoke.result.current.mutate({ id: 'g1', ticketRef: REF });
+    [req] = await requests();
+    expect(req.url).toBe(`/api/v1/orgs/o1/spaces/s1/grants/g1?ticket_ref=${REF}`);
+    expect(req.method).toBe('DELETE');
+  });
+
+  it('appends an encoded reference to the share mutations', async () => {
+    const create = renderHook(() => useCreateShare('o1', 'page', 'p1'), { wrapper });
+    create.result.current.mutate({
+      entity_type: 'page',
+      entity_id: 'p1',
+      audience: 'org',
+      ticketRef: REF,
+    });
+    let [req] = await requests();
+    expect(req.url).toBe(`/api/v1/orgs/o1/shares?ticket_ref=${REF}`);
+    expect(req.method).toBe('POST');
+    expect(req.body).toEqual({ entity_type: 'page', entity_id: 'p1', audience: 'org' });
+
+    calls = [];
+    const revoke = renderHook(() => useRevokeShare('o1', 'page', 'p1'), { wrapper });
+    revoke.result.current.mutate({ id: 'sh1', ticketRef: REF });
+    [req] = await requests();
+    expect(req.url).toBe(`/api/v1/orgs/o1/shares/sh1?ticket_ref=${REF}`);
+    expect(req.method).toBe('DELETE');
   });
 
   it('percent-encodes a reference containing URL metacharacters', async () => {
@@ -290,6 +364,36 @@ describe('ticket_ref omission', () => {
         run: () => renderHook(() => useCreateSpace('o1'), { wrapper })
           .result.current.mutate({ name: 'S', slug: 's', type: 'codex' }),
         url: '/api/v1/orgs/o1/spaces',
+      },
+      {
+        name: 'createGrant',
+        run: () => renderHook(() => useCreateGrant('o1', 's1'), { wrapper })
+          .result.current.mutate({ subject_type: 'user', subject_id: 'u1', role: 'viewer' }),
+        url: '/api/v1/orgs/o1/spaces/s1/grants',
+      },
+      {
+        name: 'updateGrant',
+        run: () => renderHook(() => useUpdateGrant('o1', 's1'), { wrapper })
+          .result.current.mutate({ grantId: 'g1', role: 'contributor' }),
+        url: '/api/v1/orgs/o1/spaces/s1/grants/g1',
+      },
+      {
+        name: 'revokeGrant (bare id)',
+        run: () => renderHook(() => useRevokeGrant('o1', 's1'), { wrapper })
+          .result.current.mutate('g1'),
+        url: '/api/v1/orgs/o1/spaces/s1/grants/g1',
+      },
+      {
+        name: 'createShare',
+        run: () => renderHook(() => useCreateShare('o1', 'page', 'p1'), { wrapper })
+          .result.current.mutate({ entity_type: 'page', entity_id: 'p1', audience: 'org' }),
+        url: '/api/v1/orgs/o1/shares',
+      },
+      {
+        name: 'revokeShare (bare id)',
+        run: () => renderHook(() => useRevokeShare('o1', 'page', 'p1'), { wrapper })
+          .result.current.mutate('sh1'),
+        url: '/api/v1/orgs/o1/shares/sh1',
       },
       {
         name: 'updateSpace',
