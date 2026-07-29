@@ -41,3 +41,8 @@ var ErrApprovalAlreadyDecided = errors.New("this approval has already been decid
 // ErrNotAnApprover is returned when the actor is not among the transition's
 // configured approvers.
 var ErrNotAnApprover = errors.New("you are not an approver for this transition")
+
+// ErrApproverExists is returned when the same subject is added twice as an
+// approver on one transition. The unique key on
+// (transition_id, subject_type, subject_id) is what enforces it.
+var ErrApproverExists = errors.New("this subject is already an approver for this transition")
