@@ -273,6 +273,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
 			WithAuditLogger(auditLog).
+			WithWorkflowTiers(tierGate, transitionTx).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).
 			WithCustomFields(customfields.NewService(adapters.NewCustomFieldDefAdapter(queries), adapters.NewCustomFieldValueAdapter(queries))).
 			WithBoardConfig(projects.NewBoardConfigService(
@@ -282,7 +283,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(adapters.NewSpaceCreateAdapter(db.Pool)).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
 		NotificationHandler: notificationsapi.NewHandler(queries),
-		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
+		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
 		ShareHandler:        shareHandler,

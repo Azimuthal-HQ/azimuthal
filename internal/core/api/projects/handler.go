@@ -15,11 +15,13 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 )
 
 // Handler holds the dependencies for project HTTP handlers.
@@ -34,6 +36,20 @@ type Handler struct {
 	customFields *customfields.Service
 	boardConfig  *projects.BoardConfigService
 	auditLog     audit.Logger
+	// tiers evaluates ADR-0011 conditions, validators and approvals for a
+	// status change; applier writes the change and its post-function effects in
+	// one transaction. Both are nil-able and therefore covered by
+	// TestHarness_NoDarkDependencies. A nil gate does NOT skip the tiers.
+	tiers   *tiergate.Gate
+	applier workflow.TransitionApplier
+}
+
+// WithWorkflowTiers attaches the ADR-0011 tier gate and the transactional
+// applier.
+func (h *Handler) WithWorkflowTiers(g *tiergate.Gate, a workflow.TransitionApplier) *Handler {
+	h.tiers = g
+	h.applier = a
+	return h
 }
 
 // NewHandler creates a project Handler.
@@ -644,20 +660,148 @@ func (h *Handler) UpdateItemStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.items.UpdateItemStatus(r.Context(), id, req.Status)
+	// Read before writing. This route had no state machine at all — it wrote
+	// any string it was given — so the read is new, and it is what lets a guard
+	// see the item it is guarding. Legality is still not adjudicated here: the
+	// tiers add restrictions and do not invent a rule this route never had.
+	current, getErr := h.items.GetItem(r.Context(), id)
+	if getErr != nil {
+		handleProjectError(w, r, getErr)
+		return
+	}
+
+	gated, ok := h.gateItemTransition(w, r, spaceID, current, req.Status)
+	if !ok {
+		return
+	}
+
+	h.applyItemTransition(w, r, itemTransition{
+		itemID: id, spaceID: spaceID, status: req.Status, gated: gated,
+	})
+}
+
+// itemTransition carries the resolved inputs of one item status change.
+type itemTransition struct {
+	itemID  uuid.UUID
+	spaceID uuid.UUID
+	status  string
+	gated   workflow.GateResult
+}
+
+// gateItemTransition runs the ADR-0011 tiers and reports whether the transition
+// may proceed, answering the request itself in every case that stops it.
+func (h *Handler) gateItemTransition(
+	w http.ResponseWriter, r *http.Request, spaceID uuid.UUID, current *projects.Item, target string,
+) (workflow.GateResult, bool) {
+	if h.tiers == nil || h.applier == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow tier evaluation is not configured on this server")
+		return workflow.GateResult{}, false
+	}
+	claims, orgID, ok := actorFromRequest(w, r)
+	if !ok {
+		return workflow.GateResult{}, false
+	}
+
+	gated, err := h.tiers.Evaluate(r.Context(), tiergate.Request{
+		OrgID:         orgID,
+		SpaceID:       spaceID,
+		EntityType:    workflow.ApprovalEntityItem,
+		EntityID:      current.ID,
+		ActorID:       claims.UserID,
+		CurrentStatus: current.Status,
+		TargetStatus:  target,
+		Entity: workflow.EntitySnapshot{
+			AssigneeID:  current.AssigneeID,
+			DueAt:       current.DueAt,
+			Description: current.Description,
+			Labels:      current.Labels,
+		},
+	})
+	if err != nil {
+		handleTierError(w, r, err)
+		return workflow.GateResult{}, false
+	}
+	if tiergate.Refused(w, r, gated) || tiergate.Pending(w, gated) {
+		return workflow.GateResult{}, false
+	}
+	return gated, true
+}
+
+// applyItemTransition writes the status change the gate permitted. See
+// workflow.TransitionApplier for why only a transition carrying post-functions
+// takes the transaction.
+func (h *Handler) applyItemTransition(w http.ResponseWriter, r *http.Request, t itemTransition) {
+	claims, orgID, ok := actorFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	if len(t.gated.Effects) == 0 {
+		item, err := h.items.UpdateItemStatus(r.Context(), t.itemID, t.status)
+		if err != nil {
+			handleProjectError(w, r, err)
+			return
+		}
+		_ = h.auditLog.Log(r.Context(), audit.Event{
+			Type: audit.EventTypeItemStatusChange, ActorID: claims.UserID.String(),
+			OrgID: claims.OrgID, ResourceType: "item", ResourceID: t.itemID.String(),
+			Metadata: map[string]string{"to": t.status},
+		})
+		respond.JSON(w, http.StatusOK, item)
+		return
+	}
+
+	if err := h.applier.ApplyTransition(r.Context(), workflow.ApplyInput{
+		EntityType:   workflow.ApprovalEntityItem,
+		EntityID:     t.itemID,
+		OrgID:        orgID,
+		SpaceID:      t.spaceID,
+		ActorID:      claims.UserID,
+		ToStatus:     t.status,
+		ToStateID:    t.gated.ToStateID,
+		TransitionID: t.gated.TransitionID,
+		Effects:      t.gated.Effects,
+	}); err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"the transition could not be completed and no change was made")
+		return
+	}
+
+	item, err := h.items.GetItem(r.Context(), t.itemID)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
 	}
-	claims := auth.ClaimsFromContext(r.Context())
-	if claims != nil {
-		_ = h.auditLog.Log(r.Context(), audit.Event{
-			Type: audit.EventTypeItemStatusChange, ActorID: claims.UserID.String(),
-			OrgID: claims.OrgID, ResourceType: "item", ResourceID: id.String(),
-			Metadata: map[string]string{"to": string(req.Status)},
-		})
-	}
 	respond.JSON(w, http.StatusOK, item)
+}
+
+// actorFromRequest resolves the caller's claims and org id, answering 401 and
+// reporting false when either is absent.
+func actorFromRequest(w http.ResponseWriter, r *http.Request) (*auth.Claims, uuid.UUID, bool) {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return nil, uuid.Nil, false
+	}
+	orgID, err := uuid.Parse(claims.OrgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return nil, uuid.Nil, false
+	}
+	return claims, orgID, true
+}
+
+// handleTierError maps a tier failure onto a response. A post-function this
+// build cannot perform aborts the transition rather than committing without it.
+func handleTierError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, workflow.ErrPostFunctionUnknown), errors.Is(err, workflow.ErrPostFunctionMalformed):
+		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation,
+			"this transition is configured with an action this server cannot perform, so it was not applied")
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to evaluate the transition")
+	}
 }
 
 // AssignToSprint assigns an item to a sprint.

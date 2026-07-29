@@ -295,3 +295,75 @@ func TestTierAPI_UnknownPostFunctionAbortsAndWritesNothing(t *testing.T) {
 }
 
 func ptrTo[T any](v T) *T { return &v }
+
+// ─── The Vector route ─────────────────────────────────────────────────────────
+
+// The project-item status route had NO state machine at all before this phase —
+// it wrote any string it was handed. It is gated now, and this proves it on the
+// route the Vector board actually calls.
+func TestTierAPI_ItemStatusRouteIsGated(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+	require.NoError(t, ts.WorkflowAdapter.SeedDefaultWorkflows(ctx, ts.OrgID))
+
+	owner := testutil.CreateTestUser(t, ts.DB.Pool, ts.OrgID)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, owner.ID, "vector")
+	require.NoError(t, ts.WorkflowAdapter.AssignDefaultWorkflowToSpace(ctx, ts.OrgID, "vector", space.ID))
+
+	def, err := ts.WorkflowAdapter.GetDefaultWorkflow(ctx, ts.OrgID, "project_items")
+	require.NoError(t, err)
+	states, err := ts.WorkflowAdapter.ListStates(ctx, def.ID)
+	require.NoError(t, err)
+	byName := map[string]uuid.UUID{}
+	for _, s := range states {
+		byName[s.Name] = s.ID
+	}
+	transitions, err := ts.WorkflowAdapter.ListTransitions(ctx, def.ID)
+	require.NoError(t, err)
+	var edge uuid.UUID
+	for _, tr := range transitions {
+		if tr.FromStateID == byName["backlog"] && tr.ToStateID == byName["todo"] {
+			edge = tr.ID
+		}
+	}
+	require.NotEqual(t, uuid.Nil, edge, "the seeded project workflow must carry backlog -> todo")
+
+	base := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s", ts.OrgID, space.ID)
+	r := ts.post(t, base+"/projects/items", map[string]any{
+		"title": "Gated item", "kind": "task", "priority": "medium",
+	}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "create item: %s", r.Body)
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(r.Body, &created))
+	itemID := created["id"].(string)
+
+	statusPath := fmt.Sprintf("%s/projects/items/%s/status", base, itemID)
+	statusNow := func() string {
+		var s string
+		require.NoError(t, ts.DB.Pool.QueryRow(ctx,
+			`SELECT status FROM project_items WHERE id = $1`, uuid.MustParse(itemID)).Scan(&s))
+		return s
+	}
+
+	// Ungated, it moves — the behaviour this route has always had.
+	r = ts.post(t, statusPath, map[string]any{"status": "todo"}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
+	require.Equal(t, "todo", statusNow())
+
+	r = ts.post(t, statusPath, map[string]any{"status": "backlog"}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode)
+
+	tier := adapters.NewWorkflowTierAdapter(generated.New(ts.DB.Pool))
+	_, err = tier.CreateGuard(ctx, workflow.Guard{
+		TransitionID: edge,
+		Class:        workflow.GuardValidatorClass,
+		Kind:         workflow.GuardFieldRequired,
+		FieldKey:     ptrTo(workflow.FieldAssigneeID),
+	})
+	require.NoError(t, err)
+
+	r = ts.post(t, statusPath, map[string]any{"status": "todo"}, true)
+	require.Equal(t, http.StatusUnprocessableEntity, r.StatusCode,
+		"the Vector status route must honour the guard: %s", r.Body)
+	require.Equal(t, "backlog", statusNow(), "a refused item transition must write nothing")
+}

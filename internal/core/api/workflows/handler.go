@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
@@ -21,6 +24,20 @@ type Handler struct {
 	q    *generated.Queries
 	repo workflow.Repository
 	eng  workflow.Engine
+	// tiers and applier gate and write a transition exactly as the /status
+	// routes do. Both engine-backed routes below go through them, so no route
+	// is a way around a configured guard. Nil-able, so covered by
+	// TestHarness_NoDarkDependencies.
+	tiers   *tiergate.Gate
+	applier workflow.TransitionApplier
+}
+
+// WithWorkflowTiers attaches the ADR-0011 tier gate and the transactional
+// applier.
+func (h *Handler) WithWorkflowTiers(g *tiergate.Gate, a workflow.TransitionApplier) *Handler {
+	h.tiers = g
+	h.applier = a
+	return h
 }
 
 // NewHandler creates a Handler.
@@ -618,6 +635,30 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 		return
 	}
 
+	gated, ok := h.gate(w, r, spaceID, workflow.ApprovalEntityTicket, ticketID,
+		ticket.Status, targetState.Name, workflow.EntitySnapshot{
+			AssigneeID:  goUUIDPtr(ticket.AssigneeID),
+			DueAt:       goTimePtr(ticket.DueAt),
+			Description: ticket.Description,
+			Labels:      ticket.Labels,
+		})
+	if !ok {
+		return
+	}
+
+	if len(gated.Effects) > 0 {
+		if !h.applyWithEffects(w, r, spaceID, workflow.ApprovalEntityTicket, ticketID, targetState.Name, gated) {
+			return
+		}
+		refreshed, err := h.q.GetTicketByID(r.Context(), ticketID)
+		if err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to read the updated ticket")
+			return
+		}
+		respond.JSON(w, http.StatusOK, refreshed)
+		return
+	}
+
 	updated, err := h.q.UpdateTicketWorkflowState(r.Context(), generated.UpdateTicketWorkflowStateParams{
 		ID:              ticketID,
 		Status:          targetState.Name,
@@ -710,6 +751,30 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	gated, ok := h.gate(w, r, spaceID, workflow.ApprovalEntityItem, itemID,
+		item.Status, targetState.Name, workflow.EntitySnapshot{
+			AssigneeID:  goUUIDPtr(item.AssigneeID),
+			DueAt:       goTimePtr(item.DueAt),
+			Description: item.Description,
+			Labels:      item.Labels,
+		})
+	if !ok {
+		return
+	}
+
+	if len(gated.Effects) > 0 {
+		if !h.applyWithEffects(w, r, spaceID, workflow.ApprovalEntityItem, itemID, targetState.Name, gated) {
+			return
+		}
+		refreshed, err := h.q.GetProjectItemByID(r.Context(), itemID)
+		if err != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to read the updated item")
+			return
+		}
+		respond.JSON(w, http.StatusOK, refreshed)
+		return
+	}
+
 	updated, err := h.q.UpdateProjectItemWorkflowState(r.Context(), generated.UpdateProjectItemWorkflowStateParams{
 		ID:              itemID,
 		Status:          targetState.Name,
@@ -766,4 +831,114 @@ func transitionIDFromURL(r *http.Request) (uuid.UUID, error) {
 		return uuid.UUID{}, fmt.Errorf("parsing transitionID: %w", err)
 	}
 	return id, nil
+}
+
+// ─── Tier evaluation, shared by both engine-backed transition routes ──────────
+
+// gate runs the ADR-0011 tiers for an engine-backed transition and reports
+// whether it may proceed.
+//
+// These two routes have no frontend caller today, but they are gated for the
+// same reason the /status routes are: an ungated route is a way around a
+// configured guard, and "nothing calls it yet" is not a security boundary.
+func (h *Handler) gate(
+	w http.ResponseWriter, r *http.Request,
+	spaceID uuid.UUID, entityType workflow.ApprovalEntityType, entityID uuid.UUID,
+	currentStatus, targetStatus string, snapshot workflow.EntitySnapshot,
+) (workflow.GateResult, bool) {
+	if h.tiers == nil || h.applier == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow tier evaluation is not configured on this server")
+		return workflow.GateResult{}, false
+	}
+
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return workflow.GateResult{}, false
+	}
+	orgID, err := uuid.Parse(claims.OrgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return workflow.GateResult{}, false
+	}
+
+	gated, err := h.tiers.Evaluate(r.Context(), tiergate.Request{
+		OrgID:         orgID,
+		SpaceID:       spaceID,
+		EntityType:    entityType,
+		EntityID:      entityID,
+		ActorID:       claims.UserID,
+		CurrentStatus: currentStatus,
+		TargetStatus:  targetStatus,
+		Entity:        snapshot,
+	})
+	if err != nil {
+		if errors.Is(err, workflow.ErrPostFunctionUnknown) || errors.Is(err, workflow.ErrPostFunctionMalformed) {
+			respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation,
+				"this transition is configured with an action this server cannot perform, so it was not applied")
+			return workflow.GateResult{}, false
+		}
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to evaluate the transition")
+		return workflow.GateResult{}, false
+	}
+	if tiergate.Refused(w, r, gated) || tiergate.Pending(w, gated) {
+		return workflow.GateResult{}, false
+	}
+	return gated, true
+}
+
+// applyWithEffects writes the status and its post-function effects in one
+// transaction, reporting whether it succeeded.
+func (h *Handler) applyWithEffects(
+	w http.ResponseWriter, r *http.Request,
+	spaceID uuid.UUID, entityType workflow.ApprovalEntityType, entityID uuid.UUID,
+	toStatus string, gated workflow.GateResult,
+) bool {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return false
+	}
+	orgID, err := uuid.Parse(claims.OrgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return false
+	}
+
+	if err := h.applier.ApplyTransition(r.Context(), workflow.ApplyInput{
+		EntityType:   entityType,
+		EntityID:     entityID,
+		OrgID:        orgID,
+		SpaceID:      spaceID,
+		ActorID:      claims.UserID,
+		ToStatus:     toStatus,
+		ToStateID:    gated.ToStateID,
+		TransitionID: gated.TransitionID,
+		Effects:      gated.Effects,
+	}); err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"the transition could not be completed and no change was made")
+		return false
+	}
+	return true
+}
+
+// goUUIDPtr converts a pgtype.UUID to a *uuid.UUID; an invalid (NULL) value
+// yields nil.
+func goUUIDPtr(id pgtype.UUID) *uuid.UUID {
+	if !id.Valid {
+		return nil
+	}
+	u := uuid.UUID(id.Bytes)
+	return &u
+}
+
+// goTimePtr converts a pgtype.Timestamptz to a *time.Time; an invalid (NULL)
+// value yields nil.
+func goTimePtr(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
 }

@@ -784,7 +784,13 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		tagSvc,
 	)
 	wikiHandler := wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc)
-	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc)
+	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
+		WithItemTypes(itemTypeSvc).
+		WithCustomFields(customFieldSvc).
+		WithWorkflowTiers(
+			tiergate.New(workflow.NewTierService(&mockTierStore{}), &mockWorkflowResolver{}),
+			&mockTransitionApplier{},
+		)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
 	spaceHandler := spacesapi.NewHandler(nil)
 
