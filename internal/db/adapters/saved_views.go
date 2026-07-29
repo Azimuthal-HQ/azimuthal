@@ -22,12 +22,16 @@ import (
 // always wired together; splitting them would mean two constructors in
 // main.go for one feature.
 type SavedViewAdapter struct {
-	q *generated.Queries
+	// The pool as well as the queries: a queue reorder (migration 039) is
+	// several UPDATEs that have to land in one transaction, on the same
+	// reasoning BoardConfigAdapter holds a pool.
+	pool *pgxpool.Pool
+	q    *generated.Queries
 }
 
 // NewSavedViewAdapter creates a SavedViewAdapter backed by the given pool.
 func NewSavedViewAdapter(pool *pgxpool.Pool) *SavedViewAdapter {
-	return &SavedViewAdapter{q: generated.New(pool)}
+	return &SavedViewAdapter{pool: pool, q: generated.New(pool)}
 }
 
 // Compile-time proof that the adapter satisfies both seams. Without these the

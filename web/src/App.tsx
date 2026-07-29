@@ -21,6 +21,9 @@ import {
   ModuleBoardRoute,
   ModuleIndexRoute,
   ModuleLabelsRoute,
+  ModuleQueueBuilderRoute,
+  ModuleQueueDetailRoute,
+  ModuleQueuesRoute,
   ModuleRoadmapRoute,
   ModuleSprintsRoute,
 } from './pages/space/ModuleRoutes';
@@ -114,6 +117,13 @@ export function App() {
           <Route path="tickets" element={<ErrorBoundary><TicketListPage /></ErrorBoundary>} />
           <Route path="tickets/:ticketId" element={<ErrorBoundary><TicketDetailPage /></ErrorBoundary>} />
           <Route path="board" element={<ErrorBoundary><ModuleBoardRoute /></ErrorBoundary>} />
+          {/* Beacon queues (P4). "new" is a static segment, so React Router
+              ranks it above ":queueId" — the builder is never mistaken for a
+              queue whose id happens to be spelled that way. */}
+          <Route path="queues" element={<ErrorBoundary><ModuleQueuesRoute /></ErrorBoundary>} />
+          <Route path="queues/new" element={<ErrorBoundary><ModuleQueueBuilderRoute /></ErrorBoundary>} />
+          <Route path="queues/:queueId" element={<ErrorBoundary><ModuleQueueDetailRoute /></ErrorBoundary>} />
+          <Route path="queues/:queueId/edit" element={<ErrorBoundary><ModuleQueueBuilderRoute /></ErrorBoundary>} />
           <Route path="backlog" element={<ErrorBoundary><ModuleBacklogRoute /></ErrorBoundary>} />
           <Route path="backlog/:itemKey" element={<ErrorBoundary><ItemDetailPage /></ErrorBoundary>} />
           <Route path="sprints" element={<ErrorBoundary><ModuleSprintsRoute /></ErrorBoundary>} />

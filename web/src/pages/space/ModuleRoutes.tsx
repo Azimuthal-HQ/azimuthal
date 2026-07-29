@@ -1,6 +1,9 @@
 import { Navigate, useParams } from 'react-router-dom';
 import { isModuleKey } from '../../shell/modules';
 import { KanbanPage } from '../beacon/KanbanPage';
+import { QueueBuilderPage } from '../beacon/queues/QueueBuilderPage';
+import { QueueDetailPage } from '../beacon/queues/QueueDetailPage';
+import { QueuesPage } from '../beacon/queues/QueuesPage';
 import { WikiPage } from '../codex/WikiPage';
 import { BacklogPage } from '../vector/BacklogPage';
 import { LabelsPage } from '../vector/LabelsPage';
@@ -53,6 +56,35 @@ export function ModuleRoadmapRoute() {
   const { module } = useParams<{ module: string }>();
   if (module === 'vector') return <RoadmapPage />;
   return <SpacePlaceholderPage feature="roadmap" />;
+}
+
+/*
+ * Queues (P4) are a Beacon concept: they are bound to a Beacon space and their
+ * results are that space's tickets. The three dispatchers below follow the same
+ * shape as the rest of this file — real page for Beacon, branded placeholder
+ * anywhere else — so a `/vector/{id}/queues` URL keeps the space chrome and
+ * says what it is instead of rendering a Beacon page over Vector data.
+ */
+
+/** ModuleQueuesRoute: Beacon's queue list and management surface. */
+export function ModuleQueuesRoute() {
+  const { module } = useParams<{ module: string }>();
+  if (module === 'beacon') return <QueuesPage />;
+  return <SpacePlaceholderPage feature="queues" />;
+}
+
+/** ModuleQueueDetailRoute: one Beacon queue, resolved for the reader. */
+export function ModuleQueueDetailRoute() {
+  const { module } = useParams<{ module: string }>();
+  if (module === 'beacon') return <QueueDetailPage />;
+  return <SpacePlaceholderPage feature="queues" />;
+}
+
+/** ModuleQueueBuilderRoute: create or edit a Beacon queue. */
+export function ModuleQueueBuilderRoute() {
+  const { module } = useParams<{ module: string }>();
+  if (module === 'beacon') return <QueueBuilderPage />;
+  return <SpacePlaceholderPage feature="queues" />;
 }
 
 /** ModuleLabelsRoute: Vector's labels page, placeholder elsewhere. */

@@ -95,9 +95,34 @@ interface QueryFilterBuilderProps {
   orgId: string;
   value: QueryDoc;
   onChange: (next: QueryDoc) => void;
+  /**
+   * Set by a caller whose document is bound to ONE space and cannot name
+   * others — a Beacon queue, whose server-side `scopeToSpace` overwrites
+   * `space_ids` with the space the queue belongs to.
+   *
+   * The space picker is then replaced by a statement of that binding rather
+   * than left enabled: a control whose selection is silently discarded on save
+   * is worse than no control, because it tells the author their queue searches
+   * somewhere it does not. Every other field behaves identically.
+   */
+  boundSpaceLabel?: string;
+  /**
+   * Set on a queue. A queue's space binding pins `space_ids` to its own Beacon
+   * space, which makes the Vector module unmatchable — project items live in
+   * Vector spaces — so the server refuses it (422 ErrQueueModule). Offering a
+   * toggle whose only other position always fails is a control that lies, so
+   * the queue builder states the module instead of asking for it.
+   */
+  lockedModuleLabel?: string;
 }
 
-export function QueryFilterBuilder({ orgId, value, onChange }: QueryFilterBuilderProps) {
+export function QueryFilterBuilder({
+  orgId,
+  value,
+  onChange,
+  boundSpaceLabel,
+  lockedModuleLabel,
+}: QueryFilterBuilderProps) {
   const filter = value.filter;
   const modules = filter.modules;
   const vectorOnlyOK = vectorOnlyFieldsAllowed(modules);
@@ -182,23 +207,35 @@ export function QueryFilterBuilder({ orgId, value, onChange }: QueryFilterBuilde
     <div data-testid="query-filter-builder" className="space-y-1">
       <Field>
         <FieldLabel id="view-modules-label">Modules</FieldLabel>
-        <TypeFilter
-          label="Modules this view searches"
-          testId="view-modules"
-          options={VIEW_MODULES.map((m) => ({ slug: m, name: MODULES[m].name }))}
-          selected={new Set<string>(modules)}
-          onToggle={(slug) => toggleModule(slug as ViewModule)}
-        />
-        <FieldHint>
-          {modules.length === 0
-            ? 'Choose at least one module for this view to search.'
-            : 'A view that names both modules returns one merged list.'}
-        </FieldHint>
+        {lockedModuleLabel ? (
+          <p data-testid="view-modules-locked" className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+            Searches {lockedModuleLabel}. A queue reads the module its space serves.
+          </p>
+        ) : (
+          <>
+            <TypeFilter
+              label="Modules this view searches"
+              testId="view-modules"
+              options={VIEW_MODULES.map((m) => ({ slug: m, name: MODULES[m].name }))}
+              selected={new Set<string>(modules)}
+              onToggle={(slug) => toggleModule(slug as ViewModule)}
+            />
+            <FieldHint>
+              {modules.length === 0
+                ? 'Choose at least one module for this view to search.'
+                : 'A view that names both modules returns one merged list.'}
+            </FieldHint>
+          </>
+        )}
       </Field>
 
       <Field>
         <FieldLabel>Spaces</FieldLabel>
-        {spaceOptions.length > 0 ? (
+        {boundSpaceLabel ? (
+          <p data-testid="view-spaces-bound" className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+            Bound to {boundSpaceLabel}. A queue searches the space it belongs to and no other.
+          </p>
+        ) : spaceOptions.length > 0 ? (
           <TypeFilter
             label="Spaces this view searches"
             testId="view-spaces"
@@ -211,11 +248,13 @@ export function QueryFilterBuilder({ orgId, value, onChange }: QueryFilterBuilde
             No Beacon or Vector spaces are available to you yet.
           </p>
         )}
-        <FieldHint>
-          {(filter.space_ids?.length ?? 0) === 0
-            ? 'No selection searches every space you can read — including spaces added later.'
-            : `Searching ${filter.space_ids!.length} space${filter.space_ids!.length === 1 ? '' : 's'}. At most ${QUERY_LIMITS.space_ids}.`}
-        </FieldHint>
+        {!boundSpaceLabel && (
+          <FieldHint>
+            {(filter.space_ids?.length ?? 0) === 0
+              ? 'No selection searches every space you can read — including spaces added later.'
+              : `Searching ${filter.space_ids!.length} space${filter.space_ids!.length === 1 ? '' : 's'}. At most ${QUERY_LIMITS.space_ids}.`}
+          </FieldHint>
+        )}
       </Field>
 
       <Field>

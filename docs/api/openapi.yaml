@@ -6252,6 +6252,341 @@ paths:
       summary: Get active sprint
       tags:
       - projects
+  /orgs/{orgID}/spaces/{spaceID}/queues:
+    get:
+      description: Queues are saved views bound to the space. Reading needs only space-readability,
+        which is the audience a queue has.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Queues in display order
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Space not found or not readable
+      security:
+      - BearerAuth: []
+      summary: List a space's queues
+      tags:
+      - queues
+    post:
+      description: Requires manage_queue on the space (the agent role).
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Queue
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created queue
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_queue required
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: A queue of that name exists in this space
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+      security:
+      - BearerAuth: []
+      summary: Create a queue
+      tags:
+      - queues
+  /orgs/{orgID}/spaces/{spaceID}/queues/{queueID}:
+    delete:
+      description: Requires manage_queue.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Queue ID (UUID)
+        in: path
+        name: queueID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_queue required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No such queue in this space
+      security:
+      - BearerAuth: []
+      summary: Delete a queue
+      tags:
+      - queues
+    patch:
+      description: Requires manage_queue. Position is changed by the reorder endpoint,
+        never here.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Queue ID (UUID)
+        in: path
+        name: queueID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Queue
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Updated queue
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_queue required
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No such queue in this space
+      security:
+      - BearerAuth: []
+      summary: Update a queue
+      tags:
+      - queues
+  /orgs/{orgID}/spaces/{spaceID}/queues/{queueID}/results:
+    get:
+      description: Resolves per viewer, exactly as a saved view does — so an "Assigned
+        to me" queue means each agent's own work.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Queue ID (UUID)
+        in: path
+        name: queueID
+        required: true
+        schema:
+          type: string
+      - description: Opaque cursor from a previous page
+        in: query
+        name: cursor
+        schema:
+          type: string
+      - description: Page size (default 50, max 200)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Results, next_cursor and has_more
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No such queue in this space
+      security:
+      - BearerAuth: []
+      summary: Run a queue
+      tags:
+      - queues
+  /orgs/{orgID}/spaces/{spaceID}/queues/defaults:
+    post:
+      description: 'Idempotent: creates only the defaults this space does not already
+        have, and reports how many were added. Requires manage_queue.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: How many queues were created
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_queue required
+      security:
+      - BearerAuth: []
+      summary: Create the default queues
+      tags:
+      - queues
+  /orgs/{orgID}/spaces/{spaceID}/queues/order:
+    put:
+      description: The body must list every live queue in the space exactly once.
+        Applied in one transaction. Requires manage_queue.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Ordered queue ids
+        required: true
+      responses:
+        "204":
+          description: Reordered
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: manage_queue required
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not a permutation of this space's queues
+      security:
+      - BearerAuth: []
+      summary: Reorder a space's queues
+      tags:
+      - queues
   /orgs/{orgID}/spaces/{spaceID}/summary:
     get:
       description: Counts of live tickets, pages, and project items in the space.
