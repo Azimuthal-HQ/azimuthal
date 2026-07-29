@@ -1,8 +1,10 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,28 +26,57 @@ import (
 //
 // Modelled on web/src/lib/no-direct-fetch.test.ts, which enforces the same
 // shape of rule on the frontend's single API client.
+//
+// # Why this parses instead of grepping
+//
+// The first version searched the file bytes for "config.Load()", and a
+// concurrently-merged command's doc comment mentioned that call while
+// explaining why it deliberately does not make it. The guard failed the build
+// over a sentence that agreed with it. A text search cannot tell a call from a
+// mention, and a guard that cries wolf at prose is one someone eventually
+// deletes rather than fixes — which would cost the rule, not the test.
+//
+// So it walks the AST and looks for a genuine call expression. Comments and
+// string literals are invisible to it, and `configThing.Load()` or a local
+// variable named `config` cannot trip it either.
 func TestCmdServer_NoDirectConfigLoad(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
 
+	fset := token.NewFileSet()
 	var offenders []string
 	var scanned int
+
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") {
 			continue
 		}
-		// config.go is the one sanctioned caller; the test files below drive
-		// the real boot path deliberately.
+		// config.go is the one sanctioned caller; the test files drive the real
+		// boot path deliberately.
 		if name == "config.go" || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		body, readErr := os.ReadFile(filepath.Clean(name))
-		require.NoError(t, readErr)
+
+		file, parseErr := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		require.NoError(t, parseErr, "parsing %s", name)
 		scanned++
-		if strings.Contains(string(body), "config.Load()") {
-			offenders = append(offenders, name)
-		}
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Load" {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if ok && pkg.Name == "config" {
+				offenders = append(offenders, name)
+			}
+			return true
+		})
 	}
 
 	require.NotZero(t, scanned, "no command files were scanned; this guard has gone stale")
