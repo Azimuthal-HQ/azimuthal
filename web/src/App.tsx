@@ -7,8 +7,10 @@ import { SpaceLayout } from './shell/SpaceLayout';
 import { ModuleLandingRedirect } from './shell/ModuleLandingRedirect';
 import { NotFoundPage } from './shell/NotFoundPage';
 import { LoginPage } from './pages/auth/LoginPage';
-import { HomeOverviewPage } from './pages/home/HomeOverviewPage';
-import { HomeDashboardPage } from './pages/home/HomeDashboardPage';
+import { HomePage } from './pages/home/HomePage';
+import { DashboardsListPage } from './pages/dashboards/DashboardsListPage';
+import { DashboardPage } from './pages/dashboards/DashboardPage';
+import { LegacyHomeDashboardRedirect } from './pages/dashboards/LegacyHomeDashboardRedirect';
 import { SearchPage } from './pages/home/SearchPage';
 import { TicketListPage } from './pages/beacon/TicketListPage';
 import { TicketDetailPage } from './pages/beacon/TicketDetailPage';
@@ -66,8 +68,29 @@ export function App() {
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
         {/* Home: user- and org-scoped pages under the static "Your work" panel */}
         <Route element={<HomeLayout />}>
-          <Route path="/" element={<HomeOverviewPage />} />
-          <Route path="home/:dashboardId" element={<HomeDashboardPage />} />
+          {/* Home is the caller's default dashboard, seeded on a first visit
+              (P5, decision log D4). */}
+          <Route path="/" element={<HomePage />} />
+
+          {/* Dashboards (P5, ADR-0009). A TOP-LEVEL destination for the same
+              reason saved views are: a dashboard arranges gadgets that cross
+              modules and containers, and its API is org-scoped, so there is no
+              space to hang it under. Spec §7 sketches
+              /:module/:spaceId/dashboards/:id, which a cross-container
+              surface cannot express — the identical contradiction the
+              reconciliation doc already recorded for views. Static before
+              dynamic, as at /views. */}
+          <Route path="dashboards" element={<DashboardsListPage />} />
+          <Route path="dashboards/:dashboardId" element={<DashboardPage />} />
+
+          {/* The interim Home routes. /home/:id was the dashboard placeholder
+              and /home/new the sidebar's "new dashboard" link; both now belong
+              to the real surface, and old links keep working rather than
+              hitting the catch-all 404. */}
+          <Route path="home" element={<Navigate to="/dashboards" replace />} />
+          <Route path="home/new" element={<Navigate to="/dashboards" replace />} />
+          <Route path="home/:dashboardId" element={<LegacyHomeDashboardRedirect />} />
+
           <Route path="search" element={<SearchPage />} />
           <Route path="spaces" element={<SpaceDirectoryPage />} />
 

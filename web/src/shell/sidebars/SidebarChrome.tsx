@@ -106,10 +106,12 @@ interface SidebarNavItemProps {
   label: string;
   count?: number;
   end?: boolean;
+  /** Set on data-driven rows so a test can address the list rather than a label. */
+  testId?: string;
 }
 
 /** SidebarNavItem is a single nav row; icon-only with a tooltip when collapsed. */
-export function SidebarNavItem({ to, icon: Icon, label, count, end }: SidebarNavItemProps) {
+export function SidebarNavItem({ to, icon: Icon, label, count, end, testId }: SidebarNavItemProps) {
   const collapsed = useSidebarIsCollapsed();
   const { setMobileNavOpen } = useShellUI();
 
@@ -118,6 +120,7 @@ export function SidebarNavItem({ to, icon: Icon, label, count, end }: SidebarNav
       to={to}
       end={end}
       title={label}
+      data-testid={testId}
       onClick={() => setMobileNavOpen(false)}
       className={({ isActive }) =>
         cn(

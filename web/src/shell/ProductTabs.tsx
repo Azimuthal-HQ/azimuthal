@@ -14,9 +14,14 @@ export function ProductTabs() {
 
   // Saved views are org-scoped and cross-module, so they sit under Home rather
   // than becoming a fifth product tab — they are a destination, not a product.
+  // Every Home-scoped top-level path, or the Home tab goes dark on a page
+  // that plainly belongs to it. /dashboards joins the list in P5; /spaces was
+  // already missing, so the space directory rendered with no tab lit at all.
   const isHomeActive =
     pathname === '/' ||
     pathname.startsWith('/home') ||
+    pathname.startsWith('/dashboards') ||
+    pathname.startsWith('/spaces') ||
     pathname.startsWith('/settings') ||
     pathname.startsWith('/admin') ||
     pathname.startsWith('/search') ||
