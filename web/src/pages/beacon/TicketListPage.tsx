@@ -22,6 +22,8 @@ import {
   normalizePriority,
   type PriorityKey,
 } from '../../components/priority';
+import { SaveAsViewButton } from '../../components/views/SaveAsViewButton';
+import { beaconListDraft } from '../../lib/views/draft';
 import { cn } from '../../lib/utils';
 import {
   useTickets,
@@ -118,6 +120,21 @@ export function TicketListPage() {
     });
   }, [tickets, statusFilter, priorityFilter, search]);
 
+  // The current filter state as a saved-view draft. Recomputed with the
+  // filters so the button always carries what is on screen, never a stale
+  // snapshot taken when the page mounted.
+  const viewDraft = useMemo(
+    () =>
+      beaconListDraft({
+        spaceId,
+        spaceName: space?.name,
+        status: statusFilter,
+        priority: priorityFilter,
+        text: search,
+      }),
+    [spaceId, space?.name, statusFilter, priorityFilter, search],
+  );
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -125,10 +142,13 @@ export function TicketListPage() {
         <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">
           Tickets
         </h1>
-        <Button onClick={() => setDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Ticket
-        </Button>
+        <div className="flex items-center gap-2">
+          <SaveAsViewButton draft={viewDraft} />
+          <Button onClick={() => setDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Ticket
+          </Button>
+        </div>
       </div>
 
       {/* Filter bar */}

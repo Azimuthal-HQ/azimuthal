@@ -1,4 +1,4 @@
-import { Home, LayoutDashboard, Plus } from 'lucide-react';
+import { Bookmark, Home, LayoutDashboard, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { SidebarChrome, SidebarNavItem, SidebarSection, useSidebarIsCollapsed } from './SidebarChrome';
 
@@ -12,6 +12,10 @@ export function HomeSidebar() {
     <SidebarChrome testId="home-sidebar" header={<YourWorkHeader />} settingsTo="/settings">
       <nav className="flex flex-col gap-[2px]">
         <SidebarNavItem to="/" icon={Home} label="Overview" end />
+        {/* Saved views (P4). Declared here because this panel is where the
+            top-level, org-scoped destinations live — a view belongs to no
+            space and no module, so it has nowhere else to be listed. */}
+        <SidebarNavItem to="/views" icon={Bookmark} label="Views" />
       </nav>
       <SidebarSection label="Dashboards">
         <SidebarNavItem to="/home/new" icon={Plus} label="New dashboard" />

@@ -9,7 +9,8 @@ or a transactional write with an audit trail, look here first. If something clos
 already exists, extend it. A second implementation of anything on this page is a defect, not a
 convenience.
 
-Verified against `main` at migration 028; sections 9 and 10 added at migration 036.
+Verified against `main` at migration 028; sections 9 and 10 added at migration 036; section 13
+and the section 5 corrections added at migration 038 (P4 saved views).
 
 ---
 
@@ -188,12 +189,32 @@ Every route carries **exactly one** guard class:
 router — never a hand-maintained list — and fails **bidirectionally**: on any route present in the
 router but missing from the table, and on any table row whose route no longer exists. It also
 asserts at least 90 routes were enumerated, so a broken walk cannot pass vacuously. The table
-currently holds 142 rows, keyed `"METHOD /path"` — mostly under `/api/v1`, except `/health`,
-`/ready`, `/api/docs` and `/api/docs/openapi.yaml`.
+holds **172 rows** as of P4, keyed `"METHOD /path"` — mostly under `/api/v1`, except `/health`,
+`/ready`, `/api/docs` and `/api/docs/openapi.yaml`. (It said 142 here until P4 counted them; the
+repository wins.)
 
 Note what the test does and does not do: it proves every route is **classified**, not that each
 route's middleware chain matches the class it claims. The classification is a human assertion the
 test keeps honest by refusing to let you skip it.
+
+A second test, `TestReadPathSweep_GuardClassMatchesMiddleware`, *does* read the real chain — but it
+compares chain against claim for **`org-admin` and `org-admin-404` only**. A row claiming
+`space-read`, `space-write`, `space-cap`, `org-member`, `org-read`, `share-manage` or `share-read`
+is accepted on the strength of the row alone, and its middleware is never inspected. So for every
+class but the two admin ones, the guard is proved by an explicit permission-matrix test or it is
+not proved at all. `views_endpoint_matrix_integration_test.go` (P4) is the pattern to copy.
+
+> **The sweep and the dark-harness test had a seam between them, and P4 closed it.** Both walk the
+> router built by `newTestServerOn`. `TestHarness_NoDarkDependencies` deliberately *skips* a nil
+> handler, on the stated grounds that "the route-accounting sweep already covers" it — but a
+> handler left nil in the harness contributes no routes to that walk, so it needs no accounting
+> rows and is invisible to **both** tests at once. That is the dark-harness failure one level up:
+> not a mounted handler missing a collaborator, but an entire feature that exists in production and
+> in no test. P4 walked into it — the saved-view routes were added, the sweep stayed green, and
+> nothing said the routes simply were not mounted.
+>
+> `TestHarness_NoUnmountedSurfaces` closes it: every `RouterConfig` handler field is mounted in the
+> harness, or named in `unmountedInHarness` **with its reason**.
 
 > **The rule: a new route fails this test until you classify it.** That is the point. Classifying
 > is the moment you decide whether the route leaks existence, and it is much harder to get wrong
@@ -444,7 +465,73 @@ download links.
 
 ---
 
-## 13. The Swagger UI assets are vendored
+## 13. Cross-container reads, and the one sanctioned share-union exception
+
+**Where:** `internal/db/queries/saved_views.sql` (`ListViewTickets`, `ListViewProjectItems`),
+reached through `internal/core/views.Resolve`.
+
+**The rule this excepts.** A space-scoped listing filters on `space_id = ANY(readable)` and
+**never unions shares**. That is what keeps ADR-0008 cheap: shares widen visibility for one
+entity, the main query path is untouched, and no list has to do per-row permission work
+(spec §5, and §2.5 case 23 forbids per-item authorisation inside a list handler).
+
+**The exception.** A saved view is cross-container by nature — that is the entire feature — so
+its two result fan-outs are the sanctioned place where the readable-space set is unioned with the
+caller's shared entities:
+
+```sql
+WHERE tk.space_id = ANY(@readable_space_ids) OR tk.id = ANY(@shared_ticket_ids)
+```
+
+It is recorded here for the same reason the Codex publish-409 exception is recorded in section 2:
+so the next person who finds a share union in a list query can tell a sanctioned exception from a
+mistake, and so a *second* one has to be argued for rather than copied.
+
+Four things about it that are load-bearing:
+
+- **Per viewer, always.** A shared view shares the definition, never the results. Two people
+  opening one view legitimately see different rows, and a viewer with less access silently sees
+  fewer. That is correct behaviour, not a bug to smooth over, and the UI must never present it as
+  a sync failure. Nothing in the resolution consults the view's *owner* — the owner's access is
+  irrelevant to what a viewer may read.
+
+- **There is no subtree term, and its absence is correct.** Migration 026 constrains cascade to
+  pages (`entity_shares_cascade_pages_only`), so a ticket or project-item share is always exactly
+  one entity and `SharedEntities.DirectIDs(type)` is the complete story for both tables. The
+  `(space_id, pattern)` pair problem spec §5 warns about — and the accessor it says "P4 must build
+  first" — is a **page** problem. P6 search reads pages and still has to solve it; **D46 stays
+  open**. Do not copy this query's shape onto pages.
+
+- **Share resolution is mounted per route, not per family.** `ResolveShares` is applied to
+  `GET /views/{viewID}/results` and `POST /views/preview` and to nothing else under `/views`:
+  listing or editing a view has no use for share coverage and must not pay a query for it. This is
+  the same discipline §5 states for P3's `/shared` subtree — mount it where it is needed and
+  re-run the case-23 constancy tracer, rather than promoting it to the org-wide middleware where
+  every route starts paying.
+
+- **The readable set and the shared set ARE the access control**, not a hint. Neither array may be
+  widened by a caller, and the service short-circuits to an empty page when both are empty rather
+  than relying on `= ANY('{}')`. `TestViewResults_TicketInUnreadableSpaceDoesNotLeak` fails if the
+  space predicate is weakened; `TestViewResults_ShareUnionReachesAnUnreadableSpace` fails if the
+  share term is dropped.
+
+**Two schema functions belong to this surface** (migration 038), and both exist so a rule is
+written once:
+
+- `saved_view_sort_key(...)` collapses whichever of the six sortable fields a view uses into one
+  comparable text value, so one static query serves every field in both directions and the API
+  layer can merge the two modules by comparing the same key type (ADR-0009: fan out per module,
+  merge in the API layer). Callers apply `COLLATE "C"` so PostgreSQL's ordering and Go's bytewise
+  string comparison are the **same** ordering — on a title sort a linguistic collation would
+  interleave two correctly-sorted halves incorrectly, and only across a page boundary.
+- `effective_team_ids(org, user)` is ADR-0007's subject-side team expansion, named. The same rule
+  is still written inline inside `ResolveAccessRows`; that copy was deliberately left alone
+  because it is the product's hottest query and the subject of the case-23 tracer.
+  `TestEffectiveTeamIDs_AgreesWithGrantResolution` pins the two together.
+
+---
+
+## 14. The Swagger UI assets are vendored
 
 **Where:** `internal/core/api/swaggerui/`, served from `/api/docs/assets/`.
 

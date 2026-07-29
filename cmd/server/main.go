@@ -73,6 +73,7 @@ import (
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
+	viewsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/views"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/attachments"
@@ -87,6 +88,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/views"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db"
@@ -300,6 +302,11 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	sharedReader := sharesapi.NewServiceReader(wikiSvc, ticketSvc, itemSvc)
 	shareHandler := sharesapi.NewHandler(shareSvc, sharedReader).WithAuditLogger(auditLog)
 
+	// Saved views (P4, ADR-0009). One adapter satisfies both seams: the view
+	// rows and the two cross-space result fan-outs.
+	savedViewAdapter := adapters.NewSavedViewAdapter(pool)
+	viewHandler := viewsapi.NewHandler(views.NewService(savedViewAdapter, savedViewAdapter))
+
 	// P2.5 administration: people lifecycle, invites, bulk grants, audit
 	// viewer. Invite delivery follows config — link mode returns the URL to
 	// the admin; email mode sends it (SMTP validated at startup).
@@ -350,6 +357,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		AvatarHandler:       avatarHandler,
+		ViewHandler:         viewHandler,
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		QueueStatus:         queueStatus,

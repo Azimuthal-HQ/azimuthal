@@ -32,6 +32,7 @@ import (
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
+	viewsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/views"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/attachments"
@@ -45,6 +46,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/views"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
@@ -203,6 +205,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// board-config endpoints reached zero coverage. This is no longer a
 	// convention you have to remember: TestHarness_NoDarkDependencies walks
 	// the config below and fails on any handler dependency left nil.
+	savedViewAdapter := adapters.NewSavedViewAdapter(pool)
+
 	cfg := api.RouterConfig{
 		Authenticator: authenticator,
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner, userAdapter).
@@ -232,7 +236,10 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
 		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
 		AvatarHandler:       avatarHandler,
-		SPAHandler:          nil,
+		// Saved views (P4). One adapter satisfies both seams — the view rows
+		// and the two cross-space result fan-outs.
+		ViewHandler: viewsapi.NewHandler(views.NewService(savedViewAdapter, savedViewAdapter)),
+		SPAHandler:  nil,
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
 			if err != nil {

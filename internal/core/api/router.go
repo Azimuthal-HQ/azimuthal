@@ -19,6 +19,7 @@ import (
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
+	viewsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/views"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
@@ -57,7 +58,11 @@ type RouterConfig struct {
 	// org-member-readable serve endpoint. nil leaves the routes unmounted
 	// (e.g. when object storage is unavailable).
 	AvatarHandler *avatarapi.Handler
-	SPAHandler    http.Handler // serves the embedded frontend; nil disables SPA serving
+	// ViewHandler serves saved views (P4, ADR-0009): the org-scoped /views
+	// family. Cross-container by nature, so it has no {spaceID} to hang off
+	// (ADR-0010).
+	ViewHandler *viewsapi.Handler
+	SPAHandler  http.Handler // serves the embedded frontend; nil disables SPA serving
 	// AllowedOrigins is the explicit CORS allow-list, and nil or empty is the
 	// safe default: no CORS headers are emitted and the browser enforces
 	// same-origin. Cross-origin callers are admitted only by an operator
@@ -176,6 +181,13 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			// carries its own ResolveShares middleware and lives outside
 			// mountSpaceResources.
 			mountShareResources(r, cfg)
+
+			// Saved views (P4, ADR-0009/ADR-0010). Org-scoped: a view spans
+			// containers, so there is no {spaceID} to scope it to. The two
+			// result routes carry ResolveShares of their own — a view is the
+			// sanctioned ADR-0008 exception and unions the caller's shared
+			// entities into its results.
+			mountViewResources(r, cfg)
 
 			// Ticket-reference typeahead (A1). Org-scoped rather than
 			// space-scoped: the ticket_ref field it fills names a ticket
@@ -324,6 +336,35 @@ func mountShareResources(r chi.Router, cfg RouterConfig) {
 			r.Get("/{entityType}/{entityID}/attachments", cfg.AttachmentHandler.ListShared)
 			r.Get("/{entityType}/{entityID}/attachments/{attachmentID}", cfg.AttachmentHandler.DownloadShared)
 		}
+	})
+}
+
+// mountViewResources registers the P4 saved-view family under the org group.
+//
+// Org-scoped per ADR-0010: a saved view is cross-container by nature and has
+// no {spaceID} to hang off. Every route is org-member — any member may keep
+// private views — and who may see or change one is decided by the view's own
+// ownership and visibility rather than by a space capability.
+//
+// The share resolver is applied to the two RESULT routes only, and is passed
+// into the handler rather than mounted on the whole family. A saved view is
+// the sanctioned ADR-0008 exception and must union the caller's shared
+// entities into its results, but listing or editing a view has no use for
+// share coverage and must not pay a query for it. That is the same reasoning
+// that keeps ResolveShares off every space-scoped route (spec §5): mount it
+// per route family — here, per route — and re-run the case-23 tracer.
+func mountViewResources(r chi.Router, cfg RouterConfig) {
+	if cfg.ViewHandler == nil {
+		return
+	}
+	// Same nil-resolver pass-through convention as the admin guards, so
+	// routing-only unit tests can build a router without an access resolver.
+	shareResolver := func(next http.Handler) http.Handler { return next }
+	if cfg.AccessResolver != nil {
+		shareResolver = ResolveShares(cfg.AccessResolver)
+	}
+	r.Route("/views", func(r chi.Router) {
+		r.Mount("/", cfg.ViewHandler.Routes(shareResolver))
 	})
 }
 

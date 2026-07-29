@@ -264,6 +264,29 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/shared/{entityType}/{entityID}/attachments":                "share-read: list a shared entity's attachments",
 	"GET /api/v1/orgs/{orgID}/shared/{entityType}/{entityID}/attachments/{attachmentID}": "share-read: stream a shared entity's attachment (object key from the row, entity-bound)",
 
+	// Saved views (P4, ADR-0009/ADR-0010). Org-scoped: a view spans
+	// containers, so there is no {spaceID} to scope it to.
+	//
+	// Every route is org-member rather than capability-gated, deliberately.
+	// Creating a private view reads nothing the caller could not already
+	// read, so gating it would mean a capability every role holds; who may
+	// SEE or CHANGE a view is decided by its own ownership and visibility,
+	// in-handler. An edit attempt on a view the caller cannot even see
+	// answers 404, not 403, so the surface does not confirm that somebody
+	// else's private view exists.
+	//
+	// The two result routes additionally carry ResolveShares — a saved view
+	// is the sanctioned ADR-0008 exception and unions the caller's shared
+	// entities into its results. They are still org-member: the share
+	// coverage widens what the view returns, it does not authorise the route.
+	"GET /api/v1/orgs/{orgID}/views/":                 "org-member: list own + shared-with-me views; audience matching in-handler",
+	"POST /api/v1/orgs/{orgID}/views/":                "org-member: create a saved view owned by the caller",
+	"POST /api/v1/orgs/{orgID}/views/preview":         "org-member: resolve an unsaved query for the filter builder; +ResolveShares, results filtered per viewer",
+	"GET /api/v1/orgs/{orgID}/views/{viewID}":         "org-member: read one view; 404 unless owned or shared to the caller",
+	"PATCH /api/v1/orgs/{orgID}/views/{viewID}":       "org-member: update a view; owner-only in-handler (org admin bypasses), 404 when not visible",
+	"DELETE /api/v1/orgs/{orgID}/views/{viewID}":      "org-member: delete a view; owner-only in-handler (org admin bypasses), 404 when not visible",
+	"GET /api/v1/orgs/{orgID}/views/{viewID}/results": "org-member: run a view; +ResolveShares, results resolve against the CALLER's readable spaces unioned with their shares",
+
 	// Attachments — space-scoped (P3). Uploads/deletes gated by the write
 	// floor; reads by space-readability. Every route re-checks the
 	// attachment's entity lives in the URL space.

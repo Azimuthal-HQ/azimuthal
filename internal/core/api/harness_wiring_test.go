@@ -170,3 +170,69 @@ func TestHarness_AuditLoggersAreLive(t *testing.T) {
 			".WithAuditLogger(auditLog) in newTestServerOn:\n%s", strings.Join(discarding, "\n"))
 	}
 }
+
+// unmountedInHarness lists RouterConfig handler fields that are legitimately
+// nil in the test harness, with the reason. It should stay empty.
+var unmountedInHarness = map[string]string{}
+
+// TestHarness_NoUnmountedSurfaces closes the seam between the two guards
+// above and the route-accounting sweep.
+//
+// TestHarness_NoDarkDependencies deliberately SKIPS a nil handler, on the
+// stated grounds that "a nil handler means the surface is deliberately
+// unmounted, which the route-accounting sweep already covers". It does not.
+// TestReadPathSweep_EveryRouteAccounted walks the router built by
+// newTestServerOn — the same router — so a handler left nil there contributes
+// no routes to the walk, needs no accounting rows, and is invisible to both
+// tests at once.
+//
+// The failure mode is the dark-harness one a level up: not a mounted handler
+// missing a collaborator, but a whole feature that exists in production and
+// in no test. P4 walked straight into it — the saved-view routes were added,
+// the sweep stayed green, and nothing said the routes were simply not there.
+//
+// So: every handler field is mounted in the harness, or named here with a
+// reason. SPAHandler is not caught by this and does not need to be — it is an
+// interface, not a handler struct, and serving the embedded frontend from the
+// test harness would be noise.
+func TestHarness_NoUnmountedSurfaces(t *testing.T) {
+	ts := newTestServer(t)
+	cfg := reflect.ValueOf(ts.RouterCfg)
+	cfgType := cfg.Type()
+
+	var missing []string
+	for i := range cfg.NumField() {
+		name := cfgType.Field(i).Name
+		if !strings.HasSuffix(name, "Handler") {
+			continue
+		}
+		field := cfg.Field(i)
+		// Pointer-to-struct handlers only: SPAHandler is an interface.
+		if field.Kind() != reflect.Ptr || field.Type().Elem().Kind() != reflect.Struct {
+			continue
+		}
+		if !field.IsNil() {
+			continue
+		}
+		if _, ok := unmountedInHarness[name]; ok {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	sort.Strings(missing)
+
+	if len(missing) > 0 {
+		t.Errorf("handler surfaces left unmounted in the test harness:\n  %s\n\n"+
+			"A nil handler contributes no routes to the router the accounting sweep walks, so its\n"+
+			"endpoints are covered by NEITHER that sweep NOR TestHarness_NoDarkDependencies. The\n"+
+			"feature reads as tested and has never been reached. Wire it in newTestServerOn\n"+
+			"(mirroring cmd/server/main.go), or add it to unmountedInHarness with the reason.",
+			strings.Join(missing, "\n  "))
+	}
+
+	for name := range unmountedInHarness {
+		if _, ok := cfgType.FieldByName(name); !ok {
+			t.Errorf("unmountedInHarness names %q, which is no longer a RouterConfig field", name)
+		}
+	}
+}

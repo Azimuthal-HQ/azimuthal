@@ -286,6 +286,20 @@ type ProjectItemSequence struct {
 	LastNumber int64     `json:"last_number"`
 }
 
+type SavedView struct {
+	ID               uuid.UUID          `json:"id"`
+	OrgID            uuid.UUID          `json:"org_id"`
+	OwnerID          uuid.UUID          `json:"owner_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Query            []byte             `json:"query"`
+	Visibility       string             `json:"visibility"`
+	VisibilityTeamID pgtype.UUID        `json:"visibility_team_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+}
+
 type Session struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`
