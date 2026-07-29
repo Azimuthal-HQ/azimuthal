@@ -511,6 +511,19 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 
 	mountQueueResources(r, cfg, spaceGuard, readableGuard, writeFloor)
 
+	// Customer-portal configuration (agent side). Ordinary space-scoped
+	// routes: org membership, space readability, and manage_space enforced in
+	// the handler. Deliberately NOT under writeFloor — the floor is
+	// create_items, and manage_space sits well above it, so adding the floor
+	// would make the capability check unreachable for anybody it would refuse.
+	if cfg.PortalHandler != nil {
+		r.Route("/spaces/{spaceID}/portal", func(r chi.Router) {
+			r.Use(spaceGuard)
+			r.Use(readableGuard)
+			r.Mount("/", cfg.PortalHandler.AdminRoutes())
+		})
+	}
+
 	// Tickets
 	r.Route("/spaces/{spaceID}/tickets", func(r chi.Router) {
 		r.Use(spaceGuard)

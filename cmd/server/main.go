@@ -381,6 +381,13 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	})
 	portalHandler := portalapi.NewHandler(portalSvc).
 		WithAuditLogger(auditLog).
+		WithSpaceTypes(func(ctx context.Context, spaceID uuid.UUID) (string, error) {
+			sp, err := queries.GetSpaceByID(ctx, spaceID)
+			if err != nil {
+				return "", fmt.Errorf("resolving space type: %w", err)
+			}
+			return sp.Type, nil
+		}).
 		WithNotifier(func(args jobs.NotificationArgs) {
 			if err := notifEnqueuer.EnqueueNotification(context.Background(), args); err != nil {
 				slog.Warn("portal reply notification not enqueued", "error", err)

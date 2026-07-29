@@ -60,6 +60,13 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/invites/{token}": "public: invite inspection, token-authenticated",
 	"POST /api/v1/invites/accept": "public: invite acceptance, token-authenticated",
 
+	// Customer-portal configuration, AGENT side. Ordinary space-scoped routes
+	// with the capability enforced in the handler — the opposite of the
+	// requester routes below in every way that matters.
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/portal/":   "space-cap: manage_space in-handler",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/portal/":  "space-cap: manage_space in-handler",
+	"PATCH /api/v1/orgs/{orgID}/spaces/{spaceID}/portal/": "space-cap: manage_space in-handler",
+
 	// Customer portal, unauthenticated half. An external requester holds no
 	// account by design (migration 044), so these three cannot require one.
 	// Possession of the emailed magic-link token is the credential, exactly

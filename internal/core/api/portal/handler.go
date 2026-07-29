@@ -18,6 +18,7 @@
 package portal
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -37,6 +38,12 @@ type Handler struct {
 	svc      *portal.Service
 	auditLog audit.Logger
 	notifs   notifyFunc
+	// spaceTypes resolves a space's module, so the agent-side create route can
+	// refuse a portal on a Codex or Vector space. A function rather than a
+	// queries handle because that is the entire dependency — see
+	// SpaceOrgResolver in the router, which takes the same shape for the same
+	// reason.
+	spaceTypes func(ctx context.Context, spaceID uuid.UUID) (string, error)
 }
 
 // notifyFunc is the narrow shape the handler actually uses, so that wiring a
@@ -51,6 +58,13 @@ func NewHandler(svc *portal.Service) *Handler {
 // WithAuditLogger attaches an audit logger.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithSpaceTypes attaches the space-module resolver used by the agent-side
+// create route.
+func (h *Handler) WithSpaceTypes(f func(ctx context.Context, spaceID uuid.UUID) (string, error)) *Handler {
+	h.spaceTypes = f
 	return h
 }
 

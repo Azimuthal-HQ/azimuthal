@@ -231,7 +231,15 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		nil,
 		portal.Config{LinkTTL: time.Hour, DiscloseLink: true, BaseURL: "http://portal.test"},
 	)
-	portalHandler := portalapi.NewHandler(portalSvc).WithAuditLogger(auditLog)
+	portalHandler := portalapi.NewHandler(portalSvc).
+		WithAuditLogger(auditLog).
+		WithSpaceTypes(func(ctx context.Context, spaceID uuid.UUID) (string, error) {
+			sp, err := queries.GetSpaceByID(ctx, spaceID)
+			if err != nil {
+				return "", fmt.Errorf("resolving space type: %w", err)
+			}
+			return sp.Type, nil
+		})
 
 	cfg := api.RouterConfig{
 		Authenticator: authenticator,

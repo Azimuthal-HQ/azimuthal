@@ -37,6 +37,23 @@ func RequirePortalSession(svc *portal.Service) func(http.Handler) http.Handler {
 				return
 			}
 
+			// THE PORTAL IS RESOLVED FIRST, BEFORE THE CREDENTIAL.
+			//
+			// The URL's portal is the primary resource here, so "no such
+			// portal" has to answer the same way whoever is asking — and it
+			// must answer that way for a DISABLED portal too, which is how
+			// switching a portal off ends its outstanding sessions rather than
+			// waiting for them to expire (GetPortalByKey requires `enabled`).
+			//
+			// Authenticating first would answer 401 in that case, which is
+			// both less accurate and worse behaviour: it sends the requester
+			// to a sign-in page that cannot work either.
+			p, err := svc.LookupPortal(r.Context(), chi.URLParam(r, "portalKey"))
+			if err != nil {
+				respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "portal not found")
+				return
+			}
+
 			token := bearerToken(r)
 			if token == "" {
 				respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "sign in to continue")
@@ -49,12 +66,15 @@ func RequirePortalSession(svc *portal.Service) func(http.Handler) http.Handler {
 				return
 			}
 
-			// The URL's portal must be the session's portal.
-			key := chi.URLParam(r, "portalKey")
-			p, err := svc.LookupPortal(r.Context(), key)
-			if err != nil || p.ID != sess.PortalID {
-				// 404, not 403: a session for another portal must not learn
-				// that this portal exists.
+			// The URL's portal must be the session's portal. Without this a
+			// magic link issued for one service desk would authenticate
+			// against every portal in the deployment, and the request scoping
+			// downstream — which trusts the session's SpaceID — would serve
+			// one portal's requester out of another portal's space.
+			//
+			// 404 rather than 403: a session for another portal must not learn
+			// that this one exists.
+			if p.ID != sess.PortalID {
 				respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "portal not found")
 				return
 			}

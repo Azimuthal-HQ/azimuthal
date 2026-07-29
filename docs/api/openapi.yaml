@@ -1138,6 +1138,26 @@ components:
         valid:
           type: boolean
       type: object
+    portal.adminPortalView:
+      properties:
+        enabled:
+          type: boolean
+        intro:
+          type: string
+        name:
+          type: string
+        portal_id:
+          type: string
+        portal_key:
+          type: string
+      type: object
+    portal.createPortalRequest:
+      properties:
+        intro:
+          type: string
+        name:
+          type: string
+      type: object
     portal.messageView:
       properties:
         author:
@@ -1235,6 +1255,11 @@ components:
           $ref: '#/components/schemas/portal.requesterV'
         session_token:
           type: string
+      type: object
+    portal.setEnabledRequest:
+      properties:
+        enabled:
+          type: boolean
       type: object
     projects.boardColumnRequest:
       properties:
@@ -4323,6 +4348,145 @@ paths:
       summary: Remove space member
       tags:
       - members
+  /orgs/{orgID}/spaces/{spaceID}/portal:
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.adminPortalView'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing manage_space
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No portal on this space
+      security:
+      - BearerAuth: []
+      summary: Get a space's customer portal configuration
+      tags:
+      - portal
+    patch:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/portal.setEnabledRequest'
+              description: Desired state
+              summary: request
+        description: Desired state
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.adminPortalView'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing manage_space
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No portal on this space
+      security:
+      - BearerAuth: []
+      summary: Enable or disable a space's customer portal
+      tags:
+      - portal
+    post:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/portal.createPortalRequest'
+              description: Portal name and introduction
+              summary: request
+        description: Portal name and introduction
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.adminPortalView'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing name, or not a Beacon space
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing manage_space
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: This space already has a portal
+      security:
+      - BearerAuth: []
+      summary: Enable the customer portal on a Beacon space
+      tags:
+      - portal
   /orgs/{orgID}/spaces/{spaceID}/projects/backlog:
     get:
       description: Returns the unassigned backlog items for a space

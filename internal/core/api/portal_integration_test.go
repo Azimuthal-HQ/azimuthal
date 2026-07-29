@@ -542,3 +542,101 @@ func topLevelKeys(t *testing.T, body []byte) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// ── The agent-side capability gate ───────────────────────────────────────
+
+// TestPortalConfig_ContributorIsRefusedSpaceAdminIsAllowed is the
+// capability-gate pair, with the persona CLAUDE.md §2 requires.
+//
+// A viewer would prove nothing here. The space subtree's write floor is
+// create_items, which already refuses viewers upstream, so a "viewer is
+// refused" assertion measures the middleware and would pass with the
+// in-handler access.Can(CapManageSpace) deleted. A CONTRIBUTOR clears the
+// floor and lacks manage_space, so they isolate this gate and nothing else.
+//
+// FAILS-BEFORE: delete the access.Can(CapManageSpace) check in
+// requireManageSpace and every "refused" case below turns into a success.
+//
+// Note the portal config routes deliberately do NOT carry the write floor —
+// manage_space sits well above create_items, so adding the floor would make
+// this gate unreachable for anybody it would refuse, and the test would then
+// be measuring the floor again.
+func TestPortalConfig_ContributorIsRefusedSpaceAdminIsAllowed(t *testing.T) {
+	ts := newTestServer(t)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	path := "/api/v1/orgs/" + ts.OrgID.String() + "/spaces/" + space.ID.String() + "/portal"
+
+	contributor := personaOn(t, ts, space.ID, "contributor")
+	spaceAdmin := personaOn(t, ts, space.ID, "space_admin")
+	body := map[string]string{"name": "Acme Support", "intro": "How can we help?"}
+
+	// Persona validation first: the contributor must be able to do the
+	// baseline thing, or the refusal below is measuring the wrong check.
+	t.Run("contributor clears the space floor", func(t *testing.T) {
+		res := ts.getAs(t, contributor, "/api/v1/orgs/"+ts.OrgID.String()+"/spaces/"+space.ID.String()+"/tickets")
+		require.Equal(t, http.StatusOK, res.StatusCode,
+			"the contributor persona must be able to read the space, or this test proves nothing")
+	})
+
+	t.Run("contributor cannot enable a portal", func(t *testing.T) {
+		res := ts.postAs(t, contributor, path, body)
+		require.Equal(t, http.StatusForbidden, res.StatusCode,
+			"a contributor is past the write floor and short of manage_space: %s", res.Body)
+	})
+
+	t.Run("space admin can enable a portal", func(t *testing.T) {
+		res := ts.postAs(t, spaceAdmin, path, body)
+		require.Equal(t, http.StatusCreated, res.StatusCode, string(res.Body))
+		requireSnakeCaseKeys(t, res.Body)
+	})
+
+	t.Run("contributor cannot toggle it", func(t *testing.T) {
+		res := ts.patchAs(t, contributor, path, map[string]bool{"enabled": false})
+		require.Equal(t, http.StatusForbidden, res.StatusCode)
+	})
+
+	t.Run("contributor cannot read the configuration", func(t *testing.T) {
+		// The portal key is the URL an outsider uses. A contributor having it
+		// is not a disaster, but manage_space owns the space's configuration
+		// and this route is part of it.
+		res := ts.getAs(t, contributor, path)
+		require.Equal(t, http.StatusForbidden, res.StatusCode)
+	})
+}
+
+// TestPortalConfig_RefusedOnNonBeaconSpaces pins the module restriction.
+// Codex and Vector spaces have no requesters and no tickets to raise.
+func TestPortalConfig_RefusedOnNonBeaconSpaces(t *testing.T) {
+	ts := newTestServer(t)
+	for _, module := range []string{"codex", "vector"} {
+		t.Run(module, func(t *testing.T) {
+			space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, module)
+			res := ts.post(t,
+				"/api/v1/orgs/"+ts.OrgID.String()+"/spaces/"+space.ID.String()+"/portal",
+				map[string]string{"name": "Nope"}, true)
+			require.Equal(t, http.StatusBadRequest, res.StatusCode, string(res.Body))
+			requireErrorCode(t, res, http.StatusBadRequest, "VALIDATION_ERROR")
+		})
+	}
+}
+
+// TestPortalConfig_DisablingEndsLiveSessions is the consequence of
+// GetPortalByID requiring `enabled`.
+//
+// FAILS-BEFORE: drop `AND p.enabled` from GetPortalByID and a requester whose
+// portal was switched off keeps working until their token expires.
+func TestPortalConfig_DisablingEndsLiveSessions(t *testing.T) {
+	f := newPortalFixture(t)
+	token := f.signIn(t, "customer@example.com")
+
+	res := f.ts.requestAs(t, token, http.MethodGet, "/api/v1/portal/"+f.portalKey+"/my/requests", nil)
+	require.Equal(t, http.StatusOK, res.StatusCode, "persona must work before the portal is disabled")
+
+	_, err := f.ts.DB.Pool.Exec(context.Background(),
+		`UPDATE service_desk_portals SET enabled = false WHERE portal_key = $1`, f.portalKey)
+	require.NoError(t, err)
+
+	res = f.ts.requestAs(t, token, http.MethodGet, "/api/v1/portal/"+f.portalKey+"/my/requests", nil)
+	require.Equal(t, http.StatusNotFound, res.StatusCode,
+		"disabling a portal must end its outstanding sessions, not wait for them to expire")
+}
