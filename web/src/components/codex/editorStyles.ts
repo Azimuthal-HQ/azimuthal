@@ -7,6 +7,26 @@
  * diverge. Everything here is a shell token: no hard-coded hex, so the
  * document follows the theme instead of pinning itself to one.
  */
+/**
+ * The document's measure: fluid, with a clamp.
+ *
+ * One string for the reader, the editor and the drafts list, for the same
+ * reason `editorSurfaceClasses` is one string — the reading view and the
+ * editing view are the same document, and a width that differed between them
+ * would mean every line broke somewhere else the moment you pressed Edit.
+ * Before this, they differed as much as two surfaces can: the reader was pinned
+ * to a fixed 76ch and the editor had no constraint at all.
+ *
+ * `w-full` with a `max-width` is what makes it fluid rather than fixed — the
+ * element takes the width it is given and stops growing at the clamp, which is
+ * a CSS property rather than a resize listener, so it reflows during a drag
+ * with nothing subscribed to anything.
+ *
+ * The clamp itself is `--codex-measure` in `tokens.css`, which is where the
+ * number and the reasoning for it live.
+ */
+export const codexMeasureClasses = 'mx-auto w-full max-w-[var(--codex-measure)]';
+
 export const editorSurfaceClasses = [
   '[&_.ProseMirror]:outline-none',
   '[&_.ProseMirror]:text-[var(--color-text)]',

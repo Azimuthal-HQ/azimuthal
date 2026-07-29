@@ -12,6 +12,7 @@ import {
   NODE_UNKNOWN_CONTENT,
   NODE_UNKNOWN_INLINE,
   PRESERVED_ATTRS,
+  PROJECTED_ATTRS,
   preservedIdsIn,
   type CodexDoc,
 } from './schema';
@@ -45,6 +46,10 @@ interface Manifest {
   marks: Record<string, string>;
   inlineNodes: string[];
   inlineContentNodes: string[];
+  projectedAttrs: {
+    nodes: Record<string, string[]>;
+    marks: Record<string, string[]>;
+  };
 }
 
 function readManifest(): Manifest {
@@ -93,6 +98,38 @@ describe('the Codex document schema mirrors the Go manifest', () => {
     }
     for (const name of CODEX_INLINE_CONTENT_NODES) {
       expect(CODEX_NODES).toContain(name);
+    }
+  });
+
+  it('mirrors the attribute names the server projects, in both directions', () => {
+    // The second half of the vocabulary, guarding a quieter failure than the
+    // type lists above. A type that drifts either fails loudly or destroys
+    // content; an attribute that drifts does neither — the page publishes, the
+    // document stores correctly, and internal/core/wiki/doc/text.go looks for a
+    // name that is no longer there, so the content silently stops being
+    // findable.
+    const manifest = readManifest();
+    const flatten = (source: Record<string, readonly string[]>, kind: string) =>
+      Object.entries(source)
+        .flatMap(([type, attrs]) => attrs.map((attr) => `${kind}.${type}.${attr}`))
+        .sort();
+
+    expect(flatten(PROJECTED_ATTRS.nodes, 'node')).toEqual(
+      flatten(manifest.projectedAttrs.nodes, 'node'),
+    );
+    expect(flatten(PROJECTED_ATTRS.marks, 'mark')).toEqual(
+      flatten(manifest.projectedAttrs.marks, 'mark'),
+    );
+  });
+
+  it('projects attributes only of types that are in the vocabulary', () => {
+    // A projected attribute on a type nobody registers describes a projection
+    // that can never run. The Go side panics at init on the same condition.
+    for (const type of Object.keys(PROJECTED_ATTRS.nodes)) {
+      expect(CODEX_NODES, `projected node ${type}`).toContain(type);
+    }
+    for (const type of Object.keys(PROJECTED_ATTRS.marks)) {
+      expect(CODEX_MARKS, `projected mark ${type}`).toContain(type);
     }
   });
 });

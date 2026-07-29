@@ -33,8 +33,12 @@ import type { AnyExtension } from '@tiptap/core';
 import { lowlight } from '../lowlight';
 import { CodeBlockView } from '../nodeviews/CodeBlockView';
 import { ImageView } from '../nodeviews/ImageView';
+import { LINK_ATTRS } from '../../../lib/codex/schema';
 import { macroExtensions } from './macros';
 import { preservationExtensions } from './preservation';
+import { InlineTag } from './tags';
+import { wikilinkExtension } from './wikilinks';
+import type { WikilinkOptions } from './wikilinks';
 
 /**
  * The image node, extended with the attribute the document model addresses an
@@ -87,11 +91,35 @@ export const CodexLink = Link.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
-      page_id: {
+      [LINK_ATTRS.pageId]: {
         default: null,
         parseHTML: (el: HTMLElement) => el.getAttribute('data-page-id'),
         renderHTML: (attrs: Record<string, unknown>) =>
-          attrs.page_id == null ? {} : { 'data-page-id': String(attrs.page_id) },
+          attrs[LINK_ATTRS.pageId] == null
+            ? {}
+            : { 'data-page-id': String(attrs[LINK_ATTRS.pageId]) },
+      },
+      /**
+       * The third state: an UNRESOLVED wikilink naming a page that does not
+       * exist yet. Not a variant of the other two — a link with an `href`
+       * leaves Azimuthal, one with a `page_id` resolves to a page, and this one
+       * has no destination at all until somebody creates the page.
+       *
+       * `data-target-title` is what the reading surface keys the create-on-click
+       * offer off, and `data-unresolved` is what the stylesheet keys the dashed,
+       * dimmed rendering off — a class would be lost the moment the mark was
+       * re-rendered from its attributes.
+       */
+      [LINK_ATTRS.targetTitle]: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-target-title'),
+        renderHTML: (attrs: Record<string, unknown>) =>
+          attrs[LINK_ATTRS.targetTitle] == null
+            ? {}
+            : {
+                'data-target-title': String(attrs[LINK_ATTRS.targetTitle]),
+                'data-unresolved': 'true',
+              },
       },
     };
   },
@@ -111,7 +139,7 @@ export const CodexLink = Link.extend({
  * defect that only shows up when both are mounted at once — which the reading
  * surface and the editor do during a publish.
  */
-export function codexExtensions(): AnyExtension[] {
+export function codexExtensions(options: CodexExtensionOptions = {}): AnyExtension[] {
   return [
     StarterKit.configure({
       // Replaced below by the highlighted, language-picking variant.
@@ -127,9 +155,26 @@ export function codexExtensions(): AnyExtension[] {
     TaskItem.configure({ nested: true }),
     TableKit.configure({ table: { resizable: true } }),
     CodexImage,
+    InlineTag,
+    // Registers no node or mark type of its own — `[[…]]` produces the link
+    // mark and `![[…]]` the pageInclude macro — so it is safe to include
+    // unconditionally, including in the reading surface and in the schema drift
+    // guard, both of which pass no options at all.
+    wikilinkExtension(options.wikilinks),
     ...macroExtensions,
     ...preservationExtensions,
   ];
+}
+
+/**
+ * What a caller can hand the extension list.
+ *
+ * Only the editor passes anything. The reading surface builds the same list
+ * deliberately — a reader must see exactly what the author saw — and needs none
+ * of it, because input rules are inert when the editor is not editable.
+ */
+export interface CodexExtensionOptions {
+  wikilinks?: Partial<WikilinkOptions>;
 }
 
 /**

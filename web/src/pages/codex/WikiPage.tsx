@@ -26,6 +26,7 @@ import { ShareDialog } from '../../components/ShareDialog';
 import { MovePageDialog } from '../../components/MovePageDialog';
 import { CodexDocRenderer } from '../../components/codex/CodexDocRenderer';
 import { PageEditor } from '../../components/codex/PageEditor';
+import { codexMeasureClasses } from '../../components/codex/editorStyles';
 
 // ---------------------------------------------------------------------------
 // Revisions panel
@@ -345,22 +346,29 @@ export function WikiPage() {
                     </Button>
                   </div>
                 ) : pageDocument ? (
-                  <PageEditor
-                    key={activeId ?? ''}
-                    spaceId={spaceId}
-                    pageId={activeId ?? ''}
-                    document={pageDocument}
-                    pages={pages}
-                    onClose={() => setEditMode(false)}
-                    onReloadDocument={async () => (await refetchDocument()).data}
-                  />
+                  /* The same measure the reading view uses, and that is the
+                     point of it: pressing Edit must not reflow every line of
+                     the document. See codexMeasureClasses. */
+                  <div className={codexMeasureClasses} data-testid="codex-measure">
+                    <PageEditor
+                      key={activeId ?? ''}
+                      spaceId={spaceId}
+                      pageId={activeId ?? ''}
+                      document={pageDocument}
+                      pages={pages}
+                      onClose={() => setEditMode(false)}
+                      onReloadDocument={async () => (await refetchDocument()).data}
+                    />
+                  </div>
                 ) : null
               ) : (
                 <>
-                  {/* Reading surface: a bounded measure — full-width prose
-                      is unreadable past ~75ch. Scale per the dashboards
+                  {/* Reading surface. Fluid within a clamp: it fills whatever
+                      width the window gives it and reflows live, stopping at
+                      --codex-measure so an ultra-wide monitor does not produce
+                      unreadable line lengths. Scale per the dashboards
                       concept: 22px title, 1.78 body line-height. */}
-                  <div className="mx-auto w-full max-w-[76ch]">
+                  <div className={codexMeasureClasses} data-testid="codex-measure">
                   <div className="mb-6">
                     <h1
                       data-testid="wiki-page-title"

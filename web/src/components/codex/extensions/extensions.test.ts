@@ -1,7 +1,12 @@
 import { getSchema } from '@tiptap/core';
 import { describe, expect, it } from 'vitest';
 
-import { CODEX_MARKS, CODEX_NODES, PRESERVED_ATTRS } from '../../../lib/codex/schema';
+import {
+  CODEX_MARKS,
+  CODEX_NODES,
+  PRESERVED_ATTRS,
+  PROJECTED_ATTRS,
+} from '../../../lib/codex/schema';
 import { codexExtensions, registeredTypes } from './index';
 
 /**
@@ -72,20 +77,32 @@ describe('the editor registers exactly the schema vocabulary', () => {
     // that feeds the generated search_vector. Renaming one here fails nothing
     // at runtime — the page publishes, the document stores correctly, and the
     // content quietly stops being findable.
-    const projected: [string, string][] = [
-      ['panel', 'kind'],
-      ['expand', 'title'],
-      ['statusLozenge', 'text'],
-      ['pageInclude', 'page_id'],
-      ['codeBlock', 'language'],
-      ['heading', 'level'],
-      ['image', 'attachment_id'],
-    ];
-    for (const [node, attr] of projected) {
-      expect(Object.keys(schema.nodes[node].spec.attrs ?? {}), `${node}.${attr}`).toContain(attr);
+    //
+    // The list is no longer written out here. It is PROJECTED_ATTRS, which
+    // schema.test.ts holds equal to the Go manifest — so this test asks the
+    // real ProseMirror schema whether it declares what the manifest promises,
+    // rather than whether it declares a second list somebody kept in step by
+    // hand. A hand-kept copy is exactly the drift this chain exists to catch.
+    for (const [node, attrs] of Object.entries(PROJECTED_ATTRS.nodes)) {
+      const declared = Object.keys(schema.nodes[node]?.spec.attrs ?? {});
+      for (const attr of attrs) {
+        expect(declared, `${node}.${attr}`).toContain(attr);
+      }
     }
-    // The link mark falls back to page_id when it has no href, so an internal
-    // link still projects as `page:<id>` rather than an empty target.
-    expect(Object.keys(schema.marks.link.spec.attrs ?? {})).toContain('page_id');
+    for (const [mark, attrs] of Object.entries(PROJECTED_ATTRS.marks)) {
+      const declared = Object.keys(schema.marks[mark]?.spec.attrs ?? {});
+      for (const attr of attrs) {
+        expect(declared, `${mark}.${attr}`).toContain(attr);
+      }
+    }
+  });
+
+  it('makes the inline tag an inline atom', () => {
+    // A tag whose interior could be typed into would let an author edit the
+    // label out from under the token, producing a document whose visible text
+    // and whose stored `label` attribute disagree — and the label is what the
+    // server aggregates into the page's tags at publish.
+    expect(schema.nodes.inlineTag.isAtom).toBe(true);
+    expect(schema.nodes.inlineTag.isInline).toBe(true);
   });
 });

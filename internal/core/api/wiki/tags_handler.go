@@ -69,9 +69,15 @@ func (h *Handler) ListPagesWithTag(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
 		return
 	}
-	slug := strings.TrimSpace(chi.URLParam(r, "slug"))
+	// Slugified rather than taken verbatim, so the path segment may be either a
+	// slug or the label a person typed. Slugify is idempotent, so a real slug
+	// passes through unchanged — and the client never has to reimplement the
+	// slug convention to build a link to a tag it only knows the label of. A
+	// second slugifier in TypeScript is exactly the kind of quiet cross-language
+	// drift the schema manifest exists to prevent, and this avoids needing one.
+	slug := tags.Slugify(strings.TrimSpace(chi.URLParam(r, "slug")))
 	if slug == "" {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "a tag slug is required")
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "a tag name is required")
 		return
 	}
 
