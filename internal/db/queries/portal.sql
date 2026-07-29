@@ -40,9 +40,6 @@ RETURNING *;
 -- name: GetRequesterByID :one
 SELECT * FROM requesters WHERE id = $1;
 
--- name: GetRequesterByEmail :one
-SELECT * FROM requesters WHERE org_id = $1 AND lower(email) = lower($2);
-
 -- GetRequesterState is the portal guard's per-request revocation read — the
 -- requester-side counterpart of GetUserAuthState, and it must stay exactly
 -- one indexed primary-key lookup for the same reason (spec §2.5 case 23).
@@ -53,12 +50,6 @@ SELECT is_active, session_generation FROM requesters WHERE id = $1;
 -- instantly, by moving the generation the guard compares against.
 -- name: BumpRequesterSessions :execrows
 UPDATE requesters SET session_generation = session_generation + 1 WHERE id = $1;
-
--- name: SetRequesterActive :execrows
-UPDATE requesters
-SET is_active = $2,
-    session_generation = CASE WHEN $2 THEN session_generation ELSE session_generation + 1 END
-WHERE id = $1;
 
 -- ── Portals ──────────────────────────────────────────────────────────────
 

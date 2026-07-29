@@ -381,32 +381,6 @@ func (q *Queries) GetPortalRequest(ctx context.Context, arg GetPortalRequestPara
 	return i, err
 }
 
-const getRequesterByEmail = `-- name: GetRequesterByEmail :one
-SELECT id, org_id, email, display_name, is_active, session_generation, created_at, updated_at, last_seen_at FROM requesters WHERE org_id = $1 AND lower(email) = lower($2)
-`
-
-type GetRequesterByEmailParams struct {
-	OrgID uuid.UUID `json:"org_id"`
-	Lower string    `json:"lower"`
-}
-
-func (q *Queries) GetRequesterByEmail(ctx context.Context, arg GetRequesterByEmailParams) (Requester, error) {
-	row := q.db.QueryRow(ctx, getRequesterByEmail, arg.OrgID, arg.Lower)
-	var i Requester
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.Email,
-		&i.DisplayName,
-		&i.IsActive,
-		&i.SessionGeneration,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.LastSeenAt,
-	)
-	return i, err
-}
-
 const getRequesterByID = `-- name: GetRequesterByID :one
 SELECT id, org_id, email, display_name, is_active, session_generation, created_at, updated_at, last_seen_at FROM requesters WHERE id = $1
 `
@@ -626,26 +600,6 @@ func (q *Queries) SetPortalEnabled(ctx context.Context, arg SetPortalEnabledPara
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const setRequesterActive = `-- name: SetRequesterActive :execrows
-UPDATE requesters
-SET is_active = $2,
-    session_generation = CASE WHEN $2 THEN session_generation ELSE session_generation + 1 END
-WHERE id = $1
-`
-
-type SetRequesterActiveParams struct {
-	ID       uuid.UUID `json:"id"`
-	IsActive bool      `json:"is_active"`
-}
-
-func (q *Queries) SetRequesterActive(ctx context.Context, arg SetRequesterActiveParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setRequesterActive, arg.ID, arg.IsActive)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const upsertRequester = `-- name: UpsertRequester :one

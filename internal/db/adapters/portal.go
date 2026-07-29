@@ -126,18 +126,6 @@ func (a *PortalAdapter) UpsertRequester(ctx context.Context, orgID uuid.UUID, em
 	return requesterFromRow(row), nil
 }
 
-// RequesterByEmail returns the requester for (org, email).
-func (a *PortalAdapter) RequesterByEmail(ctx context.Context, orgID uuid.UUID, email string) (portal.Requester, error) {
-	row, err := a.q.GetRequesterByEmail(ctx, generated.GetRequesterByEmailParams{OrgID: orgID, Lower: email})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return portal.Requester{}, portal.ErrRequestNotFound
-	}
-	if err != nil {
-		return portal.Requester{}, fmt.Errorf("portal adapter get requester by email: %w", err)
-	}
-	return requesterFromRow(row), nil
-}
-
 // RequesterByID returns one requester.
 func (a *PortalAdapter) RequesterByID(ctx context.Context, id uuid.UUID) (portal.Requester, error) {
 	row, err := a.q.GetRequesterByID(ctx, id)

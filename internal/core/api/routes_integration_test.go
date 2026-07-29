@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,6 +88,12 @@ type testServer struct {
 	// a test can plant an object the upload gate would never have accepted —
 	// which is the only way to reach the serve path's own type check.
 	AvatarBlobs *storage.MemoryStore
+	// PortalNotifications records what the portal enqueued. cmd/server/main.go
+	// passes a real notifier, so the harness must pass one too or the reply
+	// notification would be dark — non-nil and never exercised, which is the
+	// softer version of the dark-dependency problem and the exact shape the
+	// comments handler has been in since it was written.
+	PortalNotifications *portalNotificationRecorder
 }
 
 // tokenFor issues an access token for an arbitrary user of the org —
@@ -231,8 +238,10 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		nil,
 		portal.Config{LinkTTL: time.Hour, DiscloseLink: true, BaseURL: "http://portal.test"},
 	)
+	portalNotifs := &portalNotificationRecorder{}
 	portalHandler := portalapi.NewHandler(portalSvc).
 		WithAuditLogger(auditLog).
+		WithNotifier(portalNotifs.record).
 		WithSpaceTypes(func(ctx context.Context, spaceID uuid.UUID) (string, error) {
 			sp, err := queries.GetSpaceByID(ctx, spaceID)
 			if err != nil {
@@ -301,6 +310,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		Token: pair.AccessToken, WorkflowAdapter: workflowAdapter,
 		JWT: jwtSvc, TeamService: teamSvc, GrantService: grantSvc,
 		RouterCfg: cfg, AuditLog: auditLog, AvatarBlobs: avatarBlobs,
+		PortalNotifications: portalNotifs,
 	}
 }
 
@@ -2002,4 +2012,27 @@ func TestIntegration_Projects_RankItem(t *testing.T) {
 	}, true)
 	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusNoContent || r.StatusCode == http.StatusNotFound,
 		"rank item: %d %s", r.StatusCode, r.Body)
+}
+
+// portalNotificationRecorder captures the notifications the portal enqueues, so
+// a test can assert that a customer reply actually reaches the assignee rather
+// than assuming the wiring is live.
+type portalNotificationRecorder struct {
+	mu   sync.Mutex
+	args []jobs.NotificationArgs
+}
+
+func (r *portalNotificationRecorder) record(a jobs.NotificationArgs) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.args = append(r.args, a)
+}
+
+// All returns a copy of what was recorded.
+func (r *portalNotificationRecorder) All() []jobs.NotificationArgs {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]jobs.NotificationArgs, len(r.args))
+	copy(out, r.args)
+	return out
 }

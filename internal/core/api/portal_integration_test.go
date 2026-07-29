@@ -640,3 +640,288 @@ func TestPortalConfig_DisablingEndsLiveSessions(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, res.StatusCode,
 		"disabling a portal must end its outstanding sessions, not wait for them to expire")
 }
+
+// ── The reply round trip, which the security tests above never exercise ──
+
+// TestPortal_RequesterReplyIsPublicAndReachesBothSides is the happy path the
+// earlier tests deliberately skip: they assert that a reply to somebody ELSE's
+// request is refused, which leaves the successful path — the whole point of the
+// feature — unexercised. This closes that.
+//
+// It asserts the reply from both ends, because "public" is a claim about two
+// different readers: the customer must see their own words come back, and the
+// agent must see them in the internal thread marked as the customer's.
+func TestPortal_RequesterReplyIsPublicAndReachesBothSides(t *testing.T) {
+	f := newPortalFixture(t)
+	token := f.signIn(t, "chatty@example.com")
+	ref := f.submit(t, token, "My widget is broken")
+
+	res := f.ts.requestAs(t, token, http.MethodPost,
+		"/api/v1/portal/"+f.portalKey+"/my/requests/"+ref+"/replies",
+		map[string]string{"body": "It started after the update."})
+	require.Equal(t, http.StatusCreated, res.StatusCode, string(res.Body))
+	requireSnakeCaseKeys(t, res.Body)
+	require.Equal(t,
+		[]string{"author", "body", "created_at", "from_requester", "id"},
+		topLevelKeys(t, res.Body),
+		"the portal's message shape changed — an external customer reads every field here")
+
+	var created struct {
+		FromRequester bool   `json:"from_requester"`
+		Body          string `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body, &created))
+	require.True(t, created.FromRequester)
+	require.Equal(t, "It started after the update.", created.Body)
+
+	// The customer sees it in their own thread.
+	res = f.ts.requestAs(t, token, http.MethodGet,
+		"/api/v1/portal/"+f.portalKey+"/my/requests/"+ref, nil)
+	require.Contains(t, string(res.Body), "It started after the update.")
+
+	// The AGENT sees it in the internal thread, attributed to the requester and
+	// marked public. This is the half the LEFT JOIN in ListCommentsByEntity
+	// exists for: the previous INNER JOIN on users would have dropped it
+	// silently, leaving the agent looking at a conversation that appeared to
+	// have no customer in it.
+	res = f.ts.get(t,
+		"/api/v1/orgs/"+f.ts.OrgID.String()+"/spaces/"+f.spaceID.String()+"/tickets/"+ref+"/comments", true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+
+	var thread []struct {
+		AuthorID      *string `json:"author_id"`
+		AuthorName    string  `json:"author_name"`
+		FromRequester bool    `json:"from_requester"`
+		Visibility    string  `json:"visibility"`
+		Body          string  `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body, &thread))
+	require.Len(t, thread, 1, "the agent thread must contain the customer's reply")
+	require.Equal(t, "It started after the update.", thread[0].Body)
+	require.True(t, thread[0].FromRequester)
+	require.Equal(t, "public", thread[0].Visibility)
+	require.Nil(t, thread[0].AuthorID, "a requester has no users row, so author_id is null")
+	require.Equal(t, "chatty@example.com", thread[0].AuthorName,
+		"the requester's name must resolve through the LEFT JOIN on requesters")
+}
+
+// TestPortal_ReplyNotifiesTheAssignee covers the notification this phase wired.
+//
+// It matters more than a line of coverage: the comments handler has held a
+// NotificationEnqueuer since it was written, main.go wires a live queue into
+// it, and it has never been read — so creating a comment notifies nobody. The
+// portal deliberately does not inherit that, and this is what proves it.
+//
+// FAILS-BEFORE: delete the h.notifyAssignee call in Reply and this fails.
+func TestPortal_ReplyNotifiesTheAssignee(t *testing.T) {
+	f := newPortalFixture(t)
+	token := f.signIn(t, "customer@example.com")
+	ref := f.submit(t, token, "Needs an agent")
+
+	// Unassigned first: a reply must not invent a recipient.
+	res := f.ts.requestAs(t, token, http.MethodPost,
+		"/api/v1/portal/"+f.portalKey+"/my/requests/"+ref+"/replies",
+		map[string]string{"body": "anyone there?"})
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+	require.Empty(t, f.ts.PortalNotifications.All(),
+		"an unassigned request has nobody to notify")
+
+	// Now assign it and reply again.
+	_, err := f.ts.DB.Pool.Exec(context.Background(),
+		`UPDATE tickets SET assignee_id = $2 WHERE id = $1`, uuid.MustParse(ref), f.ts.UserID)
+	require.NoError(t, err)
+
+	res = f.ts.requestAs(t, token, http.MethodPost,
+		"/api/v1/portal/"+f.portalKey+"/my/requests/"+ref+"/replies",
+		map[string]string{"body": "still broken"})
+	require.Equal(t, http.StatusCreated, res.StatusCode)
+
+	sent := f.ts.PortalNotifications.All()
+	require.Len(t, sent, 1, "an assigned request must notify its assignee exactly once")
+	require.Equal(t, f.ts.UserID.String(), sent[0].UserID)
+	require.Equal(t, "portal.reply", sent[0].EventKind)
+	require.Equal(t, ref, sent[0].ResourceID)
+	require.Equal(t, "ticket", sent[0].EntityKind)
+	require.Equal(t, f.spaceID.String(), sent[0].SpaceID)
+	// The notification is internal, so it MAY name the space — but it must not
+	// carry the customer's words, which the agent reads in the thread itself.
+	require.NotContains(t, sent[0].Message, "still broken")
+}
+
+// TestPortal_SignOutRevokesEverySession covers the route, and the difference
+// between it and the internal /auth/logout.
+//
+// FAILS-BEFORE: make SignOut a no-op and this fails. Note that mirroring
+// /auth/logout — which revokes database sessions production never creates and
+// leaves the caller's JWT valid — would ALSO fail it, which is the point: a
+// cosmetic sign-out is what this test exists to refuse.
+func TestPortal_SignOutRevokesEverySession(t *testing.T) {
+	f := newPortalFixture(t)
+	first := f.signIn(t, "leaving@example.com")
+	second := f.signIn(t, "leaving@example.com") // a second device
+
+	res := f.ts.requestAs(t, first, http.MethodPost,
+		"/api/v1/portal/"+f.portalKey+"/my/auth/sign-out", nil)
+	require.Equal(t, http.StatusNoContent, res.StatusCode)
+
+	for name, tok := range map[string]string{"the session that signed out": first, "the other device": second} {
+		res := f.ts.requestAs(t, tok, http.MethodGet, "/api/v1/portal/"+f.portalKey+"/my/requests", nil)
+		require.Equal(t, http.StatusUnauthorized, res.StatusCode,
+			"%s must be revoked: signing out bumps the generation, it does not just drop one token", name)
+	}
+}
+
+// TestPortal_StatusIsTranslatedNotEchoed walks every status the portal can
+// meet, including a WORKFLOW STATE NAME.
+//
+// tickets.status has no database CHECK and the workflow transition route writes
+// targetState.Name straight into it, so the portal cannot assume the four Go
+// constants. Anything unrecognised must fall through to a generic value: a
+// customer seeing "In progress" is a small loss, a customer seeing "Awaiting
+// legal sign-off" is a leak of exactly the internal process this surface exists
+// to withhold.
+//
+// FAILS-BEFORE: return the raw status from requesterStatus and the last case
+// fails.
+func TestPortal_StatusIsTranslatedNotEchoed(t *testing.T) {
+	f := newPortalFixture(t)
+	token := f.signIn(t, "customer@example.com")
+	ref := f.submit(t, token, "Track my status")
+
+	for _, c := range []struct{ internal, shown string }{
+		{"open", "Received"},
+		{"in_progress", "In progress"},
+		{"resolved", "Resolved"},
+		{"closed", "Closed"},
+		{"Awaiting legal sign-off", "In progress"},
+	} {
+		t.Run(c.internal, func(t *testing.T) {
+			_, err := f.ts.DB.Pool.Exec(context.Background(),
+				`UPDATE tickets SET status = $2 WHERE id = $1`, uuid.MustParse(ref), c.internal)
+			require.NoError(t, err)
+
+			res := f.ts.requestAs(t, token, http.MethodGet,
+				"/api/v1/portal/"+f.portalKey+"/my/requests/"+ref, nil)
+			require.Equal(t, http.StatusOK, res.StatusCode)
+			require.Contains(t, string(res.Body), `"status":"`+c.shown+`"`)
+			if c.internal != c.shown {
+				require.NotContains(t, string(res.Body), c.internal,
+					"the internal status string must not reach the customer")
+			}
+		})
+	}
+}
+
+// TestPortalConfig_ToggleKeepsTheKey covers the agent read/toggle pair.
+//
+// Re-enabling must not mint a new key: every URL already handed to a customer
+// would stop working, which is a support incident caused by an administrative
+// click.
+func TestPortalConfig_ToggleKeepsTheKey(t *testing.T) {
+	f := newPortalFixture(t)
+	path := "/api/v1/orgs/" + f.ts.OrgID.String() + "/spaces/" + f.spaceID.String() + "/portal"
+
+	res := f.ts.get(t, path, true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+	requireSnakeCaseKeys(t, res.Body)
+	var got struct {
+		Key     string `json:"portal_key"`
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body, &got))
+	require.Equal(t, f.portalKey, got.Key)
+	require.Equal(t, "Acme Support", got.Name)
+	require.True(t, got.Enabled)
+
+	// Disable, then re-enable.
+	res = f.ts.patch(t, path, map[string]bool{"enabled": false}, true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+	require.Contains(t, string(res.Body), `"enabled":false`)
+
+	// While disabled the public face is gone entirely.
+	res = f.ts.get(t, "/api/v1/portal/"+f.portalKey, false)
+	require.Equal(t, http.StatusNotFound, res.StatusCode)
+
+	res = f.ts.patch(t, path, map[string]bool{"enabled": true}, true)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.NoError(t, json.Unmarshal(res.Body, &got))
+	require.Equal(t, f.portalKey, got.Key,
+		"re-enabling must keep the key, or every URL already sent to a customer dies")
+	require.True(t, got.Enabled)
+
+	res = f.ts.get(t, "/api/v1/portal/"+f.portalKey, false)
+	require.Equal(t, http.StatusOK, res.StatusCode)
+}
+
+// TestPortalConfig_SecondPortalOnOneSpaceIsRefused pins the UNIQUE on space_id.
+// Two portals for one service desk would mean two public identities for the
+// same queue, and no way to tell which one a customer used.
+func TestPortalConfig_SecondPortalOnOneSpaceIsRefused(t *testing.T) {
+	f := newPortalFixture(t)
+	res := f.ts.post(t,
+		"/api/v1/orgs/"+f.ts.OrgID.String()+"/spaces/"+f.spaceID.String()+"/portal",
+		map[string]string{"name": "A second front door"}, true)
+	require.Equal(t, http.StatusConflict, res.StatusCode, string(res.Body))
+	requireErrorCode(t, res, http.StatusConflict, "CONFLICT")
+}
+
+// TestPortalConfig_RequiresAName covers the validation branch.
+func TestPortalConfig_RequiresAName(t *testing.T) {
+	ts := newTestServer(t)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	res := ts.post(t,
+		"/api/v1/orgs/"+ts.OrgID.String()+"/spaces/"+space.ID.String()+"/portal",
+		map[string]string{"name": "   "}, true)
+	require.Equal(t, http.StatusBadRequest, res.StatusCode, string(res.Body))
+	requireErrorCode(t, res, http.StatusBadRequest, "VALIDATION_ERROR")
+}
+
+// TestPortalConfig_GetOnASpaceWithNoPortal404s covers the absent case, which is
+// the default for every space in a deployment.
+func TestPortalConfig_GetOnASpaceWithNoPortal404s(t *testing.T) {
+	ts := newTestServer(t)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	res := ts.get(t, "/api/v1/orgs/"+ts.OrgID.String()+"/spaces/"+space.ID.String()+"/portal", true)
+	require.Equal(t, http.StatusNotFound, res.StatusCode)
+}
+
+// TestPortal_SubmitValidation covers the two refusals on the write paths.
+func TestPortal_SubmitValidation(t *testing.T) {
+	f := newPortalFixture(t)
+	token := f.signIn(t, "customer@example.com")
+	base := "/api/v1/portal/" + f.portalKey + "/my/requests"
+
+	res := f.ts.requestAs(t, token, http.MethodPost, base,
+		map[string]string{"summary": "  ", "description": "x"})
+	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+	requireErrorCode(t, res, http.StatusBadRequest, "VALIDATION_ERROR")
+
+	res = f.ts.requestAs(t, token, http.MethodPost,
+		base+"/"+uuid.New().String()+"/replies", map[string]string{"body": "  "})
+	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+}
+
+// TestPortal_RequestLinkRejectsAMalformedAddress is the one refusal on the
+// request-link path that is NOT collapsed into an indistinguishable 202: a
+// string that is not an address at all is a client bug, and accepting it would
+// silently create junk identities.
+func TestPortal_RequestLinkRejectsAMalformedAddress(t *testing.T) {
+	f := newPortalFixture(t)
+	res := f.ts.post(t, "/api/v1/portal/"+f.portalKey+"/auth/request-link",
+		map[string]string{"email": "not-an-address"}, false)
+	require.Equal(t, http.StatusBadRequest, res.StatusCode, string(res.Body))
+	requireErrorCode(t, res, http.StatusBadRequest, "VALIDATION_ERROR")
+}
+
+// TestPortal_UnknownPortalKeyIs404 on every public route.
+func TestPortal_UnknownPortalKeyIs404(t *testing.T) {
+	f := newPortalFixture(t)
+	bogus := "aaaaaaaaaaaaaaaaaaaa"
+
+	require.Equal(t, http.StatusNotFound, f.ts.get(t, "/api/v1/portal/"+bogus, false).StatusCode)
+	require.Equal(t, http.StatusNotFound, f.ts.post(t,
+		"/api/v1/portal/"+bogus+"/auth/request-link", map[string]string{"email": "a@b.com"}, false).StatusCode)
+	require.Equal(t, http.StatusUnauthorized, f.ts.post(t,
+		"/api/v1/portal/auth/redeem", map[string]string{"token": "nonsense"}, false).StatusCode)
+}

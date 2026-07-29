@@ -136,10 +136,6 @@ type Store interface {
 	// upsert is atomic so two simultaneous first-time link requests from one
 	// address cannot produce two identities.
 	UpsertRequester(ctx context.Context, orgID uuid.UUID, email, displayName string) (Requester, error)
-	// RequesterByEmail returns the requester for (org, email), or
-	// ErrRequestNotFound. Used by the agent-side lookup, never by the public
-	// link request, which must not distinguish known from unknown.
-	RequesterByEmail(ctx context.Context, orgID uuid.UUID, email string) (Requester, error)
 	// RequesterByID returns one requester.
 	RequesterByID(ctx context.Context, id uuid.UUID) (Requester, error)
 	// RequesterState returns the live is_active and session_generation for
