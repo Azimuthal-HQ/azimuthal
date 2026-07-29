@@ -158,7 +158,7 @@ func (c *jiraCollector) onSearchRequest(r jira.Row) error {
 }
 
 // lookupInto records an id -> name row from one of the reference tables.
-func (c *jiraCollector) lookupInto(dst map[string]string) RowFuncAdapter {
+func (c *jiraCollector) lookupInto(dst map[string]string) jira.RowFunc {
 	return func(r jira.Row) error {
 		c.lookupRows++
 		if id, name := r.Get("id"), r.Get("name"); id != "" && name != "" {
@@ -474,7 +474,3 @@ func maxInt(a, b int) int {
 	}
 	return b
 }
-
-// RowFuncAdapter is jira.RowFunc, aliased so the lookup helper can return one
-// without the jira package appearing in this file's exported surface.
-type RowFuncAdapter = func(jira.Row) error
