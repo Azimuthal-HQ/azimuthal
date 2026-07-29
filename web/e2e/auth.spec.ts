@@ -37,7 +37,7 @@ test.describe('Authentication', () => {
     await expect(page.locator('text=Welcome back')).toBeVisible()
   })
 
-  test('login API returns JSON not HTML', async ({ page, request }) => {
+  test('login API returns JSON not HTML', async ({ request }) => {
     const response = await request.post('/api/v1/auth/login', {
       data: { email: 'nobody@nowhere.com', password: 'wrong' },
     })

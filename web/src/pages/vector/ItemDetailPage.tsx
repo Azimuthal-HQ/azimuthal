@@ -115,10 +115,20 @@ export function ItemDetailPage() {
   const [relSearchDebounced, setRelSearchDebounced] = useState('');
   const { data: searchResults = [] } = useItemSearch(spaceId, relSearchDebounced);
 
+  // The debounce timer hangs off the function object itself. Typed here rather
+  // than cast to `any` so the property has a name and a type; the runtime is
+  // unchanged.
+  type DebouncedRelSearch = typeof handleRelSearchChange & {
+    _t?: ReturnType<typeof setTimeout>;
+  };
+
   function handleRelSearchChange(v: string) {
     setRelSearch(v);
-    clearTimeout((handleRelSearchChange as any)._t);
-    (handleRelSearchChange as any)._t = setTimeout(() => setRelSearchDebounced(v), 300);
+    clearTimeout((handleRelSearchChange as DebouncedRelSearch)._t);
+    (handleRelSearchChange as DebouncedRelSearch)._t = setTimeout(
+      () => setRelSearchDebounced(v),
+      300,
+    );
   }
 
   const backlogPath = `/vector/${spaceId}/backlog`;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type HTMLAttributes } from 'react';
 import { useParams } from 'react-router-dom';
 import { Edit, AlertCircle, History, X, ChevronRight, PenLine, Share2, FolderInput } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -412,7 +412,16 @@ export function WikiPage() {
                       <ReactMarkdown
                         rehypePlugins={[rehypeRaw]}
                         components={{
-                          code({ className, children, ...props }: any) {
+                          // `inline` is a react-markdown v8-era prop. It is
+                          // declared here because this renderer still reads it;
+                          // the spread is cast back to the plain HTML
+                          // attributes `<code>` accepts, so the emitted props
+                          // are exactly what they were.
+                          code({
+                            className,
+                            children,
+                            ...props
+                          }: HTMLAttributes<HTMLElement> & { inline?: boolean }) {
                             const match = /language-(\w+)/.exec(className || '');
                             const isBlock = !props.inline && match;
                             return isBlock ? (
@@ -425,7 +434,7 @@ export function WikiPage() {
                                 {String(children).replace(/\n$/, '')}
                               </SyntaxHighlighter>
                             ) : (
-                              <code className={className} {...props}>{children}</code>
+                              <code className={className} {...(props as HTMLAttributes<HTMLElement>)}>{children}</code>
                             );
                           },
                         }}

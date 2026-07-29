@@ -185,7 +185,13 @@ export function PageEditor({
       setSaveState('failed');
       setErrorMessage(friendlyErrorMessage(err, 'Your draft was not saved. Check your connection.'));
     }
-  }, []);
+    // `setSaveState` and `setErrorMessage` are useState setters, so React holds
+    // their identity stable for the component's lifetime — naming them here is
+    // compared equal on every render and keeps `flushSave` as stable as `[]`
+    // did, which is what the comment above requires. They are listed only
+    // because the compiler infers them and refuses to preserve a dependency
+    // list it cannot match.
+  }, [setSaveState, setErrorMessage]);
 
   /** Debounced autosave on every change. */
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { createUserAndLogin, createSpace, assertNoErrors, getAuthToken } from './helpers/setup'
+import { createUserAndLogin, createSpace, assertNoErrors } from './helpers/setup'
 
 test.describe('Projects', () => {
   test('can create a project space and land on backlog', async ({ page }) => {
