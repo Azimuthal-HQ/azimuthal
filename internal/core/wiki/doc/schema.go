@@ -28,13 +28,61 @@ const (
 	MarkUnknownMark = "unknownMark"
 )
 
+// The document vocabulary this phase added, named as constants for the same
+// reason the preservation types are: the input rule, the projection, the
+// publish-time tag aggregation and the editor all have to agree on them.
+const (
+	// NodeInlineTag is the inline `#tag` token. Its label is the text the
+	// author typed; the slug it resolves to is derived server-side, so a tag
+	// rename never has to rewrite a stored document.
+	NodeInlineTag = "inlineTag"
+
+	// MarkLink is the link mark, which carries all three of a link's possible
+	// destinations — see [AttrLinkTargetTitle].
+	MarkLink = "link"
+)
+
+// Attribute names the projection and the publish path read by name.
+const (
+	// AttrTagLabel is the text of an inline tag, as the author typed it.
+	AttrTagLabel = "label"
+
+	// AttrLinkHref is an external link's destination.
+	AttrLinkHref = "href"
+
+	// AttrLinkPageID is a resolved internal link's target page.
+	AttrLinkPageID = "page_id"
+
+	// AttrLinkTargetTitle is an UNRESOLVED wikilink's target: the title the
+	// author wrote inside [[...]] when no page of that name was chosen.
+	//
+	// It is a third state, not a variant of the other two, and the distinction
+	// is load-bearing. A link with a page_id resolves to a page; a link with an
+	// href leaves Azimuthal; a link with only a target_title names a page that
+	// does not exist yet, and clicking it offers to create one. Storing an
+	// unresolved link as an href (say "#design-docs") would make it an external
+	// link that goes nowhere, and storing it as a page_id is impossible —
+	// there is no page.
+	AttrLinkTargetTitle = "target_title"
+)
+
 // schema is the parsed manifest: type name -> group, plus the two position
-// lists capture needs to choose between the block and inline placeholders.
+// lists capture needs to choose between the block and inline placeholders, plus
+// the attribute names the markdown projection reads.
 type schema struct {
 	Nodes              map[string]string `json:"nodes"`
 	Marks              map[string]string `json:"marks"`
 	InlineNodes        []string          `json:"inlineNodes"`
 	InlineContentNodes []string          `json:"inlineContentNodes"`
+	ProjectedAttrs     projectedAttrs    `json:"projectedAttrs"`
+}
+
+// projectedAttrs names the attributes [ToMarkdown] reads, per type. See the
+// manifest's own comment for why an attribute rename fails differently from a
+// type rename — nothing breaks, the content just stops being findable.
+type projectedAttrs struct {
+	Nodes map[string][]string `json:"nodes"`
+	Marks map[string][]string `json:"marks"`
 }
 
 var parsedSchema = mustParseSchema()
@@ -55,6 +103,19 @@ func mustParseSchema() schema {
 	}
 	if _, ok := s.Marks[MarkUnknownMark]; !ok {
 		panic(fmt.Sprintf("wiki/doc: schema.json omits the %q mark", MarkUnknownMark))
+	}
+	// A projected attribute on a type that is not in the vocabulary describes a
+	// projection that can never run. That is a manifest mistake rather than a
+	// runtime state, so it fails at init like the missing placeholders above.
+	for nodeType := range s.ProjectedAttrs.Nodes {
+		if _, ok := s.Nodes[nodeType]; !ok {
+			panic(fmt.Sprintf("wiki/doc: schema.json projects attributes of %q, which is not a node in the vocabulary", nodeType))
+		}
+	}
+	for markType := range s.ProjectedAttrs.Marks {
+		if _, ok := s.Marks[markType]; !ok {
+			panic(fmt.Sprintf("wiki/doc: schema.json projects attributes of %q, which is not a mark in the vocabulary", markType))
+		}
 	}
 	return s
 }
@@ -88,6 +149,22 @@ func InlineNodes() []string { return sortedCopy(parsedSchema.InlineNodes) }
 
 // InlineContentNodes returns the node types whose children are inline, sorted.
 func InlineContentNodes() []string { return sortedCopy(parsedSchema.InlineContentNodes) }
+
+// ProjectedNodeAttrs returns the attribute names the markdown projection reads
+// from each node type, sorted within each type.
+func ProjectedNodeAttrs() map[string][]string { return copyAttrMap(parsedSchema.ProjectedAttrs.Nodes) }
+
+// ProjectedMarkAttrs returns the attribute names the markdown projection reads
+// from each mark type, sorted within each type.
+func ProjectedMarkAttrs() map[string][]string { return copyAttrMap(parsedSchema.ProjectedAttrs.Marks) }
+
+func copyAttrMap(in map[string][]string) map[string][]string {
+	out := make(map[string][]string, len(in))
+	for key, values := range in {
+		out[key] = sortedCopy(values)
+	}
+	return out
+}
 
 // isInlineNode reports whether a node type is inline content.
 func isInlineNode(nodeType string) bool {

@@ -196,15 +196,37 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/publish": "space-write: edit_own/edit_any in-handler",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/images":  "space-write: edit_own/edit_any in-handler; the entity comes from the URL, never a form field",
 
+	// Revision restore, and page-level tags (this phase, migration 040).
+	//
+	// Restore is space-write for the plainest reason there is: it republishes
+	// through the same publish path, so it is the same permission as any other
+	// edit, and it inherits the version guard and the lost-content refusal with it.
+	//
+	// Tags divide the way everything else on a page does — reading a page's tags
+	// is reading the page, and setting them is editing it. Note that the org-level
+	// tag routes are a different guard class (org-read) because a tag is org-scoped
+	// and its NAME is not a space's secret; the pages carrying it are filtered
+	// separately against the caller's readable set.
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/revisions/{version}/restore": "space-write: edit_own/edit_any in-handler; republishes through the ordinary publish path and gets no exemption from its refusals",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/tags":                         "space-read",
+	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/tags":                         "space-write: edit_own/edit_any in-handler",
+
 	// Projects.
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items":                          "space-read",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items":                         "space-write",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/search":                   "space-read",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/resolve":                  "space-read",
-	"GET /api/v1/orgs/{orgID}/item-types/":                                              "org-read: members read for pickers/filters",
-	"POST /api/v1/orgs/{orgID}/item-types/":                                             "org-admin: orgAdminGuard",
-	"PATCH /api/v1/orgs/{orgID}/item-types/{typeID}":                                    "org-admin: orgAdminGuard",
-	"DELETE /api/v1/orgs/{orgID}/item-types/{typeID}":                                   "org-admin: orgAdminGuard",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items":         "space-read",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items":        "space-write",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/search":  "space-read",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/resolve": "space-read",
+	"GET /api/v1/orgs/{orgID}/item-types/":                             "org-read: members read for pickers/filters",
+	"POST /api/v1/orgs/{orgID}/item-types/":                            "org-admin: orgAdminGuard",
+	"PATCH /api/v1/orgs/{orgID}/item-types/{typeID}":                   "org-admin: orgAdminGuard",
+	"DELETE /api/v1/orgs/{orgID}/item-types/{typeID}":                  "org-admin: orgAdminGuard",
+	// Codex tags, org level (migration 040). Read-only: there is no tag
+	// administration surface in this phase — tags are created by use, on the
+	// space-scoped page routes where the page's own edit permission applies.
+	// The pages route is cross-space, so it filters against the caller's
+	// resolved readable set in-handler (ADR-0010).
+	"GET /api/v1/orgs/{orgID}/tags/":                                                    "org-read: members read the tag list for the autocomplete; a tag name is not a space's secret",
+	"GET /api/v1/orgs/{orgID}/tags/{slug}/pages":                                        "org-read: cross-space, filtered to the caller's readable spaces in-handler (ADR-0010)",
 	"GET /api/v1/orgs/{orgID}/custom-fields/":                                           "org-read: members read definitions for item forms",
 	"POST /api/v1/orgs/{orgID}/custom-fields/":                                          "org-admin: orgAdminGuard",
 	"PATCH /api/v1/orgs/{orgID}/custom-fields/{fieldID}":                                "org-admin: orgAdminGuard",

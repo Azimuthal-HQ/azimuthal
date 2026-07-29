@@ -23,14 +23,16 @@
  * dual-format contract.
  */
 import { EditorContent, useEditor } from '@tiptap/react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type { CodexDoc } from '../../lib/codex/schema';
+import { LINK_ATTRS } from '../../lib/codex/schema';
 import type { WikiPage } from '../../lib/api';
 import { CodexDocumentProvider } from './CodexDocumentContext';
 import { codexExtensions } from './extensions';
 import { editorSurfaceClasses } from './editorStyles';
+import { UnresolvedLinkDialog } from './UnresolvedLinkDialog';
 
 interface CodexDocRendererProps {
   doc: CodexDoc;
@@ -60,15 +62,36 @@ export function CodexDocRenderer({ doc, spaceId, pageId, pages }: CodexDocRender
     editor?.setEditable(false);
   }, [editor]);
 
+  /** The unresolved link a reader clicked, if any. */
+  const [unresolved, setUnresolved] = useState<string | null>(null);
+
   /**
-   * Internal links carry `page_id` and no href, because a page's URL depends
-   * on the space it is read in. Turning one into a route is therefore this
-   * surface's job, not the document's.
+   * The two things a link in a document can be, and neither is an href.
+   *
+   * A RESOLVED internal link carries `page_id` and no href, because a page's
+   * URL depends on the space it is read in — turning one into a route is this
+   * surface's job, not the document's. Navigation is attempted regardless of
+   * whether the target still exists or is still readable: access is decided at
+   * the destination, exactly as it is for a notification (the S1 precedent), so
+   * a link renders identically for every reader and reveals nothing about what
+   * anyone else can see.
+   *
+   * An UNRESOLVED link carries `target_title` and names a page nobody has
+   * written. Clicking it opens the create-or-open dialogue rather than
+   * navigating, because there is nowhere to navigate to yet.
    */
   function handleClick(event: React.MouseEvent<HTMLElement>) {
-    const anchor = (event.target as HTMLElement).closest?.('a[data-page-id]');
+    const anchor = (event.target as HTMLElement).closest?.('a[data-page-id], a[data-target-title]');
     if (!anchor) return;
-    const target = anchor.getAttribute('data-page-id');
+
+    const targetTitle = anchor.getAttribute('data-target-title');
+    if (targetTitle) {
+      event.preventDefault();
+      setUnresolved(targetTitle);
+      return;
+    }
+
+    const target = anchor.getAttribute(`data-${LINK_ATTRS.pageId.replace('_', '-')}`);
     if (!target) return;
     event.preventDefault();
     navigate(`/codex/${spaceId}/pages/${target}`);
@@ -85,6 +108,15 @@ export function CodexDocRenderer({ doc, spaceId, pageId, pages }: CodexDocRender
       <article className={editorSurfaceClasses} onClick={handleClick}>
         <EditorContent editor={editor} />
       </article>
+
+      {unresolved && (
+        <UnresolvedLinkDialog
+          targetTitle={unresolved}
+          spaceId={spaceId}
+          pages={pages}
+          onClose={() => setUnresolved(null)}
+        />
+      )}
     </CodexDocumentProvider>
   );
 }

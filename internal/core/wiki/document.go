@@ -1,6 +1,7 @@
 package wiki
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -79,6 +80,16 @@ type PublishPageTxInput struct {
 	// dialogue, reachable only after the conflict has been reported and the
 	// author has chosen to overwrite it in those words.
 	Overwrite bool
+	// TagIDs are the org tags the document's inline `#tag` tokens resolved to.
+	// They are ADDED to the page's tags, never made to be its whole set: the
+	// page-level list is the authority and an inline token is a shortcut, so
+	// deleting the last `#foo` from a body must not silently untag the page.
+	//
+	// They travel inside the transaction because a published version whose tag
+	// association is missing is a visible defect, while the tag ROWS they refer
+	// to are created outside it — an unused tag row is indistinguishable from
+	// one somebody stopped using.
+	TagIDs []uuid.UUID
 }
 
 // DocumentTxStore is the transactional seam for publishing.
@@ -171,6 +182,16 @@ func (s *DocumentService) UploadImage(ctx context.Context, in UploadImageInput) 
 	return image, nil
 }
 
+// TagResolver turns a document's inline tag labels into org tag ids, creating
+// tags that do not exist yet.
+//
+// Narrow on purpose: the document surface needs exactly one thing from the tag
+// model, and stating it as one method keeps this package from depending on the
+// tag domain's shape.
+type TagResolver interface {
+	ResolveForPublish(ctx context.Context, orgID uuid.UUID, labels []string) ([]uuid.UUID, error)
+}
+
 // DocumentService owns the ProseMirror-native document surface: opening a page
 // for editing, autosaving a per-user draft, and publishing.
 //
@@ -182,11 +203,12 @@ type DocumentService struct {
 	store  DocumentStore
 	tx     DocumentTxStore
 	images ImageStore
+	tags   TagResolver
 }
 
 // NewDocumentService creates a DocumentService.
-func NewDocumentService(store DocumentStore, tx DocumentTxStore, images ImageStore) *DocumentService {
-	return &DocumentService{store: store, tx: tx, images: images}
+func NewDocumentService(store DocumentStore, tx DocumentTxStore, images ImageStore, tagResolver TagResolver) *DocumentService {
+	return &DocumentService{store: store, tx: tx, images: images, tags: tagResolver}
 }
 
 // DraftDocument is a caller's unpublished edit of a page.
@@ -389,7 +411,11 @@ func (s *DocumentService) DraftsInSpace(ctx context.Context, spaceID, authorID u
 
 // PublishInput carries one publish.
 type PublishInput struct {
-	PageID      uuid.UUID
+	PageID uuid.UUID
+	// OrgID is the org the page belongs to. It is here for one reason: tags are
+	// org-scoped, and the inline `#tag` tokens in a body are resolved against
+	// the org's tag table at publish.
+	OrgID       uuid.UUID
 	AuthorID    uuid.UUID
 	Title       string
 	Doc         json.RawMessage
@@ -466,7 +492,46 @@ func (s *DocumentService) Publish(ctx context.Context, in PublishInput) (Publish
 		return PublishResult{}, fmt.Errorf("projecting the document for search: %w", err)
 	}
 
-	return s.commit(ctx, in, document, content)
+	// The tag ROWS are created here, outside the transaction, and the
+	// ASSOCIATIONS are written inside it. See PublishPageTxInput.TagIDs for why
+	// the split falls where it does.
+	tagIDs, err := s.inlineTagIDs(ctx, in.OrgID, document)
+	if err != nil {
+		return PublishResult{}, err
+	}
+
+	return s.commit(ctx, in, document, content, tagIDs)
+}
+
+// inlineTagIDs resolves the document's inline `#tag` tokens to org tag ids.
+//
+// The restored document is walked, not the incoming one: a `#tag` inside
+// content the author never saw resolved is not something they typed, and the
+// restored document is what actually gets stored.
+//
+// A document with no inline tags returns early and never reaches the tag model
+// — which is also what makes an OrgID-less caller harmless until it publishes a
+// document that actually carries one.
+func (s *DocumentService) inlineTagIDs(ctx context.Context, orgID uuid.UUID, document json.RawMessage) ([]uuid.UUID, error) {
+	labels, err := doc.InlineTagLabels(document)
+	if err != nil {
+		return nil, fmt.Errorf("reading the document's inline tags: %w", err)
+	}
+	if len(labels) == 0 {
+		return nil, nil
+	}
+	if orgID == uuid.Nil {
+		// Tags are org-scoped, so there is nowhere to put these. Refusing is the
+		// only honest answer: creating them under a zero org would fail the
+		// foreign key, and dropping them silently would publish a page whose
+		// visible `#tag` tokens aggregate to nothing.
+		return nil, fmt.Errorf("publishing a document with inline tags needs an org id")
+	}
+	ids, err := s.tags.ResolveForPublish(ctx, orgID, labels)
+	if err != nil {
+		return nil, fmt.Errorf("resolving the document's inline tags: %w", err)
+	}
+	return ids, nil
 }
 
 // commit runs the publish transaction and turns a lost race into the same
@@ -476,7 +541,7 @@ func (s *DocumentService) Publish(ctx context.Context, in PublishInput) (Publish
 // publishes can both pass the check in [DocumentService.Publish] and then both
 // try to write, and the second one has to be told it conflicted rather than
 // silently overwriting.
-func (s *DocumentService) commit(ctx context.Context, in PublishInput, document json.RawMessage, content string) (PublishResult, error) {
+func (s *DocumentService) commit(ctx context.Context, in PublishInput, document json.RawMessage, content string, tagIDs []uuid.UUID) (PublishResult, error) {
 	published, err := s.tx.PublishPageTx(ctx, PublishPageTxInput{
 		PageID:      in.PageID,
 		AuthorID:    in.AuthorID,
@@ -485,6 +550,7 @@ func (s *DocumentService) commit(ctx context.Context, in PublishInput, document 
 		Doc:         document,
 		BaseVersion: in.BaseVersion,
 		Overwrite:   in.Overwrite,
+		TagIDs:      tagIDs,
 	})
 	if errors.Is(err, ErrVersionConflict) {
 		current, getErr := s.page(ctx, in.PageID)
@@ -539,6 +605,125 @@ func (s *DocumentService) resolvePreservedContent(ctx context.Context, page gene
 		return nil, nil, err
 	}
 	return restored.Document, nil, nil
+}
+
+// RestoreInput carries one restore of an earlier version.
+type RestoreInput struct {
+	PageID   uuid.UUID
+	OrgID    uuid.UUID
+	AuthorID uuid.UUID
+	// Version is the revision whose content is being restored.
+	Version int32
+	// BaseVersion is the version the caller believes is current, and it is what
+	// the ordinary publish version guard is applied against. A restore gets no
+	// exemption from it: if somebody else published while this one was being
+	// considered, the answer is the same conflict dialogue as any other edit.
+	BaseVersion int32
+	// AcknowledgedLostIDs answers the lost-preserved-content refusal, exactly as
+	// it does for a manual edit — see [DocumentService.RestoreRevision].
+	AcknowledgedLostIDs []string
+	Overwrite           bool
+}
+
+// RestoreResult is what a restore attempt produced.
+type RestoreResult struct {
+	PublishResult
+	// NoOp is true when the requested version's content is already the page's
+	// content. Restoring the current version produces no new version and says
+	// so, rather than adding an entry to the history in which nothing changed.
+	NoOp bool
+	// Message is the sentence to show for a no-op.
+	Message string
+}
+
+// RestoreRevision republishes an earlier version's content as a NEW version.
+//
+// # History is never rewritten
+//
+// Restoring version 3 onto a page at version 7 produces version 8 whose content
+// is version 3's. Versions 4 to 7 stay in the history exactly as they were. That
+// is the same append-only philosophy the audit log follows, and it means a
+// restore is itself undoable — by restoring version 7.
+//
+// # A restore is an ordinary publish, and gets no bypass
+//
+// It goes through [DocumentService.Publish] rather than around it, so every
+// refusal that stands between an edit and stored content stands here too:
+//
+//   - the version guard, so a restore cannot silently overwrite somebody else's
+//     publish that landed while this one was being decided;
+//   - the lost-preserved-content refusal, which is the important one. An older
+//     version will usually NOT contain preserved unknown content that the
+//     current version has — that is what makes it older. Restoring it therefore
+//     removes that content, and ADR-0012 says a removal must be acknowledged,
+//     not inferred. So the same `acknowledged_lost_ids` confirmation fires, with
+//     the same list of what would go, as if the author had deleted the blocks by
+//     hand. Giving restore an exemption would make it the one way to lose
+//     preserved content without being asked.
+//
+// # A markdown-era revision
+//
+// A revision written before the document editor carries `doc IS NULL` and only
+// markdown. It is converted with the same deterministic [doc.FromMarkdown] the
+// editor's own on-ramp uses, and then published as a document — so restoring an
+// old markdown version onto a document-backed page leaves the page
+// document-backed, with `content` re-derived from it. This composes with D54
+// rather than working around it: D54 is about the *markdown save* route writing
+// `content` without `doc`, and this path writes both.
+func (s *DocumentService) RestoreRevision(ctx context.Context, in RestoreInput) (RestoreResult, error) {
+	page, err := s.page(ctx, in.PageID)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+
+	revision, err := s.store.GetPageRevisionDocument(ctx, generated.GetPageRevisionDocumentParams{
+		PageID:  in.PageID,
+		Version: in.Version,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RestoreResult{}, fmt.Errorf("%w: version %d", ErrRevisionNotFound, in.Version)
+	}
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("getting the revision to restore: %w", err)
+	}
+
+	document := revision.Doc
+	if len(document) == 0 {
+		document, err = doc.FromMarkdown(revision.Content)
+		if err != nil {
+			return RestoreResult{}, fmt.Errorf("converting the revision being restored: %w", err)
+		}
+	}
+
+	// Restoring what is already there is a no-op with a sentence, not an empty
+	// version. The comparison is against the page's *derived* document so that a
+	// legacy markdown page — where both sides come out of FromMarkdown — answers
+	// the same way a document-backed one does.
+	current, _, err := documentOfPage(page)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if page.Title == revision.Title && bytes.Equal(current, document) {
+		return RestoreResult{
+			NoOp:    true,
+			Message: fmt.Sprintf("Version %d is already this page's content, so there was nothing to restore.", in.Version),
+		}, nil
+	}
+
+	published, err := s.Publish(ctx, PublishInput{
+		PageID:              in.PageID,
+		OrgID:               in.OrgID,
+		AuthorID:            in.AuthorID,
+		Title:               revision.Title,
+		Doc:                 document,
+		BaseVersion:         in.BaseVersion,
+		AcknowledgedLostIDs: in.AcknowledgedLostIDs,
+		Overwrite:           in.Overwrite,
+	})
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	return RestoreResult{PublishResult: published}, nil
 }
 
 // page loads a live page, mapping absence to ErrPageNotFound.

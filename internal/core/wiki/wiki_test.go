@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -653,9 +654,64 @@ func TestDiffRevisions(t *testing.T) {
 	if diff.FromVersion != 1 || diff.ToVersion != 2 {
 		t.Errorf("wrong version range in diff")
 	}
-	if diff.ContentDiff == "" {
-		t.Error("expected non-empty content diff")
+
+	// The title did not change, so it contributes nothing — a caller showing a
+	// title row only when there is one to show depends on this being empty
+	// rather than on a segment list that says "equal".
+	if len(diff.TitleSegments) != 0 {
+		t.Errorf("expected no title segments for an unchanged title, got %+v", diff.TitleSegments)
 	}
+
+	// "Hello world" -> "Hello universe". A non-empty segment list would pass
+	// against any diff at all, including one that reported the whole text as
+	// unchanged, so assert what each operation actually carries.
+	var kept, removed, added strings.Builder
+	for _, seg := range diff.ContentSegments {
+		if seg.Text == "" {
+			t.Error("an empty segment carries nothing and must not be emitted")
+		}
+		switch seg.Op {
+		case wiki.DiffEqual:
+			kept.WriteString(seg.Text)
+		case wiki.DiffDelete:
+			removed.WriteString(seg.Text)
+		case wiki.DiffInsert:
+			added.WriteString(seg.Text)
+		default:
+			t.Errorf("unknown diff op %d", seg.Op)
+		}
+	}
+	if !strings.Contains(kept.String(), "Hello") {
+		t.Errorf("the unchanged half of the sentence should be reported as equal, got %q", kept.String())
+	}
+	if !strings.Contains(removed.String(), "world") {
+		t.Errorf("expected %q to be reported as removed, got %q", "world", removed.String())
+	}
+	if !strings.Contains(added.String(), "universe") {
+		t.Errorf("expected %q to be reported as added, got %q", "universe", added.String())
+	}
+
+	// The segments must reconstruct both sides, which is the property that makes
+	// them a diff rather than a summary of one.
+	if got := kept.String() + removed.String(); !strings.Contains(rebuild(diff.ContentSegments, wiki.DiffDelete), "Hello world") {
+		t.Errorf("the delete side must rebuild the from-revision, got %q (kept+removed %q)", rebuild(diff.ContentSegments, wiki.DiffDelete), got)
+	}
+	if !strings.Contains(rebuild(diff.ContentSegments, wiki.DiffInsert), "Hello universe") {
+		t.Errorf("the insert side must rebuild the to-revision, got %q", rebuild(diff.ContentSegments, wiki.DiffInsert))
+	}
+}
+
+// rebuild reassembles one side of a diff: the equal runs plus the runs carrying
+// the given operation. With DiffDelete that is the from-revision; with
+// DiffInsert, the to-revision.
+func rebuild(segments []wiki.DiffSegment, side wiki.DiffOp) string {
+	var b strings.Builder
+	for _, seg := range segments {
+		if seg.Op == wiki.DiffEqual || seg.Op == side {
+			b.WriteString(seg.Text)
+		}
+	}
+	return b.String()
 }
 
 // ---------- conflict tests ----------

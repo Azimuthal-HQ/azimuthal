@@ -14,6 +14,7 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
@@ -119,8 +120,30 @@ func setupWikiHandler() *wikiapi.Handler {
 	// UnavailableImageStore rather than a mock: this harness has no object store,
 	// and the refusing implementation is exactly what a storage-less deployment
 	// gets, so the routes behave here as they would there.
-	docs := wiki.NewDocumentService(&mockDocumentStore{}, &mockDocumentTx{}, wiki.UnavailableImageStore{})
-	return wikiapi.NewHandler(svc, docs)
+	tagSvc := tags.NewService(&mockTagRepo{})
+	docs := wiki.NewDocumentService(&mockDocumentStore{}, &mockDocumentTx{}, wiki.UnavailableImageStore{}, tagSvc)
+	return wikiapi.NewHandler(svc, docs, tagSvc)
+}
+
+// mockTagRepo stands in for the tag store in this handler's unit tests, which
+// assert request parsing and status codes. Tag behaviour against a real
+// database lives in internal/core/api/wiki_tags_integration_test.go.
+type mockTagRepo struct{}
+
+func (m *mockTagRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]tags.Tag, error) { return nil, nil }
+func (m *mockTagRepo) GetByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (tags.Tag, error) {
+	return tags.Tag{}, tags.ErrNotFound
+}
+func (m *mockTagRepo) Upsert(_ context.Context, orgID uuid.UUID, slug, name string) (tags.Tag, error) {
+	return tags.Tag{ID: uuid.New(), OrgID: orgID, Slug: slug, Name: name}, nil
+}
+func (m *mockTagRepo) ForPage(_ context.Context, _ uuid.UUID) ([]tags.Tag, error) { return nil, nil }
+func (m *mockTagRepo) ReplacePageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error {
+	return nil
+}
+func (m *mockTagRepo) AddPageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error { return nil }
+func (m *mockTagRepo) PagesWithTag(_ context.Context, _ uuid.UUID, _ []uuid.UUID) ([]tags.TaggedPage, error) {
+	return nil, nil
 }
 
 func withParam(r *http.Request, key, val string) *http.Request {

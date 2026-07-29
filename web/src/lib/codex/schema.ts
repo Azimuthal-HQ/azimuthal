@@ -54,6 +54,10 @@ export const CODEX_NODES = [
   'childrenDisplay',
   'pageInclude',
 
+  // The inline `#tag` token. Core rather than macro: it is ordinary authored
+  // content, not an imported Confluence construct.
+  'inlineTag',
+
   // ADR-0012's zero-silent-data-loss machinery.
   'unknownContent',
   'unknownInline',
@@ -80,7 +84,13 @@ export const CODEX_MARKS = [
  * placeholder that lands where ProseMirror will not accept it is dropped, the
  * server sees the id go missing, and publish refuses the write.
  */
-export const CODEX_INLINE_NODES = ['text', 'hardBreak', 'statusLozenge', 'unknownInline'] as const;
+export const CODEX_INLINE_NODES = [
+  'text',
+  'hardBreak',
+  'statusLozenge',
+  'inlineTag',
+  'unknownInline',
+] as const;
 
 export const CODEX_INLINE_CONTENT_NODES = ['paragraph', 'heading', 'codeBlock'] as const;
 
@@ -91,6 +101,64 @@ export type CodexMarkName = (typeof CODEX_MARKS)[number];
 export const NODE_UNKNOWN_CONTENT = 'unknownContent';
 export const NODE_UNKNOWN_INLINE = 'unknownInline';
 export const MARK_UNKNOWN_MARK = 'unknownMark';
+
+/** The inline tag token, and the link mark, named for the same reason. */
+export const NODE_INLINE_TAG = 'inlineTag';
+export const MARK_LINK = 'link';
+
+/**
+ * The attributes the server's markdown projection reads by name.
+ *
+ * Mirrors `projectedAttrs` in `internal/core/wiki/doc/schema.json`, and
+ * `schema.test.ts` fails on any difference in either direction — the same
+ * contract the type lists carry, guarding a different failure.
+ *
+ * A TYPE that drifts fails loudly in one direction and destroys content in the
+ * other. An ATTRIBUTE that drifts does neither: the page publishes, the document
+ * stores correctly, and the content quietly stops being findable, because
+ * `internal/core/wiki/doc/text.go` looked for a name that is no longer there.
+ * Nothing announces it. That is why the list is data checked by a test rather
+ * than a comment asking people to remember.
+ *
+ * `extensions.test.ts` then asserts the real ProseMirror schema declares every
+ * attribute named here, which is the half a list on its own cannot promise.
+ */
+export const PROJECTED_ATTRS = {
+  nodes: {
+    heading: ['level'],
+    codeBlock: ['language'],
+    image: ['attachment_id'],
+    panel: ['kind'],
+    expand: ['title'],
+    statusLozenge: ['text'],
+    pageInclude: ['page_id'],
+    inlineTag: ['label'],
+  },
+  marks: {
+    link: ['href', 'page_id', 'target_title'],
+  },
+} as const;
+
+/**
+ * The attribute names on the link mark, and the three states a link can be in.
+ *
+ * They are states, not variants — see `AttrLinkTargetTitle` in
+ * `internal/core/wiki/doc/schema.go`:
+ *
+ * - `href` set: an external link, which leaves Azimuthal.
+ * - `page_id` set: a resolved internal link. Never a URL, because a page's URL
+ *   depends on the space it is being read in.
+ * - `target_title` set: an UNRESOLVED wikilink — the author named a page that
+ *   does not exist yet. Clicking it offers to create one.
+ */
+export const LINK_ATTRS = {
+  href: 'href',
+  pageId: 'page_id',
+  targetTitle: 'target_title',
+} as const;
+
+/** The inline tag's one attribute: the label as the author typed it. */
+export const TAG_ATTRS = { label: 'label' } as const;
 
 /**
  * Attribute names on a preservation placeholder. Prefixed so they can never

@@ -8471,6 +8471,97 @@ paths:
       summary: Get page revision
       tags:
       - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/revisions/{version}/restore:
+    post:
+      description: 'Republishes the content of an earlier version as a NEW version
+        — the history is never rewritten, so restoring version 3 onto a page at version
+        7 produces version 8 and leaves 4 through 7 in place. It flows through the
+        ordinary publish path and gets no exemption from its refusals: 409 with a
+        conflict body when the page has been published past base_version, and 409
+        with a lost-content body when the older version does not carry preserved content
+        the current one does (ADR-0012 — that removal must be acknowledged, not inferred).
+        Restoring the version the page already holds changes nothing and reports so
+        rather than adding an empty version.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      - description: The version to restore
+        in: path
+        name: version
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Base version, and any acknowledged removals
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: The published page, or a no-op report
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID or version
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Insufficient permissions
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No such page or version
+        "409":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Version conflict, or preserved content would be lost
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unresolvable preserved content
+      security:
+      - BearerAuth: []
+      summary: Restore an earlier version of a page
+      tags:
+      - wiki
   /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/share-impact:
     get:
       description: Counts the active shares that a cross-space move of the page and
@@ -8511,6 +8602,133 @@ paths:
       security:
       - BearerAuth: []
       summary: Move share impact
+      tags:
+      - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/tags:
+    get:
+      description: 'The tags this page carries. Page-level tags are metadata rather
+        than document content: they are stored alongside the page, not inside its
+        body, so they survive a rewrite of the prose. Inline #tag tokens in the body
+        are aggregated into this same set when the page is published.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Tags
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: List a page's tags
+      tags:
+      - wiki
+    put:
+      description: 'Replaces the page''s tag list with exactly the tags given. This
+        is the authoritative path — a tag left out is removed from the page, which
+        the aggregation of inline #tag tokens at publish deliberately cannot do. Tags
+        that do not exist yet are created. Requires the same permission as editing
+        the page.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: The page's tags
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: The page's tags
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: A tag name that cannot become a tag, or too many tags
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Insufficient permissions
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Set a page's tags
       tags:
       - wiki
   /orgs/{orgID}/spaces/{spaceID}/wiki/drafts:
@@ -8799,6 +9017,99 @@ paths:
       summary: Get space workflow states
       tags:
       - workflows
+  /orgs/{orgID}/tags:
+    get:
+      description: 'Every tag in the organisation, ordered by display name. Tags are
+        org-scoped and are created by use — publishing a page whose body contains
+        an inline #tag, or adding one to a page''s tag list, creates it. There is
+        no administration surface, so this list is the whole vocabulary. Any org member
+        may read it: it backs the tag autocomplete, and a tag name is not itself sensitive
+        — the pages carrying a tag are filtered separately.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Tags
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+      security:
+      - BearerAuth: []
+      summary: List the organisation's Codex tags
+      tags:
+      - wiki
+  /orgs/{orgID}/tags/{slug}/pages:
+    get:
+      description: Every page in the organisation carrying this tag that the caller
+        can read. Cross-space by nature — a tag is org-scoped — so the result is filtered
+        against the caller's resolved readable space set (ADR-0010). A page in a space
+        the caller cannot read is absent, not refused, so the response never reports
+        whether such a page exists.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Tag slug
+        in: path
+        name: slug
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: The tag and its readable pages
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No such tag
+      security:
+      - BearerAuth: []
+      summary: List the pages carrying a tag
+      tags:
+      - wiki
   /orgs/{orgID}/teams:
     get:
       description: Returns all teams in the organization. Pass parent_id to filter

@@ -14,6 +14,7 @@ import { useParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, FileText, PenLine } from 'lucide-react';
 
+import { codexMeasureClasses } from '../../components/codex/editorStyles';
 import { friendlyErrorMessage, useSpaceDrafts } from '../../lib/api';
 
 export function DraftsPage() {
@@ -35,7 +36,7 @@ export function DraftsPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[76ch] p-6" data-testid="codex-drafts">
+    <div className={`${codexMeasureClasses} p-6`} data-testid="codex-drafts">
       <div className="mb-6">
         <h1 className="flex items-center gap-2 text-[22px] font-semibold leading-[1.3] tracking-[-.01em] text-[var(--color-text)]">
           <PenLine className="h-5 w-5 text-[var(--module-codex)]" aria-hidden="true" />

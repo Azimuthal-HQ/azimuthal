@@ -255,6 +255,12 @@ type PageRevision struct {
 	Doc       json.RawMessage    `json:"doc"`
 }
 
+type PageTag struct {
+	PageID    uuid.UUID          `json:"page_id"`
+	TagID     uuid.UUID          `json:"tag_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type ProjectItem struct {
 	ID              uuid.UUID          `json:"id"`
 	SpaceID         uuid.UUID          `json:"space_id"`
@@ -362,6 +368,14 @@ type Sprint struct {
 	CreatedBy uuid.UUID          `json:"created_by"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Tag struct {
+	ID        uuid.UUID          `json:"id"`
+	OrgID     uuid.UUID          `json:"org_id"`
+	Slug      string             `json:"slug"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Team struct {

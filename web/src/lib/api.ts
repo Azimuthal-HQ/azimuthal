@@ -524,7 +524,79 @@ export interface WikiRevision {
   version: number;
   title: string;
   author_id: string;
+  /**
+   * The author's display name, resolved server-side.
+   *
+   * Null when the account has been removed. `page_revisions.author_id` has been
+   * stored since migration 005, so the name was never missing from the data —
+   * only from the read — and a deleted account must not make its revisions
+   * vanish from a page's history. The surface renders "Unknown" rather than
+   * inventing an author for an old row.
+   */
+  author_name: string | null;
   created_at: string;
+}
+
+/**
+ * One run of text in a revision diff, and what happened to it.
+ *
+ * The numbers are the server's `DiffOp`: -1 removed, 0 unchanged, 1 added.
+ * Segments rather than a rendered string, because the endpoint used to return
+ * ANSI terminal colour codes — unprintable bytes in the middle of the text as
+ * far as a browser is concerned.
+ *
+ * What is compared is the markdown projection, not the document. That is what
+ * makes a page written before the editor and one written after it comparable
+ * against each other at all, and it is why the UI calls it a text comparison
+ * rather than implying a structural one.
+ */
+export interface WikiDiffSegment {
+  op: -1 | 0 | 1;
+  text: string;
+}
+
+export interface WikiRevisionDiff {
+  from_version: number;
+  to_version: number;
+  /** Empty when the title did not change, so the title row can be omitted. */
+  title_segments: WikiDiffSegment[] | null;
+  content_segments: WikiDiffSegment[] | null;
+}
+
+/** An org-scoped Codex tag. */
+export interface CodexTag {
+  id: string;
+  org_id: string;
+  /** The immutable identity, derived server-side. Underscore-separated. */
+  slug: string;
+  /** The display form: the first spelling anybody used. */
+  name: string;
+  created_at: string;
+}
+
+/** One row of the tag browse: a page carrying a tag, with its space context. */
+export interface TaggedPage {
+  page_id: string;
+  space_id: string;
+  space_name: string;
+  space_key: string;
+  title: string;
+  path: string;
+  updated_at: string;
+}
+
+export interface TaggedPages {
+  tag: CodexTag;
+  pages: TaggedPage[] | null;
+  /**
+   * The answer was cut short.
+   *
+   * A list capped without saying so looks exactly like a complete one, and
+   * because the order is most-recent-first the pages that disappear are the
+   * oldest — so a reader is shown the wrong nothing and told nothing. The
+   * surface must say when this is set.
+   */
+  truncated?: boolean;
 }
 
 export interface Relation {
@@ -1971,8 +2043,93 @@ async function fetchWikiRevision(spaceId: string, pageId: string, version: numbe
   return apiFetch<WikiPage>(`${spaceBase(spaceId)}/wiki/${pageId}/revisions/${version}`);
 }
 
-async function fetchWikiDiff(spaceId: string, pageId: string, from: number, to: number): Promise<{ diff: string }> {
-  return apiFetch<{ diff: string }>(`${spaceBase(spaceId)}/wiki/${pageId}/diff?from=${from}&to=${to}`);
+async function fetchWikiDiff(
+  spaceId: string,
+  pageId: string,
+  from: number,
+  to: number,
+): Promise<WikiRevisionDiff> {
+  return apiFetch<WikiRevisionDiff>(
+    `${spaceBase(spaceId)}/wiki/${pageId}/diff?from=${from}&to=${to}`,
+  );
+}
+
+/**
+ * Restoring an earlier version.
+ *
+ * It republishes through the ordinary publish path, so it carries the ordinary
+ * publish arguments: `base_version` for the version guard, and
+ * `acknowledged_lost_ids` for the ADR-0012 confirmation. A restore is more
+ * likely than an edit to trigger that confirmation, not less — an older version
+ * usually lacks preserved content the current one has, which is part of what
+ * makes it older.
+ */
+export interface RestoreRevisionRequest {
+  base_version: number;
+  acknowledged_lost_ids?: string[];
+  overwrite?: boolean;
+}
+
+/**
+ * The result of a restore.
+ *
+ * `restored: false` is a success, not a failure: it is the answer to restoring
+ * the version the page already holds, which produces no new version and says
+ * so rather than adding an entry to the history in which nothing changed.
+ */
+export interface RestoreRevisionResult {
+  restored: boolean;
+  message?: string;
+  page?: WikiPage;
+}
+
+async function restoreWikiRevision(
+  spaceId: string,
+  pageId: string,
+  version: number,
+  req: RestoreRevisionRequest,
+): Promise<RestoreRevisionResult> {
+  return apiFetch<RestoreRevisionResult>(
+    `${spaceBase(spaceId)}/wiki/${pageId}/revisions/${version}/restore`,
+    { method: 'POST', body: JSON.stringify(req) },
+    // The same classifier the publish call uses, and that is the point: a
+    // restore hits the same two 409s, so it must produce the same two typed
+    // errors and the same two dialogues rather than a second set that drifts.
+    classifyPublishFailure,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Codex tags (migration 040)
+// ---------------------------------------------------------------------------
+
+async function fetchOrgTags(orgId: string): Promise<CodexTag[]> {
+  const data = await apiFetch<CodexTag[] | null>(`/orgs/${orgId}/tags`);
+  return data ?? [];
+}
+
+async function fetchPagesWithTag(orgId: string, label: string): Promise<TaggedPages> {
+  // The LABEL, not a slug. The server slugifies whatever it is given and
+  // Slugify is idempotent, so both forms work — and the client never has to
+  // reimplement a slug convention that has a database CHECK written against it.
+  return apiFetch<TaggedPages>(`/orgs/${orgId}/tags/${encodeURIComponent(label)}/pages`);
+}
+
+async function fetchPageTags(spaceId: string, pageId: string): Promise<CodexTag[]> {
+  const data = await apiFetch<CodexTag[] | null>(`${spaceBase(spaceId)}/wiki/${pageId}/tags`);
+  return data ?? [];
+}
+
+async function setPageTags(
+  spaceId: string,
+  pageId: string,
+  labels: string[],
+): Promise<CodexTag[]> {
+  const data = await apiFetch<CodexTag[] | null>(`${spaceBase(spaceId)}/wiki/${pageId}/tags`, {
+    method: 'PUT',
+    body: JSON.stringify({ tags: labels }),
+  });
+  return data ?? [];
 }
 
 interface MoveWikiPageRequest {
@@ -2116,6 +2273,9 @@ export const queryKeys = {
   wikiRevisions: (spaceId: string, pageId: string) => ['wikiRevisions', spaceId, pageId] as const,
   wikiRevision: (spaceId: string, pageId: string, version: number) => ['wikiRevision', spaceId, pageId, version] as const,
   wikiDiff: (spaceId: string, pageId: string, from: number, to: number) => ['wikiDiff', spaceId, pageId, from, to] as const,
+  orgTags: (orgId: string) => ['orgTags', orgId] as const,
+  pagesWithTag: (orgId: string, label: string) => ['pagesWithTag', orgId, label] as const,
+  pageTags: (spaceId: string, pageId: string) => ['pageTags', spaceId, pageId] as const,
   /** The Codex document surface (issue #15). */
   pageDocument: (spaceId: string, pageId: string) => ['pageDocument', spaceId, pageId] as const,
   spaceDrafts: (spaceId: string) => ['spaceDrafts', spaceId] as const,
@@ -2662,6 +2822,14 @@ export function usePublishPage(spaceId: string, pageId: string) {
       queryClient.invalidateQueries({ queryKey: queryKeys.pageDocument(spaceId, pageId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.spaceDrafts(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.wikiRevisions(spaceId, pageId) });
+      // Publishing can CREATE tags: the server walks the document and adds a
+      // tag for every inline `#tag` in the body. Without this the chip a
+      // publish just produced does not appear until the next reload, because
+      // the reading surface remounts against the cached pre-publish list —
+      // which is empty, so it renders nothing at all and looks like the
+      // aggregation never ran.
+      queryClient.invalidateQueries({ queryKey: queryKeys.pageTags(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.orgTags(getCurrentOrgId()) });
     },
   });
 }
@@ -2770,12 +2938,100 @@ export function useWikiRevision(spaceId: string, pageId: string, version: number
   });
 }
 
-export function useWikiDiff(spaceId: string, pageId: string, from: number, to: number, opts?: QueryOpts<{ diff: string }>) {
-  return useQuery<{ diff: string }, APIError>({
+export function useWikiDiff(
+  spaceId: string,
+  pageId: string,
+  from: number,
+  to: number,
+  opts?: QueryOpts<WikiRevisionDiff>,
+) {
+  return useQuery<WikiRevisionDiff, APIError>({
     queryKey: queryKeys.wikiDiff(spaceId, pageId, from, to),
     queryFn: () => fetchWikiDiff(spaceId, pageId, from, to),
-    enabled: !!spaceId && !!pageId && from > 0 && to > 0,
+    // Two DIFFERENT versions, and both real. `from === to` would ask the server
+    // to diff a revision against itself, which is a request with no answer
+    // worth rendering.
+    enabled: !!spaceId && !!pageId && from > 0 && to > 0 && from !== to,
     ...opts,
+  });
+}
+
+/**
+ * Restoring an earlier version.
+ *
+ * The invalidation list is the publish list, because a restore IS a publish:
+ * it bumps the version, writes a revision and changes what a reader sees. A
+ * shorter list would leave the page's own cache showing the version it had
+ * before the restore.
+ */
+export function useRestoreWikiRevision(spaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<
+    RestoreRevisionResult,
+    Error,
+    { version: number } & RestoreRevisionRequest
+  >({
+    mutationFn: ({ version, ...req }) => restoreWikiRevision(spaceId, pageId, version, req),
+    onSuccess: (result) => {
+      // A no-op restore changed nothing, so there is nothing to invalidate and
+      // refetching would only make the panel flicker.
+      if (!result.restored) return;
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiPages(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiPage(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiTree(spaceId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pageDocument(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.wikiRevisions(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.pageTags(spaceId, pageId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Codex tags (migration 040)
+// ---------------------------------------------------------------------------
+
+export function useOrgTags(orgId: string, opts?: QueryOpts<CodexTag[]>) {
+  return useQuery<CodexTag[], APIError>({
+    queryKey: queryKeys.orgTags(orgId),
+    queryFn: () => fetchOrgTags(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+export function usePagesWithTag(orgId: string, label: string, opts?: QueryOpts<TaggedPages>) {
+  return useQuery<TaggedPages, APIError>({
+    queryKey: queryKeys.pagesWithTag(orgId, label),
+    queryFn: () => fetchPagesWithTag(orgId, label),
+    enabled: !!orgId && !!label,
+    ...opts,
+  });
+}
+
+export function usePageTags(spaceId: string, pageId: string, opts?: QueryOpts<CodexTag[]>) {
+  return useQuery<CodexTag[], APIError>({
+    queryKey: queryKeys.pageTags(spaceId, pageId),
+    queryFn: () => fetchPageTags(spaceId, pageId),
+    enabled: !!spaceId && !!pageId,
+    ...opts,
+  });
+}
+
+/**
+ * Setting a page's tags — the authoritative path, which can remove.
+ *
+ * The org tag list is invalidated too, because setting a tag nobody has used
+ * before creates it: tags have no administration surface and come into
+ * existence by use, so this mutation is also the only constructor there is.
+ */
+export function useSetPageTags(spaceId: string, pageId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<CodexTag[], APIError, string[]>({
+    mutationFn: (labels) => setPageTags(spaceId, pageId, labels),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.pageTags(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.orgTags(getCurrentOrgId()) });
+    },
   });
 }
 

@@ -50,6 +50,8 @@
     "childrenDisplay": "macro",
     "pageInclude": "macro",
 
+    "inlineTag": "core",
+
     "unknownContent": "preservation",
     "unknownInline": "preservation"
   },
@@ -74,7 +76,42 @@
     "rather than committing the loss."
   ],
 
-  "inlineNodes": ["text", "hardBreak", "statusLozenge", "unknownInline"],
+  "inlineNodes": ["text", "hardBreak", "statusLozenge", "inlineTag", "unknownInline"],
 
-  "inlineContentNodes": ["paragraph", "heading", "codeBlock"]
+  "inlineContentNodes": ["paragraph", "heading", "codeBlock"],
+
+  "_projectedAttrsComment": [
+    "The attributes the markdown projection reads by name.",
+    "",
+    "These are the second half of the vocabulary, and they fail differently",
+    "from the type names above. A type the editor omits is silent data loss;",
+    "an ATTRIBUTE renamed on one side loses nothing at write time — the page",
+    "publishes, the document stores correctly, and the content quietly stops",
+    "being findable, because internal/core/wiki/doc/text.go looked for a name",
+    "that is no longer there. Nothing fails until somebody searches for a",
+    "panel's kind or an expand's summary line and does not find it.",
+    "",
+    "So the list lives here rather than in either language: schema.test.ts",
+    "checks the TypeScript mirror against it, extensions.test.ts checks that",
+    "the real ProseMirror schema declares every attribute named, and",
+    "text_projection_test.go checks that the projection actually reads each",
+    "one — a table whose key set must equal this manifest, so an attribute",
+    "added here without a projection to go with it fails rather than ships."
+  ],
+
+  "projectedAttrs": {
+    "nodes": {
+      "heading": ["level"],
+      "codeBlock": ["language"],
+      "image": ["attachment_id"],
+      "panel": ["kind"],
+      "expand": ["title"],
+      "statusLozenge": ["text"],
+      "pageInclude": ["page_id"],
+      "inlineTag": ["label"]
+    },
+    "marks": {
+      "link": ["href", "page_id", "target_title"]
+    }
+  }
 }
