@@ -33,14 +33,18 @@ const DefaultBcryptCost = 12
 // # Why lowering it cannot reach production
 //
 // The initial value is chosen by testing.Testing(), which reports whether
-// this binary was built by `go test`. It reads a variable the linker sets
-// when it builds a test binary; no environment variable, build tag or flag is
-// involved, so a binary produced by `go build` takes the production branch by
-// construction. There is nothing to forget and nothing to misconfigure.
+// this binary was built by `go test`. It reads a variable the linker sets when
+// building a test binary — no environment variable, build tag or flag is
+// involved — so an ordinary `go build` takes the production branch, and there
+// is nothing an operator can misconfigure to change that.
 //
-// The only other way to move it is SetPasswordCost, which enforces the floor.
-// The reachable set for a shipped binary is therefore [12, 31], and the low
-// cost exists solely inside test binaries.
+// It is a linker variable, not a law of physics: someone who deliberately
+// builds with `-ldflags "-X testing.testBinary=1"` gets the low branch. That
+// is why the floor does not rest on this alone. Every command in cmd/server
+// loads its configuration through loadConfig, which calls SetPasswordCost, and
+// SetPasswordCost refuses anything below MinBcryptCost. So a shipped binary
+// that has read its configuration — which is every path that reaches a
+// database — is at a cost in [12, 31] regardless of how it was linked.
 //
 // atomic.Int64 rather than a plain int: nothing sets the cost concurrently
 // today, but a hash is a read and -race would flag the first test that ever

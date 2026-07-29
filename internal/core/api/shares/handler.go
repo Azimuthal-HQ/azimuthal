@@ -29,6 +29,7 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 )
@@ -66,6 +67,21 @@ type Handler struct {
 	shares   *access.ShareService
 	reader   EntityReader
 	auditLog audit.Logger
+
+	// ticketRef is the boot-time ticket-reference policy. Both mutations
+	// resolve the reference AFTER their authorisation gate and BEFORE their
+	// write.
+	//
+	// The order matters more here than anywhere else in the application. This
+	// route family carries no space guard at all — resolveManageable and
+	// authorizeShareManagement do the whole read-then-manage split in the
+	// handler, 404 when the entity's space is unreadable so existence never
+	// leaks and 403 only once it is readable. A ticket_ref 400 raised above
+	// that would answer a caller who cannot see the entity differently from
+	// one naming a nonexistent id, which is the ADR-0008 leak the split
+	// exists to prevent. Resolving before the write is what makes a
+	// required-mode 400 mean nothing happened. The zero value is permissive.
+	ticketRef ticketref.Policy
 }
 
 // NewHandler creates a shares Handler.
@@ -76,6 +92,13 @@ func NewHandler(shares *access.ShareService, reader EntityReader) *Handler {
 // WithAuditLogger attaches an audit logger to the handler.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithTicketRefPolicy sets the ticket-reference requirement applied to share
+// mutations.
+func (h *Handler) WithTicketRefPolicy(p ticketref.Policy) *Handler {
+	h.ticketRef = p
 	return h
 }
 
@@ -230,8 +253,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // @Security     BearerAuth
 // @Param        orgID  path      string                        true  "Organization ID (UUID)"
 // @Param        body   body      api.SwaggerCreateShareRequest true  "Share"
+// @Param        ticket_ref  query     string                        false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
 // @Success      201    {object}  map[string]interface{}        "Created share"
-// @Failure      400    {object}  api.SwaggerErrorResponse      "Validation error"
+// @Failure      400    {object}  api.SwaggerErrorResponse      "Validation error, or a missing/over-long ticket_ref"
 // @Failure      401    {object}  api.SwaggerErrorResponse      "Not authenticated"
 // @Failure      403    {object}  api.SwaggerErrorResponse      "manage_shares required"
 // @Failure      404    {object}  api.SwaggerErrorResponse      "Entity not found"
@@ -258,12 +282,17 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "entity_id is required")
 		return
 	}
-	ref, ok := h.resolveManageable(w, r, orgID, req.EntityType, req.EntityID)
+	entity, ok := h.resolveManageable(w, r, orgID, req.EntityType, req.EntityID)
+	if !ok {
+		return
+	}
+	// After the 404/403 split, before the write — see the ticketRef field.
+	ticketRef, ok := h.ticketRef.Resolve(w, r)
 	if !ok {
 		return
 	}
 
-	share, err := h.shares.Create(r.Context(), ref, access.CreateShareInput{
+	share, err := h.shares.Create(r.Context(), entity, access.CreateShareInput{
 		OrgID:      orgID,
 		EntityType: req.EntityType,
 		EntityID:   req.EntityID,
@@ -289,7 +318,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create share")
 		return
 	}
-	h.logShareEvent(r, audit.EventTypeShareCreated, share)
+	h.logShareEvent(r, audit.EventTypeShareCreated, share, ticketRef)
 	respond.JSON(w, http.StatusCreated, toShareResponse(share))
 }
 
@@ -302,7 +331,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 // @Security     BearerAuth
 // @Param        orgID    path  string  true  "Organization ID (UUID)"
 // @Param        shareID  path  string  true  "Share ID (UUID)"
+// @Param        ticket_ref  query  string  false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
 // @Success      204  "Revoked"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID, or a missing/over-long ticket_ref"
 // @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      403  {object}  api.SwaggerErrorResponse  "manage_shares required"
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
@@ -321,6 +352,11 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	if !h.authorizeShareManagement(w, r, orgID, shareID) {
 		return
 	}
+	// Resolved before the revoke: a rejected DELETE must leave the share live.
+	ticketRef, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
+		return
+	}
 	revoked, err := h.shares.Revoke(r.Context(), shareID)
 	if errors.Is(err, access.ErrShareAlreadyRevoked) {
 		respond.Error(w, r, http.StatusGone, respond.CodeConflict, "share already revoked")
@@ -334,7 +370,7 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to revoke share")
 		return
 	}
-	h.logShareEvent(r, audit.EventTypeShareRevoked, revoked)
+	h.logShareEvent(r, audit.EventTypeShareRevoked, revoked, ticketRef)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -414,10 +450,15 @@ func (h *Handler) ReadShared(w http.ResponseWriter, r *http.Request) {
 }
 
 // logShareEvent writes a handler-layer audit event for a share mutation
-// (best-effort, per the default convention). The revoke-on-move and
-// revoke-on-delete invariants write their own share.revoked events inside
-// the entity mutation's transaction instead — see the content_tx adapter.
-func (h *Handler) logShareEvent(r *http.Request, t audit.EventType, s access.Share) {
+// (best-effort, per the default convention). ticketRef is the reference the
+// caller resolved before its write — empty when none was supplied and the
+// policy did not demand one, which the logger stores as SQL NULL.
+//
+// The revoke-on-move and revoke-on-delete invariants write their own
+// share.revoked events inside the entity mutation's transaction instead — see
+// the content_tx adapter. Those carry no reference, deliberately, and the
+// reason is recorded there.
+func (h *Handler) logShareEvent(r *http.Request, t audit.EventType, s access.Share, ticketRef string) {
 	claims := auth.ClaimsFromContext(r.Context())
 	actor := ""
 	if claims != nil {
@@ -438,6 +479,7 @@ func (h *Handler) logShareEvent(r *http.Request, t audit.EventType, s access.Sha
 	_ = h.auditLog.Log(r.Context(), audit.Event{
 		Type: t, ActorID: actor, OrgID: s.OrgID.String(),
 		ResourceType: "share", ResourceID: s.ID.String(), Metadata: meta,
+		TicketRef: ticketRef,
 	})
 }
 

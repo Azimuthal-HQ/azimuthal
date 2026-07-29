@@ -16,17 +16,24 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	adminapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/admin"
+	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
+	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
+	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
@@ -34,11 +41,12 @@ import (
 //
 // The reference travels as the `ticket_ref` query parameter and lands in the
 // dedicated audit_log.ticket_ref column (migration 025), NOT in the payload
-// JSONB. These tests drive the four extended handlers — admin people
-// lifecycle, teams, spaces, invites — through the real router against a real
-// database and read the column back with SQL.
+// JSONB. These tests drive the six extended handlers — admin people
+// lifecycle, teams, spaces, invites, and (since B3) grants and shares —
+// through the real router against a real database and read the column back
+// with SQL.
 //
-// Two properties are load-bearing and easy to regress:
+// Three properties are load-bearing and easy to regress:
 //
 //   - One request can emit several events (a three-field person PATCH, a
 //     rename-and-reparent team PATCH, a bulk invite). Every event of one
@@ -48,6 +56,10 @@ import (
 //   - Under the required policy (A2) a missing reference must mean *nothing
 //     happened*. A 400 returned after the write is the exact failure the
 //     feature exists to prevent, and only a state assertion catches it.
+//   - The reference is checked AFTER the authorisation gate and never before
+//     it. A 400 saying "ticket_ref is required" for a resource the caller may
+//     not see answers differently from that resource's 403 or 404, and is
+//     therefore an existence oracle. Nothing asserted this before B3.
 
 // --- helpers ---
 
@@ -529,17 +541,28 @@ func TestTicketRefAudit_ReferenceSurvivesDeletionOfWhatItNames(t *testing.T) {
 
 // --- A2: required mode ---
 
-// newTicketRefRequiredServer builds a server whose four reference-accepting
+// newTicketRefRequiredServer builds a server whose six reference-accepting
 // handlers run under ticketref.Policy{Required: true} — the boot-time posture
 // AZIMUTHAL_TICKET_REF_REQUIRED selects in cmd/server/main.go.
 //
-// newTestServer builds them with the permissive zero value and
-// routes_integration_test.go is owned elsewhere, so the required posture
-// needs its own construction. It is the smallest wiring that still runs the
-// real handlers, the real router and the real database: the four handlers
-// under test plus the authenticator and access resolver they sit behind.
+// newTestServer builds them with the permissive zero value, which the whole
+// A3 suite depends on, so the required posture needs its own construction. It
+// is the smallest wiring that still runs the real handlers, the real router
+// and the real database: the six handlers under test plus the authenticator
+// and access resolver they sit behind.
+//
 // Handlers left nil are simply unmounted (the router registers only method
-// values for them), which is why no ticket/wiki/project routes exist here.
+// values for them), and that is a trap rather than a convenience: a mutation
+// family missing from here is not merely untested under the required policy,
+// its routes 404, so a test written against it fails on the status rather
+// than reporting the gap. That is exactly how grants and shares went
+// uncovered until B3. TestHarness_EveryTicketRefHandlerIsUnderTheRequiredPolicy
+// now fails by name when a handler that accepts a reference is missing here.
+//
+// TicketHandler is mounted despite accepting no reference of its own: a share
+// needs a real entity to point at, and creating one through the API exercises
+// the space resolution shares.LookupEntity performs. Inserting a row with raw
+// SQL instead would couple these tests to the tickets schema and skip it.
 func newTicketRefRequiredServer(t *testing.T) *testServer {
 	t.Helper()
 	db := testutil.NewTestDB(t)
@@ -563,9 +586,21 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc, userAdapter)
 
 	accessAdapter := adapters.NewAccessAdapter(pool)
-	accessResolver := access.NewResolver(accessAdapter).WithShareStore(adapters.NewShareAdapter(pool))
+	shareAdapter := adapters.NewShareAdapter(pool)
+	accessResolver := access.NewResolver(accessAdapter).WithShareStore(shareAdapter)
 	grantSvc := access.NewGrantService(accessAdapter)
+	explainer := access.NewExplainer(accessAdapter, accessAdapter)
+	shareSvc := access.NewShareService(shareAdapter)
 	teamSvc := coreteams.NewService(adapters.NewTeamAdapter(pool))
+
+	// The share routes need a readable entity and a reader that can project
+	// it, so the three module services come along. contentTx carries the
+	// ADR-0008 revoke-on-delete/move invariants, exactly as production wires
+	// them.
+	contentTx := adapters.NewContentTxAdapter(pool)
+	ticketSvc := tickets.NewTicketService(adapters.NewTicketAdapter(queries), contentTx)
+	itemSvc := projects.NewItemService(adapters.NewItemAdapter(queries), contentTx)
+	wikiSvc := wiki.NewService(queries, contentTx)
 	peopleSvc := people.NewService(adapters.NewPeopleAdapter(pool))
 	inviteSvc := invites.NewService(adapters.NewInviteAdapter(pool), nil, invites.Config{
 		TTL:     7 * 24 * time.Hour,
@@ -595,6 +630,17 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 		InviteHandler: invitesapi.NewHandler(inviteSvc, jwtSvc).
 			WithAuditLogger(auditLog).
 			WithTicketRefPolicy(required),
+		GrantHandler: grantsapi.NewHandler(grantSvc, explainer).
+			WithAuditLogger(auditLog).
+			WithTicketRefPolicy(required),
+		ShareHandler: sharesapi.NewHandler(shareSvc, sharesapi.NewServiceReader(wikiSvc, ticketSvc, itemSvc)).
+			WithAuditLogger(auditLog).
+			WithTicketRefPolicy(required),
+		// Accepts no reference of its own — here so the share tests have a
+		// real entity to share. See the doc comment above.
+		TicketHandler: ticketsapi.NewHandler(ticketSvc).
+			WithAuditLogger(auditLog).
+			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
 			if err != nil {

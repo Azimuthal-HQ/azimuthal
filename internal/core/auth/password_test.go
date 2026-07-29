@@ -51,9 +51,17 @@ func TestHashPassword_ProductionCostIsTwelve(t *testing.T) {
 // fails three ways: the error goes nil, the stored cost moves, and the next
 // hash carries the lowered cost.
 func TestSetPasswordCost_RefusesBelowProductionFloor(t *testing.T) {
+	// Deliberately NOT DefaultBcryptCost: each row hashes once to prove the
+	// cost did not move, and six cost-12 hashes would cost ~19s under -race —
+	// a fifth of the saving this change exists to make, spent asserting
+	// something a cheap distinct baseline proves just as well. baseline is one
+	// above bcrypt.MinCost so that a successfully-refused SetPasswordCost(4)
+	// would still be visible as a change.
+	baseline := bcrypt.MinCost + 1
+
 	refused := []int{-1, 0, bcrypt.MinCost, 11, bcrypt.MaxCost + 1, 99}
 	for _, cost := range refused {
-		withPasswordCost(t, DefaultBcryptCost)
+		withPasswordCost(t, baseline)
 		before := PasswordCost()
 
 		if err := SetPasswordCost(cost); err == nil {
@@ -76,7 +84,7 @@ func TestSetPasswordCost_RefusesBelowProductionFloor(t *testing.T) {
 	}
 
 	for _, cost := range []int{MinBcryptCost, 13, bcrypt.MaxCost} {
-		withPasswordCost(t, DefaultBcryptCost)
+		withPasswordCost(t, bcrypt.MinCost+1)
 		if err := SetPasswordCost(cost); err != nil {
 			t.Errorf("SetPasswordCost(%d) must be accepted, got %v", cost, err)
 		}
@@ -90,17 +98,30 @@ func TestSetPasswordCost_RefusesBelowProductionFloor(t *testing.T) {
 // Without it, deleting the testing.Testing() branch would leave every test
 // green and quietly hand the CI job back its three minutes.
 //
-// Honest limitation: the `go build` branch cannot be exercised from a test
-// binary, because testing.Testing() is true here by definition. The second
-// half swaps the predicate to reach it, which proves the branch computes the
-// production default — it does not, and cannot, prove what the linker does.
-// That guarantee comes from testing.Testing()'s own contract.
+// It asserts the OBSERVABLE property — the cost carried by a hash this binary
+// actually produces — rather than the value of the package variable, because
+// sibling tests in this file move that variable on purpose and an assertion
+// about it would be about test ordering as much as about the code.
+//
+// Honest limitation, stated because the name could be read as more than it
+// is: the `go build` branch cannot be reached from a test binary, since
+// testing.Testing() is true here by definition. The second half swaps the
+// predicate to prove the branch computes the production default. It does not,
+// and cannot, prove what the linker does — and it is not the only thing
+// standing between production and a weak hash either. That is loadConfig
+// calling SetPasswordCost, which has its own test in cmd/server.
 func TestPasswordCost_TestBinaryBootsAtMinCost(t *testing.T) {
-	if !testing.Testing() {
-		t.Fatal("this is a test binary; testing.Testing() must be true")
+	hash, err := HashPassword("boot-cost")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := initialPasswordCost(); got != bcrypt.MinCost {
-		t.Errorf("a test binary must boot at bcrypt.MinCost (%d), got %d", bcrypt.MinCost, got)
+	cost, err := bcrypt.Cost([]byte(hash))
+	if err != nil {
+		t.Fatalf("parsing cost from hash: %v", err)
+	}
+	if cost != bcrypt.MinCost {
+		t.Errorf("a test binary must hash at bcrypt.MinCost (%d), got %d — known-issues #18 has regressed",
+			bcrypt.MinCost, cost)
 	}
 
 	previous := isTestBinary

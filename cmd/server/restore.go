@@ -42,7 +42,7 @@ func init() {
 
 // runRestore reads a backup archive and restores the database and object storage.
 func runRestore(_ *cobra.Command, _ []string) error {
-	cfg, err := config.Load()
+	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}

@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 )
 
 // serveCmd starts the HTTP server. It is also the default action.
@@ -32,7 +30,7 @@ func runServe(_ *cobra.Command, _ []string) error {
 
 	slog.Info("starting azimuthal", "version", Version, "build_time", BuildTime)
 
-	cfg, err := config.Load()
+	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}

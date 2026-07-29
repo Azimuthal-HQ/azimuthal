@@ -122,14 +122,6 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 	noop := func() {}
 	deps := &serverDeps{stopQueue: func(_ context.Context) error { return nil }}
 
-	// Before any resource is opened, so a refused work factor fails startup
-	// rather than a connection pool later. config.Load has already bounded the
-	// value; auth re-checks the floor because it is the package that owns it,
-	// and because a future caller might not come through config at all.
-	if err := auth.SetPasswordCost(cfg.BcryptCost); err != nil {
-		return nil, deps, noop, fmt.Errorf("configuring password hashing: %w", err)
-	}
-
 	pool, err := db.Connect(ctx, db.DefaultConfig(cfg.DatabaseURL))
 	if err != nil {
 		return nil, deps, noop, fmt.Errorf("connecting to database: %w", err)
@@ -310,10 +302,17 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	tagSvc := tags.NewService(adapters.NewTagAdapter(queries, pool))
 	wikiDocs := wiki.NewDocumentService(queries, contentTx, pageImages, tagSvc)
 
+	// Read once, at boot, and handed to every handler that accepts a ticket
+	// reference. Deliberately not a runtime settings row: turning this on
+	// changes what every administrative action requires, and a restart is the
+	// honest cost of that. One value shared by all six handlers is also what
+	// stops the surfaces disagreeing about whether a reference is mandatory.
+	ticketRefPolicy := ticketref.Policy{Required: cfg.TicketRefRequired}
+
 	// The shared-entity reader projects each module entity into a
 	// container-free view (no space, tree, siblings, or comments).
 	sharedReader := sharesapi.NewServiceReader(wikiSvc, ticketSvc, itemSvc)
-	shareHandler := sharesapi.NewHandler(shareSvc, sharedReader).WithAuditLogger(auditLog)
+	shareHandler := sharesapi.NewHandler(shareSvc, sharedReader).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy)
 
 	// Saved views (P4, ADR-0009). One adapter satisfies both seams: the view
 	// rows and the two cross-space result fan-outs.
@@ -347,13 +346,6 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	bulkSvc := access.NewBulkService(adapters.NewBulkGrantAdapter(pool))
 	auditReader := audit.NewReader(adapters.NewAuditReaderAdapter(queries))
 
-	// Read once, at boot, and handed to every handler that accepts a ticket
-	// reference. Deliberately not a runtime settings row: turning this on
-	// changes what every administrative action requires, and a restart is the
-	// honest cost of that. One value shared by all four handlers is also what
-	// stops the surfaces disagreeing about whether a reference is mandatory.
-	ticketRefPolicy := ticketref.Policy{Required: cfg.TicketRefRequired}
-
 	return api.NewRouter(api.RouterConfig{
 		Authenticator: authenticator,
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner, userAdapter).
@@ -367,7 +359,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		NotificationHandler: notificationsapi.NewHandler(queries),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
-		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
+		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		ShareHandler:        shareHandler,
 		AttachmentHandler:   attachmentHandler,
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),

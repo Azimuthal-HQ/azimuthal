@@ -12,6 +12,7 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 )
@@ -21,6 +22,20 @@ type Handler struct {
 	grants    *access.GrantService
 	explainer *access.Explainer
 	auditLog  audit.Logger
+
+	// ticketRef is the boot-time ticket-reference policy. Every mutation
+	// below resolves the reference AFTER its authorisation gate and BEFORE
+	// its write.
+	//
+	// Both halves of that order are load-bearing. After the gate, because a
+	// 400 saying "ticket_ref is required" for a space the caller cannot
+	// manage would answer differently from a 403 or a 404 and become an
+	// existence oracle for grants on spaces they cannot see. Before the
+	// write, because under a required policy a missing reference has to mean
+	// nothing happened — a 400 returned after h.grants.Create would leave an
+	// unreferenced grant live, which is exactly what the requirement exists
+	// to prevent. The zero value is the permissive default.
+	ticketRef ticketref.Policy
 }
 
 // NewHandler creates a grants Handler.
@@ -31,6 +46,13 @@ func NewHandler(grants *access.GrantService, explainer *access.Explainer) *Handl
 // WithAuditLogger attaches an audit logger to the handler.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithTicketRefPolicy sets the ticket-reference requirement applied to grant
+// mutations.
+func (h *Handler) WithTicketRefPolicy(p ticketref.Policy) *Handler {
+	h.ticketRef = p
 	return h
 }
 
@@ -164,8 +186,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // @Param        orgID    path      string                        true  "Organization ID (UUID)"
 // @Param        spaceID  path      string                        true  "Space ID (UUID)"
 // @Param        body     body      api.SwaggerCreateGrantRequest true  "Grant"
+// @Param        ticket_ref  query     string                        false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
 // @Success      201      {object}  map[string]interface{}        "Created grant"
-// @Failure      400      {object}  api.SwaggerErrorResponse      "Subject not an org member / invalid role"
+// @Failure      400      {object}  api.SwaggerErrorResponse      "Subject not an org member / invalid role, or a missing/over-long ticket_ref"
 // @Failure      401      {object}  api.SwaggerErrorResponse      "Not authenticated"
 // @Failure      403      {object}  api.SwaggerErrorResponse      "manage_grants required"
 // @Failure      404      {object}  api.SwaggerErrorResponse      "Space not found"
@@ -179,6 +202,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	// After the manage_grants gate, before the write — see the ticketRef
+	// field comment.
+	ref, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
 		return
 	}
 	subjectType, subjectID, role, ok := decodeCreateGrant(w, r)
@@ -203,7 +232,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create grant")
 		return
 	}
-	h.logEvent(r, audit.EventTypeGrantCreated, grant, nil)
+	h.logEvent(r, audit.EventTypeGrantCreated, grant, ref, nil)
 	respond.JSON(w, http.StatusCreated, toGrantResponse(grant))
 }
 
@@ -219,8 +248,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 // @Param        spaceID  path      string                        true  "Space ID (UUID)"
 // @Param        grantID  path      string                        true  "Grant ID (UUID)"
 // @Param        body     body      api.SwaggerUpdateGrantRequest true  "New role"
+// @Param        ticket_ref  query     string                        false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
 // @Success      200      {object}  map[string]interface{}        "Updated grant"
-// @Failure      400      {object}  api.SwaggerErrorResponse      "Invalid role"
+// @Failure      400      {object}  api.SwaggerErrorResponse      "Invalid role, or a missing/over-long ticket_ref"
 // @Failure      401      {object}  api.SwaggerErrorResponse      "Not authenticated"
 // @Failure      403      {object}  api.SwaggerErrorResponse      "manage_grants required"
 // @Failure      404      {object}  api.SwaggerErrorResponse      "Not found"
@@ -231,6 +261,11 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	grant, ok := h.grantInSpace(w, r, spaceID)
+	if !ok {
+		return
+	}
+	// After the 404 that hides a grant belonging to another space.
+	ref, ok := h.ticketRef.Resolve(w, r)
 	if !ok {
 		return
 	}
@@ -253,7 +288,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to update grant")
 		return
 	}
-	h.logEvent(r, audit.EventTypeGrantUpdated, updated, map[string]string{"role": updated.Role.String()})
+	h.logEvent(r, audit.EventTypeGrantUpdated, updated, ref, map[string]string{"role": updated.Role.String()})
 	respond.JSON(w, http.StatusOK, toGrantResponse(updated))
 }
 
@@ -266,7 +301,9 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 // @Param        orgID    path  string  true  "Organization ID (UUID)"
 // @Param        spaceID  path  string  true  "Space ID (UUID)"
 // @Param        grantID  path  string  true  "Grant ID (UUID)"
+// @Param        ticket_ref  query  string  false  "Operator ticket reference recorded on the audit event (max 200 characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED"
 // @Success      204  "Revoked"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID, or a missing/over-long ticket_ref"
 // @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      403  {object}  api.SwaggerErrorResponse  "manage_grants required"
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
@@ -280,11 +317,16 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Resolved before the revoke: a rejected DELETE must leave the grant live.
+	ref, ok := h.ticketRef.Resolve(w, r)
+	if !ok {
+		return
+	}
 	if err := h.grants.Revoke(r.Context(), grant.ID); err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to revoke grant")
 		return
 	}
-	h.logEvent(r, audit.EventTypeGrantRevoked, grant, nil)
+	h.logEvent(r, audit.EventTypeGrantRevoked, grant, ref, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -360,8 +402,11 @@ func (h *Handler) grantInSpace(w http.ResponseWriter, r *http.Request, spaceID u
 	return grant, true
 }
 
-// logEvent writes an audit event for a grant mutation.
-func (h *Handler) logEvent(r *http.Request, t audit.EventType, g access.Grant, extra map[string]string) {
+// logEvent writes an audit event for a grant mutation. ticketRef is the
+// reference the caller resolved before its write — empty when none was
+// supplied and the policy did not demand one, which the logger stores as SQL
+// NULL.
+func (h *Handler) logEvent(r *http.Request, t audit.EventType, g access.Grant, ticketRef string, extra map[string]string) {
 	claims := auth.ClaimsFromContext(r.Context())
 	actor := ""
 	if claims != nil {
@@ -379,5 +424,6 @@ func (h *Handler) logEvent(r *http.Request, t audit.EventType, g access.Grant, e
 	_ = h.auditLog.Log(r.Context(), audit.Event{
 		Type: t, ActorID: actor, OrgID: g.OrgID.String(),
 		ResourceType: "grant", ResourceID: g.ID.String(), Metadata: meta,
+		TicketRef: ticketRef,
 	})
 }

@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 )
 
@@ -235,4 +238,108 @@ func TestHarness_NoUnmountedSurfaces(t *testing.T) {
 			t.Errorf("unmountedInHarness names %q, which is no longer a RouterConfig field", name)
 		}
 	}
+}
+
+// TestHarness_EveryTicketRefHandlerIsUnderTheRequiredPolicy is the structural
+// guard for the omission that produced B3.
+//
+// A ticketref.Policy is a VALUE field, so TestHarness_NoDarkDependencies is
+// blind to it by design (isDependencyKind above excludes value kinds, and it
+// is right to: the zero policy is a real, working, permissive configuration,
+// not an absent collaborator). The consequence is that a handler could gain a
+// ticket-reference gate and no test would ever exercise it under the required
+// posture — which is exactly what happened to grants and shares. They accepted
+// no reference at all, the four required-mode tests passed, and nothing in the
+// suite had an opinion.
+//
+// So the guard is not "is the field set" but "is every handler that HAS one
+// also mounted in the required-mode harness with Required true". A new
+// reference-accepting handler fails here by name until newTicketRefRequiredServer
+// knows about it.
+//
+// Verified by deliberate breakage: removing `.WithTicketRefPolicy(required)`
+// from TeamHandler in newTicketRefRequiredServer fails this with
+// "TeamHandler"; leaving GrantHandler out of that harness entirely fails it
+// too. Restored afterwards.
+func TestHarness_EveryTicketRefHandlerIsUnderTheRequiredPolicy(t *testing.T) {
+	production := newTestServer(t)
+	required := newTicketRefRequiredServer(t)
+
+	prodCfg := reflect.ValueOf(production.RouterCfg)
+	reqCfg := reflect.ValueOf(required.RouterCfg)
+	cfgType := prodCfg.Type()
+
+	var missing []string
+	var checked []string
+
+	for i := range prodCfg.NumField() {
+		name := cfgType.Field(i).Name
+		field := prodCfg.Field(i)
+		if field.Kind() != reflect.Ptr || field.IsNil() || field.Elem().Kind() != reflect.Struct {
+			continue
+		}
+		if !hasTicketRefPolicy(field.Elem()) {
+			continue
+		}
+		checked = append(checked, name)
+
+		counterpart := reqCfg.Field(i)
+		if counterpart.Kind() != reflect.Ptr || counterpart.IsNil() {
+			missing = append(missing, name+" (not mounted in newTicketRefRequiredServer)")
+			continue
+		}
+		if !ticketRefPolicyIsRequired(counterpart.Elem()) {
+			missing = append(missing, name+" (mounted, but its policy is permissive)")
+		}
+	}
+
+	sort.Strings(missing)
+	require.Empty(t, missing, strings.Join([]string{
+		"these handlers accept a ticket reference but are not exercised under the required policy:",
+		strings.Join(missing, ", "),
+		"— add them to newTicketRefRequiredServer in ticket_ref_audit_integration_test.go.",
+	}, "\n"))
+
+	// Guard against the guard passing vacuously. If the reflection stops
+	// finding the policy field — renamed, moved, made a pointer — `missing`
+	// is empty for the wrong reason and this test would report success while
+	// checking nothing.
+	require.NotEmpty(t, checked, "no handler was found to carry a ticketref.Policy; the reflection has gone stale")
+	require.Contains(t, checked, "GrantHandler")
+	require.Contains(t, checked, "ShareHandler")
+}
+
+// hasTicketRefPolicy reports whether a handler struct carries a
+// ticketref.Policy field, by type rather than by name — a rename of the field
+// must not silently drop a handler out of the guard above.
+func hasTicketRefPolicy(handler reflect.Value) bool {
+	return ticketRefPolicyField(handler).IsValid()
+}
+
+// ticketRefPolicyIsRequired reads Required off the handler's policy.
+//
+// Reading an exported sub-field of an unexported struct field is legal
+// through reflect as long as nothing calls Interface() on it — the same
+// constraint TestHarness_AuditLoggersAreLive works within.
+func ticketRefPolicyIsRequired(handler reflect.Value) bool {
+	policy := ticketRefPolicyField(handler)
+	if !policy.IsValid() {
+		return false
+	}
+	field := policy.FieldByName("Required")
+	return field.IsValid() && field.Kind() == reflect.Bool && field.Bool()
+}
+
+// ticketRefPolicyField finds the handler's ticketref.Policy field by type.
+func ticketRefPolicyField(handler reflect.Value) reflect.Value {
+	if handler.Kind() != reflect.Struct {
+		return reflect.Value{}
+	}
+	t := handler.Type()
+	for i := range t.NumField() {
+		if t.Field(i).Type == reflect.TypeOf(ticketref.Policy{}) {
+			return handler.Field(i)
+		}
+	}
+	return reflect.Value{}
 }
