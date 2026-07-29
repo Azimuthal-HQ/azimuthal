@@ -410,19 +410,31 @@ func (q *Queries) ListChildPages(ctx context.Context, parentID pgtype.UUID) ([]L
 }
 
 const listPageRevisions = `-- name: ListPageRevisions :many
-SELECT id, page_id, version, title, author_id, created_at
-FROM page_revisions WHERE page_id = $1 ORDER BY version DESC
+SELECT r.id, r.page_id, r.version, r.title, r.author_id, r.created_at,
+       u.display_name AS author_name
+FROM page_revisions r
+LEFT JOIN users u ON u.id = r.author_id
+WHERE r.page_id = $1 ORDER BY r.version DESC
 `
 
 type ListPageRevisionsRow struct {
-	ID        uuid.UUID          `json:"id"`
-	PageID    uuid.UUID          `json:"page_id"`
-	Version   int32              `json:"version"`
-	Title     string             `json:"title"`
-	AuthorID  uuid.UUID          `json:"author_id"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID         uuid.UUID          `json:"id"`
+	PageID     uuid.UUID          `json:"page_id"`
+	Version    int32              `json:"version"`
+	Title      string             `json:"title"`
+	AuthorID   uuid.UUID          `json:"author_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	AuthorName *string            `json:"author_name"`
 }
 
+// The revision ledger, with the author resolved.
+//
+// page_revisions has carried author_id since migration 005, so "who published
+// this version" was always stored — it was only ever missing from the read.
+// LEFT JOIN, not JOIN: a user row can be soft-deleted, and a deleted account
+// must not make its revisions vanish from a page's history. The name comes back
+// NULL in that case and the surface renders "Unknown" rather than inventing an
+// author for an old row.
 func (q *Queries) ListPageRevisions(ctx context.Context, pageID uuid.UUID) ([]ListPageRevisionsRow, error) {
 	rows, err := q.db.Query(ctx, listPageRevisions, pageID)
 	if err != nil {
@@ -439,6 +451,7 @@ func (q *Queries) ListPageRevisions(ctx context.Context, pageID uuid.UUID) ([]Li
 			&i.Title,
 			&i.AuthorID,
 			&i.CreatedAt,
+			&i.AuthorName,
 		); err != nil {
 			return nil, err
 		}

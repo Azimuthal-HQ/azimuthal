@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
@@ -196,6 +197,11 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
 	var req publishRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
@@ -204,6 +210,7 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.docs.Publish(r.Context(), wiki.PublishInput{
 		PageID:              pageID,
+		OrgID:               orgID,
 		AuthorID:            claims.UserID,
 		Title:               req.Title,
 		Doc:                 req.Doc,
@@ -239,6 +246,103 @@ func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	respond.JSON(w, http.StatusOK, result.Page)
+}
+
+type restoreRevisionRequest struct {
+	// BaseVersion is the version the caller believes is current. The ordinary
+	// publish version guard is applied against it — a restore is not exempt.
+	BaseVersion int32 `json:"base_version"`
+	// AcknowledgedLostIDs answers the same lost-preserved-content refusal a
+	// manual edit gets. An older version usually lacks preserved content the
+	// current one has, so this is the common case for a restore rather than an
+	// unusual one.
+	AcknowledgedLostIDs []string `json:"acknowledged_lost_ids,omitempty"`
+	Overwrite           bool     `json:"overwrite,omitempty"`
+}
+
+// RestoreRevision republishes an earlier version's content as a new version.
+//
+// @Summary      Restore an earlier version of a page
+// @Description  Republishes the content of an earlier version as a NEW version — the history is never rewritten, so restoring version 3 onto a page at version 7 produces version 8 and leaves 4 through 7 in place. It flows through the ordinary publish path and gets no exemption from its refusals: 409 with a conflict body when the page has been published past base_version, and 409 with a lost-content body when the older version does not carry preserved content the current one does (ADR-0012 — that removal must be acknowledged, not inferred). Restoring the version the page already holds changes nothing and reports so rather than adding an empty version.
+// @Tags         wiki
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        spaceID  path      string  true  "Space ID (UUID)"
+// @Param        pageID   path      string  true  "Page ID (UUID)"
+// @Param        version  path      integer true  "The version to restore"
+// @Param        body     body      map[string]interface{}  true  "Base version, and any acknowledged removals"
+// @Success      200      {object}  map[string]interface{}    "The published page, or a no-op report"
+// @Failure      400      {object}  api.SwaggerErrorResponse  "Invalid ID or version"
+// @Failure      403      {object}  api.SwaggerErrorResponse  "Insufficient permissions"
+// @Failure      404      {object}  api.SwaggerErrorResponse  "No such page or version"
+// @Failure      409      {object}  map[string]interface{}    "Version conflict, or preserved content would be lost"
+// @Failure      422      {object}  api.SwaggerErrorResponse  "Unresolvable preserved content"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/revisions/{version}/restore [post]
+func (h *Handler) RestoreRevision(w http.ResponseWriter, r *http.Request) {
+	pageID, claims, ok := h.editablePage(w, r)
+	if !ok {
+		return
+	}
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	version, err := strconv.ParseInt(chi.URLParam(r, "version"), 10, 32)
+	if err != nil || version < 1 {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid version")
+		return
+	}
+	var req restoreRevisionRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+
+	result, err := h.docs.RestoreRevision(r.Context(), wiki.RestoreInput{
+		PageID:              pageID,
+		OrgID:               orgID,
+		AuthorID:            claims.UserID,
+		Version:             int32(version),
+		BaseVersion:         req.BaseVersion,
+		AcknowledgedLostIDs: req.AcknowledgedLostIDs,
+		Overwrite:           req.Overwrite,
+	})
+	if err != nil {
+		handleDocumentError(w, r, err)
+		return
+	}
+	if result.Conflict != nil {
+		respond.JSON(w, http.StatusConflict, result.Conflict)
+		return
+	}
+	if result.LostContent != nil {
+		respond.JSON(w, http.StatusConflict, result.LostContent)
+		return
+	}
+	if result.NoOp {
+		// 200 rather than an error: nothing went wrong, and the caller asked for
+		// a state the page is already in. The body says so in a sentence the UI
+		// shows verbatim.
+		respond.JSON(w, http.StatusOK, map[string]any{"restored": false, "message": result.Message})
+		return
+	}
+
+	// The same page.updated event a manual publish writes — restoring IS
+	// updating the page — with the metadata saying which version it came from,
+	// so the trail distinguishes a restore from an ordinary edit.
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypePageUpdated, ActorID: claims.UserID.String(),
+		OrgID: claims.OrgID, ResourceType: "page", ResourceID: pageID.String(),
+		Metadata: map[string]string{
+			"via":              "revision_restore",
+			"restored_version": strconv.FormatInt(version, 10),
+			"version":          strconv.FormatInt(int64(result.Page.Version), 10),
+		},
+	})
+	respond.JSON(w, http.StatusOK, map[string]any{"restored": true, "page": result.Page})
 }
 
 // UploadImage stores an image on a page for the editor to reference.
@@ -350,7 +454,8 @@ func (h *Handler) editablePage(w http.ResponseWriter, r *http.Request) (uuid.UUI
 // choice the author can make would send them round a loop.
 func handleDocumentError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, wiki.ErrPageNotFound), errors.Is(err, wiki.ErrDraftNotFound):
+	case errors.Is(err, wiki.ErrPageNotFound), errors.Is(err, wiki.ErrDraftNotFound),
+		errors.Is(err, wiki.ErrRevisionNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
 	case errors.Is(err, wiki.ErrEmptyTitle):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "a page needs a title")

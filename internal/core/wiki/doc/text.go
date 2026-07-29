@@ -508,6 +508,15 @@ func inlineChildMarkdown(child json.RawMessage) (string, error) {
 	case "statusLozenge":
 		label, _ := obj.attrString("text")
 		return "`" + label + "`", nil
+	case NodeInlineTag:
+		// The tag's own text, with the hash, so the projection carries it into
+		// the generated search_vector — an inline tag that contributed nothing
+		// to the index would be a tag you cannot find by name.
+		label, _ := obj.attrString(AttrTagLabel)
+		if label == "" {
+			return "", nil
+		}
+		return "#" + label, nil
 	case "image":
 		var b strings.Builder
 		writeImageMarkdown(&b, obj)

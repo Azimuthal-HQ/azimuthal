@@ -114,8 +114,19 @@ FROM page_revisions WHERE page_id = $1 AND version = $2;
 SELECT * FROM page_revisions WHERE page_id = $1 AND version = $2;
 
 -- name: ListPageRevisions :many
-SELECT id, page_id, version, title, author_id, created_at
-FROM page_revisions WHERE page_id = $1 ORDER BY version DESC;
+-- The revision ledger, with the author resolved.
+--
+-- page_revisions has carried author_id since migration 005, so "who published
+-- this version" was always stored — it was only ever missing from the read.
+-- LEFT JOIN, not JOIN: a user row can be soft-deleted, and a deleted account
+-- must not make its revisions vanish from a page's history. The name comes back
+-- NULL in that case and the surface renders "Unknown" rather than inventing an
+-- author for an old row.
+SELECT r.id, r.page_id, r.version, r.title, r.author_id, r.created_at,
+       u.display_name AS author_name
+FROM page_revisions r
+LEFT JOIN users u ON u.id = r.author_id
+WHERE r.page_id = $1 ORDER BY r.version DESC;
 
 -- The page-lock queries were removed in S2 along with the page_locks table
 -- (migration 037). The lock was advisory only — no write path consulted it.
