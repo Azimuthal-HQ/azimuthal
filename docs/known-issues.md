@@ -661,3 +661,68 @@ neither would be obvious from the failure message.
 
 **Proper fix**: give the status badge a `data-testid` and assert on that; drop the reload from the
 first test and leave persistence to the second, which already proves it.
+
+---
+
+## 21. `comment.created` audit events are silently discarded
+
+**Severity**: Medium (the append-only log is missing a whole entity's history)
+**Status**: Open. Found by P5 while assessing whether an activity-feed gadget could be built.
+Not fixed there: changing what the append-only log contains is not a dashboard phase's call.
+
+`audit.dbLogger.Log` (`internal/core/audit/db_logger.go`) drops any event whose `OrgID` does not
+parse — `slog.Warn`, then `return nil`, so the caller sees success:
+
+```go
+orgID, err := uuid.Parse(event.OrgID)
+if err != nil {
+    slog.Warn("audit: dropping event with invalid org_id", ...)
+    return nil
+}
+```
+
+A scan of every non-test `audit.Event{...}` literal found exactly two that set no `OrgID` at all:
+
+- `internal/core/api/comments/handler.go:264` — `EventTypeCommentCreated`. **Every comment ever
+  posted is absent from the audit log.**
+- `internal/core/api/auth/handler.go:153` — `EventTypeLoginFailed`. Arguably intentional (the
+  event fires pre-authentication, so there may be no org to name), but it is a real gap in the
+  failed-login trail and it is a gap by accident rather than by decision.
+
+**What closing it takes.** For comments, `OrgID: claims.OrgID` at the call site, plus a regression
+test that posts a comment and asserts the row exists — which fails before the fix. For failed
+logins, a decision first: either resolve the org from the submitted email, or record that
+pre-auth events are deliberately not audited and make `Log` say so rather than warn.
+
+**Why it went unnoticed.** `Log`'s return value is discarded at every call site (`_ = h.auditLog.Log(...)`),
+which is correct — an audit write must not fail a user's request — so the only signal is a warning
+line nobody reads.
+
+---
+
+## 22. `audit_log` has no `space_id`, so no activity feed can be scoped to a viewer
+
+**Severity**: Low (a feature cannot be built, rather than something being broken)
+**Status**: Open. Recorded by P5, which shipped no activity gadget because of it.
+
+ADR-0009's gadget list names a recent-activity gadget and P5's brief asked for one "scoped to the
+viewer's readable containers". It is not currently buildable from anything that exists:
+
+- **`audit_log` carries `org_id` and no `space_id`**, and none in `payload`. Scoping it to a
+  viewer's readable set means deriving the container by joining `(entity_kind, entity_id)` back to
+  `tickets`, `project_items` and `pages` — a new query, and a new member-visible read path over a
+  table whose routes are `org-admin-404` today. It also structurally loses deletions: the join
+  drops soft-deleted entities, so `ticket.deleted` events disappear, and a `LEFT JOIN` does not
+  help because those rows then have no container to authorise against.
+- **`notifications` is not a candidate.** It is a per-recipient inbox with exactly ONE producer in
+  the whole product (`TicketService.Assign` → `queueAssignmentNotifier`), no org or space filter,
+  and no consultation of the readable set — migration 030's own comment says so. A feed built on
+  it would contain assignment rows and nothing else.
+
+**What closing it takes.** A nullable `audit_log.space_id` populated at write time, which is
+exactly the precedent migration 030 set for `notifications.entity_space_id`: nullable, no backfill,
+a routing/scoping hint captured where the writer already knows the answer. Then one query with the
+readable-space array as its access control, and one accounting row for the new read path.
+
+Item 21 is a prerequisite for the feed being worth having: a "recent activity" list with no
+comments in it is a poor feed.

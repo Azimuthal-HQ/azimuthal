@@ -1370,3 +1370,159 @@ alters live behaviour and needs its own regression pair.
 `ORDER BY`, so an org with two defaults for one entity type gets an arbitrary one — which this
 phase turns into "which approval policy applies". A partial unique index would close it, but
 could fail on existing data, so it is flagged rather than taken.
+---
+
+# P5 — Dashboards and the gadget registry (migration 042)
+
+## 1. Discrepancies found and corrected
+
+### D76 — the §4 migration table was stale for the fifth time
+
+It assigned `039+` to this table. `039_beacon_queues.sql` shipped from P4 PR-B while P5 was being
+planned, and 040/041 were reserved for a Codex phase running concurrently, so dashboards ship as
+**042**. 043 was reserved for this phase too and is **not used**; it stays free.
+
+Fifth occurrence, and D56 already stated the rule: *the migration table in a design document is a
+forecast, not a fact.* This entry adds one fact to it. While P5 was in flight, sibling worktrees
+took **044, 045, 046 and 047** — a customer-portal phase and a workflow phase, neither of them in
+§9's plan. The table is corrected to what shipped and the unassigned rows renumbered again; the
+next phase should expect the same thing to have happened once more.
+
+### D77 — the §4 dashboards sketch repeats D57's FK defect verbatim
+
+The sketch declares:
+
+```sql
+visibility_team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
+```
+
+This is character for character the construct D57 condemned on the saved-views sketch, and it
+fails the same way: on a **nullable** column `ON DELETE CASCADE` deletes the ROW, so deleting a
+team would delete every dashboard shared with it — somebody else's work, destroyed as a side
+effect of an unrelated administrative action.
+
+It is contrary to ADR-0009's degradation rules, which require a scope that has gone to degrade
+rather than to disappear. Migration 042 therefore uses `ON DELETE SET NULL` and, like 038, omits
+the CHECK that would make the degraded `(visibility = 'team', visibility_team_id IS NULL)` state
+unrepresentable. The invariant is enforced one layer up by `views.Audience.Normalise`, which is
+now the single implementation of that rule for both models.
+
+`TestDashboardStore_TeamDeletionDegradesRatherThanDestroys` fails with *"dashboard not found"* if
+the FK is changed back to CASCADE. Verified by making that change and running it.
+
+One half of D57 does **not** recur: the dashboards sketch carries no
+`..._visibility_team_present` CHECK, so only the FK needed correcting.
+
+### D78 — the sketch's `gadget_key` needs no CHECK, and must not have one
+
+The sketch leaves `gadget_key TEXT NOT NULL` unconstrained, and that is right for a reason worth
+recording rather than leaving to look like an oversight.
+
+The registry is a **closed set in code** (spec §7, ADR-0009 decision 5) and every write validates
+against it, so a key this build does not know cannot be written through the API. But a key this
+build does not know can still be **read** — from a row an older or newer build wrote — and
+decision log **C5** requires that to render a placeholder tile rather than crash the dashboard. A
+CHECK constraint would turn that degradation case into a failed migration or an unreadable row.
+
+Strict on write, tolerant on read, and the tolerance has to be in the schema. Migration 042 says
+so in place. `TestDashboardStore_AnUnknownStoredKeyStillLoads` inserts an unknown key straight
+through SQL and fails if the read path refuses it.
+
+### D79 — a user-fixable error on the saved-view surface answered 500
+
+Not a spec discrepancy: a live defect in P4 code, found by P5's endpoint matrix and fixed in the
+same PR because P5 inherited the shape.
+
+`views.Draft.validate` returned a bare `fmt.Errorf` for a name or description over its bound, and
+the handler's error switch had no case for it, so a saved view with a 200-character name answered
+**500 INTERNAL_ERROR** rather than 422 with the bound it exceeded. The same shape would have
+reached every gadget-configuration bound in P5.
+
+`views.ValidationError` is now the typed carrier for anything the caller can fix by changing their
+request, and both handlers match it with `errors.As` before their switches.
+`TestDashboardsMatrix_LayoutWriteRefusals` covers nine of them; the saved-view equivalent is
+covered by the existing matrix.
+
+### D80 — `/spaces` was missing from the Home product-tab prefix list
+
+Also not a spec discrepancy, and also live: `ProductTabs.isHomeActive` enumerated the Home-scoped
+top-level paths and omitted `/spaces`, so the space directory rendered with **no product tab lit
+at all**. Found while adding `/dashboards` to the same list. Both are there now.
+
+## 2. Decisions taken (justified in the phase report, recorded here)
+
+- **The audience rule is now written once.** Saved views and dashboards carry the identical
+  three-audience rule — owner, org-admin bypass, subject-side expanded team set, and a degraded
+  team row that must match nobody. `views.Audience` (`internal/core/views/audience.go`) holds it
+  and both models delegate. Two copies of an authorisation rule drift, and the direction they
+  drift in is "one of them grants more".
+
+- **`CapReadAggregates` remains uncalled**, as P4 left it. The test ADR-0007 implies is whether
+  anyone can read items but should not see counts of them, and the answer is no: an aggregate
+  resolves the identical readable set a results page does and returns counts of rows the caller
+  could enumerate one at a time, so a gate there would refuse somebody who could get the same
+  number by paging. Its placement in `minRoleFor` at `RoleViewer` stays; **the placement is still
+  speculative** and this phase declines to invent a use for it.
+
+- **No audit events for dashboards**, on P4's reasoning restated: spec §6's audit list is teams,
+  memberships, grants, space visibility, owner team and shares — every one of them an access
+  change. A dashboard grants nothing to anybody, and sharing one shares an arrangement.
+
+- **Gadget data travels the existing resolution path rather than a new one.** The dashboard
+  response hands each tile the filter document it should resolve; the client posts that to
+  `/views/preview` or the new `/views/aggregate`, both of which carry `ResolveShares`. A
+  per-gadget server-side results endpoint would have been a second resolution path, which is the
+  drift `shared-surfaces.md` exists to prevent. A viewer editing the document they were handed
+  changes only what they themselves see — which is what typing into the filter builder already
+  does.
+
+- **Spec §7 places dashboards under `/:module/:spaceId/dashboards/:dashboardId`.** A dashboard
+  arranges gadgets that cross modules and containers and its API is org-scoped per §6, so a
+  space-scoped route cannot express one — the identical contradiction this document already
+  recorded for views (P4 §3). Dashboards shipped top-level at `/dashboards` and
+  `/dashboards/:dashboardId`, beside `/views`.
+
+- **`GadgetDefinition.configSchema: JSONSchema7`** (spec §7) shipped as `configKeys: ConfigKey[]`.
+  The configuration vocabulary is four optional keys whose bounds are validated server-side; a
+  JSON-schema runtime in the client would be a second copy of those bounds, and a second copy
+  drifts. `web/src/lib/dashboards/registry.test.ts` reads the Go registry and fails in both
+  directions on the key set, the configuration keys, the breakdown fields, every bound, and
+  migration 042's `col_span` CHECK.
+
+## 3. Observed, out of scope
+
+- **There is no clean source for an actor-attributed activity feed.** ADR-0009's gadget list and
+  the P5 brief both name one, and this phase ships none, deliberately. `audit_log` has **no
+  `space_id`** and none in its payload, so scoping it to a viewer's readable containers means
+  deriving the container by joining `(entity_kind, entity_id)` back to three tables — a new query,
+  and a new member-visible read path over a table that is `org-admin-404` today. `notifications`
+  is not a candidate at all: it is a per-recipient inbox with exactly one producer in the whole
+  product (`TicketService.Assign`), and a feed built on it would contain assignment rows and
+  nothing else. **For a maintainer:** the cheap fix is a nullable `audit_log.space_id` populated
+  at write time, exactly the precedent migration 030 set for `notifications.entity_space_id`.
+
+- **Two audit events are silently discarded today.** `audit.dbLogger.Log` drops any event whose
+  `OrgID` does not parse, and two live call sites set no `OrgID` at all:
+  `internal/core/api/comments/handler.go` (`comment.created` — so **comments never appear in the
+  audit log**) and `internal/core/api/auth/handler.go` (`user.login_failed`). Found while assessing
+  the activity feed. Not touched: both are outside this phase's surface, and the comments one in
+  particular changes what the append-only log contains.
+
+- **A count gadget has no comparison window.** The prototype's stat tiles carry a delta line
+  ("+1 since Monday"). The filter vocabulary has no time dimension, so a previous-period count is
+  not expressible without extending it — a change to a locked decision rather than a render
+  choice. The tile shows the view's name in that slot instead.
+
+- **`make e2e-test` is destructive in a shared environment.** It ends with `make test-db-down`,
+  which is `docker compose down -v` and takes the volumes. Four phases were sharing one compose
+  stack while P5 ran, so this phase drove Playwright directly against an isolated database and
+  its own `E2E_PORT` rather than through the make target. **For a maintainer:** the target is
+  correct for CI and a lone developer, and a `make e2e-test-keep` that omits the teardown would
+  make it safe for the concurrent-worktree working style this project actually uses.
+
+- **The shared test database at `DATABASE_URL` accumulates other phases' migrations.**
+  `internal/db` and `cmd/server` apply goose against it directly, and goose refuses to apply a
+  migration numbered below the current version — so with 044–047 already applied by sibling
+  worktrees, migration 042 could not be applied and eleven tests failed on the toolchain rather
+  than on any change. `testutil.NewTestDB` is unaffected (it clones a fingerprinted template into
+  its own database). Recorded because the failure reads exactly like a broken migration.

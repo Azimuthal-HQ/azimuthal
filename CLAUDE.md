@@ -238,6 +238,11 @@ state before that change and is kept for the reasoning it records; the factual c
 sentence is corrected here rather than deleted, per §5. A new React surface must be eslint-clean
 on first push.
 
+Two of the rules catch real defects rather than style. P5 tripped
+`react-hooks/set-state-in-effect` by copying an effect the interim Home page had carried since P1,
+and `react-refresh/only-export-components` by putting the gadget body components in the same file
+as the registry that looks them up. Both were fixed rather than exempted.
+
 *Superseded:* `npm run lint` is **not** a gate. eslint reports 46 errors on `main` — mostly
 `react-refresh/only-export-components` and `react-hooks/set-state-in-effect` — so gating on it
 today would fail every pull request, and the alternative is a baseline file, which is an exemption
