@@ -159,13 +159,13 @@ func TestDashboardService_StoreFailuresSurface(t *testing.T) {
 
 	t.Run("the view lookup on a read", func(t *testing.T) {
 		store := &brokenStore{}
-		s, a, org := brokenSvc(store, brokenViews{fail: true})
+		_, a, org := brokenSvc(store, brokenViews{fail: true})
 		id := uuid.New()
 		store.dashboard.ID = id
 		// A dashboard with a gadget that names a view, so the lookup runs.
 		store.failGadgets = false
 		gadgetStore := &gadgetReturningStore{brokenStore: store, viewID: uuid.New()}
-		s = NewService(gadgetStore, brokenViews{fail: true})
+		s := NewService(gadgetStore, brokenViews{fail: true})
 		_, err := s.Get(ctx, org, id, a)
 		require.ErrorIs(t, err, errDashStore)
 	})
@@ -204,10 +204,10 @@ func TestDashboardService_DeleteReportsNotFoundWhenNothingChanged(t *testing.T) 
 // A starter insert that fails must fail the request. Serving an empty Home
 // would look like a dashboard somebody had cleared themselves.
 func TestDashboardService_AFailedSeedFailsTheRequest(t *testing.T) {
-	s, a, org := brokenSvc(&brokenStore{failDefault: false, failStarter: true}, brokenViews{})
-	// DefaultFor must miss first, so the seed is attempted.
-	broken := &missingDefaultStore{failStarter: true}
-	s = NewService(broken, brokenViews{})
+	// DefaultFor must MISS first, so the seed is attempted — a store that
+	// merely fails the seed never reaches it.
+	_, a, org := brokenSvc(&brokenStore{}, brokenViews{})
+	s := NewService(&missingDefaultStore{failStarter: true}, brokenViews{})
 	_, err := s.ResolveHome(context.Background(), org, a)
 	require.ErrorIs(t, err, errDashStore)
 }

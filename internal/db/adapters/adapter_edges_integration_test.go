@@ -40,18 +40,18 @@ import (
 // from "returned nothing at all".
 
 // ---------------------------------------------------------------------------
-// shared helpers (all prefixed `adn` — package adapters_test is one namespace)
+// shared helpers (all prefixed `edge` — package adapters_test is one namespace)
 // ---------------------------------------------------------------------------
 
-// adnTokenHash produces a distinct invite token hash per seed. The invite
+// edgeTokenHash produces a distinct invite token hash per seed. The invite
 // adapter looks invites up by hash, so fixtures must not collide.
-func adnTokenHash(seed string) string {
+func edgeTokenHash(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
 	return hex.EncodeToString(sum[:])
 }
 
-// adnInviteEnv is one org with an admin and a wired invite adapter.
-type adnInviteEnv struct {
+// edgeInviteEnv is one org with an admin and a wired invite adapter.
+type edgeInviteEnv struct {
 	db    *testutil.TestDB
 	ctx   context.Context
 	org   testutil.Org
@@ -59,22 +59,22 @@ type adnInviteEnv struct {
 	a     *adapters.InviteAdapter
 }
 
-func adnNewInviteEnv(t *testing.T) adnInviteEnv {
+func edgeNewInviteEnv(t *testing.T) edgeInviteEnv {
 	t.Helper()
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	admin := testutil.CreateTestUser(t, db.Pool, org.ID)
-	return adnInviteEnv{
+	return edgeInviteEnv{
 		db: db, ctx: context.Background(), org: org, admin: admin,
 		a: adapters.NewInviteAdapter(db.Pool),
 	}
 }
 
-// adnInvite creates an invite in the env's org, failing the test if the
+// edgeInvite creates an invite in the env's org, failing the test if the
 // adapter refuses it.
-func (e adnInviteEnv) adnInvite(t *testing.T, email string, teamID *uuid.UUID) (invites.Invite, string) {
+func (e edgeInviteEnv) edgeInvite(t *testing.T, email string, teamID *uuid.UUID) (invites.Invite, string) {
 	t.Helper()
-	hash := adnTokenHash(email + "|" + uuid.NewString())
+	hash := edgeTokenHash(email + "|" + uuid.NewString())
 	inv, err := e.a.Create(e.ctx, invites.Invite{
 		OrgID:     e.org.ID,
 		Email:     email,
@@ -87,9 +87,9 @@ func (e adnInviteEnv) adnInvite(t *testing.T, email string, teamID *uuid.UUID) (
 	return inv, hash
 }
 
-// adnMakeTeam inserts a live root team directly (teams.path is the migration
+// edgeMakeTeam inserts a live root team directly (teams.path is the migration
 // 022 materialised path: a root team's path is just itself).
-func adnMakeTeam(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, slug string) uuid.UUID {
+func edgeMakeTeam(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, slug string) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	_, err := pool.Exec(context.Background(),
@@ -99,7 +99,7 @@ func adnMakeTeam(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID, slug string)
 	return id
 }
 
-func adnSoftDeleteTeam(t *testing.T, pool *pgxpool.Pool, teamID uuid.UUID) {
+func edgeSoftDeleteTeam(t *testing.T, pool *pgxpool.Pool, teamID uuid.UUID) {
 	t.Helper()
 	tag, err := pool.Exec(context.Background(),
 		`UPDATE teams SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`, teamID)
@@ -107,9 +107,9 @@ func adnSoftDeleteTeam(t *testing.T, pool *pgxpool.Pool, teamID uuid.UUID) {
 	require.EqualValues(t, 1, tag.RowsAffected())
 }
 
-// adnUserState reads the three user columns the people adapter is trusted to
+// edgeUserState reads the three user columns the people adapter is trusted to
 // leave alone when it refuses an operation.
-func adnUserState(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) (active bool, generation int32, displayName string) {
+func edgeUserState(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) (active bool, generation int32, displayName string) {
 	t.Helper()
 	err := pool.QueryRow(context.Background(),
 		`SELECT is_active, token_generation, display_name FROM users WHERE id = $1`, userID).
@@ -118,7 +118,7 @@ func adnUserState(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) (active bo
 	return active, generation, displayName
 }
 
-func adnSetDisplayName(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, name string) {
+func edgeSetDisplayName(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, name string) {
 	t.Helper()
 	tag, err := pool.Exec(context.Background(),
 		`UPDATE users SET display_name = $2 WHERE id = $1`, userID, name)
@@ -126,7 +126,7 @@ func adnSetDisplayName(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID, name 
 	require.EqualValues(t, 1, tag.RowsAffected())
 }
 
-func adnMembershipRole(t *testing.T, pool *pgxpool.Pool, orgID, userID uuid.UUID) string {
+func edgeMembershipRole(t *testing.T, pool *pgxpool.Pool, orgID, userID uuid.UUID) string {
 	t.Helper()
 	var role string
 	err := pool.QueryRow(context.Background(),
@@ -135,7 +135,7 @@ func adnMembershipRole(t *testing.T, pool *pgxpool.Pool, orgID, userID uuid.UUID
 	return role
 }
 
-func adnPrimaryTeamID(t *testing.T, pool *pgxpool.Pool, orgID, userID uuid.UUID) uuid.UUID {
+func edgePrimaryTeamID(t *testing.T, pool *pgxpool.Pool, orgID, userID uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
 	err := pool.QueryRow(context.Background(),
@@ -145,17 +145,17 @@ func adnPrimaryTeamID(t *testing.T, pool *pgxpool.Pool, orgID, userID uuid.UUID)
 	return id
 }
 
-func adnScalarCount(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) int {
+func edgeScalarCount(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) int {
 	t.Helper()
 	var n int
 	require.NoError(t, pool.QueryRow(context.Background(), sql, args...).Scan(&n))
 	return n
 }
 
-// adnCreatePage inserts a page with the dotted materialised path the move
+// edgeCreatePage inserts a page with the dotted materialised path the move
 // transaction relies on: a root page's path is its own id, a child's is
 // parent.path + "." + own id.
-func adnCreatePage(t *testing.T, q *generated.Queries, spaceID, authorID uuid.UUID, parent *generated.Page, title string) generated.Page {
+func edgeCreatePage(t *testing.T, q *generated.Queries, spaceID, authorID uuid.UUID, parent *generated.Page, title string) generated.Page {
 	t.Helper()
 	id := uuid.New()
 	params := generated.CreatePageParams{
@@ -171,10 +171,10 @@ func adnCreatePage(t *testing.T, q *generated.Queries, spaceID, authorID uuid.UU
 	return page
 }
 
-// adnCreateShare makes one active share. audienceTeam nil means the 'org'
+// edgeCreateShare makes one active share. audienceTeam nil means the 'org'
 // audience; non-nil means a team-audience row, which is the branch
 // writeShareRevokedTx records an audience_id for.
-func adnCreateShare(t *testing.T, q *generated.Queries, orgID, spaceID uuid.UUID, entityType string, entityID uuid.UUID, audienceTeam *uuid.UUID, cascade bool, createdBy uuid.UUID) uuid.UUID {
+func edgeCreateShare(t *testing.T, q *generated.Queries, orgID, spaceID uuid.UUID, entityType string, entityID uuid.UUID, audienceTeam *uuid.UUID, cascade bool, createdBy uuid.UUID) uuid.UUID {
 	t.Helper()
 	params := generated.CreateEntityShareParams{
 		ID: uuid.New(), OrgID: orgID, SpaceID: spaceID,
@@ -190,7 +190,7 @@ func adnCreateShare(t *testing.T, q *generated.Queries, orgID, spaceID uuid.UUID
 	return share.ID
 }
 
-func adnShareIsActive(t *testing.T, pool *pgxpool.Pool, shareID uuid.UUID) bool {
+func edgeShareIsActive(t *testing.T, pool *pgxpool.Pool, shareID uuid.UUID) bool {
 	t.Helper()
 	var revoked *time.Time
 	err := pool.QueryRow(context.Background(),
@@ -199,9 +199,9 @@ func adnShareIsActive(t *testing.T, pool *pgxpool.Pool, shareID uuid.UUID) bool 
 	return revoked == nil
 }
 
-// adnShareRevokedPayloads returns the payload of every share.revoked audit
+// edgeShareRevokedPayloads returns the payload of every share.revoked audit
 // row in the org, keyed by the share id the event names.
-func adnShareRevokedPayloads(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) map[uuid.UUID]map[string]string {
+func edgeShareRevokedPayloads(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) map[uuid.UUID]map[string]string {
 	t.Helper()
 	rows, err := pool.Query(context.Background(),
 		`SELECT entity_id, payload FROM audit_log
@@ -234,7 +234,7 @@ func adnShareRevokedPayloads(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) 
 // and the first Create succeeds. The control at the end proves the refusal is
 // about the org boundary, not about teams generally.
 func TestAdapterNeg_InviteCreate_TeamOutsideTheOrgIsNotFound(t *testing.T) {
-	env := adnNewInviteEnv(t)
+	env := edgeNewInviteEnv(t)
 	other := testutil.CreateTestOrg(t, env.db.Pool)
 	foreignTeam := testutil.DefaultTeamID(t, env.db.Pool, other.ID)
 
@@ -242,7 +242,7 @@ func TestAdapterNeg_InviteCreate_TeamOutsideTheOrgIsNotFound(t *testing.T) {
 		OrgID: env.org.ID, Email: "cross-org@azimuthal.dev", OrgRole: "member",
 		TeamID: &foreignTeam, InvitedBy: env.admin.ID,
 		ExpiresAt: time.Now().UTC().Add(time.Hour),
-	}, adnTokenHash("cross-org"))
+	}, edgeTokenHash("cross-org"))
 	require.ErrorIs(t, err, invites.ErrTeamNotFound,
 		"a team belonging to another org must not be namable as an invite's initial team")
 
@@ -251,7 +251,7 @@ func TestAdapterNeg_InviteCreate_TeamOutsideTheOrgIsNotFound(t *testing.T) {
 	require.Empty(t, pending, "the refused invite must not have been persisted")
 
 	ownTeam := testutil.DefaultTeamID(t, env.db.Pool, env.org.ID)
-	inv, _ := env.adnInvite(t, "same-org@azimuthal.dev", &ownTeam)
+	inv, _ := env.edgeInvite(t, "same-org@azimuthal.dev", &ownTeam)
 	require.Equal(t, ownTeam, *inv.TeamID,
 		"a live team of the invite's OWN org must be accepted, or the refusal above proves nothing")
 }
@@ -263,20 +263,20 @@ func TestAdapterNeg_InviteCreate_TeamOutsideTheOrgIsNotFound(t *testing.T) {
 // Fails-before: drop `AND deleted_at IS NULL` from GetTeamByID (and the
 // DeletedAt guard beside it) and the create succeeds.
 func TestAdapterNeg_InviteCreate_SoftDeletedTeamIsNotFound(t *testing.T) {
-	env := adnNewInviteEnv(t)
-	team := adnMakeTeam(t, env.db.Pool, env.org.ID, "doomed")
+	env := edgeNewInviteEnv(t)
+	team := edgeMakeTeam(t, env.db.Pool, env.org.ID, "doomed")
 
 	// Control first: while the team is live the invite is accepted.
-	live, _ := env.adnInvite(t, "before@azimuthal.dev", &team)
+	live, _ := env.edgeInvite(t, "before@azimuthal.dev", &team)
 	require.Equal(t, team, *live.TeamID)
 
-	adnSoftDeleteTeam(t, env.db.Pool, team)
+	edgeSoftDeleteTeam(t, env.db.Pool, team)
 
 	_, err := env.a.Create(env.ctx, invites.Invite{
 		OrgID: env.org.ID, Email: "after@azimuthal.dev", OrgRole: "member",
 		TeamID: &team, InvitedBy: env.admin.ID,
 		ExpiresAt: time.Now().UTC().Add(time.Hour),
-	}, adnTokenHash("after"))
+	}, edgeTokenHash("after"))
 	require.ErrorIs(t, err, invites.ErrTeamNotFound,
 		"a soft-deleted team must not be namable as an invite's initial team")
 }
@@ -290,13 +290,13 @@ func TestAdapterNeg_InviteCreate_SoftDeletedTeamIsNotFound(t *testing.T) {
 // first Create succeeds; widen it to "the email has an account anywhere" and
 // the second Create starts failing.
 func TestAdapterNeg_InviteCreate_ExistingMemberOfThisOrgIsRefused(t *testing.T) {
-	env := adnNewInviteEnv(t)
+	env := edgeNewInviteEnv(t)
 	member := testutil.CreateTestUserWithRole(t, env.db.Pool, env.org.ID, "member")
 
 	_, err := env.a.Create(env.ctx, invites.Invite{
 		OrgID: env.org.ID, Email: member.Email, OrgRole: "member",
 		InvitedBy: env.admin.ID, ExpiresAt: time.Now().UTC().Add(time.Hour),
-	}, adnTokenHash("already-member"))
+	}, edgeTokenHash("already-member"))
 	require.ErrorIs(t, err, invites.ErrAlreadyMember)
 
 	otherOrg := testutil.CreateTestOrg(t, env.db.Pool)
@@ -304,7 +304,7 @@ func TestAdapterNeg_InviteCreate_ExistingMemberOfThisOrgIsRefused(t *testing.T) 
 	_, err = env.a.Create(env.ctx, invites.Invite{
 		OrgID: otherOrg.ID, Email: member.Email, OrgRole: "member",
 		InvitedBy: otherAdmin.ID, ExpiresAt: time.Now().UTC().Add(time.Hour),
-	}, adnTokenHash("other-org-invite"))
+	}, edgeTokenHash("other-org-invite"))
 	require.NoError(t, err,
 		"the same email must remain invitable into an org it is NOT already a member of")
 }
@@ -319,14 +319,14 @@ func TestAdapterNeg_InviteCreate_ExistingMemberOfThisOrgIsRefused(t *testing.T) 
 // non-partial (or checking the constraint name wrongly) breaks the second
 // half, where revoking frees the slot.
 func TestAdapterNeg_InviteCreate_SecondActiveInviteMapsToDuplicate(t *testing.T) {
-	env := adnNewInviteEnv(t)
+	env := edgeNewInviteEnv(t)
 	const email = "duplicate@azimuthal.dev"
-	first, _ := env.adnInvite(t, email, nil)
+	first, _ := env.edgeInvite(t, email, nil)
 
 	_, err := env.a.Create(env.ctx, invites.Invite{
 		OrgID: env.org.ID, Email: email, OrgRole: "member",
 		InvitedBy: env.admin.ID, ExpiresAt: time.Now().UTC().Add(time.Hour),
-	}, adnTokenHash("duplicate-second"))
+	}, edgeTokenHash("duplicate-second"))
 	require.ErrorIs(t, err, invites.ErrDuplicateInvite,
 		"a second ACTIVE invite for the same email must map to the domain error, not a raw constraint error")
 
@@ -334,7 +334,7 @@ func TestAdapterNeg_InviteCreate_SecondActiveInviteMapsToDuplicate(t *testing.T)
 	_, err = env.a.Create(env.ctx, invites.Invite{
 		OrgID: env.org.ID, Email: email, OrgRole: "member",
 		InvitedBy: env.admin.ID, ExpiresAt: time.Now().UTC().Add(time.Hour),
-	}, adnTokenHash("duplicate-third"))
+	}, edgeTokenHash("duplicate-third"))
 	require.NoError(t, err,
 		"revoking frees the slot — the index is partial on active rows, and re-inviting must work")
 }
@@ -345,8 +345,8 @@ func TestAdapterNeg_InviteCreate_SecondActiveInviteMapsToDuplicate(t *testing.T)
 // Fails-before: drop `AND org_id = $2` from GetInviteByID and the first
 // lookup returns the invite.
 func TestAdapterNeg_InviteGetByID_IsOrgScoped(t *testing.T) {
-	env := adnNewInviteEnv(t)
-	inv, _ := env.adnInvite(t, "scoped@azimuthal.dev", nil)
+	env := edgeNewInviteEnv(t)
+	inv, _ := env.edgeInvite(t, "scoped@azimuthal.dev", nil)
 	other := testutil.CreateTestOrg(t, env.db.Pool)
 
 	_, err := env.a.GetByID(env.ctx, other.ID, inv.ID)
@@ -369,8 +369,8 @@ func TestAdapterNeg_InviteGetByID_IsOrgScoped(t *testing.T) {
 // assertion fails; drop the org predicate and the cross-org revoke succeeds,
 // which the ListActive assertion catches.
 func TestAdapterNeg_InviteRevoke_OnlyActiveInvitesOfTheOwningOrg(t *testing.T) {
-	env := adnNewInviteEnv(t)
-	inv, _ := env.adnInvite(t, "revoke@azimuthal.dev", nil)
+	env := edgeNewInviteEnv(t)
+	inv, _ := env.edgeInvite(t, "revoke@azimuthal.dev", nil)
 	other := testutil.CreateTestOrg(t, env.db.Pool)
 
 	require.ErrorIs(t, env.a.Revoke(env.ctx, other.ID, inv.ID), invites.ErrNotFound)
@@ -397,18 +397,18 @@ func TestAdapterNeg_InviteRevoke_OnlyActiveInvitesOfTheOwningOrg(t *testing.T) {
 // foreign resend succeeds — caught by the assertion that the ORIGINAL token
 // still resolves afterwards.
 func TestAdapterNeg_InviteRefreshToken_RefusesForeignAndDeadInvites(t *testing.T) {
-	env := adnNewInviteEnv(t)
-	inv, original := env.adnInvite(t, "resend@azimuthal.dev", nil)
+	env := edgeNewInviteEnv(t)
+	inv, original := env.edgeInvite(t, "resend@azimuthal.dev", nil)
 	other := testutil.CreateTestOrg(t, env.db.Pool)
 	newExpiry := time.Now().UTC().Add(240 * time.Hour)
 
-	_, err := env.a.RefreshToken(env.ctx, other.ID, inv.ID, adnTokenHash("foreign-resend"), newExpiry)
+	_, err := env.a.RefreshToken(env.ctx, other.ID, inv.ID, edgeTokenHash("foreign-resend"), newExpiry)
 	require.ErrorIs(t, err, invites.ErrNotFound)
 	insp, err := env.a.InspectByTokenHash(env.ctx, original)
 	require.NoError(t, err, "the foreign resend must not have rotated the token")
 	require.Equal(t, "active", insp.State)
 
-	rotated := adnTokenHash("real-resend")
+	rotated := edgeTokenHash("real-resend")
 	refreshed, err := env.a.RefreshToken(env.ctx, env.org.ID, inv.ID, rotated, newExpiry)
 	require.NoError(t, err)
 	require.Equal(t, inv.ID, refreshed.ID)
@@ -420,7 +420,7 @@ func TestAdapterNeg_InviteRefreshToken_RefusesForeignAndDeadInvites(t *testing.T
 	require.Equal(t, "active", insp.State)
 
 	require.NoError(t, env.a.Revoke(env.ctx, env.org.ID, inv.ID))
-	_, err = env.a.RefreshToken(env.ctx, env.org.ID, inv.ID, adnTokenHash("post-revoke"), newExpiry)
+	_, err = env.a.RefreshToken(env.ctx, env.org.ID, inv.ID, edgeTokenHash("post-revoke"), newExpiry)
 	require.ErrorIs(t, err, invites.ErrNotFound, "a revoked invite cannot be resent back to life")
 }
 
@@ -432,25 +432,25 @@ func TestAdapterNeg_InviteRefreshToken_RefusesForeignAndDeadInvites(t *testing.T
 // Fails-before: collapse any arm of inviteState (for example drop the
 // RevokedAt case) and that state's assertion fails.
 func TestAdapterNeg_InviteInspect_ClassifiesEveryLifecycleState(t *testing.T) {
-	env := adnNewInviteEnv(t)
+	env := edgeNewInviteEnv(t)
 
-	_, err := env.a.InspectByTokenHash(env.ctx, adnTokenHash("nothing-hashes-to-this"))
+	_, err := env.a.InspectByTokenHash(env.ctx, edgeTokenHash("nothing-hashes-to-this"))
 	require.ErrorIs(t, err, invites.ErrNotFound, "an unknown token must not leak an empty inspection")
 
-	_, activeHash := env.adnInvite(t, "state-active@azimuthal.dev", nil)
+	_, activeHash := env.edgeInvite(t, "state-active@azimuthal.dev", nil)
 	insp, err := env.a.InspectByTokenHash(env.ctx, activeHash)
 	require.NoError(t, err)
 	require.Equal(t, "active", insp.State)
 	require.Equal(t, env.org.Name, insp.OrgName)
 	require.False(t, insp.ExistingAccount, "no account holds this email yet")
 
-	revoked, revokedHash := env.adnInvite(t, "state-revoked@azimuthal.dev", nil)
+	revoked, revokedHash := env.edgeInvite(t, "state-revoked@azimuthal.dev", nil)
 	require.NoError(t, env.a.Revoke(env.ctx, env.org.ID, revoked.ID))
 	insp, err = env.a.InspectByTokenHash(env.ctx, revokedHash)
 	require.NoError(t, err)
 	require.Equal(t, "revoked", insp.State)
 
-	expired, expiredHash := env.adnInvite(t, "state-expired@azimuthal.dev", nil)
+	expired, expiredHash := env.edgeInvite(t, "state-expired@azimuthal.dev", nil)
 	_, err = env.db.Pool.Exec(env.ctx,
 		`UPDATE invites SET expires_at = now() - interval '1 hour' WHERE id = $1`, expired.ID)
 	require.NoError(t, err)
@@ -458,7 +458,7 @@ func TestAdapterNeg_InviteInspect_ClassifiesEveryLifecycleState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "expired", insp.State)
 
-	accepted, acceptedHash := env.adnInvite(t, "state-accepted@azimuthal.dev", nil)
+	accepted, acceptedHash := env.edgeInvite(t, "state-accepted@azimuthal.dev", nil)
 	_, err = env.db.Pool.Exec(env.ctx,
 		`UPDATE invites SET accepted_at = now(), accepted_user_id = $2 WHERE id = $1`,
 		accepted.ID, env.admin.ID)
@@ -472,7 +472,7 @@ func TestAdapterNeg_InviteInspect_ClassifiesEveryLifecycleState(t *testing.T) {
 	// "choose a password" page.
 	otherOrg := testutil.CreateTestOrg(t, env.db.Pool)
 	existing := testutil.CreateTestUser(t, env.db.Pool, otherOrg.ID)
-	_, existingHash := env.adnInvite(t, existing.Email, nil)
+	_, existingHash := env.edgeInvite(t, existing.Email, nil)
 	insp, err = env.a.InspectByTokenHash(env.ctx, existingHash)
 	require.NoError(t, err)
 	require.True(t, insp.ExistingAccount,
@@ -487,25 +487,25 @@ func TestAdapterNeg_InviteInspect_ClassifiesEveryLifecycleState(t *testing.T) {
 // proceeds to MarkInviteAccepted, whose guard returns 0 rows — so every case
 // collapses into ErrNotFound and three of the four assertions fail.
 func TestAdapterNeg_InviteAccept_DeadInvitesAreRefusedByState(t *testing.T) {
-	env := adnNewInviteEnv(t)
-	before := adnScalarCount(t, env.db.Pool, `SELECT count(*) FROM memberships WHERE org_id = $1`, env.org.ID)
+	env := edgeNewInviteEnv(t)
+	before := edgeScalarCount(t, env.db.Pool, `SELECT count(*) FROM memberships WHERE org_id = $1`, env.org.ID)
 
-	_, err := env.a.Accept(env.ctx, adnTokenHash("no-such-token"), nil)
+	_, err := env.a.Accept(env.ctx, edgeTokenHash("no-such-token"), nil)
 	require.ErrorIs(t, err, invites.ErrNotFound)
 
-	revoked, revokedHash := env.adnInvite(t, "accept-revoked@azimuthal.dev", nil)
+	revoked, revokedHash := env.edgeInvite(t, "accept-revoked@azimuthal.dev", nil)
 	require.NoError(t, env.a.Revoke(env.ctx, env.org.ID, revoked.ID))
 	_, err = env.a.Accept(env.ctx, revokedHash, &invites.NewUser{DisplayName: "R", Password: "password123"})
 	require.ErrorIs(t, err, invites.ErrRevoked)
 
-	expired, expiredHash := env.adnInvite(t, "accept-expired@azimuthal.dev", nil)
+	expired, expiredHash := env.edgeInvite(t, "accept-expired@azimuthal.dev", nil)
 	_, err = env.db.Pool.Exec(env.ctx,
 		`UPDATE invites SET expires_at = now() - interval '1 hour' WHERE id = $1`, expired.ID)
 	require.NoError(t, err)
 	_, err = env.a.Accept(env.ctx, expiredHash, &invites.NewUser{DisplayName: "E", Password: "password123"})
 	require.ErrorIs(t, err, invites.ErrExpired)
 
-	used, usedHash := env.adnInvite(t, "accept-used@azimuthal.dev", nil)
+	used, usedHash := env.edgeInvite(t, "accept-used@azimuthal.dev", nil)
 	_, err = env.db.Pool.Exec(env.ctx,
 		`UPDATE invites SET accepted_at = now(), accepted_user_id = $2 WHERE id = $1`, used.ID, env.admin.ID)
 	require.NoError(t, err)
@@ -513,7 +513,7 @@ func TestAdapterNeg_InviteAccept_DeadInvitesAreRefusedByState(t *testing.T) {
 	require.ErrorIs(t, err, invites.ErrAlreadyAccepted)
 
 	require.Equal(t, before,
-		adnScalarCount(t, env.db.Pool, `SELECT count(*) FROM memberships WHERE org_id = $1`, env.org.ID),
+		edgeScalarCount(t, env.db.Pool, `SELECT count(*) FROM memberships WHERE org_id = $1`, env.org.ID),
 		"no refused acceptance may have created a membership")
 }
 
@@ -526,18 +526,18 @@ func TestAdapterNeg_InviteAccept_DeadInvitesAreRefusedByState(t *testing.T) {
 // resolveAcceptUser and the first Accept succeeds, adding a membership for a
 // deactivated user.
 func TestAdapterNeg_InviteAccept_DeactivatedAccountIsRefusedAndRollsBack(t *testing.T) {
-	env := adnNewInviteEnv(t)
+	env := edgeNewInviteEnv(t)
 	otherOrg := testutil.CreateTestOrg(t, env.db.Pool)
 	existing := testutil.CreateTestUser(t, env.db.Pool, otherOrg.ID)
 	_, err := env.db.Pool.Exec(env.ctx, `UPDATE users SET is_active = false WHERE id = $1`, existing.ID)
 	require.NoError(t, err)
 
-	_, hash := env.adnInvite(t, existing.Email, nil)
+	_, hash := env.edgeInvite(t, existing.Email, nil)
 
 	_, err = env.a.Accept(env.ctx, hash, nil)
 	require.ErrorIs(t, err, invites.ErrAccountInactive)
 	require.Equal(t, 0,
-		adnScalarCount(t, env.db.Pool,
+		edgeScalarCount(t, env.db.Pool,
 			`SELECT count(*) FROM memberships WHERE org_id = $1 AND user_id = $2`, env.org.ID, existing.ID),
 		"the refused acceptance must not have added a membership")
 
@@ -561,14 +561,14 @@ func TestAdapterNeg_InviteAccept_DeactivatedAccountIsRefusedAndRollsBack(t *test
 // with an empty display name and an unhashable password — the error would be
 // a 500-shaped internal error rather than the 400 the domain sentinel maps to.
 func TestAdapterNeg_InviteAccept_NewAccountWithoutRegistrationFieldsIsRefused(t *testing.T) {
-	env := adnNewInviteEnv(t)
+	env := edgeNewInviteEnv(t)
 	const email = "fresh-account@azimuthal.dev"
-	_, hash := env.adnInvite(t, email, nil)
+	_, hash := env.edgeInvite(t, email, nil)
 
 	_, err := env.a.Accept(env.ctx, hash, nil)
 	require.ErrorIs(t, err, invites.ErrDisplayNameAndPasswordRequired)
 	require.Equal(t, 0,
-		adnScalarCount(t, env.db.Pool, `SELECT count(*) FROM users WHERE email = $1`, email),
+		edgeScalarCount(t, env.db.Pool, `SELECT count(*) FROM users WHERE email = $1`, email),
 		"the refused acceptance must not have created an account")
 
 	out, err := env.a.Accept(env.ctx, hash,
@@ -589,20 +589,20 @@ func TestAdapterNeg_InviteAccept_NewAccountWithoutRegistrationFieldsIsRefused(t 
 // enrolled into the soft-deleted team (team_members has no deleted_at
 // predicate on its FK), so the primary-team assertion fails.
 func TestAdapterNeg_InviteAccept_SoftDeletedInitialTeamFallsBackToDefault(t *testing.T) {
-	env := adnNewInviteEnv(t)
-	team := adnMakeTeam(t, env.db.Pool, env.org.ID, "transient")
-	_, hash := env.adnInvite(t, "fallback@azimuthal.dev", &team)
-	adnSoftDeleteTeam(t, env.db.Pool, team)
+	env := edgeNewInviteEnv(t)
+	team := edgeMakeTeam(t, env.db.Pool, env.org.ID, "transient")
+	_, hash := env.edgeInvite(t, "fallback@azimuthal.dev", &team)
+	edgeSoftDeleteTeam(t, env.db.Pool, team)
 
 	out, err := env.a.Accept(env.ctx, hash,
 		&invites.NewUser{DisplayName: "Fallback Person", Password: "password123"})
 	require.NoError(t, err)
 
 	defaultTeam := testutil.DefaultTeamID(t, env.db.Pool, env.org.ID)
-	require.Equal(t, defaultTeam, adnPrimaryTeamID(t, env.db.Pool, env.org.ID, out.User.ID),
+	require.Equal(t, defaultTeam, edgePrimaryTeamID(t, env.db.Pool, env.org.ID, out.User.ID),
 		"a dead initial team must fall back to the org default team, as primary")
 	require.Equal(t, 0,
-		adnScalarCount(t, env.db.Pool,
+		edgeScalarCount(t, env.db.Pool,
 			`SELECT count(*) FROM team_members WHERE team_id = $1 AND user_id = $2`, team, out.User.ID),
 		"nobody may be enrolled into a soft-deleted team")
 }
@@ -617,19 +617,19 @@ func TestAdapterNeg_InviteAccept_SoftDeletedInitialTeamFallsBackToDefault(t *tes
 // single-row assertion fails (and, with the users.email unique index in
 // place, the insert fails outright).
 func TestAdapterNeg_InviteAccept_ExistingAccountJoinsWithoutASecondUserRow(t *testing.T) {
-	env := adnNewInviteEnv(t)
+	env := edgeNewInviteEnv(t)
 	otherOrg := testutil.CreateTestOrg(t, env.db.Pool)
 	existing := testutil.CreateTestUser(t, env.db.Pool, otherOrg.ID)
-	_, hash := env.adnInvite(t, existing.Email, nil)
+	_, hash := env.edgeInvite(t, existing.Email, nil)
 
 	out, err := env.a.Accept(env.ctx, hash, nil)
 	require.NoError(t, err)
 	require.True(t, out.ExistingAccount)
 	require.Equal(t, existing.ID, out.User.ID, "acceptance must attach to the existing account")
 	require.Equal(t, 1,
-		adnScalarCount(t, env.db.Pool, `SELECT count(*) FROM users WHERE email = $1`, existing.Email),
+		edgeScalarCount(t, env.db.Pool, `SELECT count(*) FROM users WHERE email = $1`, existing.Email),
 		"no second user row may be created for an email that already has one")
-	require.Equal(t, "member", adnMembershipRole(t, env.db.Pool, env.org.ID, existing.ID))
+	require.Equal(t, "member", edgeMembershipRole(t, env.db.Pool, env.org.ID, existing.ID))
 
 	// And the invite is consumed: a replayed link cannot join twice.
 	_, err = env.a.Accept(env.ctx, hash, nil)
@@ -649,16 +649,16 @@ func TestAdapterNeg_InviteAccept_ExistingAccountJoinsWithoutASecondUserRow(t *te
 // membership uniqueness); make enrolAcceptTeam set primary unconditionally
 // and the primary-team assertion fails.
 func TestAdapterNeg_InviteAccept_MembershipThatAppearedMeanwhileIsAnIdempotentJoin(t *testing.T) {
-	env := adnNewInviteEnv(t)
+	env := edgeNewInviteEnv(t)
 	otherOrg := testutil.CreateTestOrg(t, env.db.Pool)
 	person := testutil.CreateTestUser(t, env.db.Pool, otherOrg.ID)
 
 	// The invite is issued while they are still a stranger to this org.
-	_, hash := env.adnInvite(t, person.Email, nil)
+	_, hash := env.edgeInvite(t, person.Email, nil)
 
 	// ...and they join by another route before clicking it, landing on a
 	// non-default team as primary and with a higher org role.
-	elsewhere := adnMakeTeam(t, env.db.Pool, env.org.ID, "arrived-early")
+	elsewhere := edgeMakeTeam(t, env.db.Pool, env.org.ID, "arrived-early")
 	_, err := env.db.Pool.Exec(env.ctx,
 		`INSERT INTO memberships (id, org_id, user_id, role) VALUES ($1,$2,$3,'admin')`,
 		uuid.New(), env.org.ID, person.ID)
@@ -672,12 +672,12 @@ func TestAdapterNeg_InviteAccept_MembershipThatAppearedMeanwhileIsAnIdempotentJo
 	require.NoError(t, err, "the stale invite must still be consumable — it is simply a no-op join")
 	require.True(t, out.ExistingAccount)
 
-	require.Equal(t, 1, adnScalarCount(t, env.db.Pool,
+	require.Equal(t, 1, edgeScalarCount(t, env.db.Pool,
 		`SELECT count(*) FROM memberships WHERE org_id = $1 AND user_id = $2`, env.org.ID, person.ID),
 		"acceptance must not insert a second membership")
-	require.Equal(t, "admin", adnMembershipRole(t, env.db.Pool, env.org.ID, person.ID),
+	require.Equal(t, "admin", edgeMembershipRole(t, env.db.Pool, env.org.ID, person.ID),
 		"a stale invite's org role must not downgrade a membership that already exists")
-	require.Equal(t, elsewhere, adnPrimaryTeamID(t, env.db.Pool, env.org.ID, person.ID),
+	require.Equal(t, elsewhere, edgePrimaryTeamID(t, env.db.Pool, env.org.ID, person.ID),
 		"acceptance must not move a primary team the person already holds")
 }
 
@@ -704,7 +704,7 @@ func TestAdapterNeg_PeopleLifecycle_RefusesTargetsOutsideTheActingOrg(t *testing
 
 	otherOrg := testutil.CreateTestOrg(t, db.Pool)
 	outsider := testutil.CreateTestUser(t, db.Pool, otherOrg.ID)
-	activeBefore, genBefore, nameBefore := adnUserState(t, db.Pool, outsider.ID)
+	activeBefore, genBefore, nameBefore := edgeUserState(t, db.Pool, outsider.ID)
 
 	a := adapters.NewPeopleAdapter(db.Pool)
 	ops := map[string]func() error{
@@ -722,15 +722,15 @@ func TestAdapterNeg_PeopleLifecycle_RefusesTargetsOutsideTheActingOrg(t *testing
 		require.ErrorIs(t, op(), people.ErrNotMember, "%s must refuse a target outside the acting org", name)
 	}
 
-	activeAfter, genAfter, nameAfter := adnUserState(t, db.Pool, outsider.ID)
+	activeAfter, genAfter, nameAfter := edgeUserState(t, db.Pool, outsider.ID)
 	require.Equal(t, activeBefore, activeAfter, "no refused operation may have flipped is_active")
 	require.Equal(t, genBefore, genAfter, "no refused operation may have bumped token_generation")
 	require.Equal(t, nameBefore, nameAfter, "no refused operation may have rewritten the display name")
 	require.Equal(t, 1,
-		adnScalarCount(t, db.Pool, `SELECT count(*) FROM memberships WHERE user_id = $1`, outsider.ID),
+		edgeScalarCount(t, db.Pool, `SELECT count(*) FROM memberships WHERE user_id = $1`, outsider.ID),
 		"the outsider's own membership must survive")
 	require.Equal(t, 0,
-		adnScalarCount(t, db.Pool,
+		edgeScalarCount(t, db.Pool,
 			`SELECT count(*) FROM users WHERE id = $1 AND avatar_url IS NOT NULL`, outsider.ID),
 		"no avatar may have been written onto a foreign user")
 }
@@ -751,10 +751,10 @@ func TestAdapterNeg_PeopleDeactivate_LastAdminIsRefusedAndNothingIsWritten(t *te
 	owner := testutil.CreateTestUser(t, db.Pool, org.ID) // 'owner' — admin class
 	a := adapters.NewPeopleAdapter(db.Pool)
 
-	_, genBefore, _ := adnUserState(t, db.Pool, owner.ID)
+	_, genBefore, _ := edgeUserState(t, db.Pool, owner.ID)
 	require.ErrorIs(t, a.Deactivate(ctx, org.ID, owner.ID), people.ErrLastAdmin)
 
-	active, genAfter, _ := adnUserState(t, db.Pool, owner.ID)
+	active, genAfter, _ := edgeUserState(t, db.Pool, owner.ID)
 	require.True(t, active, "the refused deactivation must leave the account active")
 	require.Equal(t, genBefore, genAfter,
 		"the refused deactivation must not have bumped token_generation — that bump kills every session")
@@ -763,7 +763,7 @@ func TestAdapterNeg_PeopleDeactivate_LastAdminIsRefusedAndNothingIsWritten(t *te
 	// proves the refusal above was the last-admin rule and not a blanket no.
 	testutil.CreateTestUserWithRole(t, db.Pool, org.ID, "admin")
 	require.NoError(t, a.Deactivate(ctx, org.ID, owner.ID))
-	active, genFinal, _ := adnUserState(t, db.Pool, owner.ID)
+	active, genFinal, _ := edgeUserState(t, db.Pool, owner.ID)
 	require.False(t, active)
 	require.Greater(t, genFinal, genBefore, "a real deactivation bumps the generation")
 }
@@ -791,7 +791,7 @@ func TestAdapterNeg_PeopleActivation_SecondCallReportsTheCurrentState(t *testing
 		"deactivating an already-deactivated account must report the current state")
 
 	require.NoError(t, a.Reactivate(ctx, org.ID, member.ID))
-	active, _, _ := adnUserState(t, db.Pool, member.ID)
+	active, _, _ := edgeUserState(t, db.Pool, member.ID)
 	require.True(t, active)
 }
 
@@ -817,15 +817,15 @@ func TestAdapterNeg_PeopleForceLogout_SoftDeletedUserIsNotAMember(t *testing.T) 
 	_, err := db.Pool.Exec(ctx,
 		`INSERT INTO sessions (id, user_id, token_hash, expires_at)
 		 VALUES ($1,$2,$3, now() + interval '1 day')`,
-		sessionID, member.ID, adnTokenHash("session-"+sessionID.String()))
+		sessionID, member.ID, edgeTokenHash("session-"+sessionID.String()))
 	require.NoError(t, err)
 
-	_, genBefore, _ := adnUserState(t, db.Pool, member.ID)
+	_, genBefore, _ := edgeUserState(t, db.Pool, member.ID)
 	require.NoError(t, a.ForceLogout(ctx, org.ID, member.ID))
-	_, genAfter, _ := adnUserState(t, db.Pool, member.ID)
+	_, genAfter, _ := edgeUserState(t, db.Pool, member.ID)
 	require.Greater(t, genAfter, genBefore, "force logout bumps the token generation")
 	require.Equal(t, 1,
-		adnScalarCount(t, db.Pool,
+		edgeScalarCount(t, db.Pool,
 			`SELECT count(*) FROM sessions WHERE id = $1 AND revoked_at IS NOT NULL`, sessionID),
 		"force logout revokes the DB session in the same transaction")
 
@@ -850,7 +850,7 @@ func TestAdapterNeg_PeopleChangeOrgRole_OwnerAndLastAdminRefusals(t *testing.T) 
 	ownerOrg := testutil.CreateTestOrg(t, db.Pool)
 	owner := testutil.CreateTestUser(t, db.Pool, ownerOrg.ID)
 	require.ErrorIs(t, a.ChangeOrgRole(ctx, ownerOrg.ID, owner.ID, "member"), people.ErrCannotChangeOwner)
-	require.Equal(t, "owner", adnMembershipRole(t, db.Pool, ownerOrg.ID, owner.ID),
+	require.Equal(t, "owner", edgeMembershipRole(t, db.Pool, ownerOrg.ID, owner.ID),
 		"the refused role change must not have landed")
 
 	// An org whose only admin-class member holds 'admin' (not 'owner'), so the
@@ -858,12 +858,12 @@ func TestAdapterNeg_PeopleChangeOrgRole_OwnerAndLastAdminRefusals(t *testing.T) 
 	adminOrg := testutil.CreateTestOrg(t, db.Pool)
 	lone := testutil.CreateTestUserWithRole(t, db.Pool, adminOrg.ID, "admin")
 	require.ErrorIs(t, a.ChangeOrgRole(ctx, adminOrg.ID, lone.ID, "member"), people.ErrLastAdmin)
-	require.Equal(t, "admin", adnMembershipRole(t, db.Pool, adminOrg.ID, lone.ID))
+	require.Equal(t, "admin", edgeMembershipRole(t, db.Pool, adminOrg.ID, lone.ID))
 
 	testutil.CreateTestUserWithRole(t, db.Pool, adminOrg.ID, "admin")
 	require.NoError(t, a.ChangeOrgRole(ctx, adminOrg.ID, lone.ID, "member"),
 		"once another admin exists the demotion is allowed — the guard is conditional, not blanket")
-	require.Equal(t, "member", adnMembershipRole(t, db.Pool, adminOrg.ID, lone.ID))
+	require.Equal(t, "member", edgeMembershipRole(t, db.Pool, adminOrg.ID, lone.ID))
 }
 
 // TestAdapterNeg_PeopleChangePrimaryTeam_RefusesTeamsOutsideTheOrg: teamID is
@@ -884,8 +884,8 @@ func TestAdapterNeg_PeopleChangePrimaryTeam_RefusesTeamsOutsideTheOrg(t *testing
 
 	otherOrg := testutil.CreateTestOrg(t, db.Pool)
 	foreignTeam := testutil.DefaultTeamID(t, db.Pool, otherOrg.ID)
-	dead := adnMakeTeam(t, db.Pool, org.ID, "dead")
-	adnSoftDeleteTeam(t, db.Pool, dead)
+	dead := edgeMakeTeam(t, db.Pool, org.ID, "dead")
+	edgeSoftDeleteTeam(t, db.Pool, dead)
 
 	for name, teamID := range map[string]uuid.UUID{
 		"foreign_org_team": foreignTeam,
@@ -895,15 +895,15 @@ func TestAdapterNeg_PeopleChangePrimaryTeam_RefusesTeamsOutsideTheOrg(t *testing
 		require.ErrorIs(t, a.ChangePrimaryTeam(ctx, org.ID, member.ID, teamID),
 			people.ErrTeamNotFound, "%s must not be settable as a primary team", name)
 	}
-	require.Equal(t, defaultTeam, adnPrimaryTeamID(t, db.Pool, org.ID, member.ID),
+	require.Equal(t, defaultTeam, edgePrimaryTeamID(t, db.Pool, org.ID, member.ID),
 		"no refused call may have moved the member's primary team")
 
-	live := adnMakeTeam(t, db.Pool, org.ID, "live")
+	live := edgeMakeTeam(t, db.Pool, org.ID, "live")
 	require.NoError(t, a.ChangePrimaryTeam(ctx, org.ID, member.ID, live),
 		"a live team of the org must be settable, or the refusals above prove nothing")
-	require.Equal(t, live, adnPrimaryTeamID(t, db.Pool, org.ID, member.ID))
+	require.Equal(t, live, edgePrimaryTeamID(t, db.Pool, org.ID, member.ID))
 	require.Equal(t, 1,
-		adnScalarCount(t, db.Pool,
+		edgeScalarCount(t, db.Pool,
 			`SELECT count(*) FROM team_members WHERE org_id = $1 AND user_id = $2 AND is_primary`,
 			org.ID, member.ID),
 		"exactly one primary membership per user per org")
@@ -933,21 +933,21 @@ func TestAdapterNeg_PeopleRemoveFromOrg_LastAdminRefusedThenClearsTeamsAndGrants
 
 	require.ErrorIs(t, a.RemoveFromOrg(ctx, org.ID, owner.ID), people.ErrLastAdmin)
 	require.Equal(t, 1,
-		adnScalarCount(t, db.Pool,
+		edgeScalarCount(t, db.Pool,
 			`SELECT count(*) FROM memberships WHERE org_id = $1 AND user_id = $2`, org.ID, owner.ID),
 		"the refused removal must leave the admin's membership intact")
 
 	require.NoError(t, a.RemoveFromOrg(ctx, org.ID, member.ID))
-	require.Equal(t, 0, adnScalarCount(t, db.Pool,
+	require.Equal(t, 0, edgeScalarCount(t, db.Pool,
 		`SELECT count(*) FROM memberships WHERE org_id = $1 AND user_id = $2`, org.ID, member.ID))
-	require.Equal(t, 0, adnScalarCount(t, db.Pool,
+	require.Equal(t, 0, edgeScalarCount(t, db.Pool,
 		`SELECT count(*) FROM team_members WHERE org_id = $1 AND user_id = $2`, org.ID, member.ID),
 		"removal drops the org's team memberships")
-	require.Equal(t, 0, adnScalarCount(t, db.Pool,
+	require.Equal(t, 0, edgeScalarCount(t, db.Pool,
 		`SELECT count(*) FROM space_grants WHERE org_id = $1 AND subject_type = 'user' AND subject_id = $2`,
 		org.ID, member.ID),
 		"removal drops the org's user-subject grants — a stale grant would re-grant on re-invite")
-	require.Equal(t, 1, adnScalarCount(t, db.Pool, `SELECT count(*) FROM users WHERE id = $1`, member.ID),
+	require.Equal(t, 1, edgeScalarCount(t, db.Pool, `SELECT count(*) FROM users WHERE id = $1`, member.ID),
 		"the user record survives with their authored content's attribution intact")
 }
 
@@ -963,16 +963,16 @@ func TestAdapterNeg_PeopleSearch_WildcardsInTheQueryAreLiteral(t *testing.T) {
 	ctx := context.Background()
 	org := testutil.CreateTestOrg(t, db.Pool)
 	admin := testutil.CreateTestUser(t, db.Pool, org.ID)
-	adnSetDisplayName(t, db.Pool, admin.ID, "Admin Person")
+	edgeSetDisplayName(t, db.Pool, admin.ID, "Admin Person")
 
 	literal := testutil.CreateTestUserWithRole(t, db.Pool, org.ID, "member")
 	decoy := testutil.CreateTestUserWithRole(t, db.Pool, org.ID, "member")
-	adnSetDisplayName(t, db.Pool, literal.ID, "Rollout 100% Owner")
-	adnSetDisplayName(t, db.Pool, decoy.ID, "Rollout 100 percent Owner")
+	edgeSetDisplayName(t, db.Pool, literal.ID, "Rollout 100% Owner")
+	edgeSetDisplayName(t, db.Pool, decoy.ID, "Rollout 100 percent Owner")
 
 	otherOrg := testutil.CreateTestOrg(t, db.Pool)
 	outsider := testutil.CreateTestUser(t, db.Pool, otherOrg.ID)
-	adnSetDisplayName(t, db.Pool, outsider.ID, "Rollout 100% Outsider")
+	edgeSetDisplayName(t, db.Pool, outsider.ID, "Rollout 100% Outsider")
 
 	a := adapters.NewPeopleAdapter(db.Pool)
 	found, err := a.Search(ctx, org.ID, "100%")
@@ -1021,14 +1021,14 @@ func TestAdapterNeg_PeopleProfileWrites_TouchOnlyTheirOwnColumns(t *testing.T) {
 	member := testutil.CreateTestUserWithRole(t, db.Pool, org.ID, "member")
 	a := adapters.NewPeopleAdapter(db.Pool)
 
-	_, genBefore, _ := adnUserState(t, db.Pool, member.ID)
+	_, genBefore, _ := edgeUserState(t, db.Pool, member.ID)
 
 	require.NoError(t, a.UpdateProfile(ctx, org.ID, member.ID, "Properly Renamed"))
 	require.NoError(t, a.SetAvatarURL(ctx, org.ID, member.ID, "/api/v1/avatars/member.png"))
 
-	active, genAfter, name := adnUserState(t, db.Pool, member.ID)
+	active, genAfter, name := edgeUserState(t, db.Pool, member.ID)
 	require.Equal(t, "Properly Renamed", name, "an admin can rename a member of their own org")
-	require.Equal(t, 1, adnScalarCount(t, db.Pool,
+	require.Equal(t, 1, edgeScalarCount(t, db.Pool,
 		`SELECT count(*) FROM users WHERE id = $1 AND avatar_url = $2`,
 		member.ID, "/api/v1/avatars/member.png"),
 		"and can record their avatar reference")
@@ -1041,8 +1041,8 @@ func TestAdapterNeg_PeopleProfileWrites_TouchOnlyTheirOwnColumns(t *testing.T) {
 // content_tx: MovePageTx and the delete-and-revoke family
 // ---------------------------------------------------------------------------
 
-// adnMoveEnv is one org, two codex spaces and a wired ContentTxAdapter.
-type adnMoveEnv struct {
+// edgeMoveEnv is one org, two codex spaces and a wired ContentTxAdapter.
+type edgeMoveEnv struct {
 	db     *testutil.TestDB
 	ctx    context.Context
 	q      *generated.Queries
@@ -1053,12 +1053,12 @@ type adnMoveEnv struct {
 	spaceB testutil.Space
 }
 
-func adnNewMoveEnv(t *testing.T) adnMoveEnv {
+func edgeNewMoveEnv(t *testing.T) edgeMoveEnv {
 	t.Helper()
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	return adnMoveEnv{
+	return edgeMoveEnv{
 		db: db, ctx: context.Background(),
 		q: generated.New(db.Pool), a: adapters.NewContentTxAdapter(db.Pool),
 		org: org, user: user,
@@ -1076,7 +1076,7 @@ func adnNewMoveEnv(t *testing.T) adnMoveEnv {
 // validateMoveSpaces and the cross-org move succeeds, relocating another
 // tenant's page.
 func TestAdapterNeg_MovePage_MissingAndForeignOrgPagesAreBothNotFound(t *testing.T) {
-	env := adnNewMoveEnv(t)
+	env := edgeNewMoveEnv(t)
 
 	_, err := env.a.MovePageTx(env.ctx, wiki.MovePageInput{
 		OrgID: env.org.ID, TargetSpaceID: env.spaceB.ID, PageID: uuid.New(), ActorID: env.user.ID,
@@ -1086,7 +1086,7 @@ func TestAdapterNeg_MovePage_MissingAndForeignOrgPagesAreBothNotFound(t *testing
 	otherOrg := testutil.CreateTestOrg(t, env.db.Pool)
 	otherUser := testutil.CreateTestUser(t, env.db.Pool, otherOrg.ID)
 	otherSpace := testutil.CreateTestSpace(t, env.db.Pool, otherOrg.ID, otherUser.ID, "codex")
-	foreign := adnCreatePage(t, env.q, otherSpace.ID, otherUser.ID, nil, "Foreign page")
+	foreign := edgeCreatePage(t, env.q, otherSpace.ID, otherUser.ID, nil, "Foreign page")
 
 	_, err = env.a.MovePageTx(env.ctx, wiki.MovePageInput{
 		OrgID: env.org.ID, TargetSpaceID: env.spaceB.ID, PageID: foreign.ID, ActorID: env.user.ID,
@@ -1106,8 +1106,8 @@ func TestAdapterNeg_MovePage_MissingAndForeignOrgPagesAreBothNotFound(t *testing
 // Fails-before: delete the `targetSpace.OrgID != in.OrgID` arm and the
 // cross-org target succeeds, which is a page smuggled into another tenant.
 func TestAdapterNeg_MovePage_TargetSpaceRefusals(t *testing.T) {
-	env := adnNewMoveEnv(t)
-	page := adnCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Stays put")
+	env := edgeNewMoveEnv(t)
+	page := edgeCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Stays put")
 
 	otherOrg := testutil.CreateTestOrg(t, env.db.Pool)
 	otherUser := testutil.CreateTestUser(t, env.db.Pool, otherOrg.ID)
@@ -1149,10 +1149,10 @@ func TestAdapterNeg_MovePage_TargetSpaceRefusals(t *testing.T) {
 // `parent.SpaceID != in.TargetSpaceID` check and the wrong-space assertion
 // fails.
 func TestAdapterNeg_MovePage_ParentRefusals(t *testing.T) {
-	env := adnNewMoveEnv(t)
-	root := adnCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Root")
-	child := adnCreatePage(t, env.q, env.spaceA.ID, env.user.ID, &root, "Child")
-	elsewhere := adnCreatePage(t, env.q, env.spaceB.ID, env.user.ID, nil, "In space B")
+	env := edgeNewMoveEnv(t)
+	root := edgeCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Root")
+	child := edgeCreatePage(t, env.q, env.spaceA.ID, env.user.ID, &root, "Child")
+	elsewhere := edgeCreatePage(t, env.q, env.spaceB.ID, env.user.ID, nil, "In space B")
 
 	unknown := uuid.New()
 	_, err := env.a.MovePageTx(env.ctx, wiki.MovePageInput{
@@ -1198,17 +1198,17 @@ func TestAdapterNeg_MovePage_ParentRefusals(t *testing.T) {
 // Fails-before: move the revokeSubtreeSharesTx call below applyPageMove, or
 // narrow it to the root page only, and this fails.
 func TestAdapterNeg_MovePage_CrossSpaceRevokesTheWholeSubtreeAndAudits(t *testing.T) {
-	env := adnNewMoveEnv(t)
+	env := edgeNewMoveEnv(t)
 	team := testutil.DefaultTeamID(t, env.db.Pool, env.org.ID)
 
-	root := adnCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Shared root")
-	child := adnCreatePage(t, env.q, env.spaceA.ID, env.user.ID, &root, "Shared child")
-	bystander := adnCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Unrelated page")
-	destParent := adnCreatePage(t, env.q, env.spaceB.ID, env.user.ID, nil, "Destination parent")
+	root := edgeCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Shared root")
+	child := edgeCreatePage(t, env.q, env.spaceA.ID, env.user.ID, &root, "Shared child")
+	bystander := edgeCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Unrelated page")
+	destParent := edgeCreatePage(t, env.q, env.spaceB.ID, env.user.ID, nil, "Destination parent")
 
-	rootShare := adnCreateShare(t, env.q, env.org.ID, env.spaceA.ID, "page", root.ID, nil, true, env.user.ID)
-	childShare := adnCreateShare(t, env.q, env.org.ID, env.spaceA.ID, "page", child.ID, &team, false, env.user.ID)
-	bystanderShare := adnCreateShare(t, env.q, env.org.ID, env.spaceA.ID, "page", bystander.ID, nil, false, env.user.ID)
+	rootShare := edgeCreateShare(t, env.q, env.org.ID, env.spaceA.ID, "page", root.ID, nil, true, env.user.ID)
+	childShare := edgeCreateShare(t, env.q, env.org.ID, env.spaceA.ID, "page", child.ID, &team, false, env.user.ID)
+	bystanderShare := edgeCreateShare(t, env.q, env.org.ID, env.spaceA.ID, "page", bystander.ID, nil, false, env.user.ID)
 
 	res, err := env.a.MovePageTx(env.ctx, wiki.MovePageInput{
 		OrgID: env.org.ID, TargetSpaceID: env.spaceB.ID, PageID: root.ID,
@@ -1219,9 +1219,9 @@ func TestAdapterNeg_MovePage_CrossSpaceRevokesTheWholeSubtreeAndAudits(t *testin
 	require.EqualValues(t, 2, res.RevokedShares,
 		"the root's share and the descendant's own share must both be revoked")
 
-	require.False(t, adnShareIsActive(t, env.db.Pool, rootShare), "the moved page's share must be revoked")
-	require.False(t, adnShareIsActive(t, env.db.Pool, childShare), "a descendant's own share must be revoked too")
-	require.True(t, adnShareIsActive(t, env.db.Pool, bystanderShare),
+	require.False(t, edgeShareIsActive(t, env.db.Pool, rootShare), "the moved page's share must be revoked")
+	require.False(t, edgeShareIsActive(t, env.db.Pool, childShare), "a descendant's own share must be revoked too")
+	require.True(t, edgeShareIsActive(t, env.db.Pool, bystanderShare),
 		"a share on a page outside the moved subtree must survive")
 
 	movedRoot, err := env.q.GetPageByID(env.ctx, root.ID)
@@ -1235,7 +1235,7 @@ func TestAdapterNeg_MovePage_CrossSpaceRevokesTheWholeSubtreeAndAudits(t *testin
 	require.Equal(t, movedRoot.Path+"."+child.ID.String(), movedChild.Path,
 		"the descendant's path is rewritten by exact-prefix surgery, not by a blind replace")
 
-	events := adnShareRevokedPayloads(t, env.db.Pool, env.org.ID)
+	events := edgeShareRevokedPayloads(t, env.db.Pool, env.org.ID)
 	require.Len(t, events, 2, "each revocation writes exactly one audit row, through the move's own transaction")
 	require.Equal(t, "entity_moved", events[rootShare]["reason"])
 	require.Equal(t, "entity_moved", events[childShare]["reason"])
@@ -1255,10 +1255,10 @@ func TestAdapterNeg_MovePage_CrossSpaceRevokesTheWholeSubtreeAndAudits(t *testin
 // res.CrossSpace` guard) and both the RevokedShares and the still-active
 // assertions fail.
 func TestAdapterNeg_MovePage_InSpaceMoveKeepsSharesAlive(t *testing.T) {
-	env := adnNewMoveEnv(t)
-	root := adnCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Reordered")
-	sibling := adnCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "New parent")
-	share := adnCreateShare(t, env.q, env.org.ID, env.spaceA.ID, "page", root.ID, nil, false, env.user.ID)
+	env := edgeNewMoveEnv(t)
+	root := edgeCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "Reordered")
+	sibling := edgeCreatePage(t, env.q, env.spaceA.ID, env.user.ID, nil, "New parent")
+	share := edgeCreateShare(t, env.q, env.org.ID, env.spaceA.ID, "page", root.ID, nil, false, env.user.ID)
 
 	res, err := env.a.MovePageTx(env.ctx, wiki.MovePageInput{
 		OrgID: env.org.ID, TargetSpaceID: env.spaceA.ID, PageID: root.ID,
@@ -1267,9 +1267,9 @@ func TestAdapterNeg_MovePage_InSpaceMoveKeepsSharesAlive(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, res.CrossSpace)
 	require.EqualValues(t, 0, res.RevokedShares)
-	require.True(t, adnShareIsActive(t, env.db.Pool, share),
+	require.True(t, edgeShareIsActive(t, env.db.Pool, share),
 		"an in-space reparent must not revoke the page's shares")
-	require.Empty(t, adnShareRevokedPayloads(t, env.db.Pool, env.org.ID),
+	require.Empty(t, edgeShareRevokedPayloads(t, env.db.Pool, env.org.ID),
 		"and it must not write a share.revoked audit row")
 
 	after, err := env.q.GetPageByID(env.ctx, root.ID)
@@ -1303,24 +1303,24 @@ func TestAdapterNeg_DeleteTicketAndItem_RevokeSharesAndAudit(t *testing.T) {
 	keptTicket := insertTicket(t, db.Pool, beacon.ID, user.ID, 2, "kept ticket", "open", "high", nil)
 	item := insertItem(t, db.Pool, org.ID, vector.ID, user.ID, 1, "doomed item", "open", "high", "task", nil)
 
-	ticketShare := adnCreateShare(t, q, org.ID, beacon.ID, "ticket", ticket, nil, false, user.ID)
-	keptShare := adnCreateShare(t, q, org.ID, beacon.ID, "ticket", keptTicket, nil, false, user.ID)
-	itemShare := adnCreateShare(t, q, org.ID, vector.ID, "project_item", item, &team, false, user.ID)
+	ticketShare := edgeCreateShare(t, q, org.ID, beacon.ID, "ticket", ticket, nil, false, user.ID)
+	keptShare := edgeCreateShare(t, q, org.ID, beacon.ID, "ticket", keptTicket, nil, false, user.ID)
+	itemShare := edgeCreateShare(t, q, org.ID, vector.ID, "project_item", item, &team, false, user.ID)
 
 	require.NoError(t, a.DeleteTicketAndRevokeShares(ctx, ticket, user.ID))
-	require.Equal(t, 1, adnScalarCount(t, db.Pool,
+	require.Equal(t, 1, edgeScalarCount(t, db.Pool,
 		`SELECT count(*) FROM tickets WHERE id = $1 AND deleted_at IS NOT NULL`, ticket),
 		"the ticket is soft-deleted")
-	require.False(t, adnShareIsActive(t, db.Pool, ticketShare))
-	require.True(t, adnShareIsActive(t, db.Pool, keptShare), "another entity's share must survive")
+	require.False(t, edgeShareIsActive(t, db.Pool, ticketShare))
+	require.True(t, edgeShareIsActive(t, db.Pool, keptShare), "another entity's share must survive")
 
 	require.NoError(t, a.DeleteItemAndRevokeShares(ctx, item, user.ID))
-	require.Equal(t, 1, adnScalarCount(t, db.Pool,
+	require.Equal(t, 1, edgeScalarCount(t, db.Pool,
 		`SELECT count(*) FROM project_items WHERE id = $1 AND deleted_at IS NOT NULL`, item),
 		"the project item is soft-deleted")
-	require.False(t, adnShareIsActive(t, db.Pool, itemShare))
+	require.False(t, edgeShareIsActive(t, db.Pool, itemShare))
 
-	events := adnShareRevokedPayloads(t, db.Pool, org.ID)
+	events := edgeShareRevokedPayloads(t, db.Pool, org.ID)
 	require.Len(t, events, 2)
 	require.Equal(t, "entity_deleted", events[ticketShare]["reason"])
 	require.Equal(t, "ticket", events[ticketShare]["entity_type"])
@@ -1352,20 +1352,20 @@ func TestAdapterNeg_TeamReads_IgnoreDeletedAndForeignRows(t *testing.T) {
 	_, err = a.Update(ctx, uuid.New(), "New name", "")
 	require.ErrorIs(t, err, teams.ErrNotFound, "renaming a team that does not exist maps to the sentinel")
 
-	live := adnMakeTeam(t, db.Pool, org.ID, "live")
-	doomed := adnMakeTeam(t, db.Pool, org.ID, "doomed")
+	live := edgeMakeTeam(t, db.Pool, org.ID, "live")
+	doomed := edgeMakeTeam(t, db.Pool, org.ID, "doomed")
 	renamed, err := a.Update(ctx, doomed, "Renamed", "desc")
 	require.NoError(t, err, "control: a live team renames")
 	require.Equal(t, "Renamed", renamed.Name)
 
-	adnSoftDeleteTeam(t, db.Pool, doomed)
+	edgeSoftDeleteTeam(t, db.Pool, doomed)
 	_, err = a.Get(ctx, doomed)
 	require.ErrorIs(t, err, teams.ErrNotFound, "a soft-deleted team must read as absent")
 	_, err = a.Update(ctx, doomed, "Renamed again", "")
 	require.ErrorIs(t, err, teams.ErrNotFound, "a soft-deleted team must not be renameable")
 
 	otherOrg := testutil.CreateTestOrg(t, db.Pool)
-	foreign := adnMakeTeam(t, db.Pool, otherOrg.ID, "foreign")
+	foreign := edgeMakeTeam(t, db.Pool, otherOrg.ID, "foreign")
 
 	listed, err := a.ListByOrg(ctx, org.ID)
 	require.NoError(t, err)
@@ -1429,10 +1429,10 @@ func TestAdapterNeg_TeamMembership_UnknownSubjectsMapToMemberNotFound(t *testing
 	_, err := a.GetMember(ctx, defaultTeam, uuid.New())
 	require.ErrorIs(t, err, teams.ErrMemberNotFound)
 
-	empty := adnMakeTeam(t, db.Pool, org.ID, "empty")
+	empty := edgeMakeTeam(t, db.Pool, org.ID, "empty")
 	require.ErrorIs(t, a.SetPrimary(ctx, empty, user.ID, org.ID), teams.ErrMemberNotFound,
 		"a user who is not in the team cannot make it their primary")
-	require.Equal(t, defaultTeam, adnPrimaryTeamID(t, db.Pool, org.ID, user.ID),
+	require.Equal(t, defaultTeam, edgePrimaryTeamID(t, db.Pool, org.ID, user.ID),
 		"the refusal must fire before the existing primary flag is cleared")
 
 	// AddMember is org-scoped through the team, not just through the id.
@@ -1441,7 +1441,7 @@ func TestAdapterNeg_TeamMembership_UnknownSubjectsMapToMemberNotFound(t *testing
 	_, err = a.AddMember(ctx, foreignTeam, user.ID, org.ID, teams.MemberRoleMember)
 	require.ErrorIs(t, err, teams.ErrNotFound,
 		"a team of another org must not be enrollable from this org's admin surface")
-	require.Equal(t, 0, adnScalarCount(t, db.Pool,
+	require.Equal(t, 0, edgeScalarCount(t, db.Pool,
 		`SELECT count(*) FROM team_members WHERE team_id = $1 AND user_id = $2`, foreignTeam, user.ID))
 
 	// Control: the same call against a live team of the caller's own org
@@ -1457,7 +1457,7 @@ func TestAdapterNeg_TeamMembership_UnknownSubjectsMapToMemberNotFound(t *testing
 	require.False(t, members[0].IsPrimary, "AddMember never touches is_primary")
 
 	require.NoError(t, a.SetPrimary(ctx, empty, user.ID, org.ID))
-	require.Equal(t, empty, adnPrimaryTeamID(t, db.Pool, org.ID, user.ID))
+	require.Equal(t, empty, edgePrimaryTeamID(t, db.Pool, org.ID, user.ID))
 }
 
 // TestAdapterNeg_TeamReparent_UnknownForeignAndDefaultAreRefused: the subtree
@@ -1474,13 +1474,13 @@ func TestAdapterNeg_TeamReparent_UnknownForeignAndDefaultAreRefused(t *testing.T
 	org := testutil.CreateTestOrg(t, db.Pool)
 	a := adapters.NewTeamAdapter(db.Pool)
 
-	host := adnMakeTeam(t, db.Pool, org.ID, "host")
+	host := edgeMakeTeam(t, db.Pool, org.ID, "host")
 
 	_, err := a.Reparent(ctx, org.ID, uuid.New(), nil)
 	require.ErrorIs(t, err, teams.ErrNotFound, "an unknown team maps to the domain sentinel")
 
 	otherOrg := testutil.CreateTestOrg(t, db.Pool)
-	foreign := adnMakeTeam(t, db.Pool, otherOrg.ID, "foreign")
+	foreign := edgeMakeTeam(t, db.Pool, otherOrg.ID, "foreign")
 	_, err = a.Reparent(ctx, org.ID, foreign, &host)
 	require.ErrorIs(t, err, teams.ErrNotFound, "another org's team must not be movable from here")
 
