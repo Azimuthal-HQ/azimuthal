@@ -55,8 +55,24 @@ func NewService(store Store, tokens *TokenService, sender Sender, cfg Config) *S
 // both "no such key" and "disabled", which is the same non-disclosure the
 // share family applies to entities.
 func (s *Service) LookupPortal(ctx context.Context, key string) (Portal, error) {
-	return s.store.PortalByKey(ctx, key)
+	p, err := s.store.PortalByKey(ctx, key)
+	if err != nil {
+		return Portal{}, fmt.Errorf("looking up portal: %w", err)
+	}
+	return p, nil
 }
+
+// LookupPortalByID resolves an enabled portal by id.
+func (s *Service) LookupPortalByID(ctx context.Context, id uuid.UUID) (Portal, error) {
+	p, err := s.store.PortalByID(ctx, id)
+	if err != nil {
+		return Portal{}, fmt.Errorf("looking up portal: %w", err)
+	}
+	return p, nil
+}
+
+// SessionTTL reports how long a redeemed session lasts, for the wire response.
+func (s *Service) SessionTTL() time.Duration { return s.tokens.SessionTTL() }
 
 // LinkIssued is the outcome of a sign-in link request.
 type LinkIssued struct {
@@ -97,7 +113,7 @@ func (s *Service) RequestLink(ctx context.Context, p Portal, rawEmail, displayNa
 
 	req, err := s.store.UpsertRequester(ctx, p.OrgID, email, strings.TrimSpace(displayName))
 	if err != nil {
-		return LinkIssued{}, err
+		return LinkIssued{}, fmt.Errorf("resolving requester: %w", err)
 	}
 	if !req.IsActive {
 		// Silently indistinguishable from success. See the doc comment.
@@ -110,7 +126,7 @@ func (s *Service) RequestLink(ctx context.Context, p Portal, rawEmail, displayNa
 	}
 	expiresAt := time.Now().UTC().Add(s.cfg.LinkTTL)
 	if err := s.store.CreateMagicLink(ctx, req.ID, p.ID, hash, expiresAt); err != nil {
-		return LinkIssued{}, err
+		return LinkIssued{}, fmt.Errorf("issuing sign-in link: %w", err)
 	}
 
 	url := s.linkURL(p.Key, raw)
@@ -133,7 +149,7 @@ func (s *Service) Redeem(ctx context.Context, rawToken string) (string, Session,
 
 	redemption, err := s.store.ConsumeMagicLink(ctx, HashToken(rawToken))
 	if err != nil {
-		return "", Session{}, err
+		return "", Session{}, fmt.Errorf("redeeming sign-in link: %w", err)
 	}
 
 	sess, err := s.loadSession(ctx, redemption.RequesterID, redemption.PortalID)
@@ -143,7 +159,7 @@ func (s *Service) Redeem(ctx context.Context, rawToken string) (string, Session,
 
 	state, err := s.store.RequesterState(ctx, redemption.RequesterID)
 	if err != nil {
-		return "", Session{}, err
+		return "", Session{}, fmt.Errorf("reading requester state: %w", err)
 	}
 	if !state.IsActive {
 		return "", Session{}, ErrInvalidLink
@@ -190,7 +206,10 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Session, erro
 // caller's JWT valid — this actually invalidates the credential, because the
 // generation bump is checked on the next request.
 func (s *Service) SignOut(ctx context.Context, requesterID uuid.UUID) error {
-	return s.store.BumpRequesterSessions(ctx, requesterID)
+	if err := s.store.BumpRequesterSessions(ctx, requesterID); err != nil {
+		return fmt.Errorf("signing out requester: %w", err)
+	}
+	return nil
 }
 
 // Submit raises a request. The payload is the requester-safe subset: a
@@ -201,7 +220,11 @@ func (s *Service) Submit(ctx context.Context, sess Session, in NewRequest) (Requ
 	if in.Summary == "" {
 		return Request{}, ErrSummaryRequired
 	}
-	return s.store.CreateRequest(ctx, sess.PortalID, sess.SpaceID, sess.RequesterID, in)
+	req, err := s.store.CreateRequest(ctx, sess.PortalID, sess.SpaceID, sess.RequesterID, in)
+	if err != nil {
+		return Request{}, fmt.Errorf("submitting request: %w", err)
+	}
+	return req, nil
 }
 
 // ListRequests returns the requester's own requests.
@@ -211,7 +234,11 @@ func (s *Service) Submit(ctx context.Context, sess Session, in NewRequest) (Requ
 // in the first place, so there is no filtered-out set for a serialiser bug to
 // reveal.
 func (s *Service) ListRequests(ctx context.Context, sess Session) ([]Request, error) {
-	return s.store.ListRequests(ctx, sess.SpaceID, sess.RequesterID)
+	reqs, err := s.store.ListRequests(ctx, sess.SpaceID, sess.RequesterID)
+	if err != nil {
+		return nil, fmt.Errorf("listing requests: %w", err)
+	}
+	return reqs, nil
 }
 
 // GetRequest returns one of the requester's own requests with its public
@@ -219,11 +246,11 @@ func (s *Service) ListRequests(ctx context.Context, sess Session) ([]Request, er
 func (s *Service) GetRequest(ctx context.Context, sess Session, requestID uuid.UUID) (Request, []Message, error) {
 	req, err := s.store.GetRequest(ctx, sess.SpaceID, sess.RequesterID, requestID)
 	if err != nil {
-		return Request{}, nil, err
+		return Request{}, nil, fmt.Errorf("loading request: %w", err)
 	}
 	msgs, err := s.store.ListPublicMessages(ctx, req.ID)
 	if err != nil {
-		return Request{}, nil, err
+		return Request{}, nil, fmt.Errorf("loading request messages: %w", err)
 	}
 	return req, msgs, nil
 }
@@ -243,14 +270,22 @@ func (s *Service) Reply(ctx context.Context, sess Session, requestID uuid.UUID, 
 	// answers identical.
 	req, err := s.store.GetRequest(ctx, sess.SpaceID, sess.RequesterID, requestID)
 	if err != nil {
-		return Message{}, err
+		return Message{}, fmt.Errorf("loading request: %w", err)
 	}
-	return s.store.AppendRequesterMessage(ctx, req.ID, sess.RequesterID, body)
+	msg, err := s.store.AppendRequesterMessage(ctx, req.ID, sess.RequesterID, body)
+	if err != nil {
+		return Message{}, fmt.Errorf("appending reply: %w", err)
+	}
+	return msg, nil
 }
 
 // AssigneeFor reports who should be told about a requester's reply.
 func (s *Service) AssigneeFor(ctx context.Context, requestID uuid.UUID) (uuid.UUID, error) {
-	return s.store.AssigneeFor(ctx, requestID)
+	id, err := s.store.AssigneeFor(ctx, requestID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("resolving assignee: %w", err)
+	}
+	return id, nil
 }
 
 // CreatePortal opts a Beacon space into the portal. Agent-side; guarded by
@@ -267,24 +302,36 @@ func (s *Service) CreatePortal(ctx context.Context, spaceID uuid.UUID, spaceType
 	if err != nil {
 		return Portal{}, err
 	}
-	return s.store.CreatePortal(ctx, Portal{
+	created, err := s.store.CreatePortal(ctx, Portal{
 		SpaceID: spaceID,
 		Key:     key,
 		Name:    name,
 		Intro:   strings.TrimSpace(intro),
 		Enabled: true,
 	}, createdBy)
+	if err != nil {
+		return Portal{}, fmt.Errorf("creating portal: %w", err)
+	}
+	return created, nil
 }
 
 // PortalForSpace returns a space's portal configuration, enabled or not.
 func (s *Service) PortalForSpace(ctx context.Context, spaceID uuid.UUID) (Portal, error) {
-	return s.store.PortalBySpace(ctx, spaceID)
+	p, err := s.store.PortalBySpace(ctx, spaceID)
+	if err != nil {
+		return Portal{}, fmt.Errorf("loading space portal: %w", err)
+	}
+	return p, nil
 }
 
 // SetPortalEnabled enables or disables a space's portal without discarding
 // its key, so that re-enabling does not invalidate every URL already shared.
 func (s *Service) SetPortalEnabled(ctx context.Context, spaceID uuid.UUID, enabled bool) (Portal, error) {
-	return s.store.SetPortalEnabled(ctx, spaceID, enabled)
+	p, err := s.store.SetPortalEnabled(ctx, spaceID, enabled)
+	if err != nil {
+		return Portal{}, fmt.Errorf("setting portal enabled: %w", err)
+	}
+	return p, nil
 }
 
 // RequesterByEmail resolves a requester for the agent-side surface.
@@ -293,7 +340,11 @@ func (s *Service) RequesterByEmail(ctx context.Context, orgID uuid.UUID, email s
 	if err != nil {
 		return Requester{}, err
 	}
-	return s.store.RequesterByEmail(ctx, orgID, norm)
+	req, err := s.store.RequesterByEmail(ctx, orgID, norm)
+	if err != nil {
+		return Requester{}, fmt.Errorf("looking up requester: %w", err)
+	}
+	return req, nil
 }
 
 // loadSession assembles the principal from the portal row, refusing if the
@@ -302,11 +353,11 @@ func (s *Service) RequesterByEmail(ctx context.Context, orgID uuid.UUID, email s
 func (s *Service) loadSession(ctx context.Context, requesterID, portalID uuid.UUID) (Session, error) {
 	p, err := s.store.PortalByID(ctx, portalID)
 	if err != nil {
-		return Session{}, err
+		return Session{}, fmt.Errorf("loading session portal: %w", err)
 	}
 	r, err := s.store.RequesterByID(ctx, requesterID)
 	if err != nil {
-		return Session{}, err
+		return Session{}, fmt.Errorf("loading session requester: %w", err)
 	}
 	return Session{
 		RequesterID: r.ID,

@@ -542,8 +542,8 @@ const listPortalTicketComments = `-- name: ListPortalTicketComments :many
 SELECT c.id,
        c.body,
        c.created_at,
-       c.author_requester_id IS NOT NULL AS from_requester,
-       COALESCE(u.display_name, r.display_name, '') AS author_label
+       (c.author_requester_id IS NOT NULL)::bool AS from_requester,
+       COALESCE(u.display_name, r.display_name, '')::text AS author_label
 FROM comments c
 LEFT JOIN users u ON u.id = c.author_id
 LEFT JOIN requesters r ON r.id = c.author_requester_id
@@ -558,7 +558,7 @@ type ListPortalTicketCommentsRow struct {
 	ID            uuid.UUID          `json:"id"`
 	Body          string             `json:"body"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	FromRequester interface{}        `json:"from_requester"`
+	FromRequester bool               `json:"from_requester"`
 	AuthorLabel   string             `json:"author_label"`
 }
 

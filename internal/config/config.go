@@ -74,6 +74,15 @@ type Config struct {
 	// cost as hardware gets faster.
 	BcryptCost int
 
+	// Customer portal. PortalLinkDelivery mirrors InviteDelivery: "link"
+	// returns the sign-in URL in the API response (development and test
+	// only — see validate) or "email" sends it. PortalLinkTTL is how long a
+	// sign-in link stays redeemable; PortalSessionTTL is how long the
+	// session it produces lasts.
+	PortalLinkDelivery string
+	PortalLinkTTL      time.Duration
+	PortalSessionTTL   time.Duration
+
 	// App
 	AppEnv     string
 	AppPort    int
@@ -107,6 +116,24 @@ const (
 	InviteDeliveryEmail = "email"
 )
 
+// Customer-portal sign-in link delivery modes.
+const (
+	// PortalLinkDeliveryLink returns the sign-in URL in the API response so a
+	// developer or an E2E run can follow it without a mailbox.
+	//
+	// PRODUCTION REFUSES THIS MODE AT STARTUP. The request-link endpoint is
+	// unauthenticated by necessity — an external requester has no credential
+	// yet — so returning the URL to its caller would let anybody sign in as
+	// any address they can name. That is not a misconfiguration to warn
+	// about; it is a total authentication bypass, and the only safe place for
+	// it is a deployment that is not serving real customers.
+	PortalLinkDeliveryLink = "link"
+	// PortalLinkDeliveryEmail sends the sign-in link to the address that
+	// asked for it, which is the only delivery that authenticates anything.
+	// Requires SMTP, exactly as invite email delivery does.
+	PortalLinkDeliveryEmail = "email"
+)
+
 // Load reads configuration from environment variables and returns a validated Config.
 // It fails fast with clear error messages if required variables are missing.
 func Load() (*Config, error) {
@@ -131,27 +158,31 @@ func Load() (*Config, error) {
 	v.SetDefault("AZIMUTHAL_INVITE_TTL", "168h")
 	v.SetDefault("AZIMUTHAL_TICKET_REF_REQUIRED", false)
 	v.SetDefault("AZIMUTHAL_BCRYPT_COST", DefaultBcryptCost)
+	v.SetDefault("AZIMUTHAL_PORTAL_LINK_DELIVERY", PortalLinkDeliveryLink)
+	v.SetDefault("AZIMUTHAL_PORTAL_LINK_TTL", "1h")
+	v.SetDefault("AZIMUTHAL_PORTAL_SESSION_TTL", "72h")
 
 	cfg := &Config{
-		DatabaseURL:       v.GetString("DATABASE_URL"),
-		StorageEndpoint:   v.GetString("STORAGE_ENDPOINT"),
-		StorageAccessKey:  v.GetString("STORAGE_ACCESS_KEY"),
-		StorageSecretKey:  v.GetString("STORAGE_SECRET_KEY"),
-		StorageBucket:     v.GetString("STORAGE_BUCKET"),
-		StorageUseSSL:     v.GetBool("STORAGE_USE_SSL"),
-		JWTPrivateKeyPath: v.GetString("JWT_PRIVATE_KEY_PATH"),
-		QueueEnabled:      v.GetBool("AZIMUTHAL_QUEUE_ENABLED"),
-		AllowRegistration: v.GetBool("AZIMUTHAL_ALLOW_REGISTRATION"),
-		InviteDelivery:    v.GetString("AZIMUTHAL_INVITE_DELIVERY"),
-		TicketRefRequired: v.GetBool("AZIMUTHAL_TICKET_REF_REQUIRED"),
-		AllowedOrigins:    parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS")),
-		SMTPHost:          v.GetString("SMTP_HOST"),
-		SMTPPort:          v.GetInt("SMTP_PORT"),
-		SMTPFrom:          v.GetString("SMTP_FROM"),
-		AppEnv:            v.GetString("APP_ENV"),
-		AppPort:           v.GetInt("APP_PORT"),
-		AppBaseURL:        v.GetString("APP_BASE_URL"),
-		LogLevel:          v.GetString("LOG_LEVEL"),
+		DatabaseURL:        v.GetString("DATABASE_URL"),
+		StorageEndpoint:    v.GetString("STORAGE_ENDPOINT"),
+		StorageAccessKey:   v.GetString("STORAGE_ACCESS_KEY"),
+		StorageSecretKey:   v.GetString("STORAGE_SECRET_KEY"),
+		StorageBucket:      v.GetString("STORAGE_BUCKET"),
+		StorageUseSSL:      v.GetBool("STORAGE_USE_SSL"),
+		JWTPrivateKeyPath:  v.GetString("JWT_PRIVATE_KEY_PATH"),
+		QueueEnabled:       v.GetBool("AZIMUTHAL_QUEUE_ENABLED"),
+		AllowRegistration:  v.GetBool("AZIMUTHAL_ALLOW_REGISTRATION"),
+		InviteDelivery:     v.GetString("AZIMUTHAL_INVITE_DELIVERY"),
+		TicketRefRequired:  v.GetBool("AZIMUTHAL_TICKET_REF_REQUIRED"),
+		PortalLinkDelivery: v.GetString("AZIMUTHAL_PORTAL_LINK_DELIVERY"),
+		AllowedOrigins:     parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS")),
+		SMTPHost:           v.GetString("SMTP_HOST"),
+		SMTPPort:           v.GetInt("SMTP_PORT"),
+		SMTPFrom:           v.GetString("SMTP_FROM"),
+		AppEnv:             v.GetString("APP_ENV"),
+		AppPort:            v.GetInt("APP_PORT"),
+		AppBaseURL:         v.GetString("APP_BASE_URL"),
+		LogLevel:           v.GetString("LOG_LEVEL"),
 	}
 
 	if err := cfg.parseDurations(v); err != nil {
@@ -188,6 +219,27 @@ func (c *Config) parseDurations(v *viper.Viper) error {
 		return fmt.Errorf("invalid AZIMUTHAL_INVITE_TTL %q: must be positive", inviteTTLStr)
 	}
 	c.InviteTTL = inviteTTL
+
+	// A sign-in link is a credential sitting in an inbox, so its window is
+	// short by default (1h) — much shorter than an invite's seven days, which
+	// is an onboarding step somebody may get to next week.
+	portalLinkTTL, err := time.ParseDuration(v.GetString("AZIMUTHAL_PORTAL_LINK_TTL"))
+	if err != nil {
+		return fmt.Errorf("invalid AZIMUTHAL_PORTAL_LINK_TTL %q: %w", v.GetString("AZIMUTHAL_PORTAL_LINK_TTL"), err)
+	}
+	if portalLinkTTL <= 0 {
+		return fmt.Errorf("invalid AZIMUTHAL_PORTAL_LINK_TTL %q: must be positive", v.GetString("AZIMUTHAL_PORTAL_LINK_TTL"))
+	}
+	c.PortalLinkTTL = portalLinkTTL
+
+	portalSessionTTL, err := time.ParseDuration(v.GetString("AZIMUTHAL_PORTAL_SESSION_TTL"))
+	if err != nil {
+		return fmt.Errorf("invalid AZIMUTHAL_PORTAL_SESSION_TTL %q: %w", v.GetString("AZIMUTHAL_PORTAL_SESSION_TTL"), err)
+	}
+	if portalSessionTTL <= 0 {
+		return fmt.Errorf("invalid AZIMUTHAL_PORTAL_SESSION_TTL %q: must be positive", v.GetString("AZIMUTHAL_PORTAL_SESSION_TTL"))
+	}
+	c.PortalSessionTTL = portalSessionTTL
 	return nil
 }
 

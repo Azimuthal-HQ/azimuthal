@@ -23,6 +23,10 @@
 // @in                          header
 // @name                        Authorization
 // @description                 JWT Bearer token. Format: "Bearer <token>". Obtain via POST /api/v1/auth/login
+// @securityDefinitions.apikey  PortalSessionAuth
+// @in                          header
+// @name                        Authorization
+// @description                 Customer-portal session token. Format: "Bearer <token>". Obtained via POST /api/v1/portal/auth/redeem. NOT interchangeable with BearerAuth: the two token families carry different audience claims and each parser refuses the other's tokens.
 // @tag.name        auth
 // @tag.description Authentication — login, logout, register, get current user
 // @tag.name        spaces
@@ -67,6 +71,7 @@ import (
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
+	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -84,6 +89,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/portal"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
@@ -348,6 +354,39 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		DeliverByEmail: cfg.InviteDelivery == config.InviteDeliveryEmail,
 		BaseURL:        cfg.AppBaseURL,
 	})
+	// Customer portal. The token service shares the RSA key with the internal
+	// family and separates on the audience claim — see auth.AudienceInternal
+	// and portal.AudiencePortal, which are verified against each other in
+	// both directions.
+	portalTokens := portal.NewTokenService(portal.TokenConfig{
+		PrivateKey: privateKey,
+		PublicKey:  &privateKey.PublicKey,
+		SessionTTL: cfg.PortalSessionTTL,
+		Issuer:     "azimuthal",
+	})
+	var portalSender portal.Sender
+	if cfg.PortalLinkDelivery == config.PortalLinkDeliveryEmail {
+		portalSender = adapters.NewPortalLinkSender(sender)
+	}
+	portalSvc := portal.NewService(adapters.NewPortalAdapter(pool), portalTokens, portalSender, portal.Config{
+		LinkTTL:        cfg.PortalLinkTTL,
+		DeliverByEmail: cfg.PortalLinkDelivery == config.PortalLinkDeliveryEmail,
+		// Disclosing the sign-in URL to an unauthenticated caller is an
+		// authentication bypass, so it is gated on the delivery mode that
+		// config.validate refuses in production — belt as well as braces,
+		// because the config check is the only thing preventing it and a
+		// second reader of that decision here makes the coupling visible.
+		DiscloseLink: cfg.PortalLinkDelivery == config.PortalLinkDeliveryLink && !cfg.IsProduction(),
+		BaseURL:      cfg.AppBaseURL,
+	})
+	portalHandler := portalapi.NewHandler(portalSvc).
+		WithAuditLogger(auditLog).
+		WithNotifier(func(args jobs.NotificationArgs) {
+			if err := notifEnqueuer.EnqueueNotification(context.Background(), args); err != nil {
+				slog.Warn("portal reply notification not enqueued", "error", err)
+			}
+		})
+
 	bulkSvc := access.NewBulkService(adapters.NewBulkGrantAdapter(pool))
 	auditReader := audit.NewReader(adapters.NewAuditReaderAdapter(queries))
 
@@ -371,6 +410,8 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		AvatarHandler:       avatarHandler,
 		ViewHandler:         viewHandler,
+		PortalHandler:       portalHandler,
+		PortalService:       portalSvc,
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		QueueStatus:         queueStatus,

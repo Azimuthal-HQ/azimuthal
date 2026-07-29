@@ -111,6 +111,18 @@ const (
 	EventTypeInviteResent EventType = "invite.resent"
 	// EventTypeInviteAccepted records an invite being accepted.
 	EventTypeInviteAccepted EventType = "invite.accepted"
+	// EventTypePortalSignIn records an external requester redeeming a
+	// magic link. The ActorID is a requesters.id, NOT a users.id — the only
+	// event family where that is true, because a requester holds no account
+	// (migration 044). Anything reading actor ids out of the audit log and
+	// joining them to users must tolerate a miss on these rows.
+	EventTypePortalSignIn EventType = "portal.signed_in"
+	// EventTypePortalRequestCreated records a request raised through the
+	// customer portal. Its ActorID is likewise a requesters.id.
+	EventTypePortalRequestCreated EventType = "portal.request_created"
+	// EventTypePortalConfigured records a Beacon space being opted into, or
+	// out of, the customer portal. Its actor IS a user.
+	EventTypePortalConfigured EventType = "portal.configured"
 	// EventTypeUserDeactivated records an account being deactivated (which
 	// always terminates its sessions).
 	EventTypeUserDeactivated EventType = "user.deactivated"

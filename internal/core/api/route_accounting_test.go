@@ -60,6 +60,25 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/invites/{token}": "public: invite inspection, token-authenticated",
 	"POST /api/v1/invites/accept": "public: invite acceptance, token-authenticated",
 
+	// Customer portal, unauthenticated half. An external requester holds no
+	// account by design (migration 044), so these three cannot require one.
+	// Possession of the emailed magic-link token is the credential, exactly
+	// as it is for invite acceptance above.
+	"GET /api/v1/portal/{portalKey}":                    "public: portal name and blurb only — no space, org or request data",
+	"POST /api/v1/portal/{portalKey}/auth/request-link": "public: issues a sign-in link; answers 202 identically for known and unknown addresses so it is not a membership oracle",
+	"POST /api/v1/portal/auth/redeem":                   "public: magic-link redemption, token-authenticated",
+
+	// Customer portal, requester-authenticated half. NOT org-member: the
+	// caller is outside the capability model entirely, so access.Can is never
+	// consulted. Authorisation is RequirePortalSession (audience-verified
+	// token + live session_generation) plus queries scoped to the requester's
+	// own rows.
+	"POST /api/v1/portal/{portalKey}/my/requests":                     "portal-session: raise a request as the signed-in requester",
+	"GET /api/v1/portal/{portalKey}/my/requests":                      "portal-session: the caller's OWN requests, scoped by requester_id in the query",
+	"GET /api/v1/portal/{portalKey}/my/requests/{requestID}":          "portal-session: one of the caller's own requests; another requester's answers 404, never 403",
+	"POST /api/v1/portal/{portalKey}/my/requests/{requestID}/replies": "portal-session: appends a PUBLIC comment; ownership re-checked before the write",
+	"POST /api/v1/portal/{portalKey}/my/auth/sign-out":                "portal-session: bumps session_generation, revoking every session this requester holds",
+
 	// User-scoped: authenticated, filtered by caller identity, no org data
 	// beyond the caller's own memberships.
 	"GET /api/v1/auth/me":                              "user-scoped",
@@ -349,8 +368,34 @@ var guardClasses = map[string]bool{
 	"public": true, "user-scoped": true, "org-member": true, "org-read": true,
 	"org-admin": true, "org-admin-404": true, "space-read": true,
 	"space-write": true, "space-cap": true, "share-manage": true,
-	"share-read": true,
+	"share-read": true, "portal-session": true,
 }
+
+// portalGuardedPrefixes is the customer-portal analogue of
+// adminGuardedPrefixes, and it exists for the reason the sweep's own doc
+// comment gives: adding a token to guardClasses only stops the "not a
+// documented class" error. Without a prefix rule AND a carries() check, a
+// portal route added outside the guarded closure would carry no
+// authentication at all, its accounting row would happily claim
+// "portal-session", and every test in the repository would pass.
+//
+// The portal is the surface where that matters most: it is the only route
+// family reachable from the public internet by someone with no account, so an
+// unguarded route here is not a privilege escalation between colleagues, it is
+// an open door.
+var portalGuardedPrefixes = []string{
+	"/api/v1/portal/{portalKey}/my/",
+}
+
+// deliberatePublicPortalRoutes are portal routes that are unauthenticated on
+// purpose. Each needs a stated reason, so that "this one is public" is an
+// explicit act rather than an omission — the same discipline
+// deliberateNonAdminRoutes enforces inside the admin subtree.
+//
+// All three are outside the /my/ prefix above, so this map is currently
+// empty and should stay that way: a new public portal route belongs outside
+// /my/, not inside it with an exemption.
+var deliberatePublicPortalRoutes = map[string]string{}
 
 // adminGuardedPrefixes are the subtrees of the P2.5 administration surface.
 // Every route under them is org-admin-404 unless it appears in
@@ -527,6 +572,34 @@ func TestReadPathSweep_GuardClassMatchesMiddleware(t *testing.T) {
 				": claims org-admin but its middleware chain does not include RequireOrgAdmin")
 		}
 
+		// The customer portal, both directions. This is the same shape as the
+		// admin check below and exists for a sharper reason: the portal is
+		// the only route family an unauthenticated stranger on the public
+		// internet can reach, so a route that lost its guard is not a
+		// privilege escalation between colleagues — it is an open door.
+		hasPortalGuard := carries(chain, "RequirePortalSession")
+		if class == "portal-session" && !hasPortalGuard {
+			mismatched = append(mismatched, route+
+				": claims portal-session but its middleware chain does not include RequirePortalSession")
+		}
+		if hasPortalGuard && class != "portal-session" {
+			mismatched = append(mismatched, route+
+				": carries RequirePortalSession but is classified "+class)
+		}
+		for _, prefix := range portalGuardedPrefixes {
+			if !strings.HasPrefix(strings.SplitN(route, " ", 2)[1], prefix) {
+				continue
+			}
+			if hasPortalGuard {
+				break
+			}
+			if _, deliberate := deliberatePublicPortalRoutes[route]; deliberate {
+				break
+			}
+			unguarded = append(unguarded, route+" (portal subtree, no RequirePortalSession)")
+			break
+		}
+
 		// A route in an administration subtree is org-admin-404 unless it is
 		// a declared exception. Reached through the chain, not the row, so a
 		// wrong row cannot satisfy it.
@@ -548,10 +621,14 @@ func TestReadPathSweep_GuardClassMatchesMiddleware(t *testing.T) {
 	sort.Strings(mismatched)
 
 	if len(unguarded) > 0 {
-		t.Errorf("routes inside an administration subtree that carry no RequireOrgAdmin404.\n"+
-			"Since #64 these guards are applied per-route, so a new route inherits nothing — add\n"+
-			".With(admin404) in mountAdminSurface, or add the route to deliberateNonAdminRoutes\n"+
-			"with the reason it is deliberately member-visible:\n%s", strings.Join(unguarded, "\n"))
+		t.Errorf("routes inside a guarded subtree that do not carry that subtree's guard.\n"+
+			"ADMINISTRATION route: since #64 these guards are applied per-route, so a new route\n"+
+			"inherits nothing — add .With(admin404) in mountAdminSurface, or list it in\n"+
+			"deliberateNonAdminRoutes with the reason it is deliberately member-visible.\n"+
+			"CUSTOMER-PORTAL route: it must sit inside the r.Use(RequirePortalSession) closure in\n"+
+			"NewRouter, or move outside /my/ and be listed in deliberatePublicPortalRoutes with its\n"+
+			"reason. An unguarded portal route is reachable by anyone on the internet:\n%s",
+			strings.Join(unguarded, "\n"))
 	}
 	if len(mismatched) > 0 {
 		t.Errorf("routes whose accounting row disagrees with their actual middleware chain:\n%s",

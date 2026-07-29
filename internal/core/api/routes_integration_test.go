@@ -25,6 +25,7 @@ import (
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
+	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -40,6 +41,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/portal"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
@@ -121,6 +123,10 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		AccessTTL:  24 * time.Hour,
 		RefreshTTL: 7 * 24 * time.Hour,
 		Issuer:     "azimuthal-test",
+		// Mirrors cmd/server/main.go. Without it the harness would exercise a
+		// deployment with no audience separation at all, and every portal
+		// boundary test would be measuring a configuration nobody ships.
+		Audience: auth.AudienceInternal,
 	})
 
 	userAdapter := adapters.NewUserAdapter(pool, org.ID)
@@ -211,6 +217,22 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// the config below and fails on any handler dependency left nil.
 	savedViewAdapter := adapters.NewSavedViewAdapter(pool)
 
+	// Customer portal. DiscloseLink is on so tests can follow a sign-in link
+	// without a mailbox; config.validate refuses that combination in
+	// production, which is the only place it would be unsafe.
+	portalSvc := portal.NewService(
+		adapters.NewPortalAdapter(pool),
+		portal.NewTokenService(portal.TokenConfig{
+			PrivateKey: privateKey,
+			PublicKey:  &privateKey.PublicKey,
+			SessionTTL: 72 * time.Hour,
+			Issuer:     "azimuthal-test",
+		}),
+		nil,
+		portal.Config{LinkTTL: time.Hour, DiscloseLink: true, BaseURL: "http://portal.test"},
+	)
+	portalHandler := portalapi.NewHandler(portalSvc).WithAuditLogger(auditLog)
+
 	cfg := api.RouterConfig{
 		Authenticator: authenticator,
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner, userAdapter).
@@ -246,7 +268,9 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			views.NewService(savedViewAdapter, savedViewAdapter),
 			views.NewQueueService(savedViewAdapter),
 		),
-		SPAHandler: nil,
+		PortalHandler: portalHandler,
+		PortalService: portalSvc,
+		SPAHandler:    nil,
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
 			if err != nil {

@@ -195,8 +195,8 @@ SELECT assignee_id FROM tickets WHERE id = $1 AND deleted_at IS NULL;
 SELECT c.id,
        c.body,
        c.created_at,
-       c.author_requester_id IS NOT NULL AS from_requester,
-       COALESCE(u.display_name, r.display_name, '') AS author_label
+       (c.author_requester_id IS NOT NULL)::bool AS from_requester,
+       COALESCE(u.display_name, r.display_name, '')::text AS author_label
 FROM comments c
 LEFT JOIN users u ON u.id = c.author_id
 LEFT JOIN requesters r ON r.id = c.author_requester_id
