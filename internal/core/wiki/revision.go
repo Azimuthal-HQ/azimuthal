@@ -97,14 +97,19 @@ func (s *Service) GetRevision(ctx context.Context, pageID uuid.UUID, version int
 
 // DiffRevisions computes a unified diff between two revisions of the same page.
 func (s *Service) DiffRevisions(ctx context.Context, pageID uuid.UUID, fromVersion, toVersion int32) (RevisionDiff, error) {
+	// The wrapping names the VERSION, not the call site. handleWikiError passes
+	// a not-found error's own text through as the 404 body, so "getting
+	// to-revision: revision not found" would put internal phrasing in front of
+	// a person — while "revision not found: version 99" tells them which one.
+	// RestoreRevision already formats it this way; this is its sibling path.
 	from, err := s.GetRevision(ctx, pageID, fromVersion)
 	if err != nil {
-		return RevisionDiff{}, fmt.Errorf("getting from-revision: %w", err)
+		return RevisionDiff{}, versionError(err, fromVersion)
 	}
 
 	to, err := s.GetRevision(ctx, pageID, toVersion)
 	if err != nil {
-		return RevisionDiff{}, fmt.Errorf("getting to-revision: %w", err)
+		return RevisionDiff{}, versionError(err, toVersion)
 	}
 
 	dmp := diffmatchpatch.New()
@@ -123,6 +128,15 @@ func (s *Service) DiffRevisions(ctx context.Context, pageID uuid.UUID, fromVersi
 		TitleSegments:   titleSegments,
 		ContentSegments: segmentsOf(contentDiffs),
 	}, nil
+}
+
+// versionError names the version a lookup failed on, keeping the sentinel
+// wrapped so errors.Is still recognises it as ErrRevisionNotFound.
+func versionError(err error, version int32) error {
+	if errors.Is(err, ErrRevisionNotFound) {
+		return fmt.Errorf("%w: version %d", ErrRevisionNotFound, version)
+	}
+	return fmt.Errorf("getting revision %d: %w", version, err)
 }
 
 // segmentsOf converts diffmatchpatch's diffs into the wire shape, dropping

@@ -89,12 +89,12 @@ func (h *Handler) ListPagesWithTag(w http.ResponseWriter, r *http.Request) {
 		readable = res.ReadableSpaceIDs()
 	}
 
-	tag, pages, err := h.tags.PagesWithSlug(r.Context(), orgID, slug, readable)
+	result, err := h.tags.PagesWithSlug(r.Context(), orgID, slug, readable)
 	if err != nil {
 		handleTagError(w, r, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, map[string]any{"tag": tag, "pages": pages})
+	respond.JSON(w, http.StatusOK, result)
 }
 
 // ListPageTags returns the tags a page carries.

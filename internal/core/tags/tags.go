@@ -71,6 +71,21 @@ type Tag struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// MaxTaggedPages bounds one page of the tag browse. The query asks for one more
+// than this, so the service can report that there WERE more rather than quietly
+// returning a short answer.
+const MaxTaggedPages = 200
+
+// TagPages is the tag browse's answer: the tag, the readable pages carrying it,
+// and whether there were more than fit.
+type TagPages struct {
+	Tag   Tag          `json:"tag"`
+	Pages []TaggedPage `json:"pages"`
+	// Truncated says the answer was cut short. A caller that ignores it shows a
+	// list that looks complete and is not.
+	Truncated bool `json:"truncated"`
+}
+
 // TaggedPage is one row of the tag browse: a page carrying the tag, with enough
 // space context to be navigable and to be told apart from a same-titled page in
 // another space.
@@ -151,24 +166,58 @@ func (s *Service) ForPage(ctx context.Context, pageID uuid.UUID) ([]Tag, error) 
 // is the only input a person can type that cannot become a tag, and telling
 // them beats dropping it.
 func (s *Service) Resolve(ctx context.Context, orgID uuid.UUID, labels []string) ([]Tag, error) {
-	if len(labels) > MaxTagsPerPage {
-		return nil, fmt.Errorf("%w: %d given, %d allowed", ErrTooManyTags, len(labels), MaxTagsPerPage)
+	wanted, invalid, hadInvalid := distinctTags(labels)
+	if hadInvalid {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidName, invalid)
 	}
-	out := make([]Tag, 0, len(labels))
+	// The ceiling applies to the DEDUPED set rather than to what was typed.
+	// Refusing fifty-one labels that name three tags would be refusing
+	// arithmetic nobody did, and the ceiling exists to bound how many tag ROWS
+	// one request can mint — which is what deduping decides.
+	if len(wanted) > MaxTagsPerPage {
+		return nil, fmt.Errorf("%w: %d given, %d allowed", ErrTooManyTags, len(wanted), MaxTagsPerPage)
+	}
+	return s.upsertAll(ctx, orgID, wanted)
+}
+
+// labelledSlug pairs a tag's identity with the spelling that produced it.
+type labelledSlug struct {
+	slug  string
+	label string
+}
+
+// distinctTags normalises labels and drops duplicates by SLUG rather than by
+// text, reporting the first label that cannot become a tag.
+//
+// Deduping on the slug is the load-bearing part. "Design Docs", "design docs"
+// and "design_docs" are one tag; a caller that deduped on the text would call
+// Upsert three times for it and would count it three times against the
+// ceiling. The first spelling in order is the one carried forward, matching
+// what the table itself does on conflict.
+func distinctTags(labels []string) (wanted []labelledSlug, invalid string, hadInvalid bool) {
+	out := make([]labelledSlug, 0, len(labels))
 	seen := make(map[string]bool, len(labels))
-	for _, label := range labels {
-		label = normaliseLabel(label)
+	for _, raw := range labels {
+		label := normaliseLabel(raw)
 		slug := Slugify(label)
 		if slug == "" {
-			return nil, fmt.Errorf("%w: %q", ErrInvalidName, label)
+			return nil, label, true
 		}
 		if seen[slug] {
 			continue
 		}
 		seen[slug] = true
-		tag, err := s.repo.Upsert(ctx, orgID, slug, label)
+		out = append(out, labelledSlug{slug: slug, label: label})
+	}
+	return out, "", false
+}
+
+func (s *Service) upsertAll(ctx context.Context, orgID uuid.UUID, wanted []labelledSlug) ([]Tag, error) {
+	out := make([]Tag, 0, len(wanted))
+	for _, w := range wanted {
+		tag, err := s.repo.Upsert(ctx, orgID, w.slug, w.label)
 		if err != nil {
-			return nil, fmt.Errorf("creating tag %q: %w", slug, err)
+			return nil, fmt.Errorf("creating tag %q: %w", w.slug, err)
 		}
 		out = append(out, tag)
 	}
@@ -212,16 +261,26 @@ func (s *Service) EnsureOnPage(ctx context.Context, orgID, pageID uuid.UUID, lab
 // readableSpaceIDs is the caller's resolved readable set (ADR-0010: every
 // cross-space endpoint filters against it). An empty set matches no pages,
 // which is the fail-closed answer — never "no filter".
-func (s *Service) PagesWithSlug(ctx context.Context, orgID uuid.UUID, slug string, readableSpaceIDs []uuid.UUID) (Tag, []TaggedPage, error) {
+func (s *Service) PagesWithSlug(ctx context.Context, orgID uuid.UUID, slug string, readableSpaceIDs []uuid.UUID) (TagPages, error) {
 	tag, err := s.repo.GetByOrgSlug(ctx, orgID, slug)
 	if err != nil {
-		return Tag{}, nil, err
+		return TagPages{}, err
 	}
 	pages, err := s.repo.PagesWithTag(ctx, tag.ID, readableSpaceIDs)
 	if err != nil {
-		return Tag{}, nil, fmt.Errorf("listing pages with a tag: %w", err)
+		return TagPages{}, fmt.Errorf("listing pages with a tag: %w", err)
 	}
-	return tag, pages, nil
+
+	// The query asks for one more row than a page holds. Its presence is the
+	// only way the caller can tell a full answer from a cut-off one — a bare
+	// LIMIT returns a truncated list that looks exactly like a complete one,
+	// and because the order is most-recent-first the pages that disappear are
+	// the oldest, so the reader is shown the wrong nothing and told nothing.
+	truncated := len(pages) > MaxTaggedPages
+	if truncated {
+		pages = pages[:MaxTaggedPages]
+	}
+	return TagPages{Tag: tag, Pages: pages, Truncated: truncated}, nil
 }
 
 // ResolveForPublish turns a document's inline tag labels into tag rows, without
@@ -235,19 +294,36 @@ func (s *Service) PagesWithSlug(ctx context.Context, orgID uuid.UUID, slug strin
 // harmless failure goes outside the transaction.
 func (s *Service) ResolveForPublish(ctx context.Context, orgID uuid.UUID, labels []string) ([]uuid.UUID, error) {
 	// Labels that cannot become a tag are dropped here rather than refused. A
-	// publish is not the moment to reject a whole page over a `#!!!` in its
-	// body, and Resolve's error exists for the explicit editor path where a
+	// publish is not the moment to reject a whole page over a stray `#!!!` in
+	// its body, and Resolve's error exists for the explicit editor path, where a
 	// person is looking at the field they typed into.
 	usable := make([]string, 0, len(labels))
 	for _, label := range labels {
 		if Slugify(normaliseLabel(label)) != "" {
 			usable = append(usable, label)
 		}
-		if len(usable) == MaxTagsPerPage {
-			break
-		}
 	}
-	resolved, err := s.Resolve(ctx, orgID, usable)
+
+	// Deduped BEFORE the ceiling is applied, and the ordering matters. Counting
+	// raw labels would have dropped everything past the fiftieth spelling even
+	// when they named far fewer tags — and silently, since a publish reports no
+	// truncation. The document walker's own ceiling
+	// (doc.maxInlineTagsPerDocument) bounds the input to the same number, so
+	// after deduping this one cannot bite at all; it stays as the belt to that
+	// walker's braces, because the two live in different packages and only one
+	// of them is the one a hostile paste reaches first.
+	wanted, _, hadInvalid := distinctTags(usable)
+	if hadInvalid {
+		// Unreachable: every label was slug-checked above. Treated as no tags
+		// rather than as a failed publish, because the page's content is not in
+		// question either way.
+		return nil, nil
+	}
+	if len(wanted) > MaxTagsPerPage {
+		wanted = wanted[:MaxTagsPerPage]
+	}
+
+	resolved, err := s.upsertAll(ctx, orgID, wanted)
 	if err != nil {
 		return nil, err
 	}

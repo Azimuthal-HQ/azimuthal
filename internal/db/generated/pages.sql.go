@@ -431,10 +431,19 @@ type ListPageRevisionsRow struct {
 //
 // page_revisions has carried author_id since migration 005, so "who published
 // this version" was always stored — it was only ever missing from the read.
-// LEFT JOIN, not JOIN: a user row can be soft-deleted, and a deleted account
-// must not make its revisions vanish from a page's history. The name comes back
-// NULL in that case and the surface renders "Unknown" rather than inventing an
-// author for an old row.
+//
+// LEFT JOIN, not JOIN, and deliberately with NO predicate on the user's state.
+// Today the join cannot miss: author_id is NOT NULL REFERENCES users (id), and
+// users are soft-deleted rather than removed, so every revision resolves to a
+// row and author_name is never NULL in practice. The outer join is there so
+// that a page's history stays readable if that ever stops being true — losing
+// the whole ledger because one account was hard-deleted would be a much worse
+// failure than showing "Unknown" beside one version.
+//
+// Do NOT add `AND u.deleted_at IS NULL` to make the NULL branch reachable. It
+// would start blanking the author of every version published by anybody who has
+// since been deactivated, which is most of the history of a long-lived page —
+// and deactivating an account is not meant to rewrite what they wrote.
 func (q *Queries) ListPageRevisions(ctx context.Context, pageID uuid.UUID) ([]ListPageRevisionsRow, error) {
 	rows, err := q.db.Query(ctx, listPageRevisions, pageID)
 	if err != nil {

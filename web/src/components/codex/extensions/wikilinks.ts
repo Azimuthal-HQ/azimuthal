@@ -271,12 +271,30 @@ function makeSuggestionRenderer(options: WikilinkOptions) {
     });
   };
 
+  /**
+   * The caret's position, or null.
+   *
+   * `clientRect` asks the view for `coordsAtPos`, and TipTap throws rather than
+   * returning nothing when there is no view — which happens both before the
+   * editor mounts and while it is being torn down. Neither is a failure worth
+   * propagating: a popup with no position is a popup that has not been placed
+   * yet, and throwing from a suggestion callback surfaces as an unhandled
+   * rejection with nothing to catch it.
+   */
+  const rectOf = (props: SuggestionRenderProps): DOMRect | null => {
+    try {
+      return props.clientRect?.() ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   return {
     onStart: (props: SuggestionRenderProps) => {
       items = props.items as WikiPage[];
       activeIndex = 0;
       command = (page) => props.command(page as never);
-      push(props.query, props.clientRect?.() ?? null);
+      push(props.query, rectOf(props));
     },
     onUpdate: (props: SuggestionRenderProps) => {
       items = props.items as WikiPage[];
@@ -285,7 +303,7 @@ function makeSuggestionRenderer(options: WikilinkOptions) {
       // nothing on Enter.
       activeIndex = Math.min(activeIndex, Math.max(items.length - 1, 0));
       command = (page) => props.command(page as never);
-      push(props.query, props.clientRect?.() ?? null);
+      push(props.query, rectOf(props));
     },
     onKeyDown: (props: { event: KeyboardEvent }) => {
       if (props.event.key === 'ArrowDown') {

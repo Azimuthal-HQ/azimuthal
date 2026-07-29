@@ -65,6 +65,21 @@ export const editorSurfaceClasses = [
   '[&_.ProseMirror_td]:border [&_.ProseMirror_td]:border-[var(--color-border)] [&_.ProseMirror_td]:px-2 [&_.ProseMirror_td]:py-1 [&_.ProseMirror_td]:align-top',
   '[&_.ProseMirror_.selectedCell]:bg-[color-mix(in_srgb,var(--module-codex)_18%,transparent)]',
 
+  // An unresolved wikilink: a page named but not yet written.
+  //
+  // Dashed and dimmed rather than the ordinary link colour, because it is not
+  // an ordinary link — following it does not go anywhere, it offers to create
+  // the page. Visibly different is the whole point: an author skimming their
+  // own draft should be able to see at a glance which references are still
+  // promises.
+  //
+  // Keyed on `data-unresolved`, which the link mark renders from its
+  // `target_title` attribute. A class would be lost the moment ProseMirror
+  // re-rendered the mark from its attributes.
+  '[&_.ProseMirror_a[data-unresolved]]:text-[var(--color-text-muted)]',
+  '[&_.ProseMirror_a[data-unresolved]]:decoration-dashed [&_.ProseMirror_a[data-unresolved]]:underline-offset-4',
+  '[&_.ProseMirror_a[data-unresolved]]:cursor-pointer',
+
   // Preserved formatting: the mark has no node view, so this dotted underline
   // is the only thing that tells a reader the styling was kept rather than
   // rendered (ADR-0012 — visibly preserved, never silently approximated).

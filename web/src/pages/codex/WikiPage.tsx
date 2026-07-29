@@ -1,6 +1,6 @@
 import { useState, useEffect, type HTMLAttributes } from 'react';
 import { useParams } from 'react-router-dom';
-import { Edit, AlertCircle, History, X, ChevronRight, PenLine, Share2, FolderInput } from 'lucide-react';
+import { Edit, AlertCircle, History, PenLine, Share2, FolderInput } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -11,7 +11,6 @@ import {
   friendlyErrorMessage,
   useWikiPages,
   useWikiPage,
-  useWikiRevisions,
   usePageDocument,
   useSpaceDrafts,
   useMe,
@@ -26,79 +25,13 @@ import { ShareDialog } from '../../components/ShareDialog';
 import { MovePageDialog } from '../../components/MovePageDialog';
 import { CodexDocRenderer } from '../../components/codex/CodexDocRenderer';
 import { PageEditor } from '../../components/codex/PageEditor';
+import { PageTags } from '../../components/codex/PageTags';
 import { codexMeasureClasses } from '../../components/codex/editorStyles';
-
-// ---------------------------------------------------------------------------
-// Revisions panel
-// ---------------------------------------------------------------------------
-
-interface RevisionsPanelProps {
-  spaceId: string;
-  pageId: string;
-  currentVersion: number;
-  onClose: () => void;
-}
-
-function RevisionsPanel({ spaceId, pageId, currentVersion, onClose }: RevisionsPanelProps) {
-  const { data: revisions = [], isLoading } = useWikiRevisions(spaceId, pageId);
-  const [selected, setSelected] = useState<string | null>(null);
-  const selectedRev = revisions.find(r => r.id === selected);
-
-  return (
-    <div className="flex h-full flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)]">
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
-        <h3 className="text-[var(--text-sm)] font-semibold text-[var(--color-text)]">Revision History</h3>
-        <button onClick={onClose} className="rounded p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-      {isLoading ? (
-        <div className="flex flex-1 items-center justify-center text-[var(--color-text-muted)] text-[var(--text-sm)]">Loading…</div>
-      ) : revisions.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center text-[var(--color-text-muted)] text-[var(--text-sm)]">No revisions yet.</div>
-      ) : (
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="overflow-y-auto border-b border-[var(--color-border)]" style={{ maxHeight: '50%' }}>
-            {revisions.map(rev => (
-              <button
-                key={rev.id}
-                type="button"
-                onClick={() => setSelected(selected === rev.id ? null : rev.id)}
-                className={cn(
-                  'flex w-full items-start gap-2 px-4 py-2.5 text-left transition-colors border-b border-[var(--color-border)] last:border-0',
-                  selected === rev.id
-                    ? 'bg-[var(--color-primary-muted)]'
-                    : 'hover:bg-[var(--color-surface-hover)]',
-                )}
-              >
-                <ChevronRight className={cn('mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)] transition-transform', selected === rev.id && 'rotate-90')} />
-                <div className="min-w-0">
-                  <p className="text-[var(--text-sm)] text-[var(--color-text)]">
-                    v{rev.version}
-                    {rev.version === currentVersion && (
-                      <span className="ml-2 rounded-full bg-[var(--color-primary-muted)] px-1.5 py-0.5 text-[var(--text-xs)] text-[var(--color-primary)]">current</span>
-                    )}
-                  </p>
-                  <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
-                    {(rev.created_at ?? '').slice(0, 10)}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-          {selectedRev && (
-            <div className="flex-1 overflow-y-auto p-4">
-              <p className="mb-2 text-[var(--text-xs)] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-                v{selectedRev.version} — {selectedRev.title}
-              </p>
-              <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">{selectedRev.created_at.slice(0, 10)}</p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+// The revision panel moved out of this file when it stopped being a bare
+// ledger: an author column, a two-version text comparison and restore are
+// enough behaviour that leaving it inline would have made this component the
+// place both the page and its history live.
+import { RevisionsPanel } from '../../components/codex/RevisionsPanel';
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -383,6 +316,14 @@ export function WikiPage() {
                       )}
                     </p>
                   </div>
+
+                  {/* The page's tags, under its title and above its body: a
+                      reader should be able to see what a page is filed under
+                      and leave for the rest of that filing without scrolling
+                      past the document first. Read-only here — the editing
+                      affordances belong to the editor. Renders nothing at all
+                      on an untagged page. */}
+                  <PageTags spaceId={spaceId} pageId={activePage.id} editable={false} />
 
                   {/* The dual-format read path (migration 036).
 

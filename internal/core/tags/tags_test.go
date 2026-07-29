@@ -519,7 +519,7 @@ func TestService_PagesWithSlug_PropagatesNotFound(t *testing.T) {
 	repo := newFakeRepo()
 	svc := tags.NewService(repo)
 
-	_, _, err := svc.PagesWithSlug(context.Background(), uuid.New(), "no_such_tag", []uuid.UUID{uuid.New()})
+	_, err := svc.PagesWithSlug(context.Background(), uuid.New(), "no_such_tag", []uuid.UUID{uuid.New()})
 	if !errors.Is(err, tags.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for an unknown slug, got %v", err)
 	}
@@ -532,7 +532,7 @@ func TestService_PagesWithSlug_PropagatesNotFound(t *testing.T) {
 	// one, or a transient database failure would read to the caller as "this
 	// tag does not exist".
 	repo.getErr = errors.New("connection reset")
-	if _, _, err := svc.PagesWithSlug(context.Background(), uuid.New(), "design", nil); errors.Is(err, tags.ErrNotFound) {
+	if _, err := svc.PagesWithSlug(context.Background(), uuid.New(), "design", nil); errors.Is(err, tags.ErrNotFound) {
 		t.Errorf("a transport error was reported as ErrNotFound: %v", err)
 	}
 }
@@ -557,12 +557,17 @@ func TestService_PagesWithSlug_PassesReadableSetVerbatim(t *testing.T) {
 	}
 	readable := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
 
-	tag, _, err := svc.PagesWithSlug(context.Background(), org, "design", readable)
+	result, err := svc.PagesWithSlug(context.Background(), org, "design", readable)
 	if err != nil {
 		t.Fatalf("PagesWithSlug: %v", err)
 	}
-	if tag.ID != seeded[0].ID {
-		t.Errorf("returned tag %v, want the seeded %v", tag.ID, seeded[0].ID)
+	if result.Tag.ID != seeded[0].ID {
+		t.Errorf("returned tag %v, want the seeded %v", result.Tag.ID, seeded[0].ID)
+	}
+	// A result that fits is not truncated. Reporting truncation on a short
+	// answer would make the UI's "there are more" notice permanent noise.
+	if result.Truncated {
+		t.Error("a result well under the page size reported itself truncated")
 	}
 	called := repo.callsOf("PagesWithTag")
 	if len(called) != 1 {
@@ -582,7 +587,7 @@ func TestService_PagesWithSlug_PassesReadableSetVerbatim(t *testing.T) {
 	// would be invisible in the returned value because the repository is what
 	// applies the filter.
 	repo.calls = nil
-	if _, _, err := svc.PagesWithSlug(context.Background(), org, "design", nil); err != nil {
+	if _, err := svc.PagesWithSlug(context.Background(), org, "design", nil); err != nil {
 		t.Fatalf("PagesWithSlug (empty readable set): %v", err)
 	}
 	called = repo.callsOf("PagesWithTag")

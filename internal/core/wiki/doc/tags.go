@@ -8,9 +8,15 @@ import (
 // maxInlineTagsPerDocument bounds how many distinct inline tags one publish can
 // mint. A tag row is created by use, so a document is an untrusted path into an
 // org-scoped table; without a ceiling, one pasted page could create thousands of
-// them. Real pages are nowhere near it — a page with more than a hundred
-// distinct tags is not tagging, it is a word list.
-const maxInlineTagsPerDocument = 100
+// them. Real pages are nowhere near it — a page with fifty distinct tags is not
+// tagging, it is a word list.
+//
+// It deliberately equals `tags.MaxTagsPerPage`, and is written as a literal
+// rather than as that constant because this package knows the document model and
+// nothing about the tag table. The agreement is what closes a silent drop: were
+// this ceiling the higher of the two, a body carrying more labels than a page
+// may hold would have the excess discarded downstream with nothing reporting it.
+const maxInlineTagsPerDocument = 50
 
 // InlineTagLabels returns the labels of every inline tag token in the document,
 // in document order and without duplicates, capped at

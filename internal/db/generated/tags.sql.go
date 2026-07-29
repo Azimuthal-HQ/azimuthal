@@ -80,7 +80,7 @@ WHERE pt.tag_id = $1
   AND s.deleted_at IS NULL
   AND p.space_id = ANY($2::uuid[])
 ORDER BY p.updated_at DESC
-LIMIT 200
+LIMIT 201
 `
 
 type ListPagesWithTagParams struct {
@@ -102,6 +102,10 @@ type ListPagesWithTagRow struct {
 // against the caller's resolved readable set — ADR-0010's rule for every
 // cross-space endpoint. An empty readable set matches nothing, which is the
 // correct fail-closed answer rather than "no filter".
+// One more than the page size the service returns. The extra row is how the
+// caller learns the answer was cut short: a bare LIMIT returns a truncated list
+// that is indistinguishable from a complete one, and the pages that vanish are
+// the oldest, so a reader is told nothing and shown the wrong nothing.
 func (q *Queries) ListPagesWithTag(ctx context.Context, arg ListPagesWithTagParams) ([]ListPagesWithTagRow, error) {
 	rows, err := q.db.Query(ctx, listPagesWithTag, arg.TagID, arg.ReadableSpaceIds)
 	if err != nil {

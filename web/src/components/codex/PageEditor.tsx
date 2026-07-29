@@ -54,6 +54,7 @@ import {
   DialogTitle,
 } from '../ui/dialog';
 import { CodexEditor } from './CodexEditor';
+import { PageTags } from './PageTags';
 import {
   LostContentDialog,
   PublishConflictDialog,
@@ -317,6 +318,14 @@ export function PageEditor({
         />
         <SaveIndicator state={saveState} />
       </div>
+
+      {/* Tags sit outside the document, beside the title, because that is what
+          they are: page metadata, not content. They are saved on change rather
+          than with the draft — a tag is not part of the unpublished document,
+          so a reader sees a tag as soon as it is added even while the body is
+          still being written. The alternative, holding tags in the draft, would
+          make the two halves of a page publish on different schedules. */}
+      <PageTags spaceId={spaceId} pageId={pageId} editable />
 
       {restoredDraft && (
         <p
