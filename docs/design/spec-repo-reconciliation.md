@@ -239,6 +239,20 @@ touch or reference.
   live data and neither of which belongs in a feature phase. `TestTierAPI_ItemPostFunction
   CommitsWithTheStatus` documents the behaviour by moving the item onto a real state first.
 
+- **Reserved out-of-order migration numbers make goose refuse an existing database.**
+  `internal/db/migrate.go` calls `goose.UpContext` with no `AllowMissing`, so a database that
+  applied a HIGHER number before a LOWER one shipped will not migrate: goose reports
+  `found 1 missing migrations before current version 47: version 40`. This phase hit it
+  the moment migration 040 landed on `main` — every local database that had already run
+  046/047 stopped migrating.
+
+  Harmless for a fresh deploy, where 001–047 apply in order. It bites **developer and CI
+  databases that tracked a branch**, and it is a structural consequence of the parallel-track
+  reservation scheme (a phase takes 046/047 while 040–045 are still unshipped), not of any one
+  phase. The workaround is to recreate the database; the fix, if the project wants one, is
+  `goose.WithAllowMissing` — a decision about migration policy, so it is raised rather than
+  taken here.
+
 - **`npm run lint` is a required CI gate** (`.github/workflows/ci.yml`, the `Frontend` job),
   contradicting `CLAUDE.md` §3's statement that it is not. The repository wins; §3's claim
   predates #82. Treat eslint as blocking.
