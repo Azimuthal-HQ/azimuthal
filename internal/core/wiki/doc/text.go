@@ -482,6 +482,36 @@ func inlineMarkdown(obj object, depth int) (string, error) {
 	return b.String(), nil
 }
 
+// inlineAtomMarkdown renders the inline nodes that carry no children — the ones
+// whose whole content is an attribute. Split from [inlineChildMarkdown] so that
+// function stays about the text/atom/unknown distinction rather than growing an
+// arm per atom.
+func inlineAtomMarkdown(childType string, obj object) string {
+	switch childType {
+	case "hardBreak":
+		// Two trailing spaces then a newline: markdown's hard break.
+		return "  \n"
+	case "statusLozenge":
+		label, _ := obj.attrString("text")
+		return "`" + label + "`"
+	case NodeInlineTag:
+		// The tag's own text, with the hash, so the projection carries it into
+		// the generated search_vector — an inline tag that contributed nothing
+		// to the index would be a tag you cannot find by name.
+		label, _ := obj.attrString(AttrTagLabel)
+		if label == "" {
+			return ""
+		}
+		return "#" + label
+	case "image":
+		var b strings.Builder
+		writeImageMarkdown(&b, obj)
+		return b.String()
+	default:
+		return ""
+	}
+}
+
 // inlineChildMarkdown renders one inline child. The default arm emits the child's
 // plain text, so an inline type with no projection — including preserved inline
 // content — still reaches the search index.
@@ -502,25 +532,8 @@ func inlineChildMarkdown(child json.RawMessage) (string, error) {
 			_ = json.Unmarshal(raw, &text)
 		}
 		return applyMarks(obj, text)
-	case "hardBreak":
-		// Two trailing spaces then a newline: markdown's hard break.
-		return "  \n", nil
-	case "statusLozenge":
-		label, _ := obj.attrString("text")
-		return "`" + label + "`", nil
-	case NodeInlineTag:
-		// The tag's own text, with the hash, so the projection carries it into
-		// the generated search_vector — an inline tag that contributed nothing
-		// to the index would be a tag you cannot find by name.
-		label, _ := obj.attrString(AttrTagLabel)
-		if label == "" {
-			return "", nil
-		}
-		return "#" + label, nil
-	case "image":
-		var b strings.Builder
-		writeImageMarkdown(&b, obj)
-		return b.String(), nil
+	case "hardBreak", "statusLozenge", NodeInlineTag, "image":
+		return inlineAtomMarkdown(childType, obj), nil
 	default:
 		return PlainText(child), nil
 	}

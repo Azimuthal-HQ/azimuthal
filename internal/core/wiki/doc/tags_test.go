@@ -212,26 +212,26 @@ func TestInlineTagLabels_CapsTheNumberOfDistinctTags(t *testing.T) {
 	// tags.MaxTagsPerPage on purpose — see the constant's own comment — so if
 	// this number is ever changed, both of them move together or a publish
 	// starts dropping labels with nothing reporting it.
-	const cap = 50
-	const distinct = cap * 3
+	const maxDistinct = 50
+	const distinct = maxDistinct * 3
 
 	blocks := make([]string, 0, distinct)
-	want := make([]string, 0, cap)
+	want := make([]string, 0, maxDistinct)
 	for i := range distinct {
 		label := fmt.Sprintf("tag-%03d", i)
 		blocks = append(blocks, tagParagraph(tagNode(label)))
-		if i < cap {
+		if i < maxDistinct {
 			want = append(want, label)
 		}
 	}
 
 	labels, err := doc.InlineTagLabels(json.RawMessage(tagDoc(blocks...)))
 	require.NoError(t, err)
-	require.Len(t, labels, cap,
+	require.Len(t, labels, maxDistinct,
 		"a document with %d distinct tags must yield exactly maxInlineTagsPerDocument of them", distinct)
 	require.Equal(t, want, labels,
-		"the cap keeps the first %d in document order and drops the rest", cap)
-	require.NotContains(t, labels, fmt.Sprintf("tag-%03d", cap),
+		"the cap keeps the first %d in document order and drops the rest", maxDistinct)
+	require.NotContains(t, labels, fmt.Sprintf("tag-%03d", maxDistinct),
 		"the first label past the cap must not appear")
 }
 

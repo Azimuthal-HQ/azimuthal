@@ -264,7 +264,10 @@ func (s *Service) EnsureOnPage(ctx context.Context, orgID, pageID uuid.UUID, lab
 func (s *Service) PagesWithSlug(ctx context.Context, orgID uuid.UUID, slug string, readableSpaceIDs []uuid.UUID) (TagPages, error) {
 	tag, err := s.repo.GetByOrgSlug(ctx, orgID, slug)
 	if err != nil {
-		return TagPages{}, err
+		// Wrapped, but with the sentinel intact: the handler dispatches on
+		// errors.Is(err, ErrNotFound) to answer 404, and a laundered error
+		// would turn an unknown tag slug into a 500.
+		return TagPages{}, fmt.Errorf("getting tag %q: %w", slug, err)
 	}
 	pages, err := s.repo.PagesWithTag(ctx, tag.ID, readableSpaceIDs)
 	if err != nil {
