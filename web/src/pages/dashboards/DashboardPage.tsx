@@ -82,6 +82,22 @@ export function DashboardPage() {
     );
   }
 
+
+  /**
+   * Reorders one tile. The whole collection is rewritten, as every other edit
+   * is — the endpoint takes a collection and assigns positions from the array
+   * order, so a swap here is a swap there.
+   */
+  function moveGadget(gadgetId: string, delta: -1 | 1) {
+    if (!detail) return;
+    const rows = toRequests(detail);
+    const index = detail.gadgets.findIndex((g) => g.id === gadgetId);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= rows.length) return;
+    [rows[index], rows[target]] = [rows[target], rows[index]];
+    writeLayout(rows);
+  }
+
   function openConfigure(gadgetId: string) {
     if (!detail) return;
     const index = detail.gadgets.findIndex((g) => g.id === gadgetId);
@@ -229,6 +245,7 @@ export function DashboardPage() {
         meId={user?.id}
         onRemove={canEdit ? removeGadget : undefined}
         onConfigure={canEdit ? openConfigure : undefined}
+        onMove={canEdit ? moveGadget : undefined}
         emptyAction={
           canEdit ? (
             <Button data-testid="empty-add-gadget" onClick={() => setPicking(true)}>

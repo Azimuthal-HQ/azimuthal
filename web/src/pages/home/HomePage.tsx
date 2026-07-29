@@ -109,6 +109,22 @@ export function HomePage() {
     writeLayout(next);
   }
 
+
+  /**
+   * Reorders one tile. The whole collection is rewritten, as every other edit
+   * is — the endpoint takes a collection and assigns positions from the array
+   * order, so a swap here is a swap there.
+   */
+  function moveGadget(gadgetId: string, delta: -1 | 1) {
+    if (!detail) return;
+    const rows = toRequests(detail);
+    const index = detail.gadgets.findIndex((g) => g.id === gadgetId);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= rows.length) return;
+    [rows[index], rows[target]] = [rows[target], rows[index]];
+    writeLayout(rows);
+  }
+
   const noSpaces = spaces && spaces.length === 0;
 
   return (
@@ -251,6 +267,7 @@ export function HomePage() {
                   })),
               )
             }
+            onMove={moveGadget}
             onConfigure={(gadgetId) => {
               const index = detail.gadgets.findIndex((g) => g.id === gadgetId);
               const def = getGadget(detail.gadgets[index]?.gadget_key ?? '');

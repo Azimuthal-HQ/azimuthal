@@ -10,6 +10,8 @@ interface DashboardGridProps {
   /** Present only when the reader owns the dashboard. */
   onRemove?: (gadgetId: string) => void;
   onConfigure?: (gadgetId: string) => void;
+  /** Moves a tile one slot earlier or later. Owner-only, like the others. */
+  onMove?: (gadgetId: string, delta: -1 | 1) => void;
   /** Rendered inside the empty state, for a dashboard the reader may edit. */
   emptyAction?: React.ReactNode;
 }
@@ -27,6 +29,7 @@ export function DashboardGrid({
   meId,
   onRemove,
   onConfigure,
+  onMove,
   emptyAction,
 }: DashboardGridProps) {
   if (gadgets.length === 0) {
@@ -45,7 +48,7 @@ export function DashboardGrid({
       data-testid="dashboard-grid"
       className="grid grid-cols-2 gap-[var(--space-3)] md:grid-cols-4"
     >
-      {gadgets.map((g) => (
+      {gadgets.map((g, i) => (
         <GadgetTile
           key={g.id}
           gadget={g}
@@ -53,6 +56,9 @@ export function DashboardGrid({
           meId={meId}
           onRemove={onRemove ? () => onRemove(g.id) : undefined}
           onConfigure={onConfigure ? () => onConfigure(g.id) : undefined}
+          onMove={onMove ? (delta) => onMove(g.id, delta) : undefined}
+          canMoveEarlier={i > 0}
+          canMoveLater={i < gadgets.length - 1}
         />
       ))}
     </div>

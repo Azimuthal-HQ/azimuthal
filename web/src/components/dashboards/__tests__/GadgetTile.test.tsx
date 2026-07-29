@@ -136,6 +136,31 @@ describe('GadgetTile degradation states', () => {
     expect(screen.queryByTestId('gadget-configure')).toBeNull();
   });
 
+  // Reordering uses arrow buttons, following BoardConfigSection — the
+  // prototype shows no drag affordance and the repository already has one
+  // pattern for reordering a small ordered list. The control is ABSENT at the
+  // ends rather than present-and-disabled, so a tile at the start never offers
+  // a move that would do nothing.
+  it('offers a move control only in the direction there is room for', () => {
+    const onMove = vi.fn();
+    const { unmount } = renderTile(gadget(), { onMove, canMoveEarlier: false, canMoveLater: true });
+    expect(screen.queryByTestId('gadget-move-earlier')).toBeNull();
+    screen.getByTestId('gadget-move-later').click();
+    expect(onMove).toHaveBeenCalledWith(1);
+    unmount();
+
+    renderTile(gadget(), { onMove, canMoveEarlier: true, canMoveLater: false });
+    expect(screen.queryByTestId('gadget-move-later')).toBeNull();
+    screen.getByTestId('gadget-move-earlier').click();
+    expect(onMove).toHaveBeenCalledWith(-1);
+  });
+
+  it('offers no move control to somebody who does not own the dashboard', () => {
+    renderTile(gadget());
+    expect(screen.queryByTestId('gadget-move-earlier')).toBeNull();
+    expect(screen.queryByTestId('gadget-move-later')).toBeNull();
+  });
+
   // Tailwind scans source text for class names, so a computed
   // `col-span-${n}` emits no CSS and every tile would silently render one
   // column wide. The literals are asserted rather than trusted.
@@ -197,6 +222,27 @@ describe('DashboardGrid', () => {
 
   // One broken tile must not take the others with it — that is the whole
   // content of "the dashboard still loads".
+  // The ends of the collection are computed from the INDEX, so the first tile
+  // never offers "earlier" and the last never offers "later".
+  it('bounds the move controls at the ends of the collection', () => {
+    render(
+      <MemoryRouter>
+        <DashboardGrid
+          orgId="org-1"
+          onMove={vi.fn()}
+          gadgets={[
+            gadget({ id: 'a' }),
+            gadget({ id: 'b' }),
+            gadget({ id: 'c' }),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+    // Three tiles: the middle one offers both, the ends one each.
+    expect(screen.getAllByTestId('gadget-move-earlier')).toHaveLength(2);
+    expect(screen.getAllByTestId('gadget-move-later')).toHaveLength(2);
+  });
+
   it('renders every tile even when one of them is unknown', () => {
     render(
       <MemoryRouter>

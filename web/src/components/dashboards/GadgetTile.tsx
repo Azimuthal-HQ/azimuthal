@@ -1,4 +1,4 @@
-import { Compass, HelpCircle, Lock, Settings2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Compass, HelpCircle, Lock, Settings2, X } from 'lucide-react';
 import { Card, CardContent } from '../ui/card';
 import { cn } from '../../lib/utils';
 import type { DashboardGadget } from '../../lib/api';
@@ -15,6 +15,21 @@ interface GadgetTileProps {
   /** Rendered when the reader owns the dashboard and is editing it. */
   onRemove?: () => void;
   onConfigure?: () => void;
+  /**
+   * Moves the tile one slot earlier or later. Undefined at the ends of the
+   * collection, so the control is absent rather than present-and-inert.
+   *
+   * Arrow buttons rather than drag-and-drop, on two grounds. The dashboards
+   * prototype shows no drag affordance and no reorder handler — its gadgets
+   * are added at the end and removed in place. And the repository's own
+   * precedent for reordering a small ordered list is
+   * pages/space/BoardConfigSection.tsx, which is exactly this: ArrowUp /
+   * ArrowDown over a local draft. Introducing @dnd-kit here would be a second
+   * pattern for one problem.
+   */
+  onMove?: (delta: -1 | 1) => void;
+  canMoveEarlier?: boolean;
+  canMoveLater?: boolean;
 }
 
 /**
@@ -36,7 +51,16 @@ interface GadgetTileProps {
  * are four kinds of content, drawn in the tile's own frame, and the rest of
  * the dashboard renders beside them.
  */
-export function GadgetTile({ gadget, orgId, meId, onRemove, onConfigure }: GadgetTileProps) {
+export function GadgetTile({
+  gadget,
+  orgId,
+  meId,
+  onRemove,
+  onConfigure,
+  onMove,
+  canMoveEarlier,
+  canMoveLater,
+}: GadgetTileProps) {
   const def = getGadget(gadget.gadget_key);
 
   return (
@@ -60,6 +84,28 @@ export function GadgetTile({ gadget, orgId, meId, onRemove, onConfigure }: Gadge
             {gadget.title || gadget.gadget_key}
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1">
+            {onMove && canMoveEarlier && (
+              <button
+                type="button"
+                data-testid="gadget-move-earlier"
+                aria-label={`Move ${gadget.title} earlier`}
+                onClick={() => onMove(-1)}
+                className="rounded p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {onMove && canMoveLater && (
+              <button
+                type="button"
+                data-testid="gadget-move-later"
+                aria-label={`Move ${gadget.title} later`}
+                onClick={() => onMove(1)}
+                className="rounded p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              >
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            )}
             {onConfigure && def && (
               <button
                 type="button"
