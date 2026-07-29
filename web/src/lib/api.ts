@@ -2355,8 +2355,16 @@ export const queryKeys = {
   // ['dashboards', orgId] so a single prefix invalidation after a create,
   // rename, layout save or delete catches every cached copy — a stale gadget
   // list on screen is a layout somebody thinks they saved and did not.
+  //
+  // The third element DISCRIMINATES THE FAMILY, and it is load-bearing rather
+  // than decorative. Without it `dashboards(orgId, 'home')` — the sidebar's
+  // list of Home dashboards — and `homeDashboard(orgId)` — the resolved Home
+  // dashboard with its gadgets — produced the identical key, so whichever
+  // resolved last overwrote the other in the cache and Home rendered an ARRAY
+  // where it expected an object. It cost a blank page. queryKeys.test.ts now
+  // asserts the three families are pairwise disjoint.
   dashboards: (orgId: string, module?: string) =>
-    ['dashboards', orgId, module ?? ''] as const,
+    ['dashboards', orgId, 'list', module ?? ''] as const,
   dashboard: (orgId: string, dashboardId: string) =>
     ['dashboards', orgId, 'one', dashboardId] as const,
   homeDashboard: (orgId: string) => ['dashboards', orgId, 'home'] as const,
