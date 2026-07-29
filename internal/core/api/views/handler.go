@@ -606,10 +606,19 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error, fallba
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, views.ErrNotOwner.Error())
 	case errors.Is(err, views.ErrBadCursor):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "that page cursor is not valid")
+	// ErrUnknownField reaching HERE is a STORED document this build cannot
+	// parse, never a submitted one — every route that decodes a caller's
+	// document calls views.ParseQuery directly and answers 422 with its
+	// message before the service is entered. So this is a server-side data
+	// problem, and it was previously answered as 422 VALIDATION_ERROR with
+	// err.Error() attached: a status telling the caller to fix a request that
+	// has nothing wrong with it, and a message naming the row's uuid and the
+	// unrecognised key. Both were wrong; only the fixed fallback goes out now.
+	case errors.Is(err, views.ErrUnknownField):
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, fallback)
 	case errors.Is(err, views.ErrTeamRequired),
 		errors.Is(err, views.ErrTeamNotMember),
 		errors.Is(err, views.ErrNameRequired),
-		errors.Is(err, views.ErrUnknownField),
 		errors.Is(err, views.ErrUnknownGroupField),
 		errors.Is(err, views.ErrGroupFieldModule):
 		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation, err.Error())

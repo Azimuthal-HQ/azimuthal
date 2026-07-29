@@ -806,3 +806,14 @@ maintainer's judgement rather than a clear defect.
 
 **None of these has a test asserting the current behaviour** — a test that pinned the 500 would
 encode the bug. Each fix wants a regression test written against the documented status.
+
+**A sixth instance was found in the same sweep and FIXED rather than recorded**, because it sat on
+P5's own inherited surface. `views.ErrUnknownField` — raised when a *stored* filter document names
+a key this build does not know — was listed in `api/views/handler.go`'s 422 branch, so every
+saved-view, queue, dashboard and Home route answered `422 VALIDATION_ERROR` carrying the internal
+wording *"saved view <uuid> holds an unreadable filter document: unknown field \"...\""*. Two faults
+in one: the wrong class (nothing the caller sent was invalid — every caller-supplied document is
+parsed and refused by `views.ParseQuery` before the service is entered), and a disclosure of the
+row id and the stored key. It now has its own branch answering 500 with the fixed fallback.
+`internal/core/api/views_unreadable_document_integration_test.go` drives every affected route and
+fails in both directions.
