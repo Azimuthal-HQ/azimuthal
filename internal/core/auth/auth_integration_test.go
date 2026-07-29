@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"sync"
 	"testing"
 	"time"
 
@@ -259,10 +260,24 @@ func TestOrgProvisioner_CreateAndMembership(t *testing.T) {
 	require.Equal(t, orgID, resolvedOrgID)
 }
 
-// testRSAKey generates a test RSA key pair.
+// testRSAKey returns the RSA key pair the JWT tests in this file sign with.
+//
+// One per test binary, not one per call (known-issues #19). Neither caller
+// asserts anything about the key itself — they issue a token and validate it
+// with the same service — so sharing changes no assertion, and keygen is
+// expensive enough under -race to be worth not repeating.
+//
+// A test that needs a key *nobody else holds* must not use this. See
+// freshTestKey and TestJWTService_WrongKey in jwt_test.go for that case.
+var sharedTestRSAKey = sync.OnceValue(func() *rsa.PrivateKey {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("generating the shared test RSA key: " + err.Error())
+	}
+	return key
+})
+
 func testRSAKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	return key
+	return sharedTestRSAKey()
 }

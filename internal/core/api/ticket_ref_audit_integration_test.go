@@ -2,8 +2,6 @@ package api_test
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -550,8 +548,8 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 	user := testutil.CreateTestUser(t, pool, org.ID)
 	queries := generated.New(pool)
 
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
+	// One key per test binary, not one per server — see testSigningKey.
+	privateKey := testSigningKey()
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
 		PrivateKey: privateKey,
 		PublicKey:  &privateKey.PublicKey,

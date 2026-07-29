@@ -3,8 +3,6 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -725,11 +723,9 @@ func (m *mockTagRepo) PagesWithTag(_ context.Context, _ uuid.UUID, _ []uuid.UUID
 func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	t.Helper()
 
-	// RSA keys for JWT
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generating RSA key: %v", err)
-	}
+	// RSA key for JWT — one per test binary, not one per router (see
+	// testSigningKey).
+	privateKey := testSigningKey()
 
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
 		PrivateKey: privateKey,

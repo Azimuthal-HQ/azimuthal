@@ -3,8 +3,6 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -114,8 +112,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
 	queries := generated.New(pool)
 
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
+	// One key per test binary, not one per server — see testSigningKey.
+	privateKey := testSigningKey()
 
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
 		PrivateKey: privateKey,

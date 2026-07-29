@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,13 +12,48 @@ import (
 	"github.com/google/uuid"
 )
 
-// testTokenConfig generates a fresh RSA-2048 key pair for testing.
-func testTokenConfig(t *testing.T) TokenConfig {
+// sharedTestKey is the RSA-2048 key the token tests in this package sign
+// with. One per test binary, not one per call (known-issues #19): keygen
+// costs ~40ms on a developer machine and several times that under -race, and
+// testTokenConfig is called on nearly every test in this file and in
+// middleware_test.go.
+//
+// Read the doc comment on freshTestKey before using this for anything that
+// cares about *which* key.
+var sharedTestKey = sync.OnceValue(func() *rsa.PrivateKey {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("generating the shared test signing key: " + err.Error())
+	}
+	return key
+})
+
+// freshTestKey mints a key nothing else holds. Exactly one test needs it —
+// TestJWTService_WrongKey, whose entire subject is that a service rejects a
+// token signed by a key it does not have. Calling testTokenConfig twice would
+// hand that test the same key twice and turn its rejection assertion into a
+// tautology that passes while asserting nothing, which is why the distinct
+// key is requested explicitly and loudly rather than inherited from a helper.
+func freshTestKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("generating RSA key: %v", err)
 	}
+	return key
+}
+
+// testTokenConfig returns a TokenConfig over the shared test key. The struct
+// is returned by value, so a test may adjust TTLs or the issuer on its own
+// copy without disturbing anyone else; the key itself is shared and must be
+// treated as read-only.
+func testTokenConfig(t *testing.T) TokenConfig {
+	t.Helper()
+	return tokenConfigFor(sharedTestKey())
+}
+
+// tokenConfigFor builds the standard test TokenConfig around a given key.
+func tokenConfigFor(key *rsa.PrivateKey) TokenConfig {
 	return TokenConfig{
 		PrivateKey: key,
 		PublicKey:  &key.PublicKey,
@@ -228,8 +264,11 @@ func TestJWTService_RefreshClaimsPreserveOrgID(t *testing.T) {
 }
 
 func TestJWTService_WrongKey(t *testing.T) {
-	svc1 := NewJWTService(testTokenConfig(t))
-	svc2 := NewJWTService(testTokenConfig(t)) // different key pair
+	// The two keys must genuinely differ, so both are requested explicitly:
+	// testTokenConfig hands out one shared key per test binary, and calling
+	// it twice here would make the rejection below unprovable.
+	svc1 := NewJWTService(tokenConfigFor(freshTestKey(t)))
+	svc2 := NewJWTService(tokenConfigFor(freshTestKey(t))) // different key pair
 
 	pair, err := svc1.IssueTokenPair(uuid.New(), "key@example.com", uuid.New().String(), "member", 0)
 	if err != nil {
