@@ -145,7 +145,7 @@ type AggregateStore interface {
 // count gadget on a shared dashboard shows each person a different number.
 // Nothing here consults the view's owner.
 //
-//nolint:cyclop // the two module fan-outs and the merge belong together for the same reason Resolve's do
+//nolint:cyclop // the two module halves and the group check belong in one place: the access union and the merge contract are only checkable together
 func Aggregate(ctx context.Context, store AggregateStore, q Query, v Viewer, group GroupField) (AggregateResult, error) {
 	if err := q.Validate(); err != nil {
 		return AggregateResult{}, err
@@ -172,35 +172,24 @@ func Aggregate(ctx context.Context, store AggregateStore, q Query, v Viewer, gro
 	if q.Filter.HasModule(ModuleBeacon) && v.canReachModule(ModuleBeacon) {
 		p := base
 		p.SharedIDs = v.SharedTicketIDs
+		// Vector-only fields never reach the ticket fan-out. Validation
+		// already refuses them alongside Beacon, so this is belt and braces
+		// rather than the enforcement — the same line Resolve carries.
 		p.Kinds, p.SprintIDs = nil, nil
-		n, err := store.CountTickets(ctx, p)
+		n, err := aggregateModule(ctx, p, group, merged, store.CountTickets, store.BreakdownTickets)
 		if err != nil {
-			return AggregateResult{}, fmt.Errorf("counting beacon results: %w", err)
+			return AggregateResult{}, fmt.Errorf("beacon: %w", err)
 		}
 		out.Total += n
-		if group != GroupNone {
-			rows, err := store.BreakdownTickets(ctx, p)
-			if err != nil {
-				return AggregateResult{}, fmt.Errorf("grouping beacon results: %w", err)
-			}
-			mergeBuckets(merged, rows)
-		}
 	}
 	if q.Filter.HasModule(ModuleVector) && v.canReachModule(ModuleVector) {
 		p := base
 		p.SharedIDs = v.SharedItemIDs
-		n, err := store.CountProjectItems(ctx, p)
+		n, err := aggregateModule(ctx, p, group, merged, store.CountProjectItems, store.BreakdownProjectItems)
 		if err != nil {
-			return AggregateResult{}, fmt.Errorf("counting vector results: %w", err)
+			return AggregateResult{}, fmt.Errorf("vector: %w", err)
 		}
 		out.Total += n
-		if group != GroupNone {
-			rows, err := store.BreakdownProjectItems(ctx, p)
-			if err != nil {
-				return AggregateResult{}, fmt.Errorf("grouping vector results: %w", err)
-			}
-			mergeBuckets(merged, rows)
-		}
 	}
 
 	if group == GroupNone {
@@ -209,6 +198,31 @@ func Aggregate(ctx context.Context, store AggregateStore, q Query, v Viewer, gro
 	}
 	out.Buckets, out.Truncated = capBuckets(merged)
 	return out, nil
+}
+
+// aggregateModule runs one module's half and folds its buckets into the merge.
+// Both halves take the identical shape, so they take the identical function.
+func aggregateModule(
+	ctx context.Context,
+	p FanoutParams,
+	group GroupField,
+	merged map[string]Bucket,
+	count func(context.Context, FanoutParams) (int64, error),
+	breakdown func(context.Context, FanoutParams) ([]Bucket, error),
+) (int64, error) {
+	n, err := count(ctx, p)
+	if err != nil {
+		return 0, fmt.Errorf("counting results: %w", err)
+	}
+	if group == GroupNone {
+		return n, nil
+	}
+	rows, err := breakdown(ctx, p)
+	if err != nil {
+		return 0, fmt.Errorf("grouping results: %w", err)
+	}
+	mergeBuckets(merged, rows)
+	return n, nil
 }
 
 // canReachModule reports whether this viewer could match anything in a module

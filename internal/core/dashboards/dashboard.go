@@ -243,10 +243,10 @@ func (d *Draft) validate(a views.Actor) error {
 		return ErrNameRequired
 	}
 	if len([]rune(d.Name)) > MaxNameLen {
-		return fmt.Errorf("a dashboard name may be at most %d characters", MaxNameLen)
+		return invalid("a dashboard name may be at most %d characters", MaxNameLen)
 	}
 	if len([]rune(d.Description)) > MaxDescLen {
-		return fmt.Errorf("a dashboard description may be at most %d characters", MaxDescLen)
+		return invalid("a dashboard description may be at most %d characters", MaxDescLen)
 	}
 	if !ValidModule(d.Module) {
 		return ErrModuleInvalid
@@ -255,7 +255,10 @@ func (d *Draft) validate(a views.Actor) error {
 	// (team, NULL) state must be representable but never reachable by a write.
 	aud, err := views.Audience{Visibility: d.Visibility, TeamID: d.VisibilityTeamID}.Normalise(a)
 	if err != nil {
-		return err
+		// Passed through unwrapped: ErrTeamRequired and ErrTeamNotMember are
+		// matched by errors.Is one layer up, and a wrapper would only prefix a
+		// message already written for the person reading it.
+		return err //nolint:wrapcheck // sentinel matched by errors.Is in the API layer
 	}
 	d.Visibility, d.VisibilityTeamID = aud.Visibility, aud.TeamID
 	return nil
@@ -396,9 +399,20 @@ func (s *Service) detail(ctx context.Context, orgID uuid.UUID, d Dashboard, a vi
 // audience decision is then made per gadget in memory from the same
 // views.Audience rule the saved-view endpoints apply, so "can I see this
 // view's definition" has one answer site rather than two.
-//
-//nolint:cyclop,gocognit // one linear branch per ADR-0009 degradation rule; splitting it scatters the rule set
 func (s *Service) resolveGadgets(ctx context.Context, orgID uuid.UUID, gadgets []Gadget, a views.Actor) ([]ResolvedGadget, error) {
+	live, err := s.lookupViews(ctx, orgID, gadgets)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ResolvedGadget, 0, len(gadgets))
+	for _, g := range gadgets {
+		out = append(out, resolveGadget(g, live, a))
+	}
+	return out, nil
+}
+
+// lookupViews fetches every distinct saved view the gadgets name, in one call.
+func (s *Service) lookupViews(ctx context.Context, orgID uuid.UUID, gadgets []Gadget) (map[uuid.UUID]views.View, error) {
 	ids := make([]uuid.UUID, 0, len(gadgets))
 	seen := map[uuid.UUID]struct{}{}
 	for _, g := range gadgets {
@@ -412,74 +426,79 @@ func (s *Service) resolveGadgets(ctx context.Context, orgID uuid.UUID, gadgets [
 		ids = append(ids, *g.SavedViewID)
 	}
 	live := map[uuid.UUID]views.View{}
-	if len(ids) > 0 {
-		rows, err := s.views.ByIDs(ctx, orgID, ids)
-		if err != nil {
-			return nil, fmt.Errorf("loading the views this dashboard shows: %w", err)
-		}
-		for _, v := range rows {
-			live[v.ID] = v
-		}
+	if len(ids) == 0 {
+		return live, nil
 	}
+	rows, err := s.views.ByIDs(ctx, orgID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("loading the views this dashboard shows: %w", err)
+	}
+	for _, v := range rows {
+		live[v.ID] = v
+	}
+	return live, nil
+}
 
-	out := make([]ResolvedGadget, 0, len(gadgets))
-	for _, g := range gadgets {
-		r := ResolvedGadget{Gadget: g}
-		def, known := Lookup(GadgetKey(g.Key))
-		if !known {
-			// C5. Nothing else is computed: an inert tile needs a label and a
-			// slot, and reading a config this build cannot interpret would be
-			// guessing at what an unknown gadget meant.
-			r.State = StateUnknownGadget
-			r.Title = g.Config.Title
-			out = append(out, r)
-			continue
-		}
-		r.Render = def.Render
+// resolveGadget decides what one tile should render for one viewer. Every
+// branch is an ADR-0009 degradation rule, and they are together because they
+// are only checkable together — one of them missing is a tile that renders
+// nothing with no way to tell why.
+//
+//nolint:cyclop // one linear branch per degradation rule; splitting it scatters the rule set
+func resolveGadget(g Gadget, live map[uuid.UUID]views.View, a views.Actor) ResolvedGadget {
+	r := ResolvedGadget{Gadget: g}
+	def, known := Lookup(GadgetKey(g.Key))
+	if !known {
+		// C5. Nothing else is computed: an inert tile needs a label and a
+		// slot, and reading a config this build cannot interpret would be
+		// guessing at what an unknown gadget meant.
+		r.State = StateUnknownGadget
 		r.Title = g.Config.Title
-		if r.Title == "" {
-			r.Title = def.Name
-		}
-
-		switch {
-		case !def.RequiresSavedView:
-			r.State = StateReady
-			if def.Query != nil {
-				q := def.Query()
-				r.Query = &q
-			}
-		case g.SavedViewID == nil:
-			// The fourth degradation rule. Migration 042 nulls the column when
-			// a view is hard-deleted, so this is also how a deleted view
-			// arrives here.
-			r.State = StateViewRequired
-		default:
-			v, ok := live[*g.SavedViewID]
-			switch {
-			case !ok:
-				// The row is gone (soft-deleted). Same tile as a null column:
-				// the gadget needs a view, and offering to pick another is the
-				// recoverable state ADR-0009 asks for.
-				r.State = StateViewRequired
-			case !v.CanSee(a):
-				// C2. The dashboard still loads; this tile says so.
-				r.State = StateViewUnreadable
-			case !v.IsValid():
-				// C1 reaching a gadget.
-				r.State = StateScopeUnavailable
-				r.ViewName = v.Name
-				r.InvalidReason = v.InvalidReason
-			default:
-				r.State = StateReady
-				r.ViewName = v.Name
-				if g.Config.Title == "" {
-					r.Title = v.Name
-				}
-				q := v.Query
-				r.Query = &q
-			}
-		}
-		out = append(out, r)
+		return r
 	}
-	return out, nil
+	r.Render = def.Render
+	r.Title = g.Config.Title
+	if r.Title == "" {
+		r.Title = def.Name
+	}
+
+	switch {
+	case !def.RequiresSavedView:
+		r.State = StateReady
+		if def.Query != nil {
+			q := def.Query()
+			r.Query = &q
+		}
+	case g.SavedViewID == nil:
+		// The fourth degradation rule. Migration 042 nulls the column when a
+		// view is hard-deleted, so this is also how a deleted view arrives
+		// here.
+		r.State = StateViewRequired
+	default:
+		v, ok := live[*g.SavedViewID]
+		switch {
+		case !ok:
+			// The row is gone (soft-deleted). Same tile as a null column: the
+			// gadget needs a view, and offering to pick another is the
+			// recoverable state ADR-0009 asks for.
+			r.State = StateViewRequired
+		case !v.CanSee(a):
+			// C2. The dashboard still loads; this tile says so.
+			r.State = StateViewUnreadable
+		case !v.IsValid():
+			// C1 reaching a gadget.
+			r.State = StateScopeUnavailable
+			r.ViewName = v.Name
+			r.InvalidReason = v.InvalidReason
+		default:
+			r.State = StateReady
+			r.ViewName = v.Name
+			if g.Config.Title == "" {
+				r.Title = v.Name
+			}
+			q := v.Query
+			r.Query = &q
+		}
+	}
+	return r
 }

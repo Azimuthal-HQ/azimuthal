@@ -64,7 +64,6 @@ func (s *Service) SetGadgets(ctx context.Context, orgID, id uuid.UUID, a views.A
 			return Detail{}, fmt.Errorf("gadget %d: %w", i+1, err)
 		}
 		g.DashboardID = d.ID
-		//nolint:gosec // len(drafts) is bounded by MaxGadgets above
 		g.Position = int32(i)
 		rows = append(rows, g)
 	}
@@ -138,6 +137,14 @@ func (s *Service) validateGadget(module Module, dr GadgetDraft, visible map[uuid
 		return Gadget{}, ErrSpanInvalid
 	}
 
+	// Parsed once, before the view checks, because the breakdown rule below
+	// needs the group field and re-parsing would be two chances for the two
+	// reads to disagree.
+	cfg, err := ParseConfig(def, dr.Config)
+	if err != nil {
+		return Gadget{}, err
+	}
+
 	switch {
 	case def.RequiresSavedView && dr.SavedViewID == nil:
 		return Gadget{}, ErrViewRequired
@@ -155,26 +162,13 @@ func (s *Service) validateGadget(module Module, dr GadgetDraft, visible map[uuid
 		}
 		// A breakdown over a field the view's modules cannot answer is refused
 		// here as well as at resolution time. The vocabulary's own rule, in
-		// the vocabulary's own words.
-		if def.Key == GadgetBreakdown {
-			cfg, err := ParseConfig(def, dr.Config)
-			if err != nil {
-				return Gadget{}, err
-			}
-			field, err := views.ParseGroupField(cfg.GroupBy)
-			if err != nil {
-				return Gadget{}, err
-			}
-			if !field.AllowedFor(v.Query.Filter) {
-				return Gadget{}, views.ErrGroupFieldModule
-			}
+		// the vocabulary's own words. ParseConfig has already established that
+		// GroupBy is in the vocabulary, so this is only the module question.
+		if def.Key == GadgetBreakdown && !views.GroupField(cfg.GroupBy).AllowedFor(v.Query.Filter) {
+			return Gadget{}, views.ErrGroupFieldModule
 		}
 	}
 
-	cfg, err := ParseConfig(def, dr.Config)
-	if err != nil {
-		return Gadget{}, err
-	}
 	return Gadget{
 		Key: string(def.Key), ColSpan: span,
 		SavedViewID: dr.SavedViewID, Config: cfg,

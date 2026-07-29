@@ -102,9 +102,43 @@ type dashboardResponse struct {
 	InvalidReason string `json:"invalid_reason,omitempty"`
 	CreatedAt     string `json:"created_at"`
 	UpdatedAt     string `json:"updated_at"`
-	// Gadgets is present on the detail routes and absent from the list, where
-	// it would be N extra queries for something nothing renders.
-	Gadgets []gadgetResponse `json:"gadgets,omitempty"`
+}
+
+// dashboardDetailResponse adds the gadgets, and is used only by the routes
+// that resolve them.
+//
+// A SEPARATE TYPE rather than an omitempty field on the one above. With
+// omitempty an EMPTY dashboard would serialise no `gadgets` key at all, and a
+// client reading `body.gadgets.map(...)` would take the page down on exactly
+// the dashboard somebody just created. Without omitempty the LIST response
+// would carry `"gadgets":null` on every row, which is worse: it looks like an
+// answer. Two types, each honest about what it holds.
+type dashboardDetailResponse struct {
+	dashboardResponse
+	// Always a slice, never null: an empty dashboard is a real state the UI
+	// renders an "add a gadget" prompt for.
+	Gadgets []gadgetResponse `json:"gadgets"`
+}
+
+// MarshalJSON flattens the embedded dashboard into one object. Go's embedding
+// promotes fields for selection but not for encoding/json, which would
+// otherwise nest the dashboard under a "dashboardResponse" key.
+func (d dashboardDetailResponse) MarshalJSON() ([]byte, error) {
+	base, err := json.Marshal(d.dashboardResponse)
+	if err != nil {
+		return nil, fmt.Errorf("encoding the dashboard: %w", err)
+	}
+	gadgets, err := json.Marshal(d.Gadgets)
+	if err != nil {
+		return nil, fmt.Errorf("encoding the dashboard's gadgets: %w", err)
+	}
+	// base always ends in '}' — it is a struct with at least one field.
+	out := make([]byte, 0, len(base)+len(gadgets)+16)
+	out = append(out, base[:len(base)-1]...)
+	out = append(out, []byte(`,"gadgets":`)...)
+	out = append(out, gadgets...)
+	out = append(out, '}')
+	return out, nil
 }
 
 // gadgetResponse is one resolved tile.
@@ -160,12 +194,11 @@ func toDashboardResponse(d dashboards.Dashboard, a views.Actor) dashboardRespons
 	}
 }
 
-func toDetailResponse(d dashboards.Detail, a views.Actor) (dashboardResponse, error) {
-	out := toDashboardResponse(d.Dashboard, a)
-	// Always a slice, never null: an empty dashboard is a real state the UI
-	// renders an "add a gadget" prompt for, and Go serialises a nil slice as
-	// null, which a client mapping over it takes the page down on.
-	out.Gadgets = make([]gadgetResponse, 0, len(d.Gadgets))
+func toDetailResponse(d dashboards.Detail, a views.Actor) (dashboardDetailResponse, error) {
+	out := dashboardDetailResponse{
+		dashboardResponse: toDashboardResponse(d.Dashboard, a),
+		Gadgets:           make([]gadgetResponse, 0, len(d.Gadgets)),
+	}
 	for _, g := range d.Gadgets {
 		row := gadgetResponse{
 			ID: g.ID, GadgetKey: g.Key, Position: g.Position, ColSpan: g.ColSpan,
@@ -176,7 +209,7 @@ func toDetailResponse(d dashboards.Detail, a views.Actor) (dashboardResponse, er
 		if g.Query != nil {
 			raw, err := g.Query.Encode()
 			if err != nil {
-				return dashboardResponse{}, fmt.Errorf("encoding the gadget's filter document: %w", err)
+				return dashboardDetailResponse{}, fmt.Errorf("encoding the gadget's filter document: %w", err)
 			}
 			row.Query = raw
 		}
@@ -496,9 +529,14 @@ func (h *Handler) draft(w http.ResponseWriter, r *http.Request) (dashboards.Draf
 // fail maps domain errors to status codes. Everything the domain names is a
 // human-readable sentence written server-side; anything else collapses to the
 // caller's fallback so no internal string reaches a user.
-//
-//nolint:cyclop // one branch per named domain error; a table would hide which status each carries
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error, fallback string) {
+	// Anything the caller can fix by changing their request carries the typed
+	// error and is returned verbatim — a bound they exceeded is worth naming.
+	var invalid views.ValidationError
+	if errors.As(err, &invalid) {
+		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation, invalid.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, dashboards.ErrNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "dashboard not found")

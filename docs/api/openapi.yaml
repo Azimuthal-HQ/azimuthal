@@ -2311,6 +2311,358 @@ paths:
       summary: Update a custom field
       tags:
       - projects
+  /orgs/{orgID}/dashboards:
+    get:
+      description: Returns the caller's own dashboards plus those shared with them
+        (org audience, or a team in their effective team set). Filter by module with
+        ?module=home|beacon|vector.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Restrict to one module
+        in: query
+        name: module
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Dashboards
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid parameters
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an org member
+      security:
+      - BearerAuth: []
+      summary: List dashboards
+      tags:
+      - dashboards
+    post:
+      description: Creates a dashboard owned by the caller. Any org member may create
+        one; it is private unless a visibility is given.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Dashboard
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created dashboard
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid parameters
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+      security:
+      - BearerAuth: []
+      summary: Create a dashboard
+      tags:
+      - dashboards
+  /orgs/{orgID}/dashboards/{dashboardID}:
+    delete:
+      description: Owner only; org admins bypass.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Dashboard ID (UUID)
+        in: path
+        name: dashboardID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not the owner
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or not visible to the caller
+      security:
+      - BearerAuth: []
+      summary: Delete a dashboard
+      tags:
+      - dashboards
+    get:
+      description: 'Every gadget resolves per viewer: two people opening one shared
+        dashboard legitimately see different rows and different numbers.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Dashboard ID (UUID)
+        in: path
+        name: dashboardID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Dashboard with gadgets
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or not visible to the caller
+      security:
+      - BearerAuth: []
+      summary: Get a dashboard
+      tags:
+      - dashboards
+    patch:
+      description: Owner only; org admins bypass. A dashboard the caller cannot see
+        answers 404 rather than 403, so the endpoint does not confirm that somebody
+        else's private dashboard exists.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Dashboard ID (UUID)
+        in: path
+        name: dashboardID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Dashboard
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Updated dashboard
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not the owner
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or not visible to the caller
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+      security:
+      - BearerAuth: []
+      summary: Update a dashboard
+      tags:
+      - dashboards
+  /orgs/{orgID}/dashboards/{dashboardID}/gadgets:
+    put:
+      description: Replaces the whole gadget collection in one transaction — layout
+        saves as a collection, never per gadget, so a dashboard is never left half-arranged.
+        Order in the array is the display order; the server assigns positions. Owner
+        only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Dashboard ID (UUID)
+        in: path
+        name: dashboardID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Ordered gadgets
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Dashboard with the saved gadgets
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not the owner
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found or not visible to the caller
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unknown gadget, or invalid configuration
+      security:
+      - BearerAuth: []
+      summary: Save a dashboard's layout
+      tags:
+      - dashboards
+  /orgs/{orgID}/dashboards/home:
+    get:
+      description: Returns the caller's default Home dashboard. On a first visit it
+        creates a starter layout for them — once, and idempotently, so two tabs opening
+        Home cannot produce two dashboards. Changing team never re-seeds.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: The Home dashboard with its gadgets
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an org member
+      security:
+      - BearerAuth: []
+      summary: Resolve the Home dashboard
+      tags:
+      - dashboards
   /orgs/{orgID}/grants/bulk-apply:
     post:
       description: 'Applies the changes atomically: one transaction, one batch_id,
@@ -10700,6 +11052,62 @@ paths:
       security:
       - BearerAuth: []
       summary: Run a saved view
+      tags:
+      - views
+  /orgs/{orgID}/views/aggregate:
+    post:
+      description: Counts the rows a filter document resolves to for the CALLER, optionally
+        grouped by one field (status, priority, assignee or kind). Grouping happens
+        in the database — this is what a count or breakdown gadget calls instead of
+        fetching pages and counting them. Two people running the same query legitimately
+        see different totals.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: Filter document under a query key, with an optional group_by
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Total, buckets and truncated
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an org member
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+      security:
+      - BearerAuth: []
+      summary: Count or group a query's results
       tags:
       - views
   /orgs/{orgID}/views/preview:

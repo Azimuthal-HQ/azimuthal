@@ -41,6 +41,17 @@ type Config struct {
 // understand means a later build silently changes what the gadget means.
 var ErrUnknownConfigKey = errors.New("unknown gadget configuration key")
 
+// invalid builds a views.ValidationError from this package.
+//
+// A local wrapper rather than calling views.Invalid at each site: these
+// messages are written to be READ — they name the bound the caller exceeded —
+// and wrapping them to satisfy the error-chain linter would prefix every one
+// of them with a package name the reader does not need. The type is shared
+// with saved views on purpose, so both surfaces answer 422 through one branch.
+//
+//nolint:wrapcheck // the whole point of the wrapper is that the message reaches the caller unprefixed
+func invalid(format string, a ...any) error { return views.Invalid(format, a...) }
+
 // ParseConfig decodes and validates a stored or submitted config document
 // against one gadget definition.
 //
@@ -49,6 +60,10 @@ var ErrUnknownConfigKey = errors.New("unknown gadget configuration key")
 // in the error — a note carrying a group_by is a mistake worth reporting
 // rather than silently ignoring. The second decodes with DisallowUnknownFields
 // so a key in no kind's vocabulary is refused by the decoder itself.
+//
+// There is no trailing-content check on the second pass, unlike
+// views.ParseQuery. It would be unreachable: the first pass is a plain
+// json.Unmarshal, which already refuses anything after the top-level value.
 func ParseConfig(d Definition, raw []byte) (Config, error) {
 	if len(raw) == 0 {
 		return Config{}, nil
@@ -72,40 +87,39 @@ func ParseConfig(d Definition, raw []byte) (Config, error) {
 		}
 		return Config{}, fmt.Errorf("malformed gadget configuration: %w", err)
 	}
-	if dec.More() {
-		return Config{}, errors.New("trailing content after gadget configuration")
-	}
 	if err := c.validate(d); err != nil {
 		return Config{}, err
 	}
 	return c, nil
 }
 
-//nolint:cyclop // one linear rule per key; splitting it hides the vocabulary
 func (c *Config) validate(d Definition) error {
 	c.Title = strings.TrimSpace(c.Title)
 	if len([]rune(c.Title)) > MaxTitleLen {
-		return fmt.Errorf("a gadget title may be at most %d characters", MaxTitleLen)
+		return invalid("a gadget title may be at most %d characters", MaxTitleLen)
 	}
 	if c.Limit != nil {
 		if *c.Limit < MinGadgetLimit || *c.Limit > MaxGadgetLimit {
-			return fmt.Errorf("a gadget may show between %d and %d rows (got %d)",
+			return invalid("a gadget may show between %d and %d rows (got %d)",
 				MinGadgetLimit, MaxGadgetLimit, *c.Limit)
 		}
 	}
 	if c.GroupBy != "" {
+		// Re-raised as this package's own validation error rather than passed
+		// through: the message is already the one to show, and the caller's
+		// fix is the same either way.
 		if _, err := views.ParseGroupField(c.GroupBy); err != nil {
-			return err
+			return invalid("%s", err)
 		}
 	}
 	if d.Key == GadgetBreakdown && c.GroupBy == "" {
 		// A breakdown with no field is not a defaulted breakdown, it is an
 		// unanswerable one. Refuse at write time rather than render a tile
 		// that can only ever say "nothing to show".
-		return errors.New("a breakdown gadget needs a field to group by")
+		return invalid("a breakdown gadget needs a field to group by")
 	}
 	if len([]rune(c.Body)) > MaxNoteLen {
-		return fmt.Errorf("a note may be at most %d characters (got %d)", MaxNoteLen, len([]rune(c.Body)))
+		return invalid("a note may be at most %d characters (got %d)", MaxNoteLen, len([]rune(c.Body)))
 	}
 	return nil
 }

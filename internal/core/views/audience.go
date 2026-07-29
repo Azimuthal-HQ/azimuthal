@@ -1,10 +1,6 @@
 package views
 
-import (
-	"fmt"
-
-	"github.com/google/uuid"
-)
+import "github.com/google/uuid"
 
 // Audience is the (visibility, team) pair that decides who, besides the owner,
 // may see a definition. It says nothing about results.
@@ -89,7 +85,7 @@ func (a Audience) Normalise(act Actor) (Audience, error) {
 		}
 		return a, nil
 	default:
-		return Audience{}, fmt.Errorf("visibility %q must be %q, %q or %q",
+		return Audience{}, Invalid("visibility %q must be %q, %q or %q",
 			a.Visibility, VisibilityPrivate, VisibilityTeam, VisibilityOrg)
 	}
 }

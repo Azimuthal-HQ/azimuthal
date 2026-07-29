@@ -590,6 +590,15 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error, fallba
 		respond.Error(w, r, status, code, msg)
 		return
 	}
+	// Anything the caller can fix by changing their request carries the typed
+	// error and is returned verbatim. Before it existed a view with a
+	// 200-character name answered 500, because the switch below had no case
+	// for a bare fmt.Errorf.
+	var invalid views.ValidationError
+	if errors.As(err, &invalid) {
+		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation, invalid.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, views.ErrNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "saved view not found")

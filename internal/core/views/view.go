@@ -65,6 +65,29 @@ var (
 	ErrNameRequired  = errors.New("a view needs a name")
 )
 
+// ValidationError is anything the caller can fix by changing their request:
+// a name too long, a visibility that is not one of the three, a gadget
+// configuration outside its vocabulary.
+//
+// A TYPE rather than another sentinel, because these messages are written to
+// be read — they name the bound they exceeded — and a sentinel would either
+// have to prefix them ("validation error: a view name may be…") or force a
+// new sentinel per bound. The API layer matches it with errors.As and returns
+// 422 with the message unchanged.
+//
+// It exists because the alternative was live: before P5 a saved view with a
+// 200-character name answered 500, because Draft.validate returned a bare
+// fmt.Errorf that the handler's switch had no case for. Every user-fixable
+// error in this package and in internal/core/dashboards now carries the type.
+type ValidationError struct{ Msg string }
+
+func (e ValidationError) Error() string { return e.Msg }
+
+// Invalid builds a ValidationError.
+func Invalid(format string, a ...any) error {
+	return ValidationError{Msg: fmt.Sprintf(format, a...)}
+}
+
 // Store is the persistence seam for the view rows themselves.
 type Store interface {
 	Create(ctx context.Context, v View) (View, error)
@@ -166,10 +189,10 @@ func (d *Draft) validate(a Actor) error {
 		return ErrNameRequired
 	}
 	if len([]rune(d.Name)) > MaxNameLen {
-		return fmt.Errorf("a view name may be at most %d characters", MaxNameLen)
+		return Invalid("a view name may be at most %d characters", MaxNameLen)
 	}
 	if len([]rune(d.Description)) > MaxDescLen {
-		return fmt.Errorf("a view description may be at most %d characters", MaxDescLen)
+		return Invalid("a view description may be at most %d characters", MaxDescLen)
 	}
 	// The write-path half of migration 038's deliberately absent CHECK: the
 	// database must be able to REPRESENT a team view whose team is gone,
