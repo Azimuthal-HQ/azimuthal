@@ -12,6 +12,94 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createQueue = `-- name: CreateQueue :one
+INSERT INTO saved_views (
+    org_id, owner_id, space_id, position, name, description, query, visibility
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, 'space'
+)
+RETURNING id, org_id, owner_id, name, description, query, visibility, visibility_team_id, created_at, updated_at, deleted_at, space_id, position
+`
+
+type CreateQueueParams struct {
+	OrgID       uuid.UUID   `json:"org_id"`
+	OwnerID     uuid.UUID   `json:"owner_id"`
+	SpaceID     pgtype.UUID `json:"space_id"`
+	Position    *int32      `json:"position"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Query       []byte      `json:"query"`
+}
+
+func (q *Queries) CreateQueue(ctx context.Context, arg CreateQueueParams) (SavedView, error) {
+	row := q.db.QueryRow(ctx, createQueue,
+		arg.OrgID,
+		arg.OwnerID,
+		arg.SpaceID,
+		arg.Position,
+		arg.Name,
+		arg.Description,
+		arg.Query,
+	)
+	var i SavedView
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Query,
+		&i.Visibility,
+		&i.VisibilityTeamID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SpaceID,
+		&i.Position,
+	)
+	return i, err
+}
+
+const createQueueIfAbsent = `-- name: CreateQueueIfAbsent :execrows
+INSERT INTO saved_views (
+    org_id, owner_id, space_id, position, name, description, query, visibility
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, 'space'
+)
+ON CONFLICT (space_id, name) WHERE space_id IS NOT NULL AND deleted_at IS NULL
+DO NOTHING
+`
+
+type CreateQueueIfAbsentParams struct {
+	OrgID       uuid.UUID   `json:"org_id"`
+	OwnerID     uuid.UUID   `json:"owner_id"`
+	SpaceID     pgtype.UUID `json:"space_id"`
+	Position    *int32      `json:"position"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Query       []byte      `json:"query"`
+}
+
+// The idempotent half of "create the default queues". ON CONFLICT DO NOTHING
+// against saved_views_space_name_key means pressing the button twice, or two
+// agents pressing it at once, cannot produce duplicates -- the guarantee is a
+// constraint rather than a check-then-insert race.
+func (q *Queries) CreateQueueIfAbsent(ctx context.Context, arg CreateQueueIfAbsentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createQueueIfAbsent,
+		arg.OrgID,
+		arg.OwnerID,
+		arg.SpaceID,
+		arg.Position,
+		arg.Name,
+		arg.Description,
+		arg.Query,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const createSavedView = `-- name: CreateSavedView :one
 
 INSERT INTO saved_views (
@@ -19,7 +107,7 @@ INSERT INTO saved_views (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7
 )
-RETURNING id, org_id, owner_id, name, description, query, visibility, visibility_team_id, created_at, updated_at, deleted_at
+RETURNING id, org_id, owner_id, name, description, query, visibility, visibility_team_id, created_at, updated_at, deleted_at, space_id, position
 `
 
 type CreateSavedViewParams struct {
@@ -64,12 +152,46 @@ func (q *Queries) CreateSavedView(ctx context.Context, arg CreateSavedViewParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.SpaceID,
+		&i.Position,
+	)
+	return i, err
+}
+
+const getQueue = `-- name: GetQueue :one
+SELECT id, org_id, owner_id, name, description, query, visibility, visibility_team_id, created_at, updated_at, deleted_at, space_id, position FROM saved_views
+WHERE id = $1 AND org_id = $2 AND space_id = $3 AND deleted_at IS NULL
+`
+
+type GetQueueParams struct {
+	ID      uuid.UUID   `json:"id"`
+	OrgID   uuid.UUID   `json:"org_id"`
+	SpaceID pgtype.UUID `json:"space_id"`
+}
+
+func (q *Queries) GetQueue(ctx context.Context, arg GetQueueParams) (SavedView, error) {
+	row := q.db.QueryRow(ctx, getQueue, arg.ID, arg.OrgID, arg.SpaceID)
+	var i SavedView
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Query,
+		&i.Visibility,
+		&i.VisibilityTeamID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SpaceID,
+		&i.Position,
 	)
 	return i, err
 }
 
 const getSavedView = `-- name: GetSavedView :one
-SELECT id, org_id, owner_id, name, description, query, visibility, visibility_team_id, created_at, updated_at, deleted_at FROM saved_views
+SELECT id, org_id, owner_id, name, description, query, visibility, visibility_team_id, created_at, updated_at, deleted_at, space_id, position FROM saved_views
 WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL
 `
 
@@ -93,6 +215,8 @@ func (q *Queries) GetSavedView(ctx context.Context, arg GetSavedViewParams) (Sav
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.SpaceID,
+		&i.Position,
 	)
 	return i, err
 }
@@ -167,8 +291,79 @@ func (q *Queries) ListLiveSpaceIDs(ctx context.Context, arg ListLiveSpaceIDsPara
 	return items, nil
 }
 
+const listQueuesForSpace = `-- name: ListQueuesForSpace :many
+SELECT sv.id, sv.org_id, sv.owner_id, sv.name, sv.description, sv.query, sv.visibility, sv.visibility_team_id, sv.created_at, sv.updated_at, sv.deleted_at, sv.space_id, sv.position, u.display_name AS owner_name
+FROM saved_views sv
+JOIN users u ON u.id = sv.owner_id
+WHERE sv.org_id = $1
+  AND sv.space_id = $2
+  AND sv.deleted_at IS NULL
+ORDER BY sv.position ASC
+`
+
+type ListQueuesForSpaceParams struct {
+	OrgID   uuid.UUID   `json:"org_id"`
+	SpaceID pgtype.UUID `json:"space_id"`
+}
+
+type ListQueuesForSpaceRow struct {
+	ID               uuid.UUID          `json:"id"`
+	OrgID            uuid.UUID          `json:"org_id"`
+	OwnerID          uuid.UUID          `json:"owner_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Query            []byte             `json:"query"`
+	Visibility       string             `json:"visibility"`
+	VisibilityTeamID pgtype.UUID        `json:"visibility_team_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	SpaceID          pgtype.UUID        `json:"space_id"`
+	Position         *int32             `json:"position"`
+	OwnerName        string             `json:"owner_name"`
+}
+
+// A space's queues in display order. The route that reaches this is
+// space-read guarded, so membership of the audience is already established --
+// that is what lets a queue carry visibility 'space' without this query
+// re-deriving who may see it.
+func (q *Queries) ListQueuesForSpace(ctx context.Context, arg ListQueuesForSpaceParams) ([]ListQueuesForSpaceRow, error) {
+	rows, err := q.db.Query(ctx, listQueuesForSpace, arg.OrgID, arg.SpaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListQueuesForSpaceRow{}
+	for rows.Next() {
+		var i ListQueuesForSpaceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Description,
+			&i.Query,
+			&i.Visibility,
+			&i.VisibilityTeamID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.SpaceID,
+			&i.Position,
+			&i.OwnerName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSavedViewsForViewer = `-- name: ListSavedViewsForViewer :many
-SELECT sv.id, sv.org_id, sv.owner_id, sv.name, sv.description, sv.query, sv.visibility, sv.visibility_team_id, sv.created_at, sv.updated_at, sv.deleted_at,
+SELECT sv.id, sv.org_id, sv.owner_id, sv.name, sv.description, sv.query, sv.visibility, sv.visibility_team_id, sv.created_at, sv.updated_at, sv.deleted_at, sv.space_id, sv.position,
        u.display_name AS owner_name,
        tm.name        AS team_name
 FROM saved_views sv
@@ -176,6 +371,11 @@ JOIN users u ON u.id = sv.owner_id
 LEFT JOIN teams tm ON tm.id = sv.visibility_team_id
 WHERE sv.org_id = $1
   AND sv.deleted_at IS NULL
+  -- Queues (migration 039) are space-bound saved views and are listed by the
+  -- space-scoped queue endpoint, whose middleware has already established that
+  -- the caller can read the space. Including them here would mean re-deriving
+  -- that audience per row against the caller's readable set.
+  AND sv.space_id IS NULL
   AND (
         sv.owner_id = $2
      OR sv.visibility = 'org'
@@ -204,6 +404,8 @@ type ListSavedViewsForViewerRow struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	SpaceID          pgtype.UUID        `json:"space_id"`
+	Position         *int32             `json:"position"`
 	OwnerName        string             `json:"owner_name"`
 	TeamName         *string            `json:"team_name"`
 }
@@ -238,9 +440,48 @@ func (q *Queries) ListSavedViewsForViewer(ctx context.Context, arg ListSavedView
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.SpaceID,
+			&i.Position,
 			&i.OwnerName,
 			&i.TeamName,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSpaceWorkflowStatuses = `-- name: ListSpaceWorkflowStatuses :many
+SELECT ws.name, ws.category
+FROM workflow_states ws
+JOIN spaces s ON s.workflow_id = ws.workflow_id AND s.deleted_at IS NULL
+WHERE s.id = $1
+ORDER BY ws.position ASC
+`
+
+type ListSpaceWorkflowStatusesRow struct {
+	Name     string `json:"name"`
+	Category string `json:"category"`
+}
+
+// A space's workflow state names with their categories, in board order.
+// Backs the default-queue set: "open" and "resolved" are not literals in this
+// product, they are whichever states the space's workflow puts in the
+// todo/in_progress and done categories.
+func (q *Queries) ListSpaceWorkflowStatuses(ctx context.Context, spaceID uuid.UUID) ([]ListSpaceWorkflowStatusesRow, error) {
+	rows, err := q.db.Query(ctx, listSpaceWorkflowStatuses, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSpaceWorkflowStatusesRow{}
+	for rows.Next() {
+		var i ListSpaceWorkflowStatusesRow
+		if err := rows.Scan(&i.Name, &i.Category); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -599,6 +840,72 @@ func (q *Queries) ListViewTickets(ctx context.Context, arg ListViewTicketsParams
 	return items, nil
 }
 
+const nextQueuePosition = `-- name: NextQueuePosition :one
+SELECT COALESCE(MAX(sv.position) + 1, 0)::int AS next_position
+FROM saved_views sv
+WHERE sv.space_id = $1 AND sv.deleted_at IS NULL
+`
+
+// The position a new queue takes: one past the last live queue in the space.
+// COALESCE over the empty case gives the first queue position 0.
+func (q *Queries) NextQueuePosition(ctx context.Context, spaceID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, nextQueuePosition, spaceID)
+	var next_position int32
+	err := row.Scan(&next_position)
+	return next_position, err
+}
+
+const setQueuePosition = `-- name: SetQueuePosition :execrows
+UPDATE saved_views
+SET position = $1
+WHERE id = $2 AND org_id = $3 AND space_id = $4 AND deleted_at IS NULL
+`
+
+type SetQueuePositionParams struct {
+	Position *int32      `json:"position"`
+	ID       uuid.UUID   `json:"id"`
+	OrgID    uuid.UUID   `json:"org_id"`
+	SpaceID  pgtype.UUID `json:"space_id"`
+}
+
+// One step of a reorder. Callers run several of these inside ONE transaction:
+// saved_views_space_position_key is DEFERRABLE INITIALLY DEFERRED, so the
+// intermediate states where two queues briefly share a position are legal
+// until COMMIT. Renumbering through temporary slots to dodge the constraint
+// is exactly what the deferral exists to avoid.
+func (q *Queries) SetQueuePosition(ctx context.Context, arg SetQueuePositionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setQueuePosition,
+		arg.Position,
+		arg.ID,
+		arg.OrgID,
+		arg.SpaceID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const softDeleteQueue = `-- name: SoftDeleteQueue :execrows
+UPDATE saved_views
+SET deleted_at = now()
+WHERE id = $1 AND org_id = $2 AND space_id = $3 AND deleted_at IS NULL
+`
+
+type SoftDeleteQueueParams struct {
+	ID      uuid.UUID   `json:"id"`
+	OrgID   uuid.UUID   `json:"org_id"`
+	SpaceID pgtype.UUID `json:"space_id"`
+}
+
+func (q *Queries) SoftDeleteQueue(ctx context.Context, arg SoftDeleteQueueParams) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteQueue, arg.ID, arg.OrgID, arg.SpaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const softDeleteSavedView = `-- name: SoftDeleteSavedView :execrows
 UPDATE saved_views
 SET deleted_at = now()
@@ -618,6 +925,50 @@ func (q *Queries) SoftDeleteSavedView(ctx context.Context, arg SoftDeleteSavedVi
 	return result.RowsAffected(), nil
 }
 
+const updateQueue = `-- name: UpdateQueue :one
+UPDATE saved_views
+SET name = $1, description = $2, query = $3
+WHERE id = $4 AND org_id = $5 AND space_id = $6 AND deleted_at IS NULL
+RETURNING id, org_id, owner_id, name, description, query, visibility, visibility_team_id, created_at, updated_at, deleted_at, space_id, position
+`
+
+type UpdateQueueParams struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Query       []byte      `json:"query"`
+	ID          uuid.UUID   `json:"id"`
+	OrgID       uuid.UUID   `json:"org_id"`
+	SpaceID     pgtype.UUID `json:"space_id"`
+}
+
+func (q *Queries) UpdateQueue(ctx context.Context, arg UpdateQueueParams) (SavedView, error) {
+	row := q.db.QueryRow(ctx, updateQueue,
+		arg.Name,
+		arg.Description,
+		arg.Query,
+		arg.ID,
+		arg.OrgID,
+		arg.SpaceID,
+	)
+	var i SavedView
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Description,
+		&i.Query,
+		&i.Visibility,
+		&i.VisibilityTeamID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SpaceID,
+		&i.Position,
+	)
+	return i, err
+}
+
 const updateSavedView = `-- name: UpdateSavedView :one
 UPDATE saved_views
 SET name               = $1,
@@ -626,7 +977,7 @@ SET name               = $1,
     visibility         = $4,
     visibility_team_id = $5
 WHERE id = $6 AND org_id = $7 AND deleted_at IS NULL
-RETURNING id, org_id, owner_id, name, description, query, visibility, visibility_team_id, created_at, updated_at, deleted_at
+RETURNING id, org_id, owner_id, name, description, query, visibility, visibility_team_id, created_at, updated_at, deleted_at, space_id, position
 `
 
 type UpdateSavedViewParams struct {
@@ -667,6 +1018,8 @@ func (q *Queries) UpdateSavedView(ctx context.Context, arg UpdateSavedViewParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.SpaceID,
+		&i.Position,
 	)
 	return i, err
 }

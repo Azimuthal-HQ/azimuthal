@@ -26,6 +26,14 @@ vi.mock('../../lib/api', () => ({
   // dialog since the navigation collapse (ADR-0005).
   useWikiSearch: vi.fn(() => ({ data: [], isLoading: false })),
   useCreateWikiPage: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false, error: null })),
+  // The Beacon sidebar lists the space's queues since P4. `can_manage: false`
+  // is the safe default here: this test asserts the sidebar's shape, and the
+  // queue controls have their own coverage in BeaconSidebar.queues.test.tsx.
+  useQueues: vi.fn(() => ({
+    data: { queues: [], can_manage: false },
+    isLoading: false,
+    error: null,
+  })),
   friendlyErrorMessage: vi.fn((_err: unknown, fallback: string) => fallback),
 }));
 
