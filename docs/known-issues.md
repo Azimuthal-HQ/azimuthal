@@ -817,3 +817,43 @@ parsed and refused by `views.ParseQuery` before the service is entered), and a d
 row id and the stored key. It now has its own branch answering 500 with the fixed fallback.
 `internal/core/api/views_unreadable_document_integration_test.go` drives every affected route and
 fails in both directions.
+
+---
+
+## 25. A team-shared saved view cannot be renamed without re-naming its team
+
+**Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
+**Status**: Open. Found by P5's coverage pass, verified over HTTP. Not fixed — it is P4 behaviour
+outside this phase's surface, and the repair is a decision about PATCH semantics rather than an
+omission.
+
+`views.Service.Update` inherits the row's own visibility when the request omits it:
+
+```go
+if d.Visibility == "" {
+    d.Visibility = existing.Visibility
+}
+```
+
+It does not inherit `existing.VisibilityTeamID`. For the one visibility that carries a payload the
+inheritance therefore cannot succeed — the merged draft is `team` with no team, which `Normalise`
+refuses:
+
+```
+PATCH /api/v1/orgs/{org}/views/{id}   {"name":"Renamed","query":{...}}
+422 {"error":{"code":"VALIDATION_ERROR","message":"a team-visible view must name a team"}}
+```
+
+The message describes a field the caller did not send and state they did not create. Naming the
+team explicitly works, so this is a gap in the inheritance rather than a rule about team views.
+
+**What closing it takes.** One line — inherit `existing.VisibilityTeamID` alongside the visibility
+when the request omits both. The decision it needs first is whether an omitted `visibility_team_id`
+alongside an explicit `"visibility":"team"` should mean "unchanged" or "you must say"; today it
+means the latter, consistently, and that part is defensible. It is the partial-PATCH tri-state
+shape again: one field cannot distinguish "absent" from "cleared".
+
+**The current behaviour is pinned**, not left unasserted:
+`TestViewUpdate_OmittingTheTeamOnATeamViewIsRefused` in
+`internal/core/views/view_refusals_test.go` fails if somebody changes it, which is the point — the
+fix is to invert that test rather than to discover the change downstream.
