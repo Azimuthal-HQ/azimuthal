@@ -1,6 +1,7 @@
 package jql
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -68,7 +69,34 @@ const (
 	fieldKinds      = "kinds"
 	fieldSprintIDs  = "sprint_ids"
 	fieldText       = "text"
+
+	// The four v2 date ranges. Each takes {after, before} bounds, half-open.
+	fieldCreatedAt  = "created_at"
+	fieldUpdatedAt  = "updated_at"
+	fieldDueAt      = "due_at"
+	fieldResolvedAt = "resolved_at"
+
+	// fieldNot is v2's negation record. It is a MODIFIER rather than a target:
+	// no JQL clause maps onto it, because it never appears alone — it flips a
+	// membership field that some other clause named. It is listed here because
+	// the drift guard walks every JSON tag on views.Filter and requires this
+	// package to have an opinion about each one, and "this is a modifier, and
+	// here is which operators reach it" is the opinion.
+	fieldNot = "not"
 )
+
+// negatableFields are the six membership fields v2's `not` record can flip.
+// The four date fields are absent because v2 defines no date negation, and
+// `text` is absent because a substring match is not a set membership.
+//
+// This is a SECOND vocabulary, and the drift guard over views.Filter's JSON
+// tags cannot see it — that one learns only that a field called "not" exists.
+// TestVocabulary_NegatableFieldsMatchTheRealNegateRecord checks this list
+// against views.Negate's own tags, in both directions.
+var negatableFields = map[string]struct{}{
+	fieldSpaceIDs: {}, fieldStatuses: {}, fieldPriorities: {},
+	fieldAssignees: {}, fieldKinds: {}, fieldSprintIDs: {},
+}
 
 // mapping is one JQL field's disposition.
 type mapping struct {
@@ -107,30 +135,75 @@ var jqlFieldMap = map[string]mapping{
 		"there is no comment filter; text matches the title only, so a comment search does not survive"},
 }
 
-// dateFields are the JQL fields whose values are dates.
+// dateFields maps each JQL date field onto the filter date field it becomes, or
+// to "" where the product has no such column.
 //
-// They are called out separately because their failure is structural and
-// surprising: the filter document has no date predicate of any kind. Dates are
-// sortable — updated_at, created_at, due_at and resolved_at are all valid sort
-// fields — which makes it easy to assume they are filterable too. They are not,
-// so every date clause in every saved filter is lost.
-var dateFields = map[string]struct{}{
-	"created": {}, "updated": {}, "resolved": {}, "duedate": {}, "due": {},
-	"resolutiondate": {}, "lastviewed": {}, "worklogdate": {},
+// Under v1 every one of these was lost: the filter document had no date
+// predicate of any kind, which was the single largest bucket in the report.
+// v2 gives four of them a home. `lastviewed` and `worklogdate` stay lost, and
+// not because of the filter vocabulary — Azimuthal stores neither a per-user
+// last-viewed timestamp nor a worklog, so there is no column for a predicate to
+// name.
+var dateFields = map[string]string{
+	"created":        fieldCreatedAt,
+	"createddate":    fieldCreatedAt,
+	"updated":        fieldUpdatedAt,
+	"updateddate":    fieldUpdatedAt,
+	"duedate":        fieldDueAt,
+	"due":            fieldDueAt,
+	"resolved":       fieldResolvedAt,
+	"resolutiondate": fieldResolvedAt,
+	"lastviewed":     "",
+	"worklogdate":    "",
 }
+
+// dateOperators maps a JQL comparison onto a v2 bound.
+//
+// The verdict turns on INCLUSIVITY. v2's range is half-open — `after` is
+// inclusive, `before` is exclusive — so JQL's `>=` and `<` land exactly, while
+// `>` and `<=` are off by one instant in a direction the filter cannot express.
+// That is a real difference in the rows returned at a boundary, so it is
+// reported as partial rather than waved through.
+var dateOperators = map[string]struct {
+	bound   string
+	verdict Expressibility
+	reason  string
+}{
+	">=": {"after", Expressible,
+		"maps onto the range's \"after\" bound, which is inclusive exactly as >= is"},
+	"<": {"before", Expressible,
+		"maps onto the range's \"before\" bound, which is exclusive exactly as < is"},
+	">": {"after", Partial,
+		"the range's \"after\" bound is INCLUSIVE, so a strict > additionally matches rows at the boundary instant itself"},
+	"<=": {"before", Partial,
+		"the range's \"before\" bound is EXCLUSIVE, so an inclusive <= loses rows at the boundary instant itself"},
+	"=": {"both", Partial,
+		"JQL's = on a date means anywhere within that DAY; it becomes a two-bound range, and the day boundary is resolved in the server's zone rather than the author's"},
+}
+
+// dateRelative is JQL's own relative-date literal: a sign, a magnitude and a
+// unit from w/d/h/m.
+//
+// THE UNITS DO NOT LINE UP WITH OURS, and the overlap is the dangerous part.
+// JQL has no month unit and spells MINUTES `m`; the filter's grammar spells
+// months `mo` and has no unit below a day. So `-4w` and `-7d` carry across
+// exactly, while `-30m` and `-2h` have nothing to become — the filter's
+// finest granularity is a day.
+var dateRelative = regexp.MustCompile(`^([+-])([0-9]+)([wdhm])$`)
 
 // historyOperators are the JQL operators that ask about an issue's past.
 var historyOperators = map[string]struct{}{
 	"was": {}, "changed": {}, "wasnot": {}, "wasin": {}, "wasnotin": {},
 }
 
-// negatingOperators cannot be expressed because the vocabulary has no negation
-// at all: a filter field lists values that match, and there is no way to say
-// "not these".
+// negatingOperators are the operators that ask for the complement of a value
+// set. Under v1 none of them could be expressed; under v2 most of them can, but
+// only on the six fields the `not` record names — so membership here says
+// "this is a negation", and classifyNegation decides whether it survives.
 //
 // "isnot" belongs here and is easy to miss: IS NOT EMPTY reads like a presence
-// test rather than a negation, and IS EMPTY genuinely is expressible for
-// assignee (it is the "unassigned" token). Its negation is not.
+// test rather than a negation. It now translates for assignees, where the empty
+// case has its own token to negate, and for nothing else.
 var negatingOperators = map[string]struct{}{
 	"!=": {}, "!~": {}, "notin": {}, "isnot": {},
 }
@@ -286,14 +359,101 @@ func classifyClause(tokens []token) Clause {
 	}
 	c.Field, c.Operator = field, op
 
+	// DATE FIELDS ARE DECIDED BEFORE THE OPERATOR CLASSES, and the order is the
+	// whole point. On a date field, `>` and `<` are exactly what v2's `after`
+	// and `before` bounds express, so rejecting them as "the vocabulary has no
+	// comparison operators" — which is still true of every OTHER field — would
+	// leave the entire date bucket in the lost pile that v2 was built to empty.
+	//
+	// Under v1 this ordering was invisible: date clauses were lost either way,
+	// so whichever branch answered first gave the same verdict.
+	if _, isDate := dateFields[field]; isDate {
+		return classifyDateClause(c, field, tokens)
+	}
 	if v, done := classifyOperator(&c, op); done {
 		return v
 	}
-	if _, isDate := dateFields[field]; isDate {
-		c.Reason = "the filter document has no date predicate at all — created_at, updated_at, due_at and resolved_at are sortable but not filterable, so every date clause is lost"
+	return classifyField(c, field, tokens)
+}
+
+// classifyDateClause decides a clause on a date field, against v2's ranges.
+//
+// Three things must all survive: the field must have a column, the operator
+// must be a bound the range can express, and the value must be a form the
+// bound can hold. The worst of the three is the verdict.
+func classifyDateClause(c Clause, field string, tokens []token) Clause {
+	target := dateFields[field]
+	if target == "" {
+		c.Reason = "there is no such column in the product — Azimuthal stores neither a per-user last-viewed timestamp nor a worklog, so this has nothing to filter on rather than nothing to express it with"
 		return c
 	}
-	return classifyField(c, field, tokens)
+	c.FilterField = target
+
+	norm := strings.ToLower(strings.ReplaceAll(c.Operator, " ", ""))
+	if _, bad := historyOperators[norm]; bad {
+		c.Reason = "history operators ask what an issue used to be; a saved view filters the current row and has no history model"
+		return c
+	}
+	if norm == "is" || norm == "isnot" {
+		c.Reason = "IS EMPTY and IS NOT EMPTY ask whether the date is set at all; a range has two bounds and no way to say \"unset\", and negation is not defined on date fields"
+		return c
+	}
+	if _, neg := negatingOperators[norm]; neg {
+		c.Reason = "v2 negates membership fields only. A date range already expresses exclusion through its bounds, so there is deliberately no date negation to translate != into"
+		return c
+	}
+	op, ok := dateOperators[norm]
+	if !ok {
+		c.Reason = "the range expresses only ordered bounds (after and before); this operator is not one of them"
+		return c
+	}
+
+	valVerdict, valReason := classifyDateValue(tokens)
+	if rank(valVerdict) > rank(op.verdict) {
+		c.Verdict, c.Reason = valVerdict, valReason
+		return c
+	}
+	c.Verdict = op.verdict
+	c.Reason = "the " + target + " range " + op.reason
+	if valVerdict == Partial && op.verdict == Expressible {
+		c.Verdict, c.Reason = Partial, valReason
+	}
+	return c
+}
+
+// classifyDateValue decides the operand: a relative literal, a function call or
+// an absolute date.
+func classifyDateValue(tokens []token) (Expressibility, string) {
+	if len(tokens) == 0 {
+		return NotExpressible, "the clause names no value"
+	}
+	raw := tokens[len(tokens)-1]
+	v := strings.Trim(raw.text, `"'`)
+
+	// A function operand.
+	if !raw.quoted && strings.Contains(raw.text, "(") {
+		fn := strings.ToLower(strings.SplitN(raw.text, "(", 2)[0])
+		if fn == "now" {
+			return Expressible, "now() maps onto the \"now\" token, which the filter resolves per request at evaluation"
+		}
+		return NotExpressible, "JQL function " + fn + "() TRUNCATES to a calendar boundary rather than offsetting from an instant; the filter's relative tokens are offsets only, so start-of-day and end-of-week have no spelling"
+	}
+
+	// A relative literal.
+	if m := dateRelative.FindStringSubmatch(v); m != nil {
+		switch m[3] {
+		case "d", "w":
+			return Expressible, "the relative literal carries across unchanged — the filter spells days and weeks the same way and resolves them server-side at evaluation"
+		default:
+			return NotExpressible, "JQL's " + m[3] + " unit is finer than a day (h is hours, m is MINUTES — JQL has no month unit); the filter's relative grammar bottoms out at d, so a sub-day offset cannot be expressed"
+		}
+	}
+
+	// An absolute date. JQL literals carry no zone, so the instant they mean
+	// depends on the reader's Jira profile; the filter's absolute bound is
+	// RFC3339 and names an unambiguous instant. The translation has to choose a
+	// zone, and choosing is a narrowing.
+	return Partial, "an absolute JQL date carries no time zone, so it must be pinned to one to become the RFC3339 instant the filter stores; rows within a day of the boundary can land on either side"
 }
 
 // classifyOperator rejects the operator classes the vocabulary cannot express.
@@ -304,10 +464,10 @@ func classifyOperator(c *Clause, op string) (Clause, bool) {
 		c.Reason = "history operators ask what an issue used to be; a saved view filters the current row and has no history model"
 		return *c, true
 	}
-	if _, bad := negatingOperators[norm]; bad {
-		c.Reason = "the vocabulary has no negation: a filter field lists the values that match and cannot say \"not these\""
-		return *c, true
-	}
+	// NEGATION IS NO LONGER DECIDED HERE. v2 negates per field, so whether a
+	// negating operator survives depends on WHICH field it applies to — and
+	// that is not known until classifyField resolves the mapping. Deciding it
+	// on the operator alone was correct only while the answer was "never".
 	if _, bad := orderingOperators[norm]; bad {
 		c.Reason = "the vocabulary has no comparison operators — fields hold value lists matched for equality, so >, <, >= and <= have nothing to translate to"
 		return *c, true
@@ -332,7 +492,66 @@ func classifyField(c Clause, field string, tokens []token) Clause {
 	if fnReason, fnVerdict, hit := classifyFunctionValue(tokens, m); hit {
 		c.Verdict, c.Reason = fnVerdict, fnReason
 	}
+	if neg, hit := classifyNegation(c.Operator, m.filterField); hit {
+		// Negation can only narrow. A clause that was already partial for its
+		// FIELD stays partial even when its negation maps exactly — and it must
+		// keep the field's reason, because that is the reason it is partial.
+		//
+		// Overwriting unconditionally would have produced the worst kind of
+		// report line: the verdict "partial" beside a reason that says the
+		// clause carries across unchanged. The reader would have no way to know
+		// what the approximation was.
+		if rank(neg.Verdict) > rank(c.Verdict) {
+			c.Verdict, c.Reason = neg.Verdict, neg.Reason
+			return c
+		}
+		if rank(neg.Verdict) < rank(c.Verdict) {
+			c.Reason += "; the negation itself maps exactly, but the field's own limitation stands"
+			return c
+		}
+		c.Reason = neg.Reason
+	}
 	return c
+}
+
+// classifyNegation decides a negating operator once the target field is known.
+//
+// v2's negation is a per-field flag over a set of values, so it translates
+// exactly for the six membership fields and not at all for the others. The
+// bool reports that the operator was a negating one.
+func classifyNegation(op, filterField string) (Clause, bool) {
+	norm := strings.ToLower(strings.ReplaceAll(op, " ", ""))
+	if _, isNeg := negatingOperators[norm]; !isNeg {
+		return Clause{}, false
+	}
+
+	// `!~` is a negated CONTAINS, and the only field it can reach is text —
+	// which v2 deliberately left out of the negation record, because a
+	// substring match is not a set membership and "not these values" has no
+	// reading for it.
+	if norm == "!~" {
+		return Clause{Verdict: NotExpressible,
+			Reason: "the text filter is a literal substring match and v2 does not negate it — `not` names the six membership fields only, so \"title does not contain X\" has no spelling"}, true
+	}
+
+	// IS NOT EMPTY asks for a present value rather than a different one. It
+	// translates for assignees alone, where the empty case has its own token:
+	// "unassigned", negated, is exactly "somebody holds this".
+	if norm == "isnot" {
+		if filterField == fieldAssignees {
+			return Clause{Verdict: Expressible,
+				Reason: "IS NOT EMPTY becomes the \"unassigned\" token with the assignees field negated, which is exactly \"has an assignee\""}, true
+		}
+		return Clause{Verdict: NotExpressible,
+			Reason: "IS NOT EMPTY asks whether a value is set at all; only assignees has an empty-value token (\"unassigned\") for the negation to flip"}, true
+	}
+
+	if _, ok := negatableFields[filterField]; ok {
+		return Clause{Verdict: Expressible,
+			Reason: "v2 negates this field: the values carry across unchanged and `not` is set for it, giving \"everything except these\""}, true
+	}
+	return Clause{Verdict: NotExpressible,
+		Reason: "v2's `not` record names the six membership fields, and this is not one of them"}, true
 }
 
 // classifyFunctionValue handles JQL function operands.
@@ -412,11 +631,22 @@ func structuralFindings(groups []group, clauses []Clause) []string {
 	if crossFieldOR(groups, clauses) {
 		out = append(out, "an OR spans two different fields; the filter ANDs across fields and ORs only within one, so a cross-field OR cannot be expressed")
 	}
-	for _, g := range groups {
-		if g.negated {
-			out = append(out, "a NOT applies to a clause; the vocabulary has no negation")
-			break
+	// A leading NOT on a single clause is the same request as that clause's
+	// negating operator, so under v2 it survives whenever the clause's field is
+	// one the `not` record names. It is still a structural failure on any other
+	// field: there is no clause-level NOT in the document, only a per-field
+	// flag, and nothing to hang one on.
+	for i, g := range groups {
+		if !g.negated {
+			continue
 		}
+		if i < len(clauses) {
+			if _, ok := negatableFields[clauses[i].FilterField]; ok {
+				continue
+			}
+		}
+		out = append(out, "a NOT applies to a clause on a field the filter cannot negate; v2's `not` names the six membership fields, and there is no clause-level NOT to fall back on")
+		break
 	}
 	if nested := countGrouped(groups); nested > 0 {
 		out = append(out, "the query uses parentheses; the filter document is a flat record with no nesting, so grouped sub-expressions cannot be represented")

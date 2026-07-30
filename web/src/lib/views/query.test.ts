@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ASSIGNEE_ME,
   ASSIGNEE_UNASSIGNED,
+  DATE_NOW,
+  QUERY_DOC_MIN_VERSION,
   QUERY_DOC_VERSION,
   QUERY_LIMITS,
   VIEW_MODULES,
@@ -14,10 +16,13 @@ import {
   defaultSort,
   emptyQueryDoc,
   isValidAssignee,
+  isValidDateBound,
   pruneVectorOnlyFields,
+  requiredVersion,
   validateQueryDoc,
   vectorOnlyFieldsAllowed,
   vectorOnlyFieldsReason,
+  withRequiredVersion,
   type QueryDoc,
   type QueryFilter,
   type ViewModule,
@@ -298,10 +303,32 @@ describe('the filter vocabulary matches internal/core/views/filter.go', () => {
     expect(goConstString('AssigneeUnassigned')).toBe(ASSIGNEE_UNASSIGNED);
   });
 
-  it('reads the same document version', () => {
+  it('reads the same document version RANGE', () => {
     const m = /^const Version = (\d+)/m.exec(filterGo);
     expect(m, 'could not find "const Version" in filter.go').not.toBeNull();
     expect(Number(m![1])).toBe(QUERY_DOC_VERSION);
+
+    // Read support is a range on both sides. A client that tracked only the
+    // newest version would refuse to open every stored v1 view, which the
+    // server never rewrites and will go on serving indefinitely.
+    const min = /^const MinVersion = (\d+)/m.exec(filterGo);
+    expect(min, 'could not find "const MinVersion" in filter.go').not.toBeNull();
+    expect(Number(min![1])).toBe(QUERY_DOC_MIN_VERSION);
+  });
+
+  it('spells the relative-date grammar the same way', () => {
+    // The grammar itself is duplicated — a regexp cannot cross the Go/TS
+    // boundary — so the SOURCE of the Go regexp is compared against this
+    // module's. The month unit being `mo` rather than `m` is the part that
+    // matters: JQL spells minutes `m`, so a drift back to `m` would make the
+    // importer mistranslate by three orders of magnitude.
+    const m = /^var relativeToken = regexp\.MustCompile\(`([^`]+)`\)/m.exec(filterGo);
+    expect(m, 'could not find "var relativeToken" in filter.go').not.toBeNull();
+    expect(m![1]).toBe('^([+-])([0-9]{1,3})(d|w|mo)$');
+
+    const now = /^const DateNow = "([^"]+)"/m.exec(filterGo);
+    expect(now, 'could not find "const DateNow" in filter.go').not.toBeNull();
+    expect(now![1]).toBe(DATE_NOW);
   });
 
   it('carries the same bounds, with no bound on either side the other lacks', () => {
@@ -314,6 +341,7 @@ describe('the filter vocabulary matches internal/core/views/filter.go', () => {
       MaxTextLen: 'text',
       MaxNameLen: 'name',
       MaxDescLen: 'description',
+      MaxRelativeUnits: 'relative_units',
     };
     const goLimits = Object.fromEntries(
       [...filterGo.matchAll(/^\s*(Max\w+)\s*=\s*(\d+)$/gm)].map((m) => [m[1], Number(m[2])]),
@@ -336,5 +364,127 @@ describe('the filter vocabulary matches internal/core/views/filter.go', () => {
     // be hiding two working filters and this test says so.
     expect(filterGo).toContain('Beacon tickets have no type');
     expect(filterGo).toContain('Beacon tickets have no sprint');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. v2 — dates and negation
+// ---------------------------------------------------------------------------
+
+describe('v2 date bounds', () => {
+  it('accepts both spellings and the now token', () => {
+    for (const ok of ['-7d', '+2w', '-1mo', '+999d', DATE_NOW, '2026-01-31T00:00:00Z', '2026-01-31T12:30:00+01:00']) {
+      expect(isValidDateBound(ok), ok).toBe(true);
+    }
+  });
+
+  it('refuses everything outside the closed grammar', () => {
+    for (const bad of [
+      '7d', // the sign is required — a bound must say which way it points
+      '-7', // no unit
+      '-7x', // not a unit
+      '-1m', // MINUTES in JQL; the month unit here is "mo", and the collision is the reason
+      '-2h', // finer than a day
+      '-0d', // zero units is not a period
+      '-1000d', // past MaxRelativeUnits
+      '2026-01-31', // a date is not an instant; RFC3339 requires the time and offset
+      '2026', // Date.parse would accept this; the server would not
+      'yesterday',
+      '',
+    ]) {
+      expect(isValidDateBound(bad), bad).toBe(false);
+    }
+  });
+
+  it('refuses an empty range and an inverted absolute one', () => {
+    const doc = (filter: Partial<QueryFilter>): QueryDoc => ({
+      v: 2,
+      filter: { modules: ['beacon'], ...filter },
+      sort: defaultSort(),
+    });
+    expect(validateQueryDoc(doc({ updated_at: {} }))).toMatch(/neither a start nor an end/);
+    expect(
+      validateQueryDoc(
+        doc({ created_at: { after: '2026-02-01T00:00:00Z', before: '2026-01-01T00:00:00Z' } }),
+      ),
+    ).toMatch(/starts at or after it ends/);
+    // Two RELATIVE bounds are ordered on the same fixed number line the server
+    // uses, so this half must be caught too — the client mirrors the server's
+    // rule rather than a weaker version of it.
+    expect(validateQueryDoc(doc({ due_at: { after: '-1d', before: '-7d' } }))).toMatch(
+      /starts at or after it ends/,
+    );
+    expect(validateQueryDoc(doc({ due_at: { after: '+7d', before: 'now' } }))).toMatch(
+      /starts at or after it ends/,
+    );
+    expect(validateQueryDoc(doc({ due_at: { after: '-1mo', before: '-1d' } }))).toBeNull();
+    expect(validateQueryDoc(doc({ due_at: { after: 'now', before: '+7d' } }))).toBeNull();
+
+    // A mixed absolute/relative pair cannot be ordered without knowing when the
+    // query runs, so it is accepted here exactly as the server accepts it.
+    expect(
+      validateQueryDoc(doc({ created_at: { after: '-7d', before: '2026-01-01T00:00:00Z' } })),
+    ).toBeNull();
+  });
+});
+
+describe('v2 negation', () => {
+  const doc = (filter: Partial<QueryFilter>, v = 2): QueryDoc => ({
+    v,
+    filter: { modules: ['beacon'], ...filter },
+    sort: defaultSort(),
+  });
+
+  it('refuses a flag with nothing to negate', () => {
+    expect(validateQueryDoc(doc({ not: { statuses: true } }))).toMatch(/names none/);
+    // With values beside it, the same flag is fine.
+    expect(validateQueryDoc(doc({ statuses: ['closed'], not: { statuses: true } }))).toBeNull();
+  });
+
+  it('is off when the flag is present but false', () => {
+    expect(validateQueryDoc(doc({ not: { statuses: false } }))).toBeNull();
+  });
+});
+
+describe('the document declares the version it needs', () => {
+  const filter = (extra: Partial<QueryFilter>): QueryFilter => ({ modules: ['beacon'], ...extra });
+
+  it('stays at v1 for anything v1 could express', () => {
+    expect(requiredVersion(filter({}))).toBe(QUERY_DOC_MIN_VERSION);
+    expect(requiredVersion(filter({ statuses: ['open'], text: 'x' }))).toBe(QUERY_DOC_MIN_VERSION);
+    expect(emptyQueryDoc().v).toBe(QUERY_DOC_MIN_VERSION);
+    // A negation record present but entirely false is not a v2 capability.
+    expect(requiredVersion(filter({ not: { statuses: false } }))).toBe(QUERY_DOC_MIN_VERSION);
+  });
+
+  it('rises to v2 for a date range or a live negation', () => {
+    expect(requiredVersion(filter({ updated_at: { after: '-7d' } }))).toBe(2);
+    expect(requiredVersion(filter({ statuses: ['x'], not: { statuses: true } }))).toBe(2);
+  });
+
+  it('refuses a v2 capability inside a document declaring v1', () => {
+    const d: QueryDoc = {
+      v: 1,
+      filter: filter({ updated_at: { after: '-7d' } }),
+      sort: defaultSort(),
+    };
+    expect(validateQueryDoc(d)).toMatch(/need document version 2/);
+    // withRequiredVersion is the fix, and it lowers as well as raises.
+    expect(validateQueryDoc(withRequiredVersion(d))).toBeNull();
+    expect(withRequiredVersion({ ...d, v: 2, filter: filter({}) }).v).toBe(QUERY_DOC_MIN_VERSION);
+  });
+
+  it('still opens a stored v1 document', () => {
+    // The regression this guards: bumping the client to a strict v2 would make
+    // every stored v1 view unopenable in the builder, with no path forward.
+    const stored: QueryDoc = { v: 1, filter: filter({ statuses: ['open'] }), sort: defaultSort() };
+    expect(validateQueryDoc(stored)).toBeNull();
+  });
+
+  it('still refuses a version outside the range', () => {
+    for (const v of [0, 3, -1]) {
+      const d: QueryDoc = { v, filter: filter({}), sort: defaultSort() };
+      expect(validateQueryDoc(d), `v=${v}`).toMatch(/different version of Azimuthal/);
+    }
   });
 });

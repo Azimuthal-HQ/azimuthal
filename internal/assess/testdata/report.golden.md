@@ -4,21 +4,21 @@ This is a read-only assessment. Nothing was written, and no database was contact
 
 ## Readiness
 
-77 entities assessed.
+78 entities assessed.
 
 | Outcome | Entities | Share |
 |---|---:|---:|
-| Maps cleanly | 34 | 44.2% |
-| Maps with approximation | 22 | 28.6% |
+| Maps cleanly | 35 | 44.9% |
+| Maps with approximation | 22 | 28.2% |
 | Preserved as unknown | 2 | 2.6% |
-| Unmappable (lost) | 19 | 24.7% |
-| **Total** | **77** | **100.0%** |
+| Unmappable (lost) | 19 | 24.4% |
+| **Total** | **78** | **100.0%** |
 
 Every entity counted appears in exactly one row above; the arithmetic is checked, not asserted.
 
 ## What was read
 
-- **jira** — `(stream)`: 46 rows
+- **jira** — `(stream)`: 47 rows
 - **confluence** — `(stream)`: 18 rows
 
 ## What maps, and what does not
@@ -149,11 +149,11 @@ Every entity counted appears in exactly one row above; the arithmetic is checked
 
 ### Jira saved filters (JQL)
 
-3 entities.
+4 entities.
 
-- **1 maps cleanly** — every clause maps onto the saved-view filter vocabulary and the query's shape is flat
-- **1 maps with approximation** — the filter translates but narrows — a text clause becomes a title-only substring match, or a type/sprint clause restricts the view to Vector
-- **1 unmappable** — at least one clause or the query's shape has no representation: date predicates, negation, comparison operators, history operators, cross-field OR and grouping are all outside the vocabulary
+- **2 maps cleanly** — every clause maps onto the saved-view filter vocabulary and the query's shape is flat
+- **1 maps with approximation** — the filter translates but narrows — a text clause becomes a title-only substring match, a type/sprint clause restricts the view to Vector, or a date bound shifts by one instant because the filter's range is half-open
+- **1 unmappable** — at least one clause or the query's shape has no representation: history operators, calendar-boundary date functions such as startOfDay(), sub-day date offsets, comparison operators on non-date fields, text negation, cross-field OR and grouping are all outside the vocabulary
 
 ### Confluence spaces → spaces
 
@@ -261,8 +261,9 @@ Classified against the saved-view filter vocabulary, which is eight named fields
 - `project = DOCS AND status = Open AND assignee = currentUser()` — **expressible**
 - `text ~ "pool"` — **partially expressible**
   - `text ~ "pool"`: text searches the title only — Jira's text search also covers description, comments and attachments, so the translated filter matches strictly fewer rows
-- `project IN (DOCS, PLAT) AND created >= -30d ORDER BY created DESC` — **not expressible**
-  - `created >= -30d`: the vocabulary has no comparison operators — fields hold value lists matched for equality, so >, <, >= and <= have nothing to translate to
+- `project IN (DOCS, PLAT) AND created >= -30d ORDER BY created DESC` — **expressible**
+- `assignee = currentUser() OR status != Done` — **not expressible**
+  - an OR spans two different fields; the filter ANDs across fields and ORs only within one, so a cross-field OR cannot be expressed
 
 ## Assumptions this assessment rests on
 

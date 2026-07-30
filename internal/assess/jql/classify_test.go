@@ -49,6 +49,13 @@ func TestVocabulary_MatchesTheRealFilterDocument(t *testing.T) {
 	named := map[string]struct{}{
 		fieldSpaceIDs: {}, fieldStatuses: {}, fieldPriorities: {},
 		fieldAssignees: {}, fieldKinds: {}, fieldSprintIDs: {}, fieldText: {},
+		// v2. The four date ranges are targets like any other field; `not` is a
+		// modifier that no clause maps ONTO, but it still has to be named here
+		// — the guard's whole point is that this package has an opinion about
+		// every part of the document, and "negation flips these six fields and
+		// no others" is an opinion that goes stale exactly as fast as the rest.
+		fieldCreatedAt: {}, fieldUpdatedAt: {}, fieldDueAt: {}, fieldResolvedAt: {},
+		fieldNot: {},
 	}
 
 	for f := range named {
@@ -64,6 +71,51 @@ func TestVocabulary_MatchesTheRealFilterDocument(t *testing.T) {
 	for jqlField, m := range jqlFieldMap {
 		require.Contains(t, named, m.filterField,
 			"JQL field %q maps to unknown filter field %q", jqlField, m.filterField)
+	}
+}
+
+// TestVocabulary_NegatableFieldsMatchTheRealNegateRecord is the drift guard for
+// v2's `not` record, and it exists because the guard above cannot see it.
+//
+// TestVocabulary_MatchesTheRealFilterDocument walks views.Filter's JSON tags,
+// so it sees that a field called "not" exists and nothing more. WHICH fields
+// that record can negate is a second vocabulary, duplicated here as
+// negatableFields — and a classifier that believed the wrong six would report
+// confident verdicts about a negation the server refuses, which is the exact
+// failure the first guard was written to prevent, one level down.
+//
+// Fails in both directions: a field added to views.Negate with no entry here,
+// and an entry here naming a field views.Negate does not have.
+func TestVocabulary_NegatableFieldsMatchTheRealNegateRecord(t *testing.T) {
+	t.Parallel()
+
+	defined := map[string]struct{}{}
+	rt := reflect.TypeOf(views.Negate{})
+	for i := range rt.NumField() {
+		name := strings.Split(rt.Field(i).Tag.Get("json"), ",")[0]
+		if name != "" && name != "-" {
+			defined[name] = struct{}{}
+		}
+	}
+
+	for f := range defined {
+		require.Contains(t, negatableFields, f,
+			"views.Negate can negate %q and this package does not know it — a JQL negation on that "+
+				"field is being reported as unmappable when it maps", f)
+	}
+	for f := range negatableFields {
+		require.Contains(t, defined, f,
+			"this package believes %q is negatable and views.Negate has no such field — a JQL "+
+				"negation on it is being reported as mappable when the server would refuse it", f)
+	}
+
+	// The four date fields must NOT be negatable. v2 refuses date negation by
+	// having no key for it, and the classifier's story about why depends on
+	// that staying true.
+	for _, d := range []string{fieldCreatedAt, fieldUpdatedAt, fieldDueAt, fieldResolvedAt} {
+		require.NotContains(t, defined, d,
+			"views.Negate gained the date field %q; v2's stated design is that a range's bounds "+
+				"already express exclusion, and the classifier says so", d)
 	}
 }
 
@@ -113,42 +165,136 @@ func TestClassify_StatusAndAssigneeAreExpressible(t *testing.T) {
 	require.Equal(t, Expressible, q.Verdict)
 }
 
-// TestClassify_DateClausesAreNotExpressible is the finding most likely to
-// surprise a reader: the four date columns are sortable, which makes it natural
-// to assume they are filterable. They are not — the filter document has no date
-// predicate of any kind.
-func TestClassify_DateClausesAreNotExpressible(t *testing.T) {
+// TestClassify_DateClausesAgainstV2Ranges replaces the v1 test that asserted
+// every date clause was lost.
+//
+// v1's assertion was a single fact — "all of these are NotExpressible" — and
+// it is no longer true. What replaces it is stricter, not weaker: every case
+// names its EXACT verdict, so the test fails if a clause is over-promoted as
+// readily as if one is under-promoted. Roughly half of these still do not
+// translate, and those halves are the point.
+func TestClassify_DateClausesAgainstV2Ranges(t *testing.T) {
 	t.Parallel()
 
-	for _, jql := range []string{
-		`created >= -30d`,
-		`updated < "2026-01-01"`,
-		`duedate <= endOfWeek()`,
-		`resolutiondate > -1w`,
-	} {
-		q := Classify(jql)
-		require.Equal(t, NotExpressible, q.Verdict, "query: %s", jql)
-		require.NotEmpty(t, q.Clauses[0].Reason)
-	}
+	cases := []struct {
+		jql    string
+		want   Expressibility
+		reason string
+	}{
+		// Exact operator, exact value: >= is the inclusive `after` bound and a
+		// day-or-week relative literal is spelled the same in both grammars.
+		{`created >= -30d`, Expressible, "inclusive after bound, relative literal"},
+		{`updated >= -4w`, Expressible, "weeks carry across unchanged"},
+		{`duedate < now()`, Expressible, "now() is the filter's own token — this is \"overdue\""},
 
-	// And with an operator the vocabulary would otherwise accept, the field is
-	// still the reason.
-	q := Classify(`created = "2026-01-01"`)
-	require.Equal(t, NotExpressible, q.Clauses[0].Verdict)
-	require.Contains(t, q.Clauses[0].Reason, "no date predicate")
+		// Inclusivity mismatches. The range is half-open, so > and <= are each
+		// off by one instant in a direction the document cannot express.
+		{`resolutiondate > -1w`, Partial, "after is inclusive; a strict > differs at the boundary"},
+		{`created <= -1d`, Partial, "before is exclusive; an inclusive <= differs at the boundary"},
+
+		// An absolute JQL date carries no zone, so pinning it to an instant is
+		// a choice the translation has to make.
+		{`updated < "2026-01-01"`, Partial, "absolute date, no zone"},
+		{`created = "2026-01-01"`, Partial, "= means a whole day, so a two-bound range plus a zone choice"},
+
+		// Still lost, and for four different reasons.
+		{`duedate <= endOfWeek()`, NotExpressible, "calendar truncation, not an offset"},
+		{`created >= startOfMonth()`, NotExpressible, "same — startOf/endOf cannot be an offset"},
+		{`created >= -30m`, NotExpressible, "JQL m is MINUTES; the filter bottoms out at days"},
+		{`updated >= -2h`, NotExpressible, "hours are finer than the filter's smallest unit"},
+		{`lastViewed >= -7d`, NotExpressible, "the product stores no last-viewed timestamp"},
+		{`worklogDate >= -7d`, NotExpressible, "the product has no worklog"},
+		{`created != -7d`, NotExpressible, "v2 defines no date negation — bounds already exclude"},
+		{`duedate IS EMPTY`, NotExpressible, "a range has two bounds and no way to say \"unset\""},
+	}
+	for _, c := range cases {
+		q := Classify(c.jql)
+		require.Len(t, q.Clauses, 1, "query: %s", c.jql)
+		require.Equal(t, c.want, q.Clauses[0].Verdict, "query: %s (%s)", c.jql, c.reason)
+		require.NotEmpty(t, q.Clauses[0].Reason, "query: %s", c.jql)
+	}
 }
 
-func TestClassify_NegationIsNotExpressible(t *testing.T) {
+// TestClassify_DateClauseOrderingBug is the regression test for the ordering
+// defect v2 exposed.
+//
+// classifyClause used to reject the comparison operators BEFORE asking whether
+// the field was a date. Under v1 that was invisible, because a date clause was
+// lost either way and both branches gave the same verdict. Under v2 it would
+// have kept the entire date bucket in the lost pile — the exact bucket v2 was
+// built to empty — while every other test still passed.
+//
+// Fails before the reorder in classifyClause, passes after. The assertion is
+// on the REASON as well as the verdict, because the verdict alone would also
+// be satisfied by a date clause that mapped for some unrelated cause.
+func TestClassify_DateClauseOrderingBug(t *testing.T) {
 	t.Parallel()
 
+	q := Classify(`created >= -30d`)
+	require.Equal(t, Expressible, q.Clauses[0].Verdict)
+	require.Equal(t, fieldCreatedAt, q.Clauses[0].FilterField)
+	require.NotContains(t, q.Clauses[0].Reason, "comparison operators",
+		"the operator branch answered first, so every date clause is still lost")
+
+	// The same operators on a NON-date field must still be refused — the
+	// reorder must not have widened the operator rule for everybody.
+	for _, jql := range []string{`priority > Medium`, `status < Done`, `summary >= "a"`} {
+		got := Classify(jql)
+		require.Equal(t, NotExpressible, got.Clauses[0].Verdict, "query: %s", jql)
+		require.Contains(t, got.Clauses[0].Reason, "comparison operators", "query: %s", jql)
+	}
+}
+
+// TestClassify_NegationAgainstV2NotRecord replaces the v1 test that asserted
+// all negation was lost.
+//
+// v2 negates the SIX MEMBERSHIP FIELDS and nothing else, so the interesting
+// content of this test is the boundary rather than the capability: `text` and
+// the four date fields must still be refused, and refused for a reason that
+// names why rather than for the blanket reason v1 gave.
+func TestClassify_NegationAgainstV2NotRecord(t *testing.T) {
+	t.Parallel()
+
+	// Negation maps exactly on the fields whose VALUES also map exactly.
 	for _, jql := range []string{
 		`status != Done`,
 		`project NOT IN (ABC, DEF)`,
-		`summary !~ "spike"`,
+		`assignee != currentUser()`,
 	} {
 		q := Classify(jql)
-		require.Equal(t, NotExpressible, q.Verdict, "query: %s", jql)
-		require.Contains(t, strings.ToLower(q.Clauses[0].Reason), "negation", "query: %s", jql)
+		require.Equal(t, Expressible, q.Clauses[0].Verdict, "query: %s", jql)
+		require.Contains(t, strings.ToLower(q.Clauses[0].Reason), "negat", "query: %s", jql)
+	}
+
+	// Negation does NOT rescue a field that was already partial for its own
+	// reasons — priority's four-value set, and the two Vector-only fields. The
+	// clause still needs the same value coercion it needed before it was
+	// negated, so the verdict stays partial and the report keeps saying so.
+	for _, jql := range []string{
+		`priority != Low`,
+		`issuetype NOT IN (Bug, Task)`,
+		`sprint != 4`,
+	} {
+		q := Classify(jql)
+		require.Equal(t, Partial, q.Clauses[0].Verdict, "query: %s", jql)
+		// The REASON must be the field's, not the negation's. A "partial"
+		// verdict beside a reason saying the clause carries across unchanged is
+		// the worst line a migration report can print: the reader is told there
+		// is an approximation and not told what it is.
+		require.Contains(t, q.Clauses[0].Reason, "the field's own limitation stands",
+			"query: %s — the negation reason overwrote the field's", jql)
+	}
+
+	// The fields v2 deliberately left out of the `not` record.
+	notExpressible := []string{
+		`summary !~ "spike"`,      // text is a substring match, not a membership
+		`description !~ "spike"`,  // same, via the same field
+		`created != -7d`,          // dates express exclusion through bounds
+		`duedate != "2026-01-01"`, // same
+	}
+	for _, jql := range notExpressible {
+		q := Classify(jql)
+		require.Equal(t, NotExpressible, q.Clauses[0].Verdict, "query: %s", jql)
 	}
 }
 
@@ -329,12 +475,25 @@ func TestClassify_IsEmptyMapsToUnassignedForAssignee(t *testing.T) {
 // above. IS EMPTY genuinely maps (it is the "unassigned" token); its negation
 // does not, and reads like a presence test rather than a negation. Classifying
 // it as expressible would promise a translation that cannot exist.
+// TestClassify_IsNotEmptyIsNegationNotPresence keeps v1's insight and updates
+// its conclusion.
+//
+// IS NOT EMPTY still reads like a presence test and still is not one. What
+// changed is that for ASSIGNEES the negation now has something to flip: the
+// "unassigned" token, negated, is exactly "somebody holds this". No other field
+// has an empty-value token, so no other field's IS NOT EMPTY translates — which
+// is the half of this test that must not be lost.
 func TestClassify_IsNotEmptyIsNegationNotPresence(t *testing.T) {
 	t.Parallel()
 
 	q := Classify(`assignee IS NOT EMPTY`)
-	require.Equal(t, NotExpressible, q.Verdict)
-	require.Contains(t, q.Clauses[0].Reason, "negation")
+	require.Equal(t, Expressible, q.Clauses[0].Verdict)
+	require.Contains(t, q.Clauses[0].Reason, "unassigned")
+
+	for _, jql := range []string{`status IS NOT EMPTY`, `duedate IS NOT EMPTY`, `sprint IS NOT EMPTY`} {
+		got := Classify(jql)
+		require.Equal(t, NotExpressible, got.Clauses[0].Verdict, "query: %s", jql)
+	}
 }
 
 // TestClassify_InValueListIsNotStructuralNesting — "project IN (ABC, DEF)" is
@@ -364,6 +523,13 @@ func TestClassify_RealisticQueryMixesVerdicts(t *testing.T) {
 	require.Equal(t, Expressible, q.Clauses[0].Verdict)
 	require.Equal(t, Expressible, q.Clauses[1].Verdict)
 	require.Equal(t, Expressible, q.Clauses[2].Verdict)
-	require.Equal(t, NotExpressible, q.Clauses[3].Verdict, "the date clause is the one that is lost")
-	require.Equal(t, NotExpressible, q.Verdict, "the whole query is only as good as its worst clause")
+	// This clause is why the test exists. Under v1 it was the one that lost the
+	// whole query; under v2 it is the one that no longer does.
+	require.Equal(t, Expressible, q.Clauses[3].Verdict, "the date clause is what v2 recovered")
+	require.Equal(t, Expressible, q.Verdict, "a query every clause of which maps, maps")
+
+	// The same query with one unmappable clause still loses, so the
+	// worst-clause rule has not been softened along the way.
+	worse := Classify(`project = ABC AND created >= startOfMonth()`)
+	require.Equal(t, NotExpressible, worse.Verdict, "the whole query is only as good as its worst clause")
 }

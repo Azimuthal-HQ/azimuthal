@@ -691,6 +691,18 @@ Counts and breakdowns are the same read a results page performs, answered with `
 `GROUP BY` instead of a row set — the same filter vocabulary, the same fan-out, the same
 per-viewer access union, the same ADR-0008 exception (§13).
 
+> **A filter field must be added to SIX predicate blocks, not two.** `ListViewTickets` and
+> `ListViewProjectItems` are joined by the `Count*` and `Breakdown*` pairs above, and all six carry
+> a hand-maintained copy of the same `WHERE` terms with nothing mechanical linking them. A field
+> added to some of them compiles, generates and passes every existing test, while a gadget quietly
+> reports a number for a query nobody ran. Filter v2 hit this immediately: a replace-all matched
+> five of the six, because `ListViewTickets` carries a comment the others do not.
+>
+> `TestSavedViewFanouts_CarryIdenticalFilterPredicates` (in `internal/db/queries/`) now fails the
+> moment the six disagree, and `TestViewAggregate_CountAgreesWithTheListItCounts` proves the same
+> thing behaviourally against a real database. The two halves may differ only by `kinds` and
+> `sprint_ids`, which are Vector-only columns.
+
 > **The rule: never fetch pages and count them.** That form is bounded by `MaxPageSize` and would
 > silently under-report any view with more than two hundred results, which is precisely the view
 > somebody puts a count gadget on. `TestViewAggregate_CountIsNotBoundedByThePageSize` fails if it

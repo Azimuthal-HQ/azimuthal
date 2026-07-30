@@ -14,17 +14,23 @@ import { useItemTypes, useSpaces, useSprints } from '../../lib/api';
 import {
   ASSIGNEE_ME,
   ASSIGNEE_UNASSIGNED,
+  DATE_NOW,
   QUERY_LIMITS,
   VIEW_MODULES,
   VIEW_PRIORITIES,
   VIEW_SORT_FIELDS,
   hasModule,
+  isRelativeBound,
   pruneVectorOnlyFields,
   vectorOnlyFieldsAllowed,
   vectorOnlyFieldsReason,
+  withRequiredVersion,
+  type QueryDateRange,
   type QueryDoc,
   type QueryFilter,
+  type ViewDateField,
   type ViewModule,
+  type ViewNegatableField,
   type ViewPriority,
   type ViewSortDir,
   type ViewSortField,
@@ -91,6 +97,66 @@ function toggled(list: readonly string[] | undefined, value: string): string[] {
   return current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
 }
 
+/**
+ * The relative presets, as the TOKENS the document stores.
+ *
+ * These are strings, never dates. Resolving one here would freeze the view to
+ * the moment it was built — the same mistake as substituting the current user's
+ * id for the "me" token — and it would also read the clock during render, which
+ * `react-hooks/purity` refuses outright. The server resolves them per request.
+ */
+const DATE_PRESETS: { value: string; label: string; range: QueryDateRange }[] = [
+  { value: 'last-7d', label: 'Last 7 days', range: { after: '-7d' } },
+  { value: 'last-30d', label: 'Last 30 days', range: { after: '-30d' } },
+  { value: 'last-3mo', label: 'Last 3 months', range: { after: '-3mo' } },
+  { value: 'next-7d', label: 'Next 7 days', range: { after: DATE_NOW, before: '+7d' } },
+  { value: 'next-30d', label: 'Next 30 days', range: { after: DATE_NOW, before: '+30d' } },
+  { value: 'before-now', label: 'In the past', range: { before: DATE_NOW } },
+];
+
+const DATE_FIELD_LABEL: Record<ViewDateField, string> = {
+  created_at: 'Created',
+  updated_at: 'Last updated',
+  due_at: 'Due',
+  resolved_at: 'Resolved',
+};
+
+/** Which preset a stored range is, or 'custom' when it is not one of them. */
+function presetFor(range: QueryDateRange | undefined): string {
+  if (!range) return 'any';
+  const hit = DATE_PRESETS.find(
+    (p) => (p.range.after ?? '') === (range.after ?? '') && (p.range.before ?? '') === (range.before ?? ''),
+  );
+  return hit ? hit.value : 'custom';
+}
+
+/**
+ * datetime-local <-> RFC3339.
+ *
+ * A near-duplicate of `localToRFC3339` in pages/admin/AuditLogPage.tsx, which
+ * is private to that page and has no inverse. Two private copies is the point
+ * at which a third would be a defect: if another surface needs these, lift both
+ * halves into lib rather than writing a third.
+ *
+ * The author's zone is used to READ the picker and is then discarded — what the
+ * document stores is an absolute instant with an offset, so a view built in one
+ * zone means the same moment to a reader in another.
+ */
+function localToRFC3339(value: string): string | undefined {
+  if (!value) return undefined;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+function rfc3339ToLocal(value: string | undefined): string {
+  if (!value || isRelativeBound(value)) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  // toISOString is UTC; shift by the offset so the picker shows local time.
+  const shifted = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+  return shifted.toISOString().slice(0, 16);
+}
+
 interface QueryFilterBuilderProps {
   orgId: string;
   value: QueryDoc;
@@ -137,12 +203,42 @@ export function QueryFilterBuilder({
   const [personLabels, setPersonLabels] = useState<Record<string, string>>({});
   const [statusDraft, setStatusDraft] = useState('');
 
+  /**
+   * Every change goes out through withRequiredVersion, so the document declares
+   * the LOWEST version it needs. Adding a date range raises it to 2; removing
+   * the last one lowers it back to 1, which keeps a view readable by an older
+   * client for as long as it stays inside v1's vocabulary.
+   */
   function setFilter(next: QueryFilter) {
-    onChange({ ...value, filter: next });
+    onChange(withRequiredVersion({ ...value, filter: next }));
   }
 
   function setList(key: ListField, values: string[]) {
-    setFilter(withList(filter, key, values));
+    const next = withList(filter, key, values);
+    // Emptying a field takes its exclusion with it. A `not` flag left behind
+    // over no values is refused by the server, and the person who just cleared
+    // the last chip has no way to see that an invisible toggle is why their
+    // view will not save.
+    if (values.length === 0 && next.not?.[key as ViewNegatableField]) {
+      const not = { ...next.not };
+      delete not[key as ViewNegatableField];
+      next.not = Object.values(not).some(Boolean) ? not : undefined;
+    }
+    setFilter(next);
+  }
+
+  function toggleNegate(key: ViewNegatableField) {
+    const not = { ...(filter.not ?? {}) };
+    if (not[key]) delete not[key];
+    else not[key] = true;
+    setFilter({ ...filter, not: Object.values(not).some(Boolean) ? not : undefined });
+  }
+
+  function setDateRange(field: ViewDateField, range: QueryDateRange | undefined) {
+    const next = { ...filter };
+    if (range === undefined) delete next[field];
+    else next[field] = range;
+    setFilter(next);
   }
 
   /**
@@ -230,7 +326,18 @@ export function QueryFilterBuilder({
       </Field>
 
       <Field>
-        <FieldLabel>Spaces</FieldLabel>
+        <div className="flex items-center justify-between gap-2">
+          <FieldLabel>Spaces</FieldLabel>
+          {!boundSpaceLabel && (
+            <ExcludeToggle
+              field="space_ids"
+              noun="spaces"
+              on={filter.not?.space_ids === true}
+              disabled={(filter.space_ids?.length ?? 0) === 0}
+              onToggle={toggleNegate}
+            />
+          )}
+        </div>
         {boundSpaceLabel ? (
           <p data-testid="view-spaces-bound" className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
             Bound to {boundSpaceLabel}. A queue searches the space it belongs to and no other.
@@ -258,7 +365,16 @@ export function QueryFilterBuilder({
       </Field>
 
       <Field>
-        <FieldLabel htmlFor="view-status-input">Statuses</FieldLabel>
+        <div className="flex items-center justify-between gap-2">
+          <FieldLabel htmlFor="view-status-input">Statuses</FieldLabel>
+          <ExcludeToggle
+            field="statuses"
+            noun="statuses"
+            on={filter.not?.statuses === true}
+            disabled={(filter.statuses?.length ?? 0) === 0}
+            onToggle={toggleNegate}
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {(filter.statuses ?? []).map((s) => (
             <Badge key={s} variant="default" className="gap-1" data-testid={`view-status-${s}`}>
@@ -300,7 +416,16 @@ export function QueryFilterBuilder({
       </Field>
 
       <Field>
-        <FieldLabel>Priorities</FieldLabel>
+        <div className="flex items-center justify-between gap-2">
+          <FieldLabel>Priorities</FieldLabel>
+          <ExcludeToggle
+            field="priorities"
+            noun="priorities"
+            on={filter.not?.priorities === true}
+            disabled={(filter.priorities?.length ?? 0) === 0}
+            onToggle={toggleNegate}
+          />
+        </div>
         <TypeFilter
           label="Priorities"
           testId="view-priorities"
@@ -313,7 +438,16 @@ export function QueryFilterBuilder({
       </Field>
 
       <Field>
-        <FieldLabel>Assignees</FieldLabel>
+        <div className="flex items-center justify-between gap-2">
+          <FieldLabel>Assignees</FieldLabel>
+          <ExcludeToggle
+            field="assignees"
+            noun="assignees"
+            on={filter.not?.assignees === true}
+            disabled={(filter.assignees?.length ?? 0) === 0}
+            onToggle={toggleNegate}
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <TypeFilter
             label="Assignee shortcuts"
@@ -350,8 +484,12 @@ export function QueryFilterBuilder({
           />
         </div>
         <FieldHint>
-          “Me” is stored as the literal token and resolved per viewer, so a shared view means each
-          reader’s own work rather than yours.
+          {filter.not?.assignees === true
+            ? // The interaction is worth stating because it is the one people
+              // get wrong: excluding "Me" leaves unassigned work IN, because an
+              // unassigned item is not assigned to you.
+              'Excluding these. Work with no assignee is still included unless you exclude “Unassigned” too.'
+            : '“Me” is stored as the literal token and resolved per viewer, so a shared view means each reader’s own work rather than yours.'}
         </FieldHint>
       </Field>
 
@@ -360,7 +498,16 @@ export function QueryFilterBuilder({
           naming a type or a sprint alongside Beacon is a 422 on the whole
           document, not an empty Beacon half. */}
       <Field>
-        <FieldLabel>Types</FieldLabel>
+        <div className="flex items-center justify-between gap-2">
+          <FieldLabel>Types</FieldLabel>
+          <ExcludeToggle
+            field="kinds"
+            noun="types"
+            on={filter.not?.kinds === true}
+            disabled={!vectorOnlyOK || (filter.kinds?.length ?? 0) === 0}
+            onToggle={toggleNegate}
+          />
+        </div>
         {kindOptions.length > 0 ? (
           <TypeFilter
             label="Item types"
@@ -379,7 +526,16 @@ export function QueryFilterBuilder({
       </Field>
 
       <Field>
-        <FieldLabel>Sprints</FieldLabel>
+        <div className="flex items-center justify-between gap-2">
+          <FieldLabel>Sprints</FieldLabel>
+          <ExcludeToggle
+            field="sprint_ids"
+            noun="sprints"
+            on={filter.not?.sprint_ids === true}
+            disabled={!vectorOnlyOK || (filter.sprint_ids?.length ?? 0) === 0}
+            onToggle={toggleNegate}
+          />
+        </div>
         {vectorOnlyWhy ? (
           <FieldHint data-testid="view-sprints-reason">{vectorOnlyWhy}</FieldHint>
         ) : selectedSpaces.length === 0 ? (
@@ -421,6 +577,20 @@ export function QueryFilterBuilder({
         </FieldHint>
       </Field>
 
+      {/* Dates. Four ranges over the four date columns both tables share.
+          Relative periods are stored as TOKENS and resolved per request, so
+          "Last 7 days" keeps meaning the last 7 days rather than the week the
+          view was built. There is deliberately no exclude toggle here: a range
+          already expresses exclusion through its bounds. */}
+      {(['created_at', 'updated_at', 'due_at', 'resolved_at'] as ViewDateField[]).map((field) => (
+        <DateRangeField
+          key={field}
+          field={field}
+          value={filter[field]}
+          onChange={(range) => setDateRange(field, range)}
+        />
+      ))}
+
       <Field>
         <FieldLabel htmlFor="view-sort-field">Sort</FieldLabel>
         <div className="flex flex-wrap items-center gap-3">
@@ -453,6 +623,142 @@ export function QueryFilterBuilder({
         <FieldHint>One field, one direction — the results cursor encodes a single key.</FieldHint>
       </Field>
     </div>
+  );
+}
+
+/**
+ * The per-field exclusion toggle — the surface of v2's `not` record.
+ *
+ * Disabled until the field names something, because "everything except
+ * nothing" is everything: the server refuses that document, and a toggle that
+ * can be switched on to produce an unsaveable view is a control that lies.
+ *
+ * It is a button with aria-pressed rather than a checkbox because it modifies
+ * the field beside it rather than contributing a value of its own, and a
+ * screen reader should hear it as a mode on that field.
+ */
+function ExcludeToggle({
+  field,
+  noun,
+  on,
+  disabled,
+  onToggle,
+}: {
+  field: ViewNegatableField;
+  noun: string;
+  on: boolean;
+  disabled: boolean;
+  onToggle: (field: ViewNegatableField) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={`Exclude the selected ${noun}`}
+      data-testid={`view-exclude-${field}`}
+      disabled={disabled}
+      onClick={() => onToggle(field)}
+      className={cn(
+        'rounded-[var(--radius-sm)] border px-2 py-0.5 text-[11px] uppercase tracking-wider',
+        'disabled:cursor-not-allowed disabled:opacity-40',
+        on
+          ? 'border-[var(--color-danger)] bg-[var(--color-danger)]/10 text-[var(--color-danger)]'
+          : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)]',
+      )}
+    >
+      {on ? 'Excluding' : 'Exclude'}
+    </button>
+  );
+}
+
+/**
+ * One date field's range: a preset picker, plus two instants when the answer is
+ * "custom".
+ *
+ * Fully controlled and derived — the mode comes from the stored range through
+ * presetFor rather than from state seeded in an effect, which is both simpler
+ * and the only shape `react-hooks/set-state-in-effect` permits. Nothing here
+ * reads the clock: a preset is a token, and rendering one never resolves it.
+ */
+function DateRangeField({
+  field,
+  value,
+  onChange,
+}: {
+  field: ViewDateField;
+  value: QueryDateRange | undefined;
+  onChange: (range: QueryDateRange | undefined) => void;
+}) {
+  const mode = presetFor(value);
+  const label = DATE_FIELD_LABEL[field];
+
+  function setMode(next: string) {
+    if (next === 'any') return onChange(undefined);
+    if (next === 'custom') return onChange({ after: value?.after ?? '', before: value?.before ?? '' });
+    const preset = DATE_PRESETS.find((p) => p.value === next);
+    if (preset) onChange({ ...preset.range });
+  }
+
+  function setBound(side: 'after' | 'before', local: string) {
+    const next: QueryDateRange = { ...value };
+    const iso = localToRFC3339(local);
+    if (iso) next[side] = iso;
+    else delete next[side];
+    // Both bounds cleared is not a range at all — the server refuses `{}`, so
+    // clearing the last one removes the filter rather than leaving an empty
+    // object the Save button would then reject.
+    onChange(next.after || next.before ? next : undefined);
+  }
+
+  return (
+    <Field>
+      <FieldLabel htmlFor={`view-date-${field}`}>{label}</FieldLabel>
+      <select
+        id={`view-date-${field}`}
+        data-testid={`view-date-${field}`}
+        className={selectClass}
+        value={mode}
+        onChange={(e) => setMode(e.target.value)}
+      >
+        <option value="any">Any time</option>
+        {DATE_PRESETS.map((p) => (
+          <option key={p.value} value={p.value}>
+            {p.label}
+          </option>
+        ))}
+        <option value="custom">Between two dates…</option>
+      </select>
+      {mode === 'custom' && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <Input
+            type="datetime-local"
+            aria-label={`${label} from`}
+            data-testid={`view-date-${field}-after`}
+            className="max-w-[15rem]"
+            value={rfc3339ToLocal(value?.after)}
+            onChange={(e) => setBound('after', e.target.value)}
+          />
+          <span className="text-[var(--text-sm)] text-[var(--color-text-muted)]">to</span>
+          <Input
+            type="datetime-local"
+            aria-label={`${label} until`}
+            data-testid={`view-date-${field}-before`}
+            className="max-w-[15rem]"
+            value={rfc3339ToLocal(value?.before)}
+            onChange={(e) => setBound('before', e.target.value)}
+          />
+        </div>
+      )}
+      {mode !== 'any' && (
+        <FieldHint>
+          {mode === 'custom'
+            ? 'From is included, until is excluded, so two adjacent ranges never count the same item twice.'
+            : 'A relative period is stored as written and resolved each time the view is read — it keeps meaning this, not the day you saved it.'}
+          {field === 'resolved_at' && ' Nothing in Azimuthal sets a resolved date yet, so this filter matches no items.'}
+        </FieldHint>
+      )}
+    </Field>
   );
 }
 

@@ -284,7 +284,32 @@ func TestViewsMatrix_QueryValidationIsStrict(t *testing.T) {
 		"kinds alongside beacon":       `{"v":1,"filter":{"modules":["beacon","vector"],"kinds":["bug"]},"sort":{"field":"updated_at","dir":"desc"}}`,
 		"codex is not a view module":   `{"v":1,"filter":{"modules":["codex"]},"sort":{"field":"updated_at","dir":"desc"}}`,
 		"arbitrary column as sort":     `{"v":1,"filter":{"modules":["beacon"]},"sort":{"field":"assignee_id","dir":"asc"}}`,
-		"unsupported document version": `{"v":2,"filter":{"modules":["beacon"]},"sort":{"field":"updated_at","dir":"desc"}}`,
+		"unsupported document version": `{"v":3,"filter":{"modules":["beacon"]},"sort":{"field":"updated_at","dir":"desc"}}`,
+
+		// v2. The vocabulary grew; the strictness did not move, and these say so
+		// at the HTTP boundary rather than only in the package's own tests.
+		"v2 date range inside a v1 document": `{"v":1,"filter":{"modules":["beacon"],"updated_at":{"after":"-7d"}},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`,
+		"v2 negation inside a v1 document": `{"v":1,"filter":{"modules":["beacon"],"statuses":["open"],"not":{"statuses":true}},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`,
+		"unrecognised relative period": `{"v":2,"filter":{"modules":["beacon"],"updated_at":{"after":"-7 fortnights"}},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`,
+		// JQL spells MINUTES "m"; this vocabulary spells months "mo" and has no
+		// sub-day unit, so "-1m" must be refused rather than quietly guessed at.
+		"jql minute unit": `{"v":2,"filter":{"modules":["beacon"],"updated_at":{"after":"-1m"}},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`,
+		"empty date range": `{"v":2,"filter":{"modules":["beacon"],"due_at":{}},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`,
+		"inverted date range": `{"v":2,"filter":{"modules":["beacon"],"created_at":{"after":"-1d","before":"-7d"}},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`,
+		"negation with nothing to negate": `{"v":2,"filter":{"modules":["beacon"],"not":{"statuses":true}},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`,
+		// There is no date negation and no key that could express one, so this
+		// is refused by the unknown-field rule rather than by a special case.
+		"negation on a date field": `{"v":2,"filter":{"modules":["beacon"],"not":{"created_at":true}},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`,
+		"unknown key inside a date range": `{"v":2,"filter":{"modules":["beacon"],"updated_at":{"since":"-7d"}},` +
+			`"sort":{"field":"updated_at","dir":"desc"}}`,
 	}
 	for name, q := range cases {
 		t.Run(name, func(t *testing.T) {

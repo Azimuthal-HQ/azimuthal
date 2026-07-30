@@ -176,6 +176,7 @@ func Aggregate(ctx context.Context, store AggregateStore, q Query, v Viewer, gro
 		// already refuses them alongside Beacon, so this is belt and braces
 		// rather than the enforcement — the same line Resolve carries.
 		p.Kinds, p.SprintIDs = nil, nil
+		p.NotKinds, p.NotSprintIDs = false, false
 		n, err := aggregateModule(ctx, p, group, merged, store.CountTickets, store.BreakdownTickets)
 		if err != nil {
 			return AggregateResult{}, fmt.Errorf("beacon: %w", err)

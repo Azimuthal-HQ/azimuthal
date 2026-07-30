@@ -48,9 +48,20 @@ type DefaultQueue struct {
 	build func(spaceID uuid.UUID, open, done []string) Query
 }
 
+// queueQuery builds one default queue's document.
+//
+// It stamps the LOWEST version the document needs rather than the newest this
+// build can write — which for these documents is 1, since they use nothing v2
+// added.
+//
+// These rows are PERSISTED, one set per Beacon space, so the difference is not
+// cosmetic. A document stamped 2 for no reason is one an older binary refuses
+// to read, which would turn a routine rollback into every queue in the product
+// failing to load. Stamping what the document actually requires keeps that door
+// open for as long as the document stays inside v1's vocabulary, and closes it
+// only for the documents that genuinely need v2.
 func queueQuery(spaceID uuid.UUID, statuses []string, assignees []string, sort Sort) Query {
-	return Query{
-		V: Version,
+	q := Query{
 		Filter: Filter{
 			Modules:   []Module{ModuleBeacon},
 			SpaceIDs:  []uuid.UUID{spaceID},
@@ -59,6 +70,8 @@ func queueQuery(spaceID uuid.UUID, statuses []string, assignees []string, sort S
 		},
 		Sort: sort,
 	}
+	q.V = q.RequiredVersion()
+	return q
 }
 
 // DefaultQueues is the JSM-parity starting set.
@@ -184,6 +197,16 @@ func bindToSpace(q Query, spaceID uuid.UUID) (Query, error) {
 	}
 	q.Filter.Modules = []Module{ModuleBeacon}
 	q.Filter.SpaceIDs = []uuid.UUID{spaceID}
+	// The binding is not negotiable, so the NEGATION of it is cleared too.
+	//
+	// Overwriting SpaceIDs while leaving Not.SpaceIDs set would turn "this
+	// space" into "every space except this one" — the exact inversion of the
+	// binding, on a route whose guard established readability of THIS space and
+	// nothing else. The access union still bounds the result to spaces the
+	// viewer may read, so this is a scope violation rather than a leak; it is
+	// cleared here because a queue that searches somewhere other than the space
+	// it belongs to is a defect its author cannot see.
+	q.Filter.Not.SpaceIDs = false
 	return q, nil
 }
 

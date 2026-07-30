@@ -1564,3 +1564,101 @@ PR, not when you plan the phase — and if the branch is long-lived, re-check it
   worktrees, migration 048 could not be applied and eleven tests failed on the toolchain rather
   than on any change. `testutil.NewTestDB` is unaffected (it clones a fingerprinted template into
   its own database). Recorded because the failure reads exactly like a broken migration.
+
+---
+
+## Filter vocabulary v2 — dates and negation
+
+The saved-view filter document is now versioned 1..2. This section records what changed, and one
+decision a maintainer should confirm rather than inherit.
+
+- **The "locked decision" P5 flagged has been acted on, under this phase's brief.** P5 recorded, in
+  the entry above: *"The filter vocabulary has no time dimension, so a previous-period count is not
+  expressible without extending it — a change to a locked decision rather than a render choice."*
+  It declined the extension as out of its own scope and left it for a maintainer. This phase was
+  commissioned to make exactly that extension, so the lock was lifted by the brief rather than by
+  the implementation. **For a maintainer:** if that reading is wrong, this is the entry to object
+  to — the change is real, it is in `internal/core/views/filter.go`, and it is not something a
+  reviewer should have to infer from a diff.
+
+- **No ADR changes, and that is checked rather than assumed.** ADR-0009 does not mention the filter
+  document's shape at all — it constrains storage-versus-results, scope ownership and the
+  per-module fan-out. P4 already established this precedent when it replaced the spec's
+  `{field, op, value}` sketch with a closed record without amending the ADR. ADR-0011's exclusion
+  clause forbids EXECUTION ("no Groovy, no JavaScript hooks, no user-supplied code"), not
+  expressiveness, and its Tier 3 is the governing precedent: a fixed closed set, defined in code,
+  extended only by a deliberate release decision. A closed relative-token grammar is an extension
+  of a closed set; an open duration parser would not be, and v2 does not add one.
+
+  ADR-0011 also fixes the rule that *"a vocabulary that grows without amending its own ADR is how
+  the boundary this document draws stops meaning anything"*. This entry is that record.
+
+- **The document is still a record, not a query language.** `{after, before}` are two fixed keys on
+  a named field rather than a caller-supplied operator, and `not: true` is a boolean attribute of a
+  named field rather than a node in a tree. There is no `op`, no nesting, and **no cross-field OR in
+  v2 either** — that remains unrepresentable by decision, and the JQL classifier reports it as such.
+
+- **"The two SQL fan-outs" is now six.** The phrase appears in `shared-surfaces.md` §18 and in the
+  header of `saved_views.sql`, and it was accurate when P4 wrote it. P5's dashboard gadgets added
+  `CountView*` and `BreakdownView*`, so a filter field must now be added to SIX predicate blocks.
+  During this change a replace-all matched five of the six — `ListViewTickets` carries a comment the
+  others do not — and the result compiled, generated, and passed every existing test with the Beacon
+  list fan-out ignoring every v2 filter. `TestSavedViewFanouts_CarryIdenticalFilterPredicates` now
+  asserts the parity that nothing previously did.
+
+- **The relative-token month unit is `mo`, not `m`, and the spelling is load-bearing.** JQL's
+  relative date literals use `w`/`d`/`h`/`m` where `m` is MINUTES, and JQL has no month unit at all.
+  Sharing the spelling would have made `-1m` valid in both vocabularies meaning two things three
+  orders of magnitude apart, and the Jira importer would have translated it silently and wrongly.
+  An unshared spelling turns that into a parse error.
+
+- **`resolved_at` is filterable but nothing in the product writes it.** The column exists on both
+  tables, is already selected by both fan-outs and is already a valid SORT field, so sorting by it
+  has been an equally silent no-op since P4. v2 adds a `resolved_at` range for symmetry with the
+  other three date fields, and the builder says plainly that it matches nothing yet. **For a
+  maintainer:** the fix is to set `resolved_at` at the workflow done-category chokepoint, which
+  belongs to the workflow track rather than here. Until then the "Recently resolved" default queue
+  is also a no-op.
+
+- **No index backs any of the four date columns on either table**, and the saved-view fan-outs are
+  the product's only cross-space reads. A date-filtered view over a large org will sequential-scan.
+  Not addressed here because it needs a migration, and this phase was scoped to take none. **For a
+  maintainer:** read `migrations/` for the next free number rather than trusting any table — 041,
+  042 and 043 are abandoned gaps and the sequential next is above 048.
+
+- **`localToRFC3339` now has two private copies.** `pages/admin/AuditLogPage.tsx` has one and
+  `components/views/QueryFilterBuilder.tsx` has the other, which also needs the inverse. Two is the
+  point at which a third would be a defect: if another surface needs them, lift both halves into
+  `lib/` rather than writing a third.
+
+### Filter v2, after adversarial review
+
+An adversarial review of this branch confirmed thirteen findings. Eleven were fixed on the branch;
+the two below were not, each for a stated reason.
+
+- **The six fan-out adapters had no wiring guard, and the first draft of v2 was broken because of
+  it.** The four shared negation flags and all eight date bounds were wired into the three TICKET
+  adapters and missing from the three ITEM adapters — a bulk edit anchored on two adjacent lines
+  that the item literals separate with `Kinds` and `SprintIds`. It compiled, sqlc regenerated
+  cleanly, and the whole suite passed: a missing field in a Go composite literal is a zero value,
+  which reads to SQL as "this filter is absent", and the cross-module count-versus-list parity test
+  compared a list and a count that had BOTH lost the same parameters, so they agreed with each other
+  about the wrong rows. On a Vector view, `not` inverted to plain inclusion and every date range was
+  silently dropped.
+
+  `TestSavedViewAdapters_AssignEveryGeneratedParam` now parses the adapter sources and requires
+  every field of each generated `*Params` struct to be assigned by name. It is structural on
+  purpose: it fails when a parameter is added, not when somebody notices.
+
+- **NOT FIXED — `internal/core/dashboards/registry.go` stamps `views.Version` on two gadget
+  queries that need only v1.** This is the rule `queueQuery` was changed to follow, so the
+  inconsistency is real. It is left alone because that file belongs to the dashboards surface,
+  which is in flight on another track, and because the practical impact is nil: `MyWorkQuery` and
+  `RecentWorkQuery` have no production caller at all and neither document is ever persisted, so
+  no stored row carries the stamp. **For a maintainer:** two lines, `q.V = q.RequiredVersion()`,
+  whenever the dashboards track next touches that file.
+
+- **NOT FIXED — `Filter.Priorities` has no length bound.** Every other list field has one. The loop
+  that validates priorities runs to completion over an arbitrarily long list, which is the DoS shape
+  the other bounds exist to prevent. Pre-existing, and adding a `Max*` constant would require the
+  frontend bound-parity map to learn it in the same change; noted rather than smuggled in here.

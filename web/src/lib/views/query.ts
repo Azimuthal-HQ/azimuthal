@@ -27,8 +27,18 @@
  * question for the whole frontend.
  */
 
-/** The only filter-document version this build reads or writes. */
-export const QUERY_DOC_VERSION = 1;
+/**
+ * The newest filter-document version this build writes.
+ *
+ * READ SUPPORT IS A RANGE, not a point — see `QUERY_DOC_MIN_VERSION`. The
+ * server never rewrites a stored v1 document, so v1 rows persist indefinitely
+ * and a client that accepted only its own newest version would refuse to open
+ * views the server is perfectly happy to serve.
+ */
+export const QUERY_DOC_VERSION = 2;
+
+/** The oldest filter-document version this build still reads. */
+export const QUERY_DOC_MIN_VERSION = 1;
 
 /** The two modules a saved view can search. Codex is deliberately absent. */
 export type ViewModule = 'beacon' | 'vector';
@@ -101,7 +111,82 @@ export const QUERY_LIMITS = {
   text: 200,
   name: 120,
   description: 500,
+  /** The largest magnitude a relative date token may name (`-999d`). */
+  relative_units: 999,
 } as const;
+
+/**
+ * The four date fields a range can be set on. They are exactly the four date
+ * columns both tables share.
+ */
+export type ViewDateField = 'created_at' | 'updated_at' | 'due_at' | 'resolved_at';
+
+/** Every date field, in the order a builder should offer them. */
+export const VIEW_DATE_FIELDS: readonly ViewDateField[] = [
+  'created_at',
+  'updated_at',
+  'due_at',
+  'resolved_at',
+];
+
+/**
+ * The six membership fields `not` can negate.
+ *
+ * The date fields are absent because v2 defines no date negation — a range's
+ * bounds already express exclusion. `text` is absent because a substring match
+ * is not a set membership, so "not these values" has no reading for it.
+ */
+export type ViewNegatableField =
+  | 'space_ids'
+  | 'statuses'
+  | 'priorities'
+  | 'assignees'
+  | 'kinds'
+  | 'sprint_ids';
+
+/** The relative token meaning "the instant this query is evaluated". */
+export const DATE_NOW = 'now';
+
+/**
+ * The relative-date grammar, mirroring `relativeToken` in filter.go.
+ *
+ * The month unit is `mo` rather than `m`, and that is load-bearing rather than
+ * stylistic: JQL spells MINUTES `m` and has no month unit, so a shared spelling
+ * would let the Jira importer mistranslate "-1m" by three orders of magnitude.
+ */
+const RELATIVE_TOKEN_RE = /^([+-])([0-9]{1,3})(d|w|mo)$/;
+
+/**
+ * One date field's half-open range: rows at or after `after`, strictly before
+ * `before`. Both bounds are optional; an object with neither is refused.
+ *
+ * Each bound is a string holding either spelling — an RFC3339 instant, or a
+ * relative token resolved server-side at evaluation. A builder must store the
+ * TOKEN and never the instant it currently resolves to, for the same reason it
+ * stores "me" rather than the current user's id: resolving at write time
+ * freezes the view to the moment it was saved.
+ */
+export interface QueryDateRange {
+  after?: string;
+  before?: string;
+}
+
+/** The per-field negation flags. Absent is the same as all-false. */
+export type QueryNegate = Partial<Record<ViewNegatableField, boolean>>;
+
+/** Whether a string is a well-formed date bound. */
+export function isValidDateBound(value: string): boolean {
+  if (value === DATE_NOW) return true;
+  const m = RELATIVE_TOKEN_RE.exec(value);
+  if (m) {
+    const n = Number(m[2]);
+    return n > 0 && n <= QUERY_LIMITS.relative_units;
+  }
+  // An RFC3339 instant. Deliberately stricter than Date.parse, which accepts
+  // "2026" and a dozen other things the server's time.Parse(RFC3339) refuses.
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value)) return false;
+  return !Number.isNaN(Date.parse(value));
+}
 
 /**
  * The closed set of things a saved view can ask for.
@@ -127,6 +212,19 @@ export interface QueryFilter {
   sprint_ids?: string[];
   /** A literal substring matched against the title, not a pattern. */
   text?: string;
+
+  /**
+   * The four date ranges (v2). `due_at` and `resolved_at` read NULLABLE
+   * columns, so a row with no due date matches NO due_at range in either
+   * direction — an absent date is not an early or a late one.
+   */
+  created_at?: QueryDateRange;
+  updated_at?: QueryDateRange;
+  due_at?: QueryDateRange;
+  resolved_at?: QueryDateRange;
+
+  /** Per-field negation (v2): "everything except these values". */
+  not?: QueryNegate;
 }
 
 /** One ordering. Singular on purpose — the results cursor encodes one key. */
@@ -151,9 +249,37 @@ export function defaultSort(): QuerySort {
   return { field: 'updated_at', dir: 'desc' };
 }
 
+/**
+ * requiredVersion is the lowest document version that can express this filter.
+ * It mirrors `(*Query).RequiredVersion` in filter.go.
+ *
+ * A document declares what it NEEDS rather than what this build can write, so a
+ * filter using nothing v2 added stays v1 and stays readable by an older client.
+ */
+export function requiredVersion(filter: QueryFilter): number {
+  const usesDates =
+    filter.created_at !== undefined ||
+    filter.updated_at !== undefined ||
+    filter.due_at !== undefined ||
+    filter.resolved_at !== undefined;
+  const usesNegation = Object.values(filter.not ?? {}).some(Boolean);
+  return usesDates || usesNegation ? 2 : QUERY_DOC_MIN_VERSION;
+}
+
+/**
+ * withRequiredVersion returns the document with `v` set to the lowest version
+ * it needs. Call it on the way to the wire, so that adding a date range raises
+ * the version and removing it lowers it again.
+ */
+export function withRequiredVersion(doc: QueryDoc): QueryDoc {
+  const v = requiredVersion(doc.filter);
+  return doc.v === v ? doc : { ...doc, v };
+}
+
 /** A valid, maximally broad document over the given modules. */
 export function emptyQueryDoc(modules: readonly ViewModule[] = VIEW_MODULES): QueryDoc {
-  return { v: QUERY_DOC_VERSION, filter: { modules: [...modules] }, sort: defaultSort() };
+  // The minimum, not the newest: an empty filter uses nothing v2 added.
+  return { v: QUERY_DOC_MIN_VERSION, filter: { modules: [...modules] }, sort: defaultSort() };
 }
 
 /** Whether a module selection reads the given module. */
@@ -247,8 +373,8 @@ function codePoints(s: string): number {
 // One linear rule per field. Splitting it into helpers would hide the
 // vocabulary, which is the thing this file exists to make visible.
 export function validateQueryDoc(doc: QueryDoc): string | null {
-  if (doc.v !== QUERY_DOC_VERSION) {
-    return `This view was written by a different version of Azimuthal (document version ${doc.v}, this build reads ${QUERY_DOC_VERSION}).`;
+  if (doc.v < QUERY_DOC_MIN_VERSION || doc.v > QUERY_DOC_VERSION) {
+    return `This view was written by a different version of Azimuthal (document version ${doc.v}, this build reads ${QUERY_DOC_MIN_VERSION} to ${QUERY_DOC_VERSION}).`;
   }
 
   if (!VIEW_SORT_FIELDS.includes(doc.sort?.field)) {
@@ -312,5 +438,94 @@ export function validateQueryDoc(doc: QueryDoc): string | null {
     return `At most ${QUERY_LIMITS.sprint_ids} sprints may be named (this view names ${f.sprint_ids!.length}).`;
   }
 
+  return validateV2(doc);
+}
+
+/** The rules v2 added. Split out only because validateQueryDoc was already long. */
+function validateV2(doc: QueryDoc): string | null {
+  const f = doc.filter;
+
+  // A v2 capability inside a document declaring v1 is refused rather than
+  // upgraded, exactly as the server refuses it. Getting here means a caller
+  // built the document by hand and forgot withRequiredVersion.
+  const need = requiredVersion(f);
+  if (doc.v < need) {
+    return `This filter uses date ranges or exclusions, which need document version ${need} (this document declares version ${doc.v}).`;
+  }
+
+  const DATE_LABEL: Record<ViewDateField, string> = {
+    created_at: 'Created',
+    updated_at: 'Last updated',
+    due_at: 'Due',
+    resolved_at: 'Resolved',
+  };
+  for (const field of VIEW_DATE_FIELDS) {
+    const range = f[field];
+    if (range === undefined) continue;
+    if (!range.after && !range.before) {
+      return `The ${DATE_LABEL[field]} filter names neither a start nor an end.`;
+    }
+    for (const bound of [range.after, range.before]) {
+      if (bound && !isValidDateBound(bound)) {
+        return `"${bound}" is not a date or a relative period (use ${DATE_NOW}, or a sign, a number up to ${QUERY_LIMITS.relative_units} and d, w or mo — for example -7d).`;
+      }
+    }
+    // An inverted range is caught for the two cases that can be ordered
+    // WITHOUT a clock, which is exactly what the server checks: two absolute
+    // bounds compare directly, and two relative bounds compare on a fixed
+    // number line. A MIXED pair is skipped on both sides, because which comes
+    // first depends on when the query runs — and a check against the wall
+    // clock would let a stored view become invalid without anyone touching it.
+    if (range.after && range.before) {
+      const rel = [isRelativeBound(range.after), isRelativeBound(range.before)];
+      const inverted =
+        rel[0] === rel[1] &&
+        (rel[0]
+          ? relativeOrder(range.after) >= relativeOrder(range.before)
+          : Date.parse(range.after) >= Date.parse(range.before));
+      if (inverted) {
+        return `The ${DATE_LABEL[field]} filter starts at or after it ends.`;
+      }
+    }
+  }
+
+  const NEGATE_LABEL: Record<ViewNegatableField, string> = {
+    space_ids: 'space',
+    statuses: 'status',
+    priorities: 'priority',
+    assignees: 'assignee',
+    kinds: 'type',
+    sprint_ids: 'sprint',
+  };
+  for (const [field, on] of Object.entries(f.not ?? {})) {
+    if (!on) continue;
+    const key = field as ViewNegatableField;
+    if ((f[key]?.length ?? 0) === 0) {
+      return `The ${NEGATE_LABEL[key]} filter excludes values but names none — choose what to exclude, or turn the exclusion off.`;
+    }
+  }
   return null;
+}
+
+/** Whether a bound is relative rather than an absolute instant. */
+export function isRelativeBound(value: string): boolean {
+  return value === DATE_NOW || RELATIVE_TOKEN_RE.test(value);
+}
+
+/**
+ * A relative bound's position on a deterministic number line, mirroring
+ * `orderingDays` in filter.go. Used ONLY to catch an inverted range before a
+ * round trip — never to compute a date.
+ *
+ * A month counts as 30 days here, which the calendar disagrees with. That is
+ * tolerable for an ordering check and intolerable for a comparison, which is
+ * why the two are kept apart on this side too: nothing here ever resolves a
+ * token to an instant. The server does that, once per request.
+ */
+function relativeOrder(value: string): number {
+  if (value === DATE_NOW) return 0;
+  const m = RELATIVE_TOKEN_RE.exec(value);
+  if (!m) return 0;
+  const n = Number(m[2]) * (m[1] === '-' ? -1 : 1);
+  return n * (m[3] === 'w' ? 7 : m[3] === 'mo' ? 30 : 1);
 }

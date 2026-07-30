@@ -143,3 +143,104 @@ describe('QueryFilterBuilder — the viewer-relative assignee', () => {
     expect(last().filter.assignees).toEqual(['me', 'unassigned']);
   });
 });
+
+// v2: date ranges and per-field exclusion.
+//
+// The two things worth guarding here are both about what the builder must NOT
+// do. It must store a relative period as the TOKEN rather than as the instant
+// that token currently means — resolving at build time would freeze the view to
+// the day it was saved, the same defect as substituting a user id for the "me"
+// token. And it must raise the document version only when the document actually
+// needs it, so a filter that stays inside v1's vocabulary stays readable by an
+// older client.
+describe('QueryFilterBuilder — v2 date ranges', () => {
+  it('stores a relative preset as a token, not as a resolved instant', () => {
+    const { last } = renderBuilder();
+
+    fireEvent.change(screen.getByTestId('view-date-updated_at'), { target: { value: 'last-7d' } });
+
+    expect(last().filter.updated_at).toEqual({ after: '-7d' });
+    // The failure this rules out: an ISO instant here would look correct today
+    // and silently stop meaning "last 7 days" tomorrow.
+    expect(last().filter.updated_at!.after).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('raises the document to v2 for a date range and lowers it again', () => {
+    const { last } = renderBuilder();
+
+    fireEvent.change(screen.getByTestId('view-date-created_at'), { target: { value: 'last-30d' } });
+    expect(last().v).toBe(2);
+
+    fireEvent.change(screen.getByTestId('view-date-created_at'), { target: { value: 'any' } });
+    expect(last().filter.created_at).toBeUndefined();
+    expect(last().v).toBe(1);
+  });
+
+  it('reveals two instant pickers only for a custom range', () => {
+    renderBuilder();
+
+    expect(screen.queryByTestId('view-date-due_at-after')).toBeNull();
+    fireEvent.change(screen.getByTestId('view-date-due_at'), { target: { value: 'custom' } });
+    expect(screen.getByTestId('view-date-due_at-after')).toBeInTheDocument();
+    expect(screen.getByTestId('view-date-due_at-before')).toBeInTheDocument();
+  });
+
+  it('says plainly that a resolved-date filter matches nothing yet', () => {
+    renderBuilder();
+
+    fireEvent.change(screen.getByTestId('view-date-resolved_at'), { target: { value: 'last-7d' } });
+
+    // Nothing in the product writes resolved_at, so the control must say so
+    // rather than offer a filter that silently returns an empty list forever.
+    expect(screen.getByText(/matches no items/)).toBeInTheDocument();
+  });
+});
+
+describe('QueryFilterBuilder — v2 exclusion', () => {
+  it('cannot be switched on for a field that names nothing', () => {
+    renderBuilder();
+
+    // "Everything except nothing" is everything, and the server refuses it —
+    // so the control must be inert rather than able to build an unsaveable view.
+    expect(screen.getByTestId('view-exclude-kinds')).toBeDisabled();
+  });
+
+  it('negates a field that has values, and raises the version', () => {
+    const { last } = renderBuilder();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bug' }));
+    expect(last().v).toBe(1);
+
+    fireEvent.click(screen.getByTestId('view-exclude-kinds'));
+
+    expect(last().filter.not).toEqual({ kinds: true });
+    // The values stay; only the sense flips.
+    expect(last().filter.kinds).toEqual(['bug']);
+    expect(last().v).toBe(2);
+  });
+
+  it('drops the exclusion when the last value is removed', () => {
+    const { last } = renderBuilder();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bug' }));
+    fireEvent.click(screen.getByTestId('view-exclude-kinds'));
+    expect(last().filter.not).toEqual({ kinds: true });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bug' }));
+
+    // A flag left behind over no values is a 422 the author cannot see the
+    // cause of, because the toggle it came from is now disabled.
+    expect(last().filter.kinds).toBeUndefined();
+    expect(last().filter.not).toBeUndefined();
+    expect(last().v).toBe(1);
+  });
+
+  it('warns that excluding an assignee keeps unassigned work in', () => {
+    renderBuilder();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Me' }));
+    fireEvent.click(screen.getByTestId('view-exclude-assignees'));
+
+    expect(screen.getByText(/Work with no assignee is still included/)).toBeInTheDocument();
+  });
+});
