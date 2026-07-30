@@ -72,9 +72,9 @@ go install github.com/pressly/goose/v3/cmd/goose@latest
 # 2. Start local services (postgres + minio)
 docker compose -f build/docker-compose.dev.yml up -d
 
-# 3. Set required env vars
+# 3. Set the one required env var
+#    (JWT signing needs no secret — the RS256 key lives in the database; see ADR-0004)
 export DATABASE_URL="postgres://azimuthal:dev@localhost:5432/azimuthal_dev?sslmode=disable"
-export JWT_SECRET="$(openssl rand -hex 32)"
 
 # 4. Run migrations
 make migrate
@@ -92,8 +92,10 @@ The server starts on http://localhost:8080 by default.
 azimuthal serve                          Start the HTTP server
 azimuthal backup --output file.tar.gz    Create a full backup
 azimuthal restore --input file.tar.gz    Restore from backup
+azimuthal assess                         Assess a Jira/Confluence export for migration (read-only)
 azimuthal admin create-user              Create a new user
 azimuthal admin reset-password           Reset a user's password
+azimuthal admin verify-split             Verify items_archive counts against tickets + project_items
 azimuthal --version                      Show version
 azimuthal --help                         Show all commands
 ```
@@ -112,21 +114,87 @@ go test ./...
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `JWT_SECRET` | Yes | — | Random 64-char string for JWT signing |
-| `APP_PORT` | No | `8080` | HTTP listen port |
-| `APP_ENV` | No | `development` | `development`, `test`, or `production` |
-| `STORAGE_ENDPOINT` | No | — | S3/MinIO endpoint |
-| `STORAGE_ACCESS_KEY` | No | — | S3/MinIO access key |
-| `STORAGE_SECRET_KEY` | No | — | S3/MinIO secret key |
-| `STORAGE_BUCKET` | No | `azimuthal` | Object storage bucket name |
-| `SMTP_HOST` | No | `localhost` | SMTP relay host |
-| `SMTP_PORT` | No | `1025` | SMTP relay port |
-| `LOG_LEVEL` | No | `info` | Log level (`debug`, `info`, `warn`, `error`) |
-| `AZIMUTHAL_TICKET_REF_REQUIRED` | No | `false` | Require an operator ticket reference on every administrative change. Boot-time; see `docs/self-hosting.md`. |
-| `AZIMUTHAL_BCRYPT_COST` | No | `12` | Password hashing work factor. 12 is a floor, not just a default — a lower value is refused at startup in every environment. Raise it as hardware gets faster. |
+Every setting below is read once, at startup, by `internal/config`. `DATABASE_URL` is the only
+one without a default, and the only one whose absence stops the server.
+
+**There is no `JWT_SECRET`.** JWT signing uses an RS256 key pair persisted in the database
+(migration 018, [ADR-0004](docs/adr/0004-signing-keys-in-database.md)). `JWT_PRIVATE_KEY_PATH` is a
+one-time import path for deployments upgrading from the older file-based key, not a secret to
+generate.
+
+### Core
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | — (**required**) | PostgreSQL connection string. Startup fails without it. |
+| `APP_ENV` | `development` | `development`, `test`, or `production`. Selects environment-dependent behaviour; it is **not** a security exemption — see the note below. |
+| `APP_PORT` | `8080` | HTTP listen port. |
+| `APP_BASE_URL` | `http://localhost:8080` | Public URL of this instance. Used to build the links that go out in invites and portal sign-in emails, so a wrong value produces links nobody can follow. |
+| `LOG_LEVEL` | `info` | **Currently inert — see below.** Intended to select `debug`, `info`, `warn`, or `error`. |
+
+### Object storage (MinIO / S3-compatible)
+
+| Variable | Default | Description |
+|---|---|---|
+| `STORAGE_ENDPOINT` | — (empty) | S3/MinIO endpoint. Empty disables attachment storage. |
+| `STORAGE_ACCESS_KEY` | — (empty) | S3/MinIO access key. |
+| `STORAGE_SECRET_KEY` | — (empty) | S3/MinIO secret key. |
+| `STORAGE_BUCKET` | `azimuthal` | Bucket name for attachments. |
+| `STORAGE_USE_SSL` | `false` | Reach the endpoint over TLS. An `https://` prefix on `STORAGE_ENDPOINT` forces this to `true` regardless of what you set here; `http://` leaves your setting alone. |
+
+### Authentication and access
+
+| Variable | Default | Description |
+|---|---|---|
+| `AZIMUTHAL_BCRYPT_COST` | `12` | Password hashing work factor. Twelve is a **floor**, not just a default: a lower value is refused at startup in every environment, `APP_ENV=test` included. The knob is up-only, so an operator can raise it as hardware gets faster. |
+| `AZIMUTHAL_ALLOWED_ORIGINS` | — (empty) | Comma-separated CORS allow-list. Empty in **every** environment means no CORS headers are emitted and the browser enforces same-origin; `*` matches any origin. There is no permissive development default — nothing in this repository needs one, because the SPA is served from this same binary in production and Vite proxies `/api` server-side in development. |
+| `AZIMUTHAL_ALLOW_REGISTRATION` | `false` | Opens `POST /auth/register`. Off by default: the endpoint 404s and invites are the only way in. |
+| `JWT_EXPIRY` | `24h` | Access-token lifetime (Go duration). |
+| `JWT_PRIVATE_KEY_PATH` | `./data/jwt-private.pem` | One-time import path for a legacy file-based RS256 key. Not required, and not where the signing key lives — see above. |
+
+### Invitations and the customer portal
+
+| Variable | Default | Description |
+|---|---|---|
+| `AZIMUTHAL_INVITE_DELIVERY` | `link` | `link` (an admin copies the one-time URL) or `email` (Azimuthal sends it). `email` requires `SMTP_HOST` and `SMTP_FROM` to be set explicitly; startup fails loudly otherwise rather than dropping invites at send time. An unrecognised value is refused at startup. |
+| `AZIMUTHAL_INVITE_TTL` | `168h` | Invite expiry window (Go duration). Must be positive. |
+| `AZIMUTHAL_PORTAL_LINK_DELIVERY` | `link` | How a customer-portal sign-in link reaches a requester. `email` sends it; `link` returns it in the API response, which is a **development and test convenience only** — the request-link endpoint is necessarily unauthenticated, so disclosing the URL to its caller would let anybody sign in as any address they can name. Production never discloses the link regardless of this setting. |
+| `AZIMUTHAL_PORTAL_LINK_TTL` | `1h` | How long a portal sign-in link stays redeemable. Short by design: it is a credential sitting in an inbox. Must be positive. |
+| `AZIMUTHAL_PORTAL_SESSION_TTL` | `72h` | Lifetime of the session a redeemed link produces. Must be positive. |
+
+### Email
+
+| Variable | Default | Description |
+|---|---|---|
+| `SMTP_HOST` | `localhost` | SMTP relay host. The default exists for a local dev relay, so "configured" for email delivery means an operator set it *explicitly*. |
+| `SMTP_PORT` | `1025` | SMTP relay port. (The Docker Compose deployment defaults this to `25` instead — see `docs/self-hosting.md`.) |
+| `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. |
+
+### Operations
+
+| Variable | Default | Description |
+|---|---|---|
+| `AZIMUTHAL_TICKET_REF_REQUIRED` | `false` | Require an operator ticket reference on every administrative mutation that accepts one. Turning it on is a production cutover, not a preference — see `docs/self-hosting.md`. |
+| `AZIMUTHAL_QUEUE_ENABLED` | `true` | Runs the background job queue in-process. |
+| `MIGRATIONS_DIR` | (embedded) | Read by the `migrate` command only (`cmd/migrate`), to point goose at migrations on disk instead of the embedded copy. |
+
+> **All of these are boot-time policy, and that is the design.** Nothing in this table can be
+> changed from a settings page at runtime. For the security-bearing ones — the bcrypt floor, the
+> CORS allow-list, registration, ticket-reference enforcement, portal link delivery — that is the
+> point: a policy an administrator can flip through the web UI is a policy an attacker who reaches
+> the web UI can flip. Changing any of them costs a restart, deliberately.
+>
+> `APP_ENV` in particular grants no exemptions. It is an ordinary environment variable that a
+> production deployment can hold any value of, so the bcrypt floor is enforced even under
+> `APP_ENV=test`; test binaries get cheap hashing from the linker knowing they are test binaries,
+> not from configuration.
+
+> **`LOG_LEVEL` does nothing today.** `config.Load` parses it into `Config.LogLevel`, and nothing
+> reads that field: `cmd/server/serve.go` builds the logger with a hardcoded `slog.LevelInfo`, and
+> it does so *before* configuration is loaded, so the value could not reach it as written. Setting
+> `LOG_LEVEL=debug` changes nothing. Documented here rather than quietly dropped from the table,
+> because the variable is real and the gap is in the wiring — closing it is a code change and needs
+> its own review.
 
 ## Project Structure
 

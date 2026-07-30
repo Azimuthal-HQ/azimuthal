@@ -10,7 +10,7 @@ struck, stale premises corrected. No new entries were added in that pass.
 ## 0. ~~Ticket Detail Navigation — Redirect Loop~~ (RESOLVED)
 
 **Severity**: High
-**Status**: Resolved in fix/ticket-detail-auth branch
+**Status**: Resolved in PR #37 (branch `fix/ticket-detail-auth`, since deleted)
 
 **Was:** Clicking a ticket in the service desk caused a redirect loop back to login.
 Two bugs were involved:
@@ -313,7 +313,7 @@ does not map postgres unique constraint violations to `auth.ErrEmailTaken`.
 ## 12. ~~Goose Migration Mutex Required for Parallel Tests~~ (RESOLVED)
 
 **Severity**: Low
-**Status**: Fixed in test/backend-coverage branch
+**Status**: Fixed in PR #33 (branch `test/backend-coverage`, since deleted)
 
 `goose.SetTableName()` uses a package-level global variable. When integration
 tests run in parallel, concurrent `goose.Up()` calls with different schema-scoped
@@ -454,9 +454,9 @@ retrieves an object end-to-end.
 ## 17. ~~eslint is not a CI gate — 46 errors on `main`~~ (gate CLOSED; narrowed to three deferred effects)
 
 **Severity**: Low (code quality; no known user-facing defect)
-**Status**: The gate is on. `npm run lint` is a required step in the `Frontend` job and `eslint .`
-exits 0. There is no baseline file and no `--max-warnings` slack. What remains open is narrower and
-is listed at the end of this entry.
+**Status**: Closed in PR #82. The gate is on: `npm run lint` is a required step in the `Frontend`
+job (`.github/workflows/ci.yml`) and `eslint .` exits 0. There is no baseline file and no
+`--max-warnings` slack. What remains open is narrower and is listed at the end of this entry.
 
 The count above was **46**; the real count when the closing pass measured it was **48 across 33
 files** — it had drifted by two in the phases between. The corrected inventory and its disposition:
@@ -568,9 +568,9 @@ them:
 ## 18. ~~The race detector, not the database, is the largest single cost in the Test job~~ (RESOLVED)
 
 **Severity**: Low (CI wall-clock only; no user-facing defect)
-**Status**: Resolved on the backend test-speed branch. The work factor is now a variable whose
-boot value is chosen by `testing.Testing()`, so a test binary hashes at `bcrypt.MinCost` and
-anything built by `go build` hashes at 12.
+**Status**: Resolved in PR #84. The work factor is now a variable whose boot value is chosen by
+`testing.Testing()`, so a test binary hashes at `bcrypt.MinCost` and anything built by `go build`
+hashes at 12.
 
 The floor this entry insisted on is not merely preserved, it is enforced in places it was not
 before. `AZIMUTHAL_BCRYPT_COST` lets an operator RAISE the cost; `internal/config` refuses any
@@ -623,9 +623,9 @@ review — it is recorded here rather than done in passing.
 ## 19. ~~`newTestServerOn` generates a fresh RSA-2048 key for every integration test~~ (RESOLVED)
 
 **Severity**: Low (CI wall-clock only)
-**Status**: Resolved on the backend test-speed branch. Each affected package memoises one key with
-`sync.OnceValue`; a Go test binary is per package, so the sharing never crosses a package boundary
-and never reaches production code.
+**Status**: Resolved in PR #84. Each affected package memoises one key with `sync.OnceValue`; a Go
+test binary is per package, so the sharing never crosses a package boundary and never reaches
+production code.
 
 **One correction to this entry, and it is the part that needed care.** It states that "no test
 asserts that two servers have different signing keys, and if one did it would fail loudly rather
