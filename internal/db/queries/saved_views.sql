@@ -322,3 +322,181 @@ FROM workflow_states ws
 JOIN spaces s ON s.workflow_id = ws.workflow_id AND s.deleted_at IS NULL
 WHERE s.id = @space_id
 ORDER BY ws.position ASC;
+
+-- name: GetSavedViewsByIDs :many
+-- The live views among a set of ids, with NO audience filter.
+--
+-- Audience-blind on purpose, and the one query in this file that is. Its
+-- caller is the P5 dashboard loader, which has to tell "this gadget's view was
+-- deleted" from "this gadget's view is not yours to see" â€” two different tiles
+-- under ADR-0009 â€” and filtering by audience here would collapse both into
+-- "absent". The audience is applied in Go by views.Audience.Reaches, which is
+-- the same rule ListSavedViewsForViewer's WHERE clause spells in SQL.
+--
+-- Space-bound rows (queues) are excluded for the same reason the generic list
+-- excludes them: their audience is enforced by the space-read guard on the
+-- route that serves them, and nothing outside that route may widen it. A queue
+-- can therefore never be attached to a gadget.
+--
+-- One query for a whole dashboard, whatever its gadget count. A dashboard that
+-- resolved one view per gadget is exactly the per-item shape spec Â§2.5 case 23
+-- forbids.
+SELECT sv.*,
+       u.display_name AS owner_name,
+       tm.name        AS team_name
+FROM saved_views sv
+JOIN users u ON u.id = sv.owner_id
+LEFT JOIN teams tm ON tm.id = sv.visibility_team_id
+WHERE sv.org_id = @org_id
+  AND sv.deleted_at IS NULL
+  AND sv.space_id IS NULL
+  AND sv.id = ANY(@ids::uuid[]);
+
+-- name: CountViewTickets :one
+-- The Beacon half of a saved view's count (P5).
+--
+-- THE SAME PREDICATES AS ListViewTickets, MINUS THE PAGE. Read that query's
+-- header first: the access union, the two arrays that ARE the access control,
+-- and the ADR-0008 exception all apply here unchanged and for the same
+-- reasons. What is gone is the sort key, the cursor and the limit, because a
+-- count has no position and no page.
+--
+-- It exists so a count gadget never becomes fetch-all-then-count in the
+-- client. That form is bounded by MaxPageSize and would silently under-report
+-- any view with more than two hundred results, which is precisely the view
+-- somebody puts a count on.
+SELECT count(*)
+FROM tickets tk
+JOIN spaces s ON s.id = tk.space_id AND s.deleted_at IS NULL
+WHERE tk.deleted_at IS NULL
+  AND s.org_id = @org_id
+  AND (tk.space_id = ANY(@readable_space_ids::uuid[])
+       OR tk.id = ANY(@shared_ticket_ids::uuid[]))
+  AND (cardinality(@space_ids::uuid[]) = 0 OR tk.space_id = ANY(@space_ids::uuid[]))
+  AND (cardinality(@statuses::text[]) = 0 OR tk.status = ANY(@statuses::text[]))
+  AND (cardinality(@priorities::text[]) = 0 OR tk.priority = ANY(@priorities::text[]))
+  AND (NOT @filter_assignee::boolean
+       OR tk.assignee_id = ANY(@assignee_ids::uuid[])
+       OR (@include_unassigned::boolean AND tk.assignee_id IS NULL))
+  AND (@text_pattern::text = '' OR tk.title ILIKE @text_pattern::text);
+
+-- name: CountViewProjectItems :one
+-- The Vector half. Structurally identical to CountViewTickets plus the two
+-- Vector-only terms, exactly as the two list fan-outs differ.
+SELECT count(*)
+FROM project_items pi
+JOIN spaces s ON s.id = pi.space_id AND s.deleted_at IS NULL
+WHERE pi.deleted_at IS NULL
+  AND s.org_id = @org_id
+  AND (pi.space_id = ANY(@readable_space_ids::uuid[])
+       OR pi.id = ANY(@shared_item_ids::uuid[]))
+  AND (cardinality(@space_ids::uuid[]) = 0 OR pi.space_id = ANY(@space_ids::uuid[]))
+  AND (cardinality(@statuses::text[]) = 0 OR pi.status = ANY(@statuses::text[]))
+  AND (cardinality(@priorities::text[]) = 0 OR pi.priority = ANY(@priorities::text[]))
+  AND (NOT @filter_assignee::boolean
+       OR pi.assignee_id = ANY(@assignee_ids::uuid[])
+       OR (@include_unassigned::boolean AND pi.assignee_id IS NULL))
+  AND (cardinality(@kinds::text[]) = 0 OR pi.kind = ANY(@kinds::text[]))
+  AND (cardinality(@sprint_ids::uuid[]) = 0 OR pi.sprint_id = ANY(@sprint_ids::uuid[]))
+  AND (@text_pattern::text = '' OR pi.title ILIKE @text_pattern::text);
+
+-- name: BreakdownViewTickets :many
+-- Counts grouped by one field, over the Beacon half of a saved view (P5).
+--
+-- ONE STATIC QUERY FOR EVERY GROUPABLE FIELD, by the same device migration
+-- 038's saved_view_sort_key uses for sorting: the choice is collapsed into one
+-- expression rather than spread across one query per field. Four fields times
+-- two modules would otherwise be eight near-identical queries, which is eight
+-- chances for one of them to drift from the access predicate above it â€” and a
+-- drifted copy of THAT is not a display bug.
+--
+-- The bucket is (key, label) rather than one column because an assignee's key
+-- is an opaque id and its label is a name, while a status is its own label.
+-- Grouping by both is free: the label is functionally dependent on the key.
+--
+-- The empty key is a REAL BUCKET, not a null to drop. Unassigned work is
+-- exactly what a breakdown is for, and collapsing it away would make the
+-- buckets stop summing to the count.
+--
+-- ELSE '' is unreachable through the API â€” views.ParseGroupField refuses
+-- anything outside the closed set before this runs, and 'kind' is refused
+-- alongside Beacon so it never reaches this query at all. It is written as a
+-- single bucket rather than as NULL so that a field added on one side only
+-- produces one obviously-wrong tile rather than silently dropped rows.
+SELECT g.bucket_key::text AS bucket_key,
+       g.bucket_label::text AS bucket_label,
+       count(*) AS bucket_count
+FROM tickets tk
+JOIN spaces s ON s.id = tk.space_id AND s.deleted_at IS NULL
+LEFT JOIN users au ON au.id = tk.assignee_id
+CROSS JOIN LATERAL (
+    SELECT
+        CASE @group_by::text
+            WHEN 'status'   THEN tk.status
+            WHEN 'priority' THEN tk.priority
+            WHEN 'assignee' THEN COALESCE(tk.assignee_id::text, '')
+            ELSE ''
+        END AS bucket_key,
+        CASE @group_by::text
+            WHEN 'status'   THEN tk.status
+            WHEN 'priority' THEN tk.priority
+            WHEN 'assignee' THEN COALESCE(au.display_name, '')
+            ELSE ''
+        END AS bucket_label
+) g
+WHERE tk.deleted_at IS NULL
+  AND s.org_id = @org_id
+  AND (tk.space_id = ANY(@readable_space_ids::uuid[])
+       OR tk.id = ANY(@shared_ticket_ids::uuid[]))
+  AND (cardinality(@space_ids::uuid[]) = 0 OR tk.space_id = ANY(@space_ids::uuid[]))
+  AND (cardinality(@statuses::text[]) = 0 OR tk.status = ANY(@statuses::text[]))
+  AND (cardinality(@priorities::text[]) = 0 OR tk.priority = ANY(@priorities::text[]))
+  AND (NOT @filter_assignee::boolean
+       OR tk.assignee_id = ANY(@assignee_ids::uuid[])
+       OR (@include_unassigned::boolean AND tk.assignee_id IS NULL))
+  AND (@text_pattern::text = '' OR tk.title ILIKE @text_pattern::text)
+GROUP BY g.bucket_key, g.bucket_label
+ORDER BY count(*) DESC, g.bucket_key ASC;
+
+-- name: BreakdownViewProjectItems :many
+-- The Vector half. 'kind' appears here and not in the ticket query because
+-- project_items has the column and tickets does not â€” the same asymmetry the
+-- filter vocabulary records, enforced the same way.
+SELECT g.bucket_key::text AS bucket_key,
+       g.bucket_label::text AS bucket_label,
+       count(*) AS bucket_count
+FROM project_items pi
+JOIN spaces s ON s.id = pi.space_id AND s.deleted_at IS NULL
+LEFT JOIN users au ON au.id = pi.assignee_id
+CROSS JOIN LATERAL (
+    SELECT
+        CASE @group_by::text
+            WHEN 'status'   THEN pi.status
+            WHEN 'priority' THEN pi.priority
+            WHEN 'assignee' THEN COALESCE(pi.assignee_id::text, '')
+            WHEN 'kind'     THEN COALESCE(pi.kind, '')
+            ELSE ''
+        END AS bucket_key,
+        CASE @group_by::text
+            WHEN 'status'   THEN pi.status
+            WHEN 'priority' THEN pi.priority
+            WHEN 'assignee' THEN COALESCE(au.display_name, '')
+            WHEN 'kind'     THEN COALESCE(pi.kind, '')
+            ELSE ''
+        END AS bucket_label
+) g
+WHERE pi.deleted_at IS NULL
+  AND s.org_id = @org_id
+  AND (pi.space_id = ANY(@readable_space_ids::uuid[])
+       OR pi.id = ANY(@shared_item_ids::uuid[]))
+  AND (cardinality(@space_ids::uuid[]) = 0 OR pi.space_id = ANY(@space_ids::uuid[]))
+  AND (cardinality(@statuses::text[]) = 0 OR pi.status = ANY(@statuses::text[]))
+  AND (cardinality(@priorities::text[]) = 0 OR pi.priority = ANY(@priorities::text[]))
+  AND (NOT @filter_assignee::boolean
+       OR pi.assignee_id = ANY(@assignee_ids::uuid[])
+       OR (@include_unassigned::boolean AND pi.assignee_id IS NULL))
+  AND (cardinality(@kinds::text[]) = 0 OR pi.kind = ANY(@kinds::text[]))
+  AND (cardinality(@sprint_ids::uuid[]) = 0 OR pi.sprint_id = ANY(@sprint_ids::uuid[]))
+  AND (@text_pattern::text = '' OR pi.title ILIKE @text_pattern::text)
+GROUP BY g.bucket_key, g.bucket_label
+ORDER BY count(*) DESC, g.bucket_key ASC;

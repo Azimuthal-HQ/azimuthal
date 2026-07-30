@@ -11,6 +11,7 @@ import (
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	avatarapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/avatar"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	dashboardsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/dashboards"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
@@ -75,7 +76,11 @@ type RouterConfig struct {
 	// without it would leave every requester route unauthenticated.
 	// TestHarness_PortalGuardIsMounted fails if the two ever disagree.
 	PortalService *portal.Service
-	SPAHandler    http.Handler // serves the embedded frontend; nil disables SPA serving
+	// DashboardHandler serves dashboards and gadgets (P5, ADR-0009): the
+	// org-scoped /dashboards family. Org-scoped for the same reason /views is
+	// — a dashboard arranges gadgets that cross containers.
+	DashboardHandler *dashboardsapi.Handler
+	SPAHandler       http.Handler // serves the embedded frontend; nil disables SPA serving
 	// AllowedOrigins is the explicit CORS allow-list, and nil or empty is the
 	// safe default: no CORS headers are emitted and the browser enforces
 	// same-origin. Cross-origin callers are admitted only by an operator
@@ -236,6 +241,14 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			// sanctioned ADR-0008 exception and unions the caller's shared
 			// entities into its results.
 			mountViewResources(r, cfg)
+
+			// Dashboards (P5, ADR-0009). Org-scoped beside the views they
+			// arrange. Deliberately NO share resolver: not one route here
+			// reads a ticket or an item — the response hands the client the
+			// query each gadget should run, and the client resolves it
+			// through /views/preview and /views/aggregate, which carry
+			// ResolveShares themselves.
+			mountDashboardResources(r, cfg)
 
 			// Ticket-reference typeahead (A1). Org-scoped rather than
 			// space-scoped: the ticket_ref field it fills names a ticket
@@ -431,6 +444,29 @@ func mountViewResources(r chi.Router, cfg RouterConfig) {
 	}
 	r.Route("/views", func(r chi.Router) {
 		r.Mount("/", cfg.ViewHandler.Routes(shareResolver))
+	})
+}
+
+// mountDashboardResources registers the P5 dashboard family under the org
+// group.
+//
+// Its own function rather than a block inside NewRouter, matching
+// mountShareResources and mountViewResources — and because NewRouter is
+// already at its cyclomatic ceiling.
+//
+// No middleware of its own. The org group's ResolveAccess has already
+// established membership, and a dashboard read needs nothing further: it
+// returns an arrangement plus, per gadget, the query the client should run.
+// The gadget's DATA is fetched separately through the two view endpoints that
+// do carry ResolveShares. Adding it here would make every dashboard read pay
+// for a share query no route in this family uses, which is what per-family
+// mounting (spec §5, matrix case 23) exists to prevent.
+func mountDashboardResources(r chi.Router, cfg RouterConfig) {
+	if cfg.DashboardHandler == nil {
+		return
+	}
+	r.Route("/dashboards", func(r chi.Router) {
+		r.Mount("/", cfg.DashboardHandler.Routes())
 	})
 }
 

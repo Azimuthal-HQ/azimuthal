@@ -65,6 +65,11 @@ func (h *Handler) Routes(shareResolver func(http.Handler) http.Handler) chi.Rout
 	// Static before wildcard: chi matches /views/preview ahead of
 	// /views/{viewID}, so "preview" is never parsed as a view id.
 	r.With(shareResolver).Post("/preview", h.Preview)
+	// The P5 aggregate endpoint. Share-resolved for the same reason /preview
+	// is: a count over a saved view is the same read a results page performs,
+	// so it unions the caller's shared entities identically or the two would
+	// report different totals for the same query.
+	r.With(shareResolver).Post("/aggregate", h.Aggregate)
 	r.Get("/{viewID}", h.Get)
 	r.Patch("/{viewID}", h.Update)
 	r.Delete("/{viewID}", h.Delete)
@@ -432,6 +437,75 @@ func (h *Handler) Preview(w http.ResponseWriter, r *http.Request) {
 	respondPage(w, page)
 }
 
+// bucketResponse is one group of a breakdown.
+type bucketResponse struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+	// Other marks the rollup carrying everything past the bucket cap, so the
+	// UI can label it rather than showing it as a real value. Nothing is
+	// dropped: the counts still sum to total.
+	Other        bool `json:"other,omitempty"`
+	OtherBuckets int  `json:"other_buckets,omitempty"`
+}
+
+// Aggregate counts an unsaved query's results for the calling viewer.
+//
+// @Summary      Count or group a query's results
+// @Description  Counts the rows a filter document resolves to for the CALLER, optionally grouped by one field (status, priority, assignee or kind). Grouping happens in the database — this is what a count or breakdown gadget calls instead of fetching pages and counting them. Two people running the same query legitimately see different totals.
+// @Tags         views
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID  path      string                    true  "Organization ID (UUID)"
+// @Param        body   body      map[string]interface{}    true  "Filter document under a query key, with an optional group_by"
+// @Success      200    {object}  map[string]interface{}    "Total, buckets and truncated"
+// @Failure      401    {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404    {object}  api.SwaggerErrorResponse  "Not an org member"
+// @Failure      422    {object}  api.SwaggerErrorResponse  "Validation error"
+// @Router       /orgs/{orgID}/views/aggregate [post]
+func (h *Handler) Aggregate(w http.ResponseWriter, r *http.Request) {
+	orgID, _, ok := h.context(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Query   json.RawMessage `json:"query"`
+		GroupBy string          `json:"group_by"`
+	}
+	if err := respond.DecodeJSON(r, &body); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "could not read the request")
+		return
+	}
+	q, err := views.ParseQuery(body.Query)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation, err.Error())
+		return
+	}
+	group, err := views.ParseGroupField(body.GroupBy)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation, err.Error())
+		return
+	}
+	res, err := h.svc.AggregateQuery(r.Context(), orgID, q, viewerFrom(r), group)
+	if err != nil {
+		h.fail(w, r, err, "could not count the results")
+		return
+	}
+	buckets := make([]bucketResponse, 0, len(res.Buckets))
+	for _, b := range res.Buckets {
+		buckets = append(buckets, bucketResponse{
+			Key: b.Key, Label: b.Label, Count: b.Count,
+			Other: b.Other, OtherBuckets: b.OtherBuckets,
+		})
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"total":     res.Total,
+		"buckets":   buckets,
+		"truncated": res.Truncated,
+	})
+}
+
 func respondPage(w http.ResponseWriter, page views.Page) {
 	respond.JSON(w, http.StatusOK, map[string]any{
 		"results":     toResultResponses(page.Results),
@@ -516,6 +590,15 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error, fallba
 		respond.Error(w, r, status, code, msg)
 		return
 	}
+	// Anything the caller can fix by changing their request carries the typed
+	// error and is returned verbatim. Before it existed a view with a
+	// 200-character name answered 500, because the switch below had no case
+	// for a bare fmt.Errorf.
+	var invalid views.ValidationError
+	if errors.As(err, &invalid) {
+		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation, invalid.Error())
+		return
+	}
 	switch {
 	case errors.Is(err, views.ErrNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "saved view not found")
@@ -526,7 +609,9 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error, fallba
 	case errors.Is(err, views.ErrTeamRequired),
 		errors.Is(err, views.ErrTeamNotMember),
 		errors.Is(err, views.ErrNameRequired),
-		errors.Is(err, views.ErrUnknownField):
+		errors.Is(err, views.ErrUnknownField),
+		errors.Is(err, views.ErrUnknownGroupField),
+		errors.Is(err, views.ErrGroupFieldModule):
 		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation, err.Error())
 	default:
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, fallback)

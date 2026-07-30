@@ -359,6 +359,32 @@ var routeAccounting = map[string]string{
 	"PATCH /api/v1/orgs/{orgID}/views/{viewID}":       "org-member: update a view; owner-only in-handler (org admin bypasses), 404 when not visible",
 	"DELETE /api/v1/orgs/{orgID}/views/{viewID}":      "org-member: delete a view; owner-only in-handler (org admin bypasses), 404 when not visible",
 	"GET /api/v1/orgs/{orgID}/views/{viewID}/results": "org-member: run a view; +ResolveShares, results resolve against the CALLER's readable spaces unioned with their shares",
+	"POST /api/v1/orgs/{orgID}/views/aggregate":       "org-member: count or group an unsaved query in SQL; +ResolveShares, counted over the CALLER's own readable set so two people legitimately see different totals",
+
+	// Dashboards (P5, ADR-0009). Org-scoped for the same reason saved views
+	// are: a dashboard arranges gadgets that cross containers, so it has no
+	// {spaceID} to hang off (ADR-0010). Who may see or change one is decided
+	// by its own ownership and visibility — the same views.Audience rule the
+	// saved-view family applies — rather than by a space capability.
+	//
+	// NO ResolveShares anywhere in this family, deliberately. Not one route
+	// here reads a ticket or an item: the response hands the client the query
+	// each gadget should run, and the client resolves it through
+	// /views/preview and /views/aggregate, which carry the share resolver
+	// themselves. Mounting it here would make every dashboard read pay for a
+	// query no route in the family uses.
+	//
+	// NO new capability either. access.CapReadAggregates is still uncalled: an
+	// aggregate resolves the identical readable set a results page does, so a
+	// gate there would refuse somebody who could get the same number by paging.
+	// See the package comment on internal/core/api/dashboards.
+	"GET /api/v1/orgs/{orgID}/dashboards/":                      "org-member: list own + shared-with-me dashboards; audience matching in-handler",
+	"POST /api/v1/orgs/{orgID}/dashboards/":                     "org-member: create a dashboard owned by the caller",
+	"GET /api/v1/orgs/{orgID}/dashboards/home":                  "org-member: the caller's own Home dashboard, seeding a starter layout on first visit; idempotent by the dashboards_one_default index",
+	"GET /api/v1/orgs/{orgID}/dashboards/{dashboardID}":         "org-member: read one dashboard with its gadgets; 404 unless owned or shared to the caller; every gadget resolved per viewer",
+	"PATCH /api/v1/orgs/{orgID}/dashboards/{dashboardID}":       "org-member: update a dashboard; owner-only in-handler (org admin bypasses), 404 when not visible",
+	"DELETE /api/v1/orgs/{orgID}/dashboards/{dashboardID}":      "org-member: delete a dashboard; owner-only in-handler (org admin bypasses), 404 when not visible",
+	"PUT /api/v1/orgs/{orgID}/dashboards/{dashboardID}/gadgets": "org-member: replace the whole gadget collection in one transaction; owner-only in-handler, unknown gadget keys refused",
 
 	// Beacon queues (P4 PR-B, ADR-0009). A queue is a saved view bound to a
 	// space, so reading one needs only space-readability — which IS a queue's

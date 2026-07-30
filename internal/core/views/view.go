@@ -65,6 +65,29 @@ var (
 	ErrNameRequired  = errors.New("a view needs a name")
 )
 
+// ValidationError is anything the caller can fix by changing their request:
+// a name too long, a visibility that is not one of the three, a gadget
+// configuration outside its vocabulary.
+//
+// A TYPE rather than another sentinel, because these messages are written to
+// be read — they name the bound they exceeded — and a sentinel would either
+// have to prefix them ("validation error: a view name may be…") or force a
+// new sentinel per bound. The API layer matches it with errors.As and returns
+// 422 with the message unchanged.
+//
+// It exists because the alternative was live: before P5 a saved view with a
+// 200-character name answered 500, because Draft.validate returned a bare
+// fmt.Errorf that the handler's switch had no case for. Every user-fixable
+// error in this package and in internal/core/dashboards now carries the type.
+type ValidationError struct{ Msg string }
+
+func (e ValidationError) Error() string { return e.Msg }
+
+// Invalid builds a ValidationError.
+func Invalid(format string, a ...any) error {
+	return ValidationError{Msg: fmt.Sprintf(format, a...)}
+}
+
 // Store is the persistence seam for the view rows themselves.
 type Store interface {
 	Create(ctx context.Context, v View) (View, error)
@@ -74,6 +97,16 @@ type Store interface {
 	// ListForViewer returns every view the caller may see: their own, org
 	// audience, and team audience matching effectiveTeamIDs.
 	ListForViewer(ctx context.Context, orgID, viewerID uuid.UUID, effectiveTeamIDs []uuid.UUID) ([]View, error)
+	// GetMany returns every LIVE view among ids, with no audience filtering.
+	//
+	// Audience-blind on purpose. Its caller is the dashboard loader, which has
+	// to tell "this gadget's view was deleted" from "this gadget's view is not
+	// yours to see" — two different tiles under ADR-0009 — and a query that
+	// filtered by audience would collapse both into "absent". The audience is
+	// then applied in Go by Audience.Reaches, which is the same rule the SQL
+	// would have applied. One query for a whole dashboard, so a dashboard's
+	// gadget count never becomes a query count (spec §2.5 case 23).
+	GetMany(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]View, error)
 	// LiveSpaceIDs returns which of the given space ids still exist. One
 	// query for a whole page of views.
 	LiveSpaceIDs(ctx context.Context, orgID uuid.UUID, spaceIDs []uuid.UUID) ([]uuid.UUID, error)
@@ -91,13 +124,19 @@ type Store interface {
 
 // Service owns the view lifecycle.
 type Service struct {
-	store   Store
-	results ResultStore
+	store      Store
+	results    ResultStore
+	aggregates AggregateStore
 }
 
 // NewService creates a Service.
-func NewService(store Store, results ResultStore) *Service {
-	return &Service{store: store, results: results}
+//
+// aggregates is the P5 grouped fan-out. It is a constructor parameter rather
+// than a With* option because a nil one would make every count gadget answer
+// "feature disabled" in silence — the dark-harness failure mode CLAUDE.md §2
+// describes. One adapter satisfies all three seams.
+func NewService(store Store, results ResultStore, aggregates AggregateStore) *Service {
+	return &Service{store: store, results: results, aggregates: aggregates}
 }
 
 // Actor is the calling user as the service needs to see them.
@@ -120,34 +159,20 @@ func (a Actor) inTeam(id uuid.UUID) bool {
 	return false
 }
 
-// CanEdit reports who may change or delete a view.
-//
-// OWNER SEMANTICS, NOT A CAPABILITY. Creating a private view is something any
-// member may do — it reads nothing they could not already read, and gating it
-// would mean a capability that every role holds. Editing is the owner's alone,
-// with the org-admin bypass that applies everywhere else. If a future
-// requirement wants sharing gated by a capability rather than by ownership,
-// that is a change to the capability model and belongs to a maintainer, not to
-// a handler.
-func (v *View) CanEdit(a Actor) bool { return a.IsOrgAdmin || v.OwnerID == a.UserID }
+// Audience is the view's (visibility, team) pair. The rule it encodes is
+// shared with dashboards (migration 048) and lives in audience.go so there is
+// one implementation of it.
+func (v *View) Audience() Audience {
+	return Audience{Visibility: v.Visibility, TeamID: v.VisibilityTeamID}
+}
+
+// CanEdit reports who may change or delete a view: the owner, with the
+// org-admin bypass. See Audience.OwnedBy for why this is ownership rather than
+// a capability.
+func (v *View) CanEdit(a Actor) bool { return v.Audience().OwnedBy(v.OwnerID, a) }
 
 // CanSee reports whether the view's definition reaches this caller.
-func (v *View) CanSee(a Actor) bool {
-	if v.CanEdit(a) {
-		return true
-	}
-	switch v.Visibility {
-	case VisibilityOrg:
-		return true
-	case VisibilityTeam:
-		// A degraded team view (its team was deleted) matches nobody. Fail
-		// closed, then prompt the owner — who still reaches it as the owner.
-		return v.VisibilityTeamID != nil && a.inTeam(*v.VisibilityTeamID)
-	case VisibilityPrivate:
-		return false
-	}
-	return false
-}
+func (v *View) CanSee(a Actor) bool { return v.Audience().Reaches(v.OwnerID, a) }
 
 // Draft is a create or update request, already decoded but not yet validated.
 type Draft struct {
@@ -164,31 +189,19 @@ func (d *Draft) validate(a Actor) error {
 		return ErrNameRequired
 	}
 	if len([]rune(d.Name)) > MaxNameLen {
-		return fmt.Errorf("a view name may be at most %d characters", MaxNameLen)
+		return Invalid("a view name may be at most %d characters", MaxNameLen)
 	}
 	if len([]rune(d.Description)) > MaxDescLen {
-		return fmt.Errorf("a view description may be at most %d characters", MaxDescLen)
+		return Invalid("a view description may be at most %d characters", MaxDescLen)
 	}
-	switch d.Visibility {
-	case VisibilityPrivate, VisibilityOrg:
-		// Carrying a team id on a non-team view would be a lie the next
-		// reader has to interpret; drop it rather than store it.
-		d.VisibilityTeamID = nil
-	case VisibilityTeam:
-		if d.VisibilityTeamID == nil {
-			return ErrTeamRequired
-		}
-		// The write-path half of migration 038's deliberately absent CHECK.
-		// The database must be able to REPRESENT a team view whose team is
-		// gone, because that is C1's degraded state; it must never be
-		// reachable by a write.
-		if !a.IsOrgAdmin && !a.inTeam(*d.VisibilityTeamID) {
-			return ErrTeamNotMember
-		}
-	default:
-		return fmt.Errorf("visibility %q must be %q, %q or %q",
-			d.Visibility, VisibilityPrivate, VisibilityTeam, VisibilityOrg)
+	// The write-path half of migration 038's deliberately absent CHECK: the
+	// database must be able to REPRESENT a team view whose team is gone,
+	// because that is C1's degraded state, but no write may reach it.
+	aud, err := Audience{Visibility: d.Visibility, TeamID: d.VisibilityTeamID}.Normalise(a)
+	if err != nil {
+		return err
 	}
+	d.Visibility, d.VisibilityTeamID = aud.Visibility, aud.TeamID
 	return d.Query.Validate()
 }
 
@@ -389,6 +402,40 @@ func (s *Service) Preview(ctx context.Context, orgID uuid.UUID, q Query, v Viewe
 	return page, nil
 }
 
+// AggregateQuery counts an unsaved query's results for one viewer, optionally
+// grouped. It is the aggregate twin of Preview and runs the identical
+// per-viewer access union.
+func (s *Service) AggregateQuery(ctx context.Context, orgID uuid.UUID, q Query, v Viewer, group GroupField) (AggregateResult, error) {
+	res, err := Aggregate(ctx, orgScopedAggregates{inner: s.aggregates, orgID: orgID}, q, v, group)
+	if err != nil {
+		return AggregateResult{}, err
+	}
+	return res, nil
+}
+
+// ByIDs returns the live views among ids, each already marked valid or not,
+// WITHOUT applying any audience filter. See Store.GetMany for why.
+//
+// Two queries regardless of how many ids are asked for, which is what keeps a
+// dashboard's gadget count from becoming a query count.
+func (s *Service) ByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]View, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := s.store.GetMany(ctx, orgID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("loading the referenced views: %w", err)
+	}
+	ptrs := make([]*View, len(rows))
+	for i := range rows {
+		ptrs[i] = &rows[i]
+	}
+	if err := s.markValidity(ctx, orgID, ptrs); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // resolveWithOrg threads the org id into the fan-out parameters. Resolve
 // itself is org-agnostic so it can be unit-tested against a fake store.
 func resolveWithOrg(ctx context.Context, store ResultStore, orgID uuid.UUID, q Query, v Viewer, cursor string, limit int) (Page, error) {
@@ -414,6 +461,50 @@ func (o orgScopedStore) ListProjectItems(ctx context.Context, p FanoutParams) ([
 	rows, err := o.inner.ListProjectItems(ctx, p)
 	if err != nil {
 		return nil, fmt.Errorf("vector fan-out: %w", err)
+	}
+	return rows, nil
+}
+
+// orgScopedAggregates is orgScopedStore's twin for the grouped fan-outs, and
+// exists for the same reason: Aggregate is org-agnostic so it can be
+// unit-tested against a fake store, and exactly one place stamps the org id.
+type orgScopedAggregates struct {
+	inner AggregateStore
+	orgID uuid.UUID
+}
+
+func (o orgScopedAggregates) CountTickets(ctx context.Context, p FanoutParams) (int64, error) {
+	p.OrgID = o.orgID
+	n, err := o.inner.CountTickets(ctx, p)
+	if err != nil {
+		return 0, fmt.Errorf("beacon count: %w", err)
+	}
+	return n, nil
+}
+
+func (o orgScopedAggregates) CountProjectItems(ctx context.Context, p FanoutParams) (int64, error) {
+	p.OrgID = o.orgID
+	n, err := o.inner.CountProjectItems(ctx, p)
+	if err != nil {
+		return 0, fmt.Errorf("vector count: %w", err)
+	}
+	return n, nil
+}
+
+func (o orgScopedAggregates) BreakdownTickets(ctx context.Context, p FanoutParams) ([]Bucket, error) {
+	p.OrgID = o.orgID
+	rows, err := o.inner.BreakdownTickets(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("beacon breakdown: %w", err)
+	}
+	return rows, nil
+}
+
+func (o orgScopedAggregates) BreakdownProjectItems(ctx context.Context, p FanoutParams) ([]Bucket, error) {
+	p.OrgID = o.orgID
+	rows, err := o.inner.BreakdownProjectItems(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("vector breakdown: %w", err)
 	}
 	return rows, nil
 }

@@ -23,6 +23,7 @@ import (
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	avatarapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/avatar"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	dashboardsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/dashboards"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
@@ -40,6 +41,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/dashboards"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
@@ -234,6 +236,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// convention you have to remember: TestHarness_NoDarkDependencies walks
 	// the config below and fails on any handler dependency left nil.
 	savedViewAdapter := adapters.NewSavedViewAdapter(pool)
+	viewSvc := views.NewService(savedViewAdapter, savedViewAdapter, savedViewAdapter)
 
 	// Customer portal. DiscloseLink is on so tests can follow a sign-in link
 	// without a mailbox; config.validate refuses that combination in
@@ -292,11 +295,15 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
 		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
 		AvatarHandler:       avatarHandler,
-		// Saved views (P4). One adapter satisfies both seams — the view rows
-		// and the two cross-space result fan-outs.
-		ViewHandler: viewsapi.NewHandler(
-			views.NewService(savedViewAdapter, savedViewAdapter),
-			views.NewQueueService(savedViewAdapter),
+		// Saved views (P4). One adapter satisfies three seams — the view rows,
+		// the two cross-space result fan-outs, and the P5 grouped fan-outs.
+		ViewHandler: viewsapi.NewHandler(viewSvc, views.NewQueueService(savedViewAdapter)),
+		// Dashboards (P5). Mirrors cmd/server/main.go: the same saved-view
+		// service is both the dashboard service's view lookup and the
+		// handler's team expander.
+		DashboardHandler: dashboardsapi.NewHandler(
+			dashboards.NewService(adapters.NewDashboardAdapter(pool), viewSvc),
+			viewSvc,
 		),
 		PortalHandler: portalHandler,
 		PortalService: portalSvc,
