@@ -209,6 +209,23 @@ async function memberPersona(browser: Browser, tag: string): Promise<Persona> {
   return { page, userId, orgId, close: () => context.close() }
 }
 
+/**
+ * A member in an org of their very own, reachable by nobody else.
+ *
+ * The display name IS the org key, so a unique one gets a private org rather
+ * than the shared `E2E User` one every other persona lands in. Exactly one test
+ * needs this — the zero-spaces onboarding, whose whole premise is "this person
+ * can read nothing", which the shared org destroys the moment any sibling spec
+ * creates an org-visible space.
+ */
+async function loneMemberPersona(browser: Browser, tag: string): Promise<Persona> {
+  const context = await browser.newContext()
+  const page = await context.newPage()
+  await loginAs(page, seedUser({ role: 'member', tag, displayName: `Solo ${tag}` }))
+  const { userId, orgId } = await getCurrentUser(page)
+  return { page, userId, orgId, close: () => context.close() }
+}
+
 // ---------------------------------------------------------------------------
 // 1. Create a dashboard, add gadgets, share it, and a second person sees their
 //    own data
@@ -415,11 +432,52 @@ test.describe('Gadgets never leak a space the reader cannot open', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Home is a dashboard', () => {
+  // SOMEBODY WITH NO READABLE SPACE STILL GETS THE ONBOARDING.
+  //
+  // Home's replacement kept that branch deliberately — a dashboard has nothing
+  // to show a person who cannot read a single container, and an empty grid
+  // would read as "your work is empty" rather than "you have not been let in
+  // anywhere yet". Nothing asserted it before, which is how the seeding test
+  // below came to depend on it accidentally.
+  test('a person with no readable space gets the onboarding, not an empty grid', async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000)
+    const run = runToken()
+    const person = await loneMemberPersona(browser, `dbempty${run}`)
+
+    await person.page.goto('/')
+    await expect(person.page.getByTestId('home-page')).toBeVisible({ timeout: 15_000 })
+    await expect(person.page.getByTestId('home-onboarding')).toBeVisible({ timeout: 15_000 })
+    await expect(person.page.getByTestId('gadget-tile')).toHaveCount(0)
+
+    // The server still seeds their dashboard — the grid is withheld by the
+    // page, not by the API, so the layout is waiting once they are let in.
+    const home = await fetchHome(person.page, person.orgId)
+    expect(home.is_seeded).toBe(true)
+    expect(home.gadgets).toHaveLength(3)
+
+    await assertNoErrors(person.page)
+    await person.close()
+  })
+
   test('a first visit seeds a starter layout, and it is never seeded twice', async ({ browser }) => {
     test.setTimeout(120_000)
     const run = runToken()
 
     const person = await memberPersona(browser, `dbhome${run}`)
+
+    // THE PREMISE, ESTABLISHED RATHER THAN INHERITED. The grid renders only for
+    // somebody who can read at least one space (`detail && !noSpaces`), so this
+    // test must put them in one. It used to rely on whatever spaces sibling
+    // specs happened to have left org-visible, which passed alone and failed in
+    // the full suite — a fixture dependency, not a product defect.
+    const adminContext = await browser.newContext()
+    const admin = await adminContext.newPage()
+    await createUserAndLogin(admin)
+    const { orgId } = await getCurrentUser(admin)
+    const space = await createSpaceViaAPI(admin, orgId, `Dash Home ${run}`, 'org')
+    await grantUserOnSpace(admin, orgId, space.id, person.userId)
 
     // A brand-new person landing on Home.
     await person.page.goto('/')
@@ -451,6 +509,7 @@ test.describe('Home is a dashboard', () => {
     await assertNoErrors(person.page)
 
     await person.close()
+    await adminContext.close()
   })
 
   test('the interim Home dashboard routes forward to the real surface', async ({ browser }) => {
