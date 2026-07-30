@@ -151,6 +151,22 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions":                  "org-admin",
 	"DELETE /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}": "org-admin",
 
+	// ADR-0011 tier configuration. Reads are org-member because knowing WHY a
+	// transition is restricted helps the person it restricts; every mutation is
+	// org-admin, because a workflow is an org object shared by every space bound
+	// to it, so editing one edits other spaces' rules. Each of these also
+	// re-scopes {workflowID} to {orgID} in the handler, which the pre-existing
+	// workflow routes do not — see the finding in the PR body.
+	"GET /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards":                             "org-member",
+	"POST /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards":                            "org-admin",
+	"DELETE /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards/{guardID}":                "org-admin",
+	"GET /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions":                     "org-member",
+	"POST /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions":                    "org-admin",
+	"DELETE /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions/{postFunctionID}": "org-admin",
+	"GET /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers":                          "org-member",
+	"POST /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers":                         "org-admin",
+	"DELETE /api/v1/orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers/{approverID}":          "org-admin",
+
 	// Space directory and governance. The directory filters against the
 	// resolved readable set in the handler (readable + discoverable-locked
 	// rows); creation checks org-admin-or-lead; the rest is capability
@@ -298,6 +314,14 @@ var routeAccounting = map[string]string{
 	// Space workflow reads.
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/":       "space-read",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/states": "space-read",
+
+	// ADR-0011 approvals. The pending list is space-read: an item blocked on an
+	// approval must be visible to the person it blocks, not only to approvers.
+	// The decision is space-write, and authority above the write floor is NOT a
+	// capability — the handler requires the caller to be a configured approver,
+	// directly or through an ADR-0007 effective team (workflow.CanDecide).
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/approvals":                      "space-read",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/approvals/{approvalID}/decide": "space-write: configured approver in-handler",
 
 	// Entity shares — management (P3, ADR-0008). Org-scoped; the handler
 	// resolves the shared entity's space and enforces manage_shares there.

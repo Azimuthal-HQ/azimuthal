@@ -79,6 +79,7 @@ import (
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	viewsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/views"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
@@ -230,6 +231,16 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	membershipResolver := adapters.NewMembershipAdapter(queries)
 	workflowAdapter := adapters.NewWorkflowAdapter(queries)
 	workflowEngine := workflow.NewDBEngine(workflowAdapter)
+
+	// ADR-0011 workflow tiers. tierGate is the single chokepoint every status
+	// route enters; transitionTx is Convention B, used only by transitions that
+	// carry post-functions. Both are passed to every handler that can change a
+	// status — a route that skipped them would be the bypass the chokepoint
+	// exists to close.
+	tierStore := adapters.NewWorkflowTierAdapter(queries)
+	tierSvc := workflow.NewTierService(tierStore)
+	tierGate := tiergate.New(tierSvc, tierStore)
+	transitionTx := adapters.NewWorkflowTransitionTxAdapter(pool)
 	orgProvisioner := adapters.NewOrgProvisionerAdapterWithWorkflows(queries, workflowAdapter)
 
 	// The content-transaction adapter carries the ADR-0008 share invariants:
@@ -411,13 +422,13 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner, userAdapter).
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
-		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc),
+		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc).WithWorkflowTiers(tierGate, transitionTx),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
-		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc),
+		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		NotificationHandler: notificationsapi.NewHandler(queries),
-		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine),
+		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		ShareHandler:        shareHandler,

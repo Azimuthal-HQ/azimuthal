@@ -1,5 +1,36 @@
 components:
   schemas:
+    access.Capability:
+      description: Capability is set iff Kind is GuardActorHasCapability.
+      enum:
+      - read_items
+      - read_aggregates
+      - create_items
+      - edit_own_items
+      - comment
+      - edit_any_item
+      - transition_any_item
+      - manage_queue
+      - manage_space
+      - manage_grants
+      - manage_shares
+      - manage_workflow
+      - set_visibility
+      type: string
+      x-enum-varnames:
+      - CapReadItems
+      - CapReadAggregates
+      - CapCreateItems
+      - CapEditOwnItems
+      - CapComment
+      - CapEditAnyItem
+      - CapTransitionAnyItem
+      - CapManageQueue
+      - CapManageSpace
+      - CapManageGrants
+      - CapManageShares
+      - CapManageWorkflow
+      - CapSetVisibility
     admin.auditEntryResponse:
       properties:
         action:
@@ -1332,6 +1363,186 @@ components:
         title:
           type: string
       type: object
+    workflow.Approval:
+      properties:
+        decided_at:
+          type: string
+        decided_by:
+          type: string
+        decided_by_name:
+          description: DecidedByName is resolved at read time for display, never stored.
+          type: string
+        decision:
+          $ref: '#/components/schemas/workflow.Decision'
+        entity_id:
+          type: string
+        entity_type:
+          $ref: '#/components/schemas/workflow.ApprovalEntityType'
+        from_state_id:
+          type: string
+        from_status:
+          type: string
+        id:
+          type: string
+        requested_at:
+          type: string
+        requested_by:
+          type: string
+        requested_by_name:
+          description: RequestedByName is resolved at read time for display, never
+            stored.
+          type: string
+        space_id:
+          type: string
+        to_state_id:
+          type: string
+        to_status:
+          type: string
+        transition_id:
+          type: string
+      type: object
+    workflow.ApprovalEntityType:
+      enum:
+      - ticket
+      - item
+      type: string
+      x-enum-varnames:
+      - ApprovalEntityTicket
+      - ApprovalEntityItem
+    workflow.Approver:
+      properties:
+        id:
+          type: string
+        subject_id:
+          type: string
+        subject_missing:
+          description: |-
+            SubjectMissing marks an approver whose subject has been deleted — the
+            same pair access.Grant carries, resolved the same way.
+          type: boolean
+        subject_name:
+          description: |-
+            SubjectName is resolved at read time for display, never stored. Empty
+            when the subject no longer exists.
+          type: string
+        subject_type:
+          $ref: '#/components/schemas/workflow.ApproverSubjectType'
+        transition_id:
+          type: string
+      type: object
+    workflow.ApproverSubjectType:
+      enum:
+      - user
+      - team
+      type: string
+      x-enum-varnames:
+      - ApproverUser
+      - ApproverTeam
+    workflow.Decision:
+      enum:
+      - approved
+      - declined
+      type: string
+      x-enum-varnames:
+      - DecisionApproved
+      - DecisionDeclined
+    workflow.FieldKey:
+      description: FieldKey is set iff Kind is GuardFieldRequired.
+      enum:
+      - assignee_id
+      - due_at
+      - description
+      - labels
+      type: string
+      x-enum-varnames:
+      - FieldAssigneeID
+      - FieldDueAt
+      - FieldDescription
+      - FieldLabels
+    workflow.Guard:
+      properties:
+        capability:
+          $ref: '#/components/schemas/access.Capability'
+        field_key:
+          $ref: '#/components/schemas/workflow.FieldKey'
+        guard_class:
+          $ref: '#/components/schemas/workflow.GuardClass'
+        id:
+          type: string
+        kind:
+          $ref: '#/components/schemas/workflow.GuardKind'
+        position:
+          type: integer
+        team_id:
+          description: |-
+            TeamID is set iff Kind is GuardActorInTeam — except in the degraded
+            state, where the team was deleted and the reference was SET NULL. A
+            GuardActorInTeam with no TeamID is unsatisfiable by design; see
+            Evaluate.
+          type: string
+        transition_id:
+          type: string
+      type: object
+    workflow.GuardClass:
+      enum:
+      - condition
+      - validator
+      type: string
+      x-enum-varnames:
+      - GuardConditionClass
+      - GuardValidatorClass
+    workflow.GuardKind:
+      enum:
+      - actor_is_assignee
+      - actor_in_team
+      - actor_has_capability
+      - field_required
+      type: string
+      x-enum-varnames:
+      - GuardActorIsAssignee
+      - GuardActorInTeam
+      - GuardActorHasCapability
+      - GuardFieldRequired
+    workflow.PostFieldKey:
+      description: FieldKey and FieldValue are meaningful iff Kind is PostSetField.
+      enum:
+      - due_at
+      - labels
+      type: string
+      x-enum-varnames:
+      - PostFieldDueAt
+      - PostFieldLabels
+    workflow.PostFunction:
+      properties:
+        assignee_user_id:
+          description: |-
+            AssigneeUserID is meaningful iff Kind is PostAssignTo. Nil means
+            "unassign" — and also means "the configured user was deleted", because
+            migration 046 collapses the two with ON DELETE SET NULL. Both outcomes
+            remove an assignment rather than granting one, which is why the collapse
+            is safe; see the migration header.
+          type: string
+        field_key:
+          $ref: '#/components/schemas/workflow.PostFieldKey'
+        field_value:
+          type: string
+        id:
+          type: string
+        kind:
+          $ref: '#/components/schemas/workflow.PostFunctionKind'
+        position:
+          type: integer
+        transition_id:
+          type: string
+      type: object
+    workflow.PostFunctionKind:
+      enum:
+      - assign_to
+      - set_field
+      type: string
+      x-enum-varnames:
+      - PostAssignTo
+      - PostSetField
     workflow.State:
       properties:
         category:
@@ -1387,6 +1598,41 @@ components:
         updated_at:
           type: string
       type: object
+    workflows.createApproverRequest:
+      properties:
+        subject_id:
+          type: string
+        subject_type:
+          type: string
+      type: object
+    workflows.createGuardRequest:
+      properties:
+        capability:
+          type: string
+        field_key:
+          type: string
+        guard_class:
+          type: string
+        kind:
+          type: string
+        position:
+          type: integer
+        team_id:
+          type: string
+      type: object
+    workflows.createPostFunctionRequest:
+      properties:
+        assignee_user_id:
+          type: string
+        field_key:
+          type: string
+        field_value:
+          type: string
+        kind:
+          type: string
+        position:
+          type: integer
+      type: object
     workflows.createStateRequest:
       properties:
         category:
@@ -1418,6 +1664,11 @@ components:
         is_default:
           type: boolean
         name:
+          type: string
+      type: object
+    workflows.decideApprovalRequest:
+      properties:
+        decision:
           type: string
       type: object
     workflows.updateWorkflowRequest:
@@ -9677,6 +9928,131 @@ paths:
       summary: Get space workflow
       tags:
       - workflows
+  /orgs/{orgID}/spaces/{spaceID}/workflow/approvals:
+    get:
+      description: Returns the workflow transitions awaiting an approval decision
+        in a space.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/workflow.Approval'
+                type: array
+          description: Pending approvals
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List pending approvals
+      tags:
+      - workflows
+  /orgs/{orgID}/spaces/{spaceID}/workflow/approvals/{approvalID}/decide:
+    post:
+      description: Approves or declines a pending workflow transition. Only a configured
+        approver may decide.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Approval ID
+        in: path
+        name: approvalID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.decideApprovalRequest'
+                description: approved or declined
+                summary: body
+        description: approved or declined
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.Approval'
+          description: The recorded decision
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an approver
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Already decided
+      security:
+      - BearerAuth: []
+      summary: Decide an approval
+      tags:
+      - workflows
   /orgs/{orgID}/spaces/{spaceID}/workflow/states:
     get:
       description: Returns the ordered list of workflow states for a space.
@@ -11704,6 +12080,527 @@ paths:
       security:
       - BearerAuth: []
       summary: Delete workflow transition
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers:
+    get:
+      description: Returns the users and teams that may approve a workflow transition.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/workflow.Approver'
+                type: array
+          description: Approvers
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: List transition approvers
+      tags:
+      - workflows
+    post:
+      description: Adds a user or team that may approve a workflow transition. Any
+        one approver may decide.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.createApproverRequest'
+                description: Approver subject
+                summary: body
+        description: Approver subject
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.Approver'
+          description: Created approver
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Already an approver
+      security:
+      - BearerAuth: []
+      summary: Create transition approver
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers/{approverID}:
+    delete:
+      description: Removes a user or team from a workflow transition's approver set.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      - description: Approver ID
+        in: path
+        name: approverID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Delete transition approver
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards:
+    get:
+      description: Returns the ADR-0011 conditions and validators attached to a workflow
+        transition.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/workflow.Guard'
+                type: array
+          description: Guards
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: List transition guards
+      tags:
+      - workflows
+    post:
+      description: Attaches an ADR-0011 condition or validator to a workflow transition.
+        The vocabulary is closed.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.createGuardRequest'
+                description: Guard definition
+                summary: body
+        description: Guard definition
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.Guard'
+          description: Created guard
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Create transition guard
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards/{guardID}:
+    delete:
+      description: Removes an ADR-0011 condition or validator from a workflow transition.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      - description: Guard ID
+        in: path
+        name: guardID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Delete transition guard
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions:
+    get:
+      description: Returns the ADR-0011 post-functions attached to a workflow transition.
+        The set is fixed in code.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/workflow.PostFunction'
+                type: array
+          description: Post-functions
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: List transition post-functions
+      tags:
+      - workflows
+    post:
+      description: Attaches one of the fixed ADR-0011 post-functions to a transition.
+        The set is defined in code and cannot be extended by configuration.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/workflows.createPostFunctionRequest'
+                description: Post-function definition
+                summary: body
+        description: Post-function definition
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.PostFunction'
+          description: Created post-function
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Create transition post-function
+      tags:
+      - workflows
+  /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions/{postFunctionID}:
+    delete:
+      description: Removes an ADR-0011 post-function from a workflow transition.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Workflow ID
+        in: path
+        name: workflowID
+        required: true
+        schema:
+          type: string
+      - description: Transition ID
+        in: path
+        name: transitionID
+        required: true
+        schema:
+          type: string
+      - description: Post-function ID
+        in: path
+        name: postFunctionID
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Delete transition post-function
       tags:
       - workflows
   /portal/{portalKey}:

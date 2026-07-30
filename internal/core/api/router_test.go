@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
@@ -27,6 +29,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 	"github.com/jackc/pgx/v5"
@@ -759,7 +762,18 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	customFieldSvc := customfields.NewService(&mockCustomFieldDefRepo{}, &mockCustomFieldValueRepo{})
 
 	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
-	ticketHandler := ticketsapi.NewHandler(ticketSvc)
+	// The tier gate is wired here for the same reason it is wired in
+	// newTestServerOn: a status route that reaches a nil gate answers 500 rather
+	// than transitioning ungated, so leaving it out would turn this harness into
+	// a place where transitions silently stop working. This harness has no
+	// database and therefore no workflow, so WorkflowIDForSpace reports none and
+	// the gate resolves to "nothing applies" — which is exactly what an
+	// unconfigured space must do.
+	ticketHandler := ticketsapi.NewHandler(ticketSvc).
+		WithWorkflowTiers(
+			tiergate.New(workflow.NewTierService(&mockTierStore{}), &mockWorkflowResolver{}),
+			&mockTransitionApplier{},
+		)
 	tagSvc := tags.NewService(&mockTagRepo{})
 	wikiDocs := wiki.NewDocumentService(
 		newMockDocumentStore(mockPages),
@@ -770,7 +784,13 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		tagSvc,
 	)
 	wikiHandler := wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc)
-	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc)
+	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
+		WithItemTypes(itemTypeSvc).
+		WithCustomFields(customFieldSvc).
+		WithWorkflowTiers(
+			tiergate.New(workflow.NewTierService(&mockTierStore{}), &mockWorkflowResolver{}),
+			&mockTransitionApplier{},
+		)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
 	spaceHandler := spacesapi.NewHandler(nil)
 
@@ -2522,4 +2542,89 @@ func TestProjectLabelsCRUD(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Errorf("delete label status = %d, want %d", rr.Code, http.StatusNoContent)
 	}
+}
+
+// mockWorkflowResolver reports that no space has a workflow, which is the true
+// state of a harness with no workflow tables. workflow.ErrNotFound means "none
+// configured", and the tier gate turns that into "nothing applies" — never a
+// refusal.
+type mockWorkflowResolver struct{}
+
+func (m *mockWorkflowResolver) WorkflowIDForSpace(context.Context, uuid.UUID) (uuid.UUID, error) {
+	return uuid.Nil, workflow.ErrNotFound
+}
+
+// mockTierStore satisfies workflow.TierStore. Every method reports "nothing
+// configured": with no workflow resolved, the gate returns before reaching any
+// of them, so these exist to make the type complete rather than to be called.
+type mockTierStore struct{}
+
+func (m *mockTierStore) GuardsForTransition(context.Context, uuid.UUID) ([]workflow.Guard, error) {
+	return nil, nil
+}
+func (m *mockTierStore) GuardsForWorkflow(context.Context, uuid.UUID) ([]workflow.Guard, error) {
+	return nil, nil
+}
+func (m *mockTierStore) CreateGuard(_ context.Context, g workflow.Guard) (workflow.Guard, error) {
+	return g, nil
+}
+func (m *mockTierStore) DeleteGuard(context.Context, uuid.UUID) error { return nil }
+func (m *mockTierStore) PostFunctionsForTransition(context.Context, uuid.UUID) ([]workflow.PostFunction, error) {
+	return nil, nil
+}
+func (m *mockTierStore) PostFunctionsForWorkflow(context.Context, uuid.UUID) ([]workflow.PostFunction, error) {
+	return nil, nil
+}
+func (m *mockTierStore) CreatePostFunction(_ context.Context, p workflow.PostFunction) (workflow.PostFunction, error) {
+	return p, nil
+}
+func (m *mockTierStore) DeletePostFunction(context.Context, uuid.UUID) error { return nil }
+func (m *mockTierStore) ApproversForTransition(context.Context, uuid.UUID) ([]workflow.Approver, error) {
+	return nil, nil
+}
+func (m *mockTierStore) ApproversForWorkflow(context.Context, uuid.UUID) ([]workflow.Approver, error) {
+	return nil, nil
+}
+func (m *mockTierStore) CreateApprover(_ context.Context, a workflow.Approver) (workflow.Approver, error) {
+	return a, nil
+}
+func (m *mockTierStore) DeleteApprover(context.Context, uuid.UUID) error { return nil }
+func (m *mockTierStore) CreateApproval(_ context.Context, a workflow.Approval) (workflow.Approval, error) {
+	return a, nil
+}
+func (m *mockTierStore) PendingApprovalForEntity(context.Context, workflow.ApprovalEntityType, uuid.UUID) (workflow.Approval, error) {
+	return workflow.Approval{}, workflow.ErrNotFound
+}
+func (m *mockTierStore) GetApproval(context.Context, uuid.UUID) (workflow.Approval, error) {
+	return workflow.Approval{}, workflow.ErrNotFound
+}
+func (m *mockTierStore) DecideApproval(context.Context, uuid.UUID, uuid.UUID, workflow.Decision) (workflow.Approval, error) {
+	return workflow.Approval{}, workflow.ErrNotFound
+}
+func (m *mockTierStore) ApprovalsForEntity(context.Context, workflow.ApprovalEntityType, uuid.UUID) ([]workflow.Approval, error) {
+	return nil, nil
+}
+func (m *mockTierStore) PendingApprovalsForSpace(context.Context, uuid.UUID) ([]workflow.Approval, error) {
+	return nil, nil
+}
+func (m *mockTierStore) PendingApprovalCountForTransition(context.Context, uuid.UUID) (int64, error) {
+	return 0, nil
+}
+func (m *mockTierStore) StateByName(context.Context, uuid.UUID, string) (*workflow.State, error) {
+	return nil, workflow.ErrNotFound
+}
+func (m *mockTierStore) TransitionBetween(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*workflow.Transition, error) {
+	return nil, workflow.ErrNotFound
+}
+func (m *mockTierStore) EffectiveTeamIDs(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+// mockTransitionApplier fails loudly if called. This harness has no workflow, so
+// no transition can carry post-functions, and a call here would mean the gate
+// resolved an edge it should not have been able to see.
+type mockTransitionApplier struct{}
+
+func (m *mockTransitionApplier) ApplyTransition(context.Context, workflow.ApplyInput) error {
+	return errors.New("mockTransitionApplier: the tier gate resolved effects in a harness with no workflow")
 }

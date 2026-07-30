@@ -207,3 +207,29 @@ func (s *defaultLogger) Log(_ context.Context, _ Event) error {
 func (s *defaultLogger) IsAvailable() bool {
 	return false
 }
+
+// ADR-0011 workflow tier events. Configuration changes are recorded through
+// Convention A (mutate, then audit) because a tier row carries no atomicity
+// contract; an approval DECISION is recorded alongside the transition it
+// releases, which does.
+const (
+	// EventTypeWorkflowGuardCreated records a condition or validator being
+	// attached to a transition.
+	EventTypeWorkflowGuardCreated EventType = "workflow.guard_created"
+	// EventTypeWorkflowGuardDeleted records one being removed.
+	EventTypeWorkflowGuardDeleted EventType = "workflow.guard_deleted"
+	// EventTypeWorkflowPostFunctionCreated records a post-function being
+	// attached to a transition.
+	EventTypeWorkflowPostFunctionCreated EventType = "workflow.post_function_created"
+	// EventTypeWorkflowPostFunctionDeleted records one being removed.
+	EventTypeWorkflowPostFunctionDeleted EventType = "workflow.post_function_deleted"
+	// EventTypeWorkflowApproverCreated records a subject being added to a
+	// transition's approver set.
+	EventTypeWorkflowApproverCreated EventType = "workflow.approver_created"
+	// EventTypeWorkflowApproverDeleted records one being removed.
+	EventTypeWorkflowApproverDeleted EventType = "workflow.approver_deleted"
+	// EventTypeWorkflowApprovalDecided records an approver's verdict. The
+	// append-only log keeps approvals and declines alike; a decline is a new
+	// row, never an update.
+	EventTypeWorkflowApprovalDecided EventType = "workflow.approval_decided"
+)

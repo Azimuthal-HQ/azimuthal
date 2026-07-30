@@ -516,6 +516,23 @@ type Workflow struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type WorkflowApproval struct {
+	ID           uuid.UUID          `json:"id"`
+	TransitionID pgtype.UUID        `json:"transition_id"`
+	EntityType   string             `json:"entity_type"`
+	EntityID     uuid.UUID          `json:"entity_id"`
+	SpaceID      uuid.UUID          `json:"space_id"`
+	FromStateID  pgtype.UUID        `json:"from_state_id"`
+	ToStateID    pgtype.UUID        `json:"to_state_id"`
+	FromStatus   string             `json:"from_status"`
+	ToStatus     string             `json:"to_status"`
+	RequestedBy  uuid.UUID          `json:"requested_by"`
+	RequestedAt  pgtype.Timestamptz `json:"requested_at"`
+	DecidedBy    pgtype.UUID        `json:"decided_by"`
+	DecidedAt    pgtype.Timestamptz `json:"decided_at"`
+	Decision     *string            `json:"decision"`
+}
+
 type WorkflowState struct {
 	ID         uuid.UUID          `json:"id"`
 	WorkflowID uuid.UUID          `json:"workflow_id"`
@@ -534,4 +551,37 @@ type WorkflowTransition struct {
 	ToStateID   uuid.UUID          `json:"to_state_id"`
 	Name        string             `json:"name"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkflowTransitionApprover struct {
+	ID           uuid.UUID          `json:"id"`
+	TransitionID uuid.UUID          `json:"transition_id"`
+	SubjectType  string             `json:"subject_type"`
+	SubjectID    uuid.UUID          `json:"subject_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkflowTransitionGuard struct {
+	ID           uuid.UUID          `json:"id"`
+	TransitionID uuid.UUID          `json:"transition_id"`
+	GuardClass   string             `json:"guard_class"`
+	Kind         string             `json:"kind"`
+	Position     int32              `json:"position"`
+	Capability   *string            `json:"capability"`
+	TeamID       pgtype.UUID        `json:"team_id"`
+	FieldKey     *string            `json:"field_key"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkflowTransitionPostFunction struct {
+	ID             uuid.UUID          `json:"id"`
+	TransitionID   uuid.UUID          `json:"transition_id"`
+	Kind           string             `json:"kind"`
+	Position       int32              `json:"position"`
+	AssigneeUserID pgtype.UUID        `json:"assignee_user_id"`
+	FieldKey       *string            `json:"field_key"`
+	FieldValue     *string            `json:"field_value"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
