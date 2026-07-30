@@ -225,12 +225,16 @@ gitleaks detect --no-git --redact --verbose --source=. ./internal ./migrations .
 ```
 
 **Why the explicit paths.** `--no-git` walks the filesystem rather than the git
-index, and it does not consult `.gitignore`. So a bare `gitleaks detect --no-git`
-run from the repository root after `npm ci` descends into `web/node_modules` —
-tens of thousands of vendored files, full of test fixtures and sample keys — and
-buries any real finding in noise. CI never hits this because the `secret-scan`
-job checks out the repository and installs no Node dependencies, so
-`node_modules` does not exist there. Locally it usually does.
+index, so what it scans is "files on disk" rather than "files git tracks" — and
+after `npm ci` that includes `web/node_modules`, tens of thousands of vendored
+files full of test fixtures and sample keys. `node_modules` being gitignored is
+not obviously enough to keep it out of a filesystem walk, and a run from the
+repository root is slow enough to suggest it is not. Naming the directories
+sidesteps the question.
+
+CI never encounters this: the `secret-scan` job checks out the repository and
+installs no Node dependencies, so `node_modules` does not exist there. Locally it
+usually does.
 
 Add `./web/src` when you have touched the frontend; skip `./web` as a whole.
 
