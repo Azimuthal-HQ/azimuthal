@@ -15,7 +15,7 @@
 
 import { PRIORITY_TO_API, normalizePriority } from '../../components/priority';
 import {
-  QUERY_DOC_VERSION,
+  requiredVersion,
   QUERY_LIMITS,
   VIEW_MODULES,
   defaultSort,
@@ -134,7 +134,7 @@ export function beaconListDraft(state: BeaconListFilterState): ViewDraft {
   // and naming either is a 422 on the whole document.
   return {
     name: inSpace('Tickets', state.spaceName),
-    query: { v: QUERY_DOC_VERSION, filter, sort: defaultSort() },
+    query: { v: requiredVersion(filter), filter, sort: defaultSort() },
   };
 }
 
@@ -176,6 +176,6 @@ export function vectorBacklogDraft(state: VectorBacklogFilterState): ViewDraft {
 
   return {
     name: inSpace('Backlog', state.spaceName),
-    query: { v: QUERY_DOC_VERSION, filter, sort: defaultSort() },
+    query: { v: requiredVersion(filter), filter, sort: defaultSort() },
   };
 }
