@@ -74,6 +74,7 @@ import (
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	searchapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/search"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
@@ -94,6 +95,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/portal"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/search"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
@@ -353,6 +355,11 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		viewSvc,
 	)
 
+	// Cross-module search (P6, spec §5/§7). The adapter owns only translation;
+	// the access arrays it is handed are resolved per request by the router's
+	// ResolveAccess and ResolveShares middleware.
+	searchHandler := searchapi.NewHandler(search.NewService(adapters.NewSearchAdapter(pool)))
+
 	// P2.5 administration: people lifecycle, invites, bulk grants, audit
 	// viewer. Invite delivery follows config — link mode returns the URL to
 	// the admin; email mode sends it (SMTP validated at startup).
@@ -440,6 +447,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		PortalHandler:       portalHandler,
 		PortalService:       portalSvc,
 		DashboardHandler:    dashboardHandler,
+		SearchHandler:       searchHandler,
 		SPAHandler:          spaHandler,
 		AllowedOrigins:      cfg.AllowedOrigins,
 		QueueStatus:         queueStatus,

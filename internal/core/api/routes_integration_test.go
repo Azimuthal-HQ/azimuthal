@@ -29,6 +29,7 @@ import (
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	searchapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/search"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
@@ -47,6 +48,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/portal"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/search"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
@@ -305,6 +307,11 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			dashboards.NewService(adapters.NewDashboardAdapter(pool), viewSvc),
 			viewSvc,
 		),
+		// P6 cross-module search. Present here because newTestServerOn must
+		// pass every handler cmd/server/main.go passes — a missing one is not
+		// a failure, it is a tidy 404 on every route of the feature, and the
+		// endpoints then read as covered while never having been reached.
+		SearchHandler: searchapi.NewHandler(search.NewService(adapters.NewSearchAdapter(pool))),
 		PortalHandler: portalHandler,
 		PortalService: portalSvc,
 		SPAHandler:    nil,

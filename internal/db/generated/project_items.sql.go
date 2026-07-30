@@ -29,7 +29,7 @@ INSERT INTO project_items (id, space_id, org_id, parent_id, number, item_key, ki
 SELECT $1, $2, sp.org_id, $3, seq.last_number, sp.key || '-' || seq.last_number,
        $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 FROM seq, sp
-RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key
+RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector
 `
 
 type CreateProjectItemParams struct {
@@ -90,19 +90,19 @@ func (q *Queries) CreateProjectItem(ctx context.Context, arg CreateProjectItemPa
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
-		&i.SearchVector,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.WorkflowStateID,
 		&i.OrgID,
 		&i.ItemKey,
+		&i.SearchVector,
 	)
 	return i, err
 }
 
 const getProjectItemByID = `-- name: GetProjectItemByID :one
-SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key FROM project_items WHERE id = $1 AND deleted_at IS NULL
+SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetProjectItemByID(ctx context.Context, id uuid.UUID) (ProjectItem, error) {
@@ -125,19 +125,19 @@ func (q *Queries) GetProjectItemByID(ctx context.Context, id uuid.UUID) (Project
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
-		&i.SearchVector,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.WorkflowStateID,
 		&i.OrgID,
 		&i.ItemKey,
+		&i.SearchVector,
 	)
 	return i, err
 }
 
 const getProjectItemByOrgKey = `-- name: GetProjectItemByOrgKey :one
-SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key FROM project_items
+SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items
 WHERE org_id = $1 AND item_key = $2 AND deleted_at IS NULL
 `
 
@@ -167,19 +167,19 @@ func (q *Queries) GetProjectItemByOrgKey(ctx context.Context, arg GetProjectItem
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
-		&i.SearchVector,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.WorkflowStateID,
 		&i.OrgID,
 		&i.ItemKey,
+		&i.SearchVector,
 	)
 	return i, err
 }
 
 const listProjectItemsByAssignee = `-- name: ListProjectItemsByAssignee :many
-SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key FROM project_items
+SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items
 WHERE space_id = $1 AND assignee_id = $2 AND deleted_at IS NULL
 ORDER BY rank ASC, created_at DESC
 `
@@ -215,13 +215,13 @@ func (q *Queries) ListProjectItemsByAssignee(ctx context.Context, arg ListProjec
 			&i.DueAt,
 			&i.ResolvedAt,
 			&i.Rank,
-			&i.SearchVector,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.WorkflowStateID,
 			&i.OrgID,
 			&i.ItemKey,
+			&i.SearchVector,
 		); err != nil {
 			return nil, err
 		}
@@ -234,7 +234,7 @@ func (q *Queries) ListProjectItemsByAssignee(ctx context.Context, arg ListProjec
 }
 
 const listProjectItemsBySpace = `-- name: ListProjectItemsBySpace :many
-SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key FROM project_items
+SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items
 WHERE space_id = $1 AND deleted_at IS NULL
 ORDER BY rank ASC, created_at DESC
 `
@@ -265,13 +265,13 @@ func (q *Queries) ListProjectItemsBySpace(ctx context.Context, spaceID uuid.UUID
 			&i.DueAt,
 			&i.ResolvedAt,
 			&i.Rank,
-			&i.SearchVector,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.WorkflowStateID,
 			&i.OrgID,
 			&i.ItemKey,
+			&i.SearchVector,
 		); err != nil {
 			return nil, err
 		}
@@ -284,7 +284,7 @@ func (q *Queries) ListProjectItemsBySpace(ctx context.Context, spaceID uuid.UUID
 }
 
 const listProjectItemsBySprint = `-- name: ListProjectItemsBySprint :many
-SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key FROM project_items
+SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items
 WHERE sprint_id = $1 AND deleted_at IS NULL
 ORDER BY rank ASC
 `
@@ -315,13 +315,13 @@ func (q *Queries) ListProjectItemsBySprint(ctx context.Context, sprintID pgtype.
 			&i.DueAt,
 			&i.ResolvedAt,
 			&i.Rank,
-			&i.SearchVector,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.WorkflowStateID,
 			&i.OrgID,
 			&i.ItemKey,
+			&i.SearchVector,
 		); err != nil {
 			return nil, err
 		}
@@ -334,7 +334,7 @@ func (q *Queries) ListProjectItemsBySprint(ctx context.Context, sprintID pgtype.
 }
 
 const listProjectItemsByStatus = `-- name: ListProjectItemsByStatus :many
-SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key FROM project_items
+SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items
 WHERE space_id = $1 AND status = $2 AND deleted_at IS NULL
 ORDER BY rank ASC, created_at DESC
 `
@@ -370,13 +370,13 @@ func (q *Queries) ListProjectItemsByStatus(ctx context.Context, arg ListProjectI
 			&i.DueAt,
 			&i.ResolvedAt,
 			&i.Rank,
-			&i.SearchVector,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.WorkflowStateID,
 			&i.OrgID,
 			&i.ItemKey,
+			&i.SearchVector,
 		); err != nil {
 			return nil, err
 		}
@@ -389,7 +389,7 @@ func (q *Queries) ListProjectItemsByStatus(ctx context.Context, arg ListProjectI
 }
 
 const searchProjectItems = `-- name: SearchProjectItems :many
-SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key FROM project_items
+SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items
 WHERE space_id = $1
   AND deleted_at IS NULL
   AND search_vector @@ plainto_tsquery('english', $2)
@@ -429,13 +429,13 @@ func (q *Queries) SearchProjectItems(ctx context.Context, arg SearchProjectItems
 			&i.DueAt,
 			&i.ResolvedAt,
 			&i.Rank,
-			&i.SearchVector,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.WorkflowStateID,
 			&i.OrgID,
 			&i.ItemKey,
+			&i.SearchVector,
 		); err != nil {
 			return nil, err
 		}
@@ -462,7 +462,7 @@ SET title = $2, description = $3, status = $4, priority = $5,
     assignee_id = $6, labels = $7, due_at = $8, rank = $9, kind = $10,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key
+RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector
 `
 
 type UpdateProjectItemParams struct {
@@ -516,13 +516,13 @@ func (q *Queries) UpdateProjectItem(ctx context.Context, arg UpdateProjectItemPa
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
-		&i.SearchVector,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.WorkflowStateID,
 		&i.OrgID,
 		&i.ItemKey,
+		&i.SearchVector,
 	)
 	return i, err
 }
@@ -563,7 +563,7 @@ const updateProjectItemStatus = `-- name: UpdateProjectItemStatus :one
 UPDATE project_items
 SET status = $2, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key
+RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector
 `
 
 type UpdateProjectItemStatusParams struct {
@@ -591,13 +591,13 @@ func (q *Queries) UpdateProjectItemStatus(ctx context.Context, arg UpdateProject
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
-		&i.SearchVector,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.WorkflowStateID,
 		&i.OrgID,
 		&i.ItemKey,
+		&i.SearchVector,
 	)
 	return i, err
 }
@@ -606,7 +606,7 @@ const updateProjectItemWorkflowState = `-- name: UpdateProjectItemWorkflowState 
 UPDATE project_items
 SET status = $2, workflow_state_id = $3, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, search_vector, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key
+RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector
 `
 
 type UpdateProjectItemWorkflowStateParams struct {
@@ -635,13 +635,13 @@ func (q *Queries) UpdateProjectItemWorkflowState(ctx context.Context, arg Update
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
-		&i.SearchVector,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.WorkflowStateID,
 		&i.OrgID,
 		&i.ItemKey,
+		&i.SearchVector,
 	)
 	return i, err
 }

@@ -17,6 +17,7 @@ import (
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	searchapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/search"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
@@ -80,7 +81,12 @@ type RouterConfig struct {
 	// org-scoped /dashboards family. Org-scoped for the same reason /views is
 	// — a dashboard arranges gadgets that cross containers.
 	DashboardHandler *dashboardsapi.Handler
-	SPAHandler       http.Handler // serves the embedded frontend; nil disables SPA serving
+	// SearchHandler serves cross-module search (P6, spec §5/§7): the
+	// org-scoped /search route. Org-scoped for the same reason /views is — a
+	// search spans containers by definition, so there is no {spaceID} to
+	// scope it to, and the per-viewer access set replaces the space guard.
+	SearchHandler *searchapi.Handler
+	SPAHandler    http.Handler // serves the embedded frontend; nil disables SPA serving
 	// AllowedOrigins is the explicit CORS allow-list, and nil or empty is the
 	// safe default: no CORS headers are emitted and the browser enforces
 	// same-origin. Cross-origin callers are admitted only by an operator
@@ -249,6 +255,13 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			// through /views/preview and /views/aggregate, which carry
 			// ResolveShares themselves.
 			mountDashboardResources(r, cfg)
+
+			// Cross-module search (P6, ADR-0009/ADR-0010). Org-scoped beside
+			// the views it complements. It DOES carry ResolveShares, unlike
+			// dashboards: search reads pages, tickets and items directly, and
+			// a share is the only way an entity outside the caller's readable
+			// spaces can legitimately appear in results.
+			mountSearchResources(r, cfg)
 
 			// Ticket-reference typeahead (A1). Org-scoped rather than
 			// space-scoped: the ticket_ref field it fills names a ticket
@@ -444,6 +457,30 @@ func mountViewResources(r chi.Router, cfg RouterConfig) {
 	}
 	r.Route("/views", func(r chi.Router) {
 		r.Mount("/", cfg.ViewHandler.Routes(shareResolver))
+	})
+}
+
+// mountSearchResources registers the P6 cross-module search route under the org
+// group.
+//
+// It carries ResolveShares because search reads the three entity tables
+// directly and unions the caller's shared entities — including, for pages, the
+// cascade SUBTREES that D46's paired accessor makes reachable. Without the
+// middleware the share and subtree arrays are empty on every request, which has
+// no symptom other than shared things quietly never being found.
+func mountSearchResources(r chi.Router, cfg RouterConfig) {
+	if cfg.SearchHandler == nil {
+		return
+	}
+	// Same nil-resolver pass-through convention as the admin guards and
+	// mountViewResources, so routing-only unit tests can build a router
+	// without an access resolver.
+	shareResolver := func(next http.Handler) http.Handler { return next }
+	if cfg.AccessResolver != nil {
+		shareResolver = ResolveShares(cfg.AccessResolver)
+	}
+	r.Route("/search", func(r chi.Router) {
+		r.Mount("/", cfg.SearchHandler.Routes(shareResolver))
 	})
 }
 
