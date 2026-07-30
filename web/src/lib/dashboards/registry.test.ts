@@ -93,8 +93,8 @@ describe('gadget registry ↔ internal/core/dashboards/registry.go', () => {
     expect(GADGET_LIMITS.maxGadgets).toBe(goConst('internal/core/dashboards/registry.go', 'MaxGadgets'));
   });
 
-  it('offers only the spans migration 042 admits', () => {
-    const migration = goSource('migrations/042_dashboards.sql');
+  it('offers only the spans migration 048 admits', () => {
+    const migration = goSource('migrations/048_dashboards.sql');
     const m = /CHECK \(col_span IN \(([^)]*)\)\)/.exec(migration);
     expect(m).not.toBeNull();
     const allowed = (m?.[1] ?? '')

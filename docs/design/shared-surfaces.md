@@ -11,7 +11,7 @@ convenience.
 
 Verified against `main` at migration 028; sections 9 and 10 added at migration 036; section 13
 and the section 5 corrections added at migration 038 (P4 saved views); sections 15, 16 and 17
-added at migration 042 (P5 dashboards).
+added at migration 048 (P5 dashboards).
 
 ---
 
@@ -675,7 +675,7 @@ is a picker entry whose Add button always 422s.
 
 **Strict on write, tolerant on read.** A key this build does not know is refused at the API
 boundary; a key this build does not know that is ALREADY STORED must still load, as an inert
-labelled placeholder (decision log C5). That is why migration 042 puts no CHECK on `gadget_key`
+labelled placeholder (decision log C5). That is why migration 048 puts no CHECK on `gadget_key`
 and why `dashboards.Gadget.Key` is a `string` rather than a `GadgetKey`.
 
 **Adding a gadget** is one `registerGadget` call on each side plus one line in the drift test's

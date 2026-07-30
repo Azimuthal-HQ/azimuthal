@@ -1372,21 +1372,25 @@ phase turns into "which approval policy applies". A partial unique index would c
 could fail on existing data, so it is flagged rather than taken.
 ---
 
-# P5 — Dashboards and the gadget registry (migration 042)
+# P5 — Dashboards and the gadget registry (migration 048)
 
 ## 1. Discrepancies found and corrected
 
 ### D76 — the §4 migration table was stale for the fifth time
 
 It assigned `039+` to this table. `039_beacon_queues.sql` shipped from P4 PR-B while P5 was being
-planned, and 040/041 were reserved for a Codex phase running concurrently, so dashboards ship as
-**042**. 043 was reserved for this phase too and is **not used**; it stays free.
+planned, and 040/041 were reserved for a Codex phase running concurrently, so this phase was
+assigned 042 and 043 and the migration was written as **042**. It shipped as **048** — see D74,
+which is the more interesting half of this entry.
 
 Fifth occurrence, and D56 already stated the rule: *the migration table in a design document is a
 forecast, not a fact.* This entry adds one fact to it. While P5 was in flight, sibling worktrees
 took **044, 045, 046 and 047** — a customer-portal phase and a workflow phase, neither of them in
-§9's plan. The table is corrected to what shipped and the unassigned rows renumbered again; the
-next phase should expect the same thing to have happened once more.
+§9's plan; 044 and 045 then MERGED before this branch did. The table is corrected to what shipped
+and the unassigned rows renumbered again; the next phase should expect the same thing to have
+happened once more.
+
+041, 042 and 043 are all free. A gap is harmless: goose cares about ORDER, not density.
 
 ### D77 — the §4 dashboards sketch repeats D57's FK defect verbatim
 
@@ -1402,7 +1406,7 @@ team would delete every dashboard shared with it — somebody else's work, destr
 effect of an unrelated administrative action.
 
 It is contrary to ADR-0009's degradation rules, which require a scope that has gone to degrade
-rather than to disappear. Migration 042 therefore uses `ON DELETE SET NULL` and, like 038, omits
+rather than to disappear. Migration 048 therefore uses `ON DELETE SET NULL` and, like 038, omits
 the CHECK that would make the degraded `(visibility = 'team', visibility_team_id IS NULL)` state
 unrepresentable. The invariant is enforced one layer up by `views.Audience.Normalise`, which is
 now the single implementation of that rule for both models.
@@ -1424,7 +1428,7 @@ build does not know can still be **read** — from a row an older or newer build
 decision log **C5** requires that to render a placeholder tile rather than crash the dashboard. A
 CHECK constraint would turn that degradation case into a failed migration or an unreadable row.
 
-Strict on write, tolerant on read, and the tolerance has to be in the schema. Migration 042 says
+Strict on write, tolerant on read, and the tolerance has to be in the schema. Migration 048 says
 so in place. `TestDashboardStore_AnUnknownStoredKeyStillLoads` inserts an unknown key straight
 through SQL and fails if the read path refuses it.
 
@@ -1448,6 +1452,34 @@ covered by the existing matrix.
 Also not a spec discrepancy, and also live: `ProductTabs.isHomeActive` enumerated the Home-scoped
 top-level paths and omitted `/spaces`, so the space directory rendered with **no product tab lit
 at all**. Found while adding `/dashboards` to the same list. Both are there now.
+
+### D76 — a pre-assigned migration number expires when a higher one merges first
+
+The coordination for these parallel phases pre-assigned migration numbers: 040/041 to the Codex
+phase, 042/043 to P5, and the portal and workflow phases took 044–047. That is sound as collision
+avoidance and unsound as an ordering guarantee, and this phase hit the difference.
+
+The customer portal merged 044 and 045 to `main` while this branch was open. goose refuses a
+migration numbered below the current version, and `internal/db/migrate.go` calls
+`goose.UpContext` at **boot**. So a 042 landing after 045 does not produce a failed migration
+step:
+
+```
+running migrations: error: found 1 missing migrations before current version 45:
+    version 42: migrations/042_dashboards.sql
+```
+
+That is the server refusing to start, on every deployment already carrying the portal.
+
+**Nothing in CI would have reported it.** Every CI database is built fresh from an empty schema,
+where ordering gaps are irrelevant and out-of-order cannot arise. The failure exists only on a
+database with history. It was found by applying `main`'s migrations to a throwaway database and
+then applying this branch's — reproduced in both directions, before and after the fix.
+
+Numbering is immutable ONCE SHIPPED (§10). This had not shipped, so it moved to **048**, the first
+free number. The rule to carry: a pre-assigned number is a claim on a position in a SEQUENCE, and
+it expires the moment a higher number merges first. Re-check it against `main` when you open the
+PR, not when you plan the phase — and if the branch is long-lived, re-check it again before merge.
 
 ## 2. Decisions taken (justified in the phase report, recorded here)
 
@@ -1487,7 +1519,7 @@ at all**. Found while adding `/dashboards` to the same list. Both are there now.
   JSON-schema runtime in the client would be a second copy of those bounds, and a second copy
   drifts. `web/src/lib/dashboards/registry.test.ts` reads the Go registry and fails in both
   directions on the key set, the configuration keys, the breakdown fields, every bound, and
-  migration 042's `col_span` CHECK.
+  migration 048's `col_span` CHECK.
 
 ## 3. Observed, out of scope
 
@@ -1523,6 +1555,6 @@ at all**. Found while adding `/dashboards` to the same list. Both are there now.
 - **The shared test database at `DATABASE_URL` accumulates other phases' migrations.**
   `internal/db` and `cmd/server` apply goose against it directly, and goose refuses to apply a
   migration numbered below the current version — so with 044–047 already applied by sibling
-  worktrees, migration 042 could not be applied and eleven tests failed on the toolchain rather
+  worktrees, migration 048 could not be applied and eleven tests failed on the toolchain rather
   than on any change. `testutil.NewTestDB` is unaffected (it clones a fingerprinted template into
   its own database). Recorded because the failure reads exactly like a broken migration.
