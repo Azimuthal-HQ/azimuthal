@@ -3,10 +3,12 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
@@ -265,4 +267,87 @@ func TestSearchEndpoint_BadCursorIs400(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	res := ts.do(t, req)
 	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+}
+
+// TestMatrixAPI23_SearchQueriesDoNotGrowWithResults is case 23 for the search
+// route.
+//
+// shared-surfaces requires each cross-space phase to EXTEND this tracer to its
+// own endpoints rather than assume existing coverage carries over, and search
+// has no predecessor to copy: P4 never extended it to /views (neither
+// TestMatrixAPI23_ConstantAuthQueries nor
+// TestMatrixAPI23_ShareResolutionConstantQueries mentions /results), and
+// ShareResolutionConstantQueries measures the /shared subtree, whose handler
+// resolves ONE already-identified entity. Search is the first route to union
+// shares AND fan out over three tables.
+//
+// The defect it exists to catch: checking cascade coverage per hit in Go —
+// se.CoversPage(...) inside a loop over results — is correct on output and
+// grows the query count with the result count. Nothing else in the suite sees
+// it, because every assertion about correctness still passes.
+func TestMatrixAPI23_SearchQueriesDoNotGrowWithResults(t *testing.T) {
+	db := testutil.NewTestDB(t)
+
+	counter := &queryCounter{}
+	cfg, err := pgxpool.ParseConfig(db.DSN)
+	require.NoError(t, err)
+	cfg.ConnConfig.RuntimeParams["search_path"] = fmt.Sprintf("%q, public", db.Schema)
+	cfg.ConnConfig.Tracer = counter
+	cfg.MaxConns = 3
+	countingPool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(countingPool.Close)
+
+	ts := newTestServerOn(t, db, countingPool)
+
+	mkSpace := func() uuid.UUID {
+		return testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "codex").ID
+	}
+	seedPages := func(spaceID uuid.UUID, n int) {
+		for i := 0; i < n; i++ {
+			seedSearchPage(t, ts, spaceID, "Kestrel result")
+		}
+	}
+
+	searchPath := fmt.Sprintf("/api/v1/orgs/%s/search?q=kestrel&limit=50", ts.OrgID)
+
+	countedSearch := func(wantRows int) int64 {
+		// Warm request first: connection setup and auth caches must not
+		// pollute the measured request.
+		r := ts.get(t, searchPath, true)
+		require.Equal(t, http.StatusOK, r.StatusCode, "warm: %s", r.Body)
+		before := counter.n.Load()
+		r = ts.get(t, searchPath, true)
+		require.Equal(t, http.StatusOK, r.StatusCode)
+		got := decodeSearch(t, r.Body)
+		require.Len(t, got.Results, wantRows, "result-count premise for the assertion")
+		return counter.n.Load() - before
+	}
+
+	first := mkSpace()
+	seedPages(first, 3)
+	qAt3 := countedSearch(3)
+
+	seedPages(first, 27)
+	qAt30 := countedSearch(30)
+	require.Equal(t, qAt3, qAt30,
+		"search: query count must not grow with result count (N=3: %d, N=30: %d)", qAt3, qAt30)
+	// MEASURED AT 8, which is the budget exactly — auth state, ResolveAccessRows,
+	// ResolveShareRows, ParseSearchQuery, the three fan-outs, and one more. There
+	// is no headroom, and one of those eight is the empty-tsquery guard: a whole
+	// round trip spent so a stopword-only query answers "no searchable terms"
+	// instead of an ordinary empty page. That is a deliberate trade, recorded
+	// here rather than discovered by whoever next adds a query to this path and
+	// finds the budget already spent.
+	require.LessOrEqual(t, qAt3, int64(8), "per-request query budget blown: %d", qAt3)
+
+	// And it must not grow with the number of SPACES the results span, which
+	// is the shape a per-space permission re-check would produce.
+	for i := 2; i <= 12; i++ {
+		seedPages(mkSpace(), 1)
+	}
+	qSpread := countedSearch(41)
+	require.Equal(t, qAt3, qSpread,
+		"search: query count must not grow with the number of spaces spanned (1 space: %d, 12 spaces: %d)",
+		qAt3, qSpread)
 }
