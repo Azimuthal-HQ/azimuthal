@@ -43,13 +43,31 @@ func TestParseQuery_RejectsUnknownField(t *testing.T) {
 
 // TestParseQuery_RejectsUnsupportedVersion pins the versioning promise: a
 // document from a future build is refused, not guessed at.
+//
+// v2 widened the accepted set from {1} to [MinVersion, Version]. The promise
+// itself did not move — anything outside the range is still refused — so this
+// names both ends and the values just outside them. It deliberately still
+// refuses 3: a build that guessed at a document from a newer vocabulary would
+// silently drop whatever it did not recognise and return a wider set of rows
+// than the document asks for.
 func TestParseQuery_RejectsUnsupportedVersion(t *testing.T) {
 	for _, raw := range []string{
-		`{"v":2,"filter":{"modules":["beacon"]},"sort":{"field":"updated_at","dir":"desc"}}`,
+		`{"v":3,"filter":{"modules":["beacon"]},"sort":{"field":"updated_at","dir":"desc"}}`,
+		`{"v":-1,"filter":{"modules":["beacon"]},"sort":{"field":"updated_at","dir":"desc"}}`,
 		`{"filter":{"modules":["beacon"]},"sort":{"field":"updated_at","dir":"desc"}}`, // v absent decodes as 0
 	} {
 		if _, err := ParseQuery([]byte(raw)); err == nil {
 			t.Fatalf("expected version refusal for %s", raw)
+		}
+	}
+	// Both supported versions are accepted, and a v2 document is not obliged to
+	// use anything v2 added.
+	for _, raw := range []string{
+		`{"v":1,"filter":{"modules":["beacon"]},"sort":{"field":"updated_at","dir":"desc"}}`,
+		`{"v":2,"filter":{"modules":["beacon"]},"sort":{"field":"updated_at","dir":"desc"}}`,
+	} {
+		if _, err := ParseQuery([]byte(raw)); err != nil {
+			t.Fatalf("expected %s to be accepted, got %v", raw, err)
 		}
 	}
 }

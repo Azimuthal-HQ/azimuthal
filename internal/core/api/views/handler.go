@@ -523,7 +523,17 @@ func respondPage(w http.ResponseWriter, page views.Page) {
 // fail closed, never fail open.
 func viewerFrom(r *http.Request) views.Viewer {
 	ctx := r.Context()
-	v := views.Viewer{}
+	// THE REQUEST'S EVALUATION INSTANT, READ ONCE.
+	//
+	// Every relative date bound in every query built from this Viewer resolves
+	// against this one value. Reading the clock deeper down — inside
+	// buildParams, say — would give each fan-out its own instant, and the two
+	// halves of one merged result would then disagree about where "the last
+	// 7 days" ends.
+	//
+	// UTC because the columns are timestamptz and the comparison is between
+	// instants: no zone is consulted on either side, so none has to be chosen.
+	v := views.Viewer{At: time.Now().UTC()}
 	if claims := auth.ClaimsFromContext(ctx); claims != nil {
 		v.UserID = claims.UserID
 	}

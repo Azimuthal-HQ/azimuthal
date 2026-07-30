@@ -63,6 +63,18 @@ func (a *SavedViewAdapter) CountTickets(ctx context.Context, p views.FanoutParam
 		FilterAssignee:    p.FilterAssignee,
 		AssigneeIds:       nonNilUUIDs(p.AssigneeIDs),
 		IncludeUnassigned: p.IncludeUnassigned,
+		NotSpaceIds:       p.NotSpaceIDs,
+		NotStatuses:       p.NotStatuses,
+		NotPriorities:     p.NotPriorities,
+		NotAssignees:      p.NotAssignees,
+		CreatedAfter:      pgTimestampPtr(p.CreatedAfter),
+		CreatedBefore:     pgTimestampPtr(p.CreatedBefore),
+		UpdatedAfter:      pgTimestampPtr(p.UpdatedAfter),
+		UpdatedBefore:     pgTimestampPtr(p.UpdatedBefore),
+		DueAfter:          pgTimestampPtr(p.DueAfter),
+		DueBefore:         pgTimestampPtr(p.DueBefore),
+		ResolvedAfter:     pgTimestampPtr(p.ResolvedAfter),
+		ResolvedBefore:    pgTimestampPtr(p.ResolvedBefore),
 		TextPattern:       p.TextPattern,
 	})
 	if err != nil {
@@ -85,6 +97,8 @@ func (a *SavedViewAdapter) CountProjectItems(ctx context.Context, p views.Fanout
 		IncludeUnassigned: p.IncludeUnassigned,
 		Kinds:             nonNilStrings(p.Kinds),
 		SprintIds:         nonNilUUIDs(p.SprintIDs),
+		NotKinds:          p.NotKinds,
+		NotSprintIds:      p.NotSprintIDs,
 		TextPattern:       p.TextPattern,
 	})
 	if err != nil {
@@ -106,6 +120,18 @@ func (a *SavedViewAdapter) BreakdownTickets(ctx context.Context, p views.FanoutP
 		FilterAssignee:    p.FilterAssignee,
 		AssigneeIds:       nonNilUUIDs(p.AssigneeIDs),
 		IncludeUnassigned: p.IncludeUnassigned,
+		NotSpaceIds:       p.NotSpaceIDs,
+		NotStatuses:       p.NotStatuses,
+		NotPriorities:     p.NotPriorities,
+		NotAssignees:      p.NotAssignees,
+		CreatedAfter:      pgTimestampPtr(p.CreatedAfter),
+		CreatedBefore:     pgTimestampPtr(p.CreatedBefore),
+		UpdatedAfter:      pgTimestampPtr(p.UpdatedAfter),
+		UpdatedBefore:     pgTimestampPtr(p.UpdatedBefore),
+		DueAfter:          pgTimestampPtr(p.DueAfter),
+		DueBefore:         pgTimestampPtr(p.DueBefore),
+		ResolvedAfter:     pgTimestampPtr(p.ResolvedAfter),
+		ResolvedBefore:    pgTimestampPtr(p.ResolvedBefore),
 		TextPattern:       p.TextPattern,
 	})
 	if err != nil {
@@ -133,6 +159,8 @@ func (a *SavedViewAdapter) BreakdownProjectItems(ctx context.Context, p views.Fa
 		IncludeUnassigned: p.IncludeUnassigned,
 		Kinds:             nonNilStrings(p.Kinds),
 		SprintIds:         nonNilUUIDs(p.SprintIDs),
+		NotKinds:          p.NotKinds,
+		NotSprintIds:      p.NotSprintIDs,
 		TextPattern:       p.TextPattern,
 	})
 	if err != nil {

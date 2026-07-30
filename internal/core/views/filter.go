@@ -51,20 +51,85 @@
 // Beacon half forever, because it asked tickets for a column they do not have,
 // is a defect the user cannot see. The importer must report the same thing —
 // a JQL `sprint = X` scoped across both modules does not translate.
+//
+// # Version 2: dates and negation
+//
+// v2 adds two capabilities and changes nothing else. The document is still a
+// record: no operator grammar, no boolean tree, no cross-field OR. An OR across
+// two different fields has no representation in v2 either, and that is
+// deliberate — the importer reports such a query as unmappable rather than
+// approximating it.
+//
+//	{"v":2,"filter":{
+//	   "modules":["beacon"],
+//	   "updated_at":{"after":"-7d"},
+//	   "statuses":["closed"],"not":{"statuses":true}
+//	 },"sort":{...}}
+//
+// DATES. Each of the four date fields takes a range of optional {after, before}
+// bounds. A bound is EITHER an absolute RFC3339 instant OR a relative token from
+// the closed grammar ParseDateBound defines. The interval is half-open — `after`
+// is inclusive, `before` is exclusive — so adjacent ranges partition cleanly and
+// no row is counted twice at a boundary.
+//
+// Relative tokens are stored as written and resolved server-side at evaluation,
+// against ONE instant per request. That is the rule the `me` token has obeyed
+// since v1, for the same reason: a bound resolved at write time freezes the view
+// to the moment it was saved, and a view called "updated this week" would
+// quietly come to mean "updated during the week I created this".
+//
+// NEGATION. `not` carries one flag per membership field, meaning "everything
+// except these values". It is a per-field flag rather than a clause-level NOT
+// precisely so that it cannot compose into a boolean tree.
+//
+// There is no date negation, and no key that could express one: Negate names
+// only the six membership fields, so `{"not":{"created_at":true}}` is refused by
+// the unknown-key rule rather than by a special case. Bounds already express
+// exclusion — "not in the last 7 days" is `{"before":"-7d"}` — so a second
+// spelling would give one meaning two representations.
+//
+// # Why v1 documents are never rewritten
+//
+// The version a document declares is the vocabulary it was WRITTEN against, and
+// this build preserves it rather than upgrading it. A stored v1 document parses,
+// validates, evaluates and re-encodes byte for byte as itself. There is no
+// backfill and no upgrade-on-read.
+//
+// That is not conservatism; it is what keeps evaluation version-free. A v1
+// document leaves the v2 fields unset, and an unset bound and an unset negation
+// flag are already no-ops in the fan-out — a NULL bound and a false flag. So no
+// query, no adapter and no surface below this file branches on the version at
+// all. The only code that knows v2 exists is the validator.
+//
+// The rule is therefore monotone and stated once: V is 1 or 2, and a document
+// using any v2 capability must declare 2. A v2 document need not use any v2
+// capability — which lets a client raise the version only when its document
+// actually requires it, and lets an older client go on reading every view that
+// does not.
 package views
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
 
-// Version is the only filter-document version this build reads or writes. A
-// document carrying any other value is refused rather than guessed at.
-const Version = 1
+// Version is the newest filter-document version this build writes. Documents
+// declaring MinVersion..Version are read; anything else is refused rather than
+// guessed at.
+const Version = 2
+
+// MinVersion is the oldest document version this build still reads. v1
+// documents are read, evaluated and re-encoded unchanged — see the note on
+// versioning in the package comment. Lowering support for a version that has
+// been stored is a data-loss change, not a cleanup.
+const MinVersion = 1
 
 // Bounds on a stored filter. They are not security boundaries — every value is
 // a bound parameter — they stop one saved view from becoming an unbounded
@@ -78,6 +143,11 @@ const (
 	MaxTextLen   = 200
 	MaxNameLen   = 120
 	MaxDescLen   = 500
+	// MaxRelativeUnits bounds the magnitude of a relative date token, so
+	// "-999999999w" cannot ask PostgreSQL to compute an instant outside the
+	// range a timestamptz can hold. It is a bound on the TOKEN, not on how far
+	// back a view may look: an absolute RFC3339 bound has no such limit.
+	MaxRelativeUnits = 999
 )
 
 // Module names which table a fan-out reads. The values match spaces.type
@@ -100,6 +170,244 @@ const AssigneeMe = "me"
 
 // AssigneeUnassigned matches rows with a NULL assignee_id.
 const AssigneeUnassigned = "unassigned"
+
+// DateNow is the relative token for the evaluating instant itself. It is what
+// makes "overdue" expressible — `due_at: {"before":"now"}` — without a client
+// having to write a timestamp it would then have to keep refreshing.
+const DateNow = "now"
+
+// relativeToken is the whole relative grammar: a sign, a magnitude and one of
+// three units. The sign is REQUIRED. "7d" is refused rather than assumed to
+// mean the past, because a filter that guesses a direction is one whose author
+// cannot tell from reading it which way it points.
+//
+//	-7d    seven days ago         +7d   seven days from now
+//	-4w    four weeks ago         +2w   two weeks from now
+//	-1mo   one calendar month ago
+//
+// Days and weeks are exact multiples of 24h. Months are CALENDAR months, with
+// end-of-month clamping — see addMonths.
+//
+// THE MONTH UNIT IS "mo", NOT "m", AND THAT IS NOT A STYLE CHOICE. In Jira's
+// JQL, relative date literals use w/d/h/m where `m` is MINUTES — JQL has no
+// month unit at all. Spelling ours `m` would mean "-1m" was a valid token in
+// both vocabularies meaning two things three orders of magnitude apart, and the
+// importer would translate it silently and wrongly. An unshared spelling makes
+// the mismatch a parse error instead. The JQL classifier records `m` as
+// unmappable for exactly this reason.
+var relativeToken = regexp.MustCompile(`^([+-])([0-9]{1,3})(d|w|mo)$`)
+
+// DateRange is an optional half-open interval on one date column: rows at or
+// after After, and strictly before Before. Both bounds are optional, but an
+// empty range is refused — `{}` is a filter that filters nothing, written by a
+// caller who believed it did something.
+//
+// Each bound is a STRING because it holds either spelling: an RFC3339 instant
+// or a relative token. Storing a resolved instant instead would be the write-time
+// freeze the package comment describes, and giving the two spellings two fields
+// would make "exactly one of these is set" a rule someone has to remember.
+type DateRange struct {
+	// After is the inclusive lower bound.
+	After string `json:"after,omitempty"`
+	// Before is the exclusive upper bound.
+	Before string `json:"before,omitempty"`
+}
+
+// Negate carries one "everything except these values" flag per membership
+// field. A flag with no values beside it is refused: negating an empty set means
+// "everything", which is what the filter already does without it, and accepting
+// it would let a document say the same thing two ways.
+//
+// The four date fields are absent by construction, which is how date negation
+// is refused — there is no key to write. See the package comment.
+type Negate struct {
+	SpaceIDs   bool `json:"space_ids,omitempty"`
+	Statuses   bool `json:"statuses,omitempty"`
+	Priorities bool `json:"priorities,omitempty"`
+	Assignees  bool `json:"assignees,omitempty"`
+	Kinds      bool `json:"kinds,omitempty"`
+	SprintIDs  bool `json:"sprint_ids,omitempty"`
+}
+
+// any reports whether any field is negated.
+func (n Negate) any() bool {
+	return n.SpaceIDs || n.Statuses || n.Priorities || n.Assignees || n.Kinds || n.SprintIDs
+}
+
+// ParseDateBound validates one bound and reports how it resolves.
+//
+// A bound is one of:
+//
+//	an RFC3339 instant   "2026-01-31T00:00:00Z"
+//	the token "now"
+//	a relative token     [+-]<1..999><d|w|m>
+//
+// It is the single definition of the grammar. The API validator, the two SQL
+// fan-outs and the JQL classifier all describe what this function accepts, and
+// they describe it correctly only for as long as none of them re-implements it.
+func ParseDateBound(s string) (DateBound, error) {
+	if s == "" {
+		return DateBound{}, errors.New("a date bound may not be empty")
+	}
+	if s == DateNow {
+		return DateBound{Relative: true}, nil
+	}
+	if m := relativeToken.FindStringSubmatch(s); m != nil {
+		n, err := strconv.Atoi(m[2])
+		if err != nil || n == 0 {
+			return DateBound{}, fmt.Errorf("relative date %q must name at least one unit", s)
+		}
+		if n > MaxRelativeUnits {
+			return DateBound{}, fmt.Errorf("relative date %q may name at most %d units", s, MaxRelativeUnits)
+		}
+		if m[1] == "-" {
+			n = -n
+		}
+		return DateBound{Relative: true, Units: n, Unit: m[3]}, nil
+	}
+	// Absolute. RFC3339 requires the offset, so an instant is unambiguous
+	// without consulting anybody's time zone — which matters because the
+	// columns are timestamptz and the comparison is between instants.
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return DateBound{}, fmt.Errorf(
+			"date bound %q is neither an RFC3339 instant nor a relative token (%q, or a sign, 1-%d and d, w or mo — for example %q)",
+			s, DateNow, MaxRelativeUnits, "-7d")
+	}
+	return DateBound{Absolute: t}, nil
+}
+
+// DateBound is a parsed bound: either an absolute instant or an offset waiting
+// for the request's `now`.
+type DateBound struct {
+	Absolute time.Time
+	Relative bool
+	Units    int
+	Unit     string
+}
+
+// Resolve turns a bound into the instant the fan-out compares against.
+//
+// `now` is passed in rather than read here, and that is the whole point: two
+// gadgets on one dashboard resolve "-7d" against the SAME instant, so their
+// counts agree at the boundary. A time.Now() in this function would give each
+// caller its own boundary and the disagreement would appear only for rows
+// created in the microseconds between two calls.
+func (b DateBound) Resolve(now time.Time) time.Time {
+	if !b.Relative {
+		return b.Absolute
+	}
+	switch b.Unit {
+	case "d":
+		return now.AddDate(0, 0, b.Units)
+	case "w":
+		return now.AddDate(0, 0, 7*b.Units)
+	case "mo":
+		return addMonths(now, b.Units)
+	default:
+		// "now" itself: Relative with no unit.
+		return now
+	}
+}
+
+// addMonths shifts by calendar months, CLAMPING to the last day of the target
+// month rather than overflowing into the next one.
+//
+// time.Time.AddDate does not clamp: it normalises, so 31 March minus one month
+// is 31 February, which it reports as 3 March. A view called "changed in the
+// last month" would then skip the last few days of February every March. Nobody
+// would see that; they would see a count that was slightly wrong once a year.
+//
+// PostgreSQL's `interval '1 month'` clamps, so this is also the arithmetic the
+// database would do if the resolution happened there.
+func addMonths(t time.Time, months int) time.Time {
+	y, m, d := t.Date()
+	target := time.Date(y, m+time.Month(months), 1, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+	if last := daysIn(target.Year(), target.Month()); d > last {
+		d = last
+	}
+	return time.Date(target.Year(), target.Month(), d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+}
+
+func daysIn(y int, m time.Month) int {
+	// Day 0 of the next month is the last day of this one.
+	return time.Date(y, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+// orderingDays is a bound's position on a deterministic number line, used ONLY
+// to catch an inverted range at write time. Never used for evaluation.
+//
+// A month is counted as 30 days here, which the calendar disagrees with. That is
+// tolerable for an ordering check and intolerable for a comparison, so the two
+// are kept apart: evaluation always goes through Resolve, which does real
+// calendar arithmetic against the request's instant.
+//
+// The reason the check cannot simply resolve both bounds against time.Now() is
+// that validation would then depend on the wall clock: "-1m" and "-30d" swap
+// order between February and March, so a document accepted in one month would
+// be rejected in another, and a stored view would become invalid without anyone
+// touching it.
+func (b DateBound) orderingDays() (float64, bool) {
+	if !b.Relative {
+		return 0, false
+	}
+	switch b.Unit {
+	case "d":
+		return float64(b.Units), true
+	case "w":
+		return float64(7 * b.Units), true
+	case "mo":
+		return float64(30 * b.Units), true
+	default:
+		return 0, true // "now"
+	}
+}
+
+// validate checks one range's grammar and, where it can be known statically,
+// that the range is not inverted.
+func (r *DateRange) validate(field string) error {
+	if r.After == "" && r.Before == "" {
+		return fmt.Errorf("the %q filter names neither a start nor an end; remove it or give it a bound", field)
+	}
+	var after, before DateBound
+	if r.After != "" {
+		b, err := ParseDateBound(r.After)
+		if err != nil {
+			return fmt.Errorf("%s after: %w", field, err)
+		}
+		after = b
+	}
+	if r.Before != "" {
+		b, err := ParseDateBound(r.Before)
+		if err != nil {
+			return fmt.Errorf("%s before: %w", field, err)
+		}
+		before = b
+	}
+	if r.After == "" || r.Before == "" {
+		return nil
+	}
+
+	// Both bounds present. Compare only what is comparable without a clock.
+	switch {
+	case !after.Relative && !before.Relative:
+		if !after.Absolute.Before(before.Absolute) {
+			return fmt.Errorf("the %q filter starts at or after it ends (%s is not before %s)", field, r.After, r.Before)
+		}
+	case after.Relative && before.Relative:
+		ad, _ := after.orderingDays()
+		bd, _ := before.orderingDays()
+		if ad >= bd {
+			return fmt.Errorf("the %q filter starts at or after it ends (%s is not before %s)", field, r.After, r.Before)
+		}
+	default:
+		// One absolute, one relative. Their order depends on when the query
+		// runs, so there is nothing to check here that would still be true
+		// tomorrow. An inverted pair returns no rows, which is the correct
+		// answer to a range that excludes everything.
+	}
+	return nil
+}
 
 // Priorities are CHECK-constrained to these four on both tickets and
 // project_items. Validating against the same list here turns a typo into a
@@ -144,6 +452,46 @@ type Filter struct {
 	// Text is a literal substring matched against the title. It is not a
 	// pattern: LIKE metacharacters in it match themselves.
 	Text string `json:"text,omitempty"`
+
+	// The four date ranges (v2). Nil means unfiltered. Each is half-open:
+	// after is inclusive, before is exclusive.
+	//
+	// CreatedAt and UpdatedAt read NOT NULL columns on both tables. DueAt and
+	// ResolvedAt read NULLABLE ones, so a row with no due date is not matched
+	// by ANY due_at range — it is not "due before X" and not "due after X"
+	// either. Verified against the database, not the migrations.
+	CreatedAt  *DateRange `json:"created_at,omitempty"`
+	UpdatedAt  *DateRange `json:"updated_at,omitempty"`
+	DueAt      *DateRange `json:"due_at,omitempty"`
+	ResolvedAt *DateRange `json:"resolved_at,omitempty"`
+
+	// Not negates individual membership fields (v2). omitzero rather than
+	// omitempty: encoding/json never treats a struct as empty, so omitempty on
+	// a struct field emits `"not":{}` into every document — which would change
+	// the bytes of every stored v1 document the moment a v2 build re-encoded
+	// one. omitzero (Go 1.24) omits the zero struct, which is what keeps the v1
+	// round trip byte-identical.
+	Not Negate `json:"not,omitzero"`
+}
+
+// usesV2 reports whether this filter needs the v2 vocabulary.
+//
+// It is the whole definition of "what v2 added", and it is deliberately one
+// function rather than a condition repeated at each call site: a capability
+// added to Filter but forgotten here would be silently accepted inside a
+// document claiming v1, which is the exact drift the version field exists to
+// prevent.
+func (f *Filter) usesV2() bool {
+	return f.CreatedAt != nil || f.UpdatedAt != nil ||
+		f.DueAt != nil || f.ResolvedAt != nil || f.Not.any()
+}
+
+// RequiredVersion is the lowest document version that can express this filter.
+func (q *Query) RequiredVersion() int {
+	if q.Filter.usesV2() {
+		return 2
+	}
+	return MinVersion
 }
 
 // Sort is one ordering. Deliberately singular rather than the sketch's list.
@@ -209,8 +557,18 @@ func ParseQuery(raw []byte) (Query, error) {
 // Validate enforces every rule the vocabulary states. It is called by
 // ParseQuery and separately by any caller that builds a Query in Go.
 func (q *Query) Validate() error {
-	if q.V != Version {
-		return fmt.Errorf("filter document version %d is not supported (this build reads version %d)", q.V, Version)
+	if q.V < MinVersion || q.V > Version {
+		return fmt.Errorf("filter document version %d is not supported (this build reads versions %d to %d)", q.V, MinVersion, Version)
+	}
+	// A v2 capability inside a document that declares v1 is refused, not
+	// tolerated and not silently upgraded. The version is the reader's promise
+	// about what it will find; a v1 reader that met a date range would drop it
+	// and return a wider set of rows than the document asks for, which is the
+	// failure mode nobody sees.
+	if req := q.RequiredVersion(); q.V < req {
+		return fmt.Errorf(
+			"this filter uses date ranges or negation, which need document version %d (this document declares version %d)",
+			req, q.V)
 	}
 	if q.Sort.Field == "" && q.Sort.Dir == "" {
 		q.Sort = DefaultSort()
@@ -302,6 +660,57 @@ func (f *Filter) validate() error {
 		}
 		if hasBeacon {
 			return fmt.Errorf("the %q filter applies to %s items only — Beacon tickets have no sprint, so a view naming both modules cannot use it", "sprint_ids", ModuleVector)
+		}
+	}
+
+	if err := f.validateDates(); err != nil {
+		return err
+	}
+	return f.validateNegation()
+}
+
+// validateDates checks the four ranges. Named per field so the message says
+// which one is wrong rather than that "a date" is.
+func (f *Filter) validateDates() error {
+	for _, d := range []struct {
+		name  string
+		value *DateRange
+	}{
+		{"created_at", f.CreatedAt},
+		{"updated_at", f.UpdatedAt},
+		{"due_at", f.DueAt},
+		{"resolved_at", f.ResolvedAt},
+	} {
+		if d.value == nil {
+			continue
+		}
+		if err := d.value.validate(d.name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNegation refuses a negation flag with nothing to negate.
+//
+// "Everything except nothing" is everything, which the filter already says by
+// leaving the field out. Accepting it would give one meaning two spellings, and
+// the one that looks like a filter would be the one that is not.
+func (f *Filter) validateNegation() error {
+	for _, n := range []struct {
+		name  string
+		on    bool
+		empty bool
+	}{
+		{"space_ids", f.Not.SpaceIDs, len(f.SpaceIDs) == 0},
+		{"statuses", f.Not.Statuses, len(f.Statuses) == 0},
+		{"priorities", f.Not.Priorities, len(f.Priorities) == 0},
+		{"assignees", f.Not.Assignees, len(f.Assignees) == 0},
+		{"kinds", f.Not.Kinds, len(f.Kinds) == 0},
+		{"sprint_ids", f.Not.SprintIDs, len(f.SprintIDs) == 0},
+	} {
+		if n.on && n.empty {
+			return fmt.Errorf("the %q filter is negated but names no values; \"everything except nothing\" is everything, so remove the negation or name what to exclude", n.name)
 		}
 	}
 	return nil

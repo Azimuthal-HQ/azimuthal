@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/assess/jql"
 )
 
 func readFixture(t *testing.T, name string) string {
@@ -134,12 +136,33 @@ func TestRun_ClassifiesSavedFilters(t *testing.T) {
 	t.Parallel()
 
 	res := runFixtures(t)
-	require.Len(t, res.Filters, 3)
+	require.Len(t, res.Filters, 4)
 
 	cl := findClass(t, res, "Jira saved filters (JQL)")
-	require.Equal(t, 3, cl.Observed)
-	require.Equal(t, 3, cl.Classified())
-	require.Positive(t, cl.CountBy(VerdictUnmappable), "the date-clause filter cannot be expressed")
+	require.Equal(t, 4, cl.Observed)
+	require.Equal(t, 4, cl.Classified())
+
+	// The fixture spans all three verdicts, and each is asserted BY NAME rather
+	// than by a "positive count" that any one of them could satisfy.
+	//
+	// The date filter is the one that moved. Under filter document v1 it was
+	// unmappable — v1 had no date predicate at all — and v2's ranges recovered
+	// it. Asserting it is now CLEAN is what stops a later change from quietly
+	// putting the largest bucket in the report back where it was.
+	byQuery := map[string]jql.Expressibility{}
+	for _, f := range res.Filters {
+		byQuery[f.Raw] = f.Verdict
+	}
+	require.Equal(t, jql.Expressible,
+		byQuery[`project = DOCS AND status = Open AND assignee = currentUser()`])
+	require.Equal(t, jql.Partial, byQuery[`text ~ "pool"`])
+	require.Equal(t, jql.Expressible,
+		byQuery[`project IN (DOCS, PLAT) AND created >= -30d ORDER BY created DESC`],
+		"the relative date clause is expressible under filter document v2")
+	require.Equal(t, jql.NotExpressible,
+		byQuery[`assignee = currentUser() OR status != Done`],
+		"an OR across two fields has no representation in v2 either, by decision")
+	require.Positive(t, cl.CountBy(VerdictUnmappable))
 }
 
 // TestRun_RestrictedCommentsAreUnmappable — the comments table has no

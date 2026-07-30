@@ -40,33 +40,69 @@ WHERE pi.deleted_at IS NULL
   AND s.org_id = $2
   AND (pi.space_id = ANY($3::uuid[])
        OR pi.id = ANY($4::uuid[]))
-  AND (cardinality($5::uuid[]) = 0 OR pi.space_id = ANY($5::uuid[]))
-  AND (cardinality($6::text[]) = 0 OR pi.status = ANY($6::text[]))
-  AND (cardinality($7::text[]) = 0 OR pi.priority = ANY($7::text[]))
-  AND (NOT $8::boolean
-       OR pi.assignee_id = ANY($9::uuid[])
-       OR ($10::boolean AND pi.assignee_id IS NULL))
-  AND (cardinality($11::text[]) = 0 OR pi.kind = ANY($11::text[]))
-  AND (cardinality($12::uuid[]) = 0 OR pi.sprint_id = ANY($12::uuid[]))
-  AND ($13::text = '' OR pi.title ILIKE $13::text)
+  AND (cardinality($5::uuid[]) = 0
+       OR (pi.space_id = ANY($5::uuid[])) <> $6::boolean)
+  AND (cardinality($7::text[]) = 0
+       OR (pi.status = ANY($7::text[])) <> $8::boolean)
+  AND (cardinality($9::text[]) = 0
+       OR (pi.priority = ANY($9::text[])) <> $10::boolean)
+  -- See the note on the ticket half: COALESCE guards the NULLABLE columns, so
+  -- an unassigned row survives "not assigned to Alice" instead of being dropped
+  -- by three-valued logic.
+  AND (NOT $11::boolean
+       OR (COALESCE(pi.assignee_id = ANY($12::uuid[]), false)
+           OR ($13::boolean AND pi.assignee_id IS NULL)
+          ) <> $14::boolean)
+  AND (cardinality($15::text[]) = 0
+       OR (pi.kind = ANY($15::text[])) <> $16::boolean)
+  -- sprint_id is the second nullable column, so it needs the COALESCE for the
+  -- same reason: a backlog item in no sprint belongs in "not in sprint 4".
+  AND (cardinality($17::uuid[]) = 0
+       OR COALESCE(pi.sprint_id = ANY($17::uuid[]), false) <> $18::boolean)
+  AND ($19::text = '' OR pi.title ILIKE $19::text)
+  -- The four v2 date ranges — half-open, and identical to the ticket half. Read
+  -- the note there; the two blocks must stay the same predicate or a count
+  -- gadget and the list it counts would disagree.
+  AND ($20::timestamptz IS NULL OR pi.created_at >= $20::timestamptz)
+  AND ($21::timestamptz IS NULL OR pi.created_at < $21::timestamptz)
+  AND ($22::timestamptz IS NULL OR pi.updated_at >= $22::timestamptz)
+  AND ($23::timestamptz IS NULL OR pi.updated_at < $23::timestamptz)
+  AND ($24::timestamptz IS NULL OR pi.due_at >= $24::timestamptz)
+  AND ($25::timestamptz IS NULL OR pi.due_at < $25::timestamptz)
+  AND ($26::timestamptz IS NULL OR pi.resolved_at >= $26::timestamptz)
+  AND ($27::timestamptz IS NULL OR pi.resolved_at < $27::timestamptz)
 GROUP BY g.bucket_key, g.bucket_label
 ORDER BY count(*) DESC, g.bucket_key ASC
 `
 
 type BreakdownViewProjectItemsParams struct {
-	GroupBy           string      `json:"group_by"`
-	OrgID             uuid.UUID   `json:"org_id"`
-	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
-	SharedItemIds     []uuid.UUID `json:"shared_item_ids"`
-	SpaceIds          []uuid.UUID `json:"space_ids"`
-	Statuses          []string    `json:"statuses"`
-	Priorities        []string    `json:"priorities"`
-	FilterAssignee    bool        `json:"filter_assignee"`
-	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
-	IncludeUnassigned bool        `json:"include_unassigned"`
-	Kinds             []string    `json:"kinds"`
-	SprintIds         []uuid.UUID `json:"sprint_ids"`
-	TextPattern       string      `json:"text_pattern"`
+	GroupBy           string             `json:"group_by"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID        `json:"readable_space_ids"`
+	SharedItemIds     []uuid.UUID        `json:"shared_item_ids"`
+	SpaceIds          []uuid.UUID        `json:"space_ids"`
+	NotSpaceIds       bool               `json:"not_space_ids"`
+	Statuses          []string           `json:"statuses"`
+	NotStatuses       bool               `json:"not_statuses"`
+	Priorities        []string           `json:"priorities"`
+	NotPriorities     bool               `json:"not_priorities"`
+	FilterAssignee    bool               `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID        `json:"assignee_ids"`
+	IncludeUnassigned bool               `json:"include_unassigned"`
+	NotAssignees      bool               `json:"not_assignees"`
+	Kinds             []string           `json:"kinds"`
+	NotKinds          bool               `json:"not_kinds"`
+	SprintIds         []uuid.UUID        `json:"sprint_ids"`
+	NotSprintIds      bool               `json:"not_sprint_ids"`
+	TextPattern       string             `json:"text_pattern"`
+	CreatedAfter      pgtype.Timestamptz `json:"created_after"`
+	CreatedBefore     pgtype.Timestamptz `json:"created_before"`
+	UpdatedAfter      pgtype.Timestamptz `json:"updated_after"`
+	UpdatedBefore     pgtype.Timestamptz `json:"updated_before"`
+	DueAfter          pgtype.Timestamptz `json:"due_after"`
+	DueBefore         pgtype.Timestamptz `json:"due_before"`
+	ResolvedAfter     pgtype.Timestamptz `json:"resolved_after"`
+	ResolvedBefore    pgtype.Timestamptz `json:"resolved_before"`
 }
 
 type BreakdownViewProjectItemsRow struct {
@@ -85,14 +121,28 @@ func (q *Queries) BreakdownViewProjectItems(ctx context.Context, arg BreakdownVi
 		arg.ReadableSpaceIds,
 		arg.SharedItemIds,
 		arg.SpaceIds,
+		arg.NotSpaceIds,
 		arg.Statuses,
+		arg.NotStatuses,
 		arg.Priorities,
+		arg.NotPriorities,
 		arg.FilterAssignee,
 		arg.AssigneeIds,
 		arg.IncludeUnassigned,
+		arg.NotAssignees,
 		arg.Kinds,
+		arg.NotKinds,
 		arg.SprintIds,
+		arg.NotSprintIds,
 		arg.TextPattern,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+		arg.UpdatedAfter,
+		arg.UpdatedBefore,
+		arg.DueAfter,
+		arg.DueBefore,
+		arg.ResolvedAfter,
+		arg.ResolvedBefore,
 	)
 	if err != nil {
 		return nil, err
@@ -138,29 +188,71 @@ WHERE tk.deleted_at IS NULL
   AND s.org_id = $2
   AND (tk.space_id = ANY($3::uuid[])
        OR tk.id = ANY($4::uuid[]))
-  AND (cardinality($5::uuid[]) = 0 OR tk.space_id = ANY($5::uuid[]))
-  AND (cardinality($6::text[]) = 0 OR tk.status = ANY($6::text[]))
-  AND (cardinality($7::text[]) = 0 OR tk.priority = ANY($7::text[]))
-  AND (NOT $8::boolean
-       OR tk.assignee_id = ANY($9::uuid[])
-       OR ($10::boolean AND tk.assignee_id IS NULL))
-  AND ($11::text = '' OR tk.title ILIKE $11::text)
+  AND (cardinality($5::uuid[]) = 0
+       OR (tk.space_id = ANY($5::uuid[])) <> $6::boolean)
+  AND (cardinality($7::text[]) = 0
+       OR (tk.status = ANY($7::text[])) <> $8::boolean)
+  AND (cardinality($9::text[]) = 0
+       OR (tk.priority = ANY($9::text[])) <> $10::boolean)
+  -- COALESCE is load-bearing here and nowhere else in this block. assignee_id
+  -- is the only NULLABLE column the ticket half negates (verified against the
+  -- database, not the migrations: space_id, status and priority are NOT NULL on
+  -- both tables). For a row with no assignee, ` + "`" + `assignee_id = ANY(...)` + "`" + ` is NULL
+  -- rather than false, and ` + "`" + `NULL <> true` + "`" + ` is NULL — so without the COALESCE an
+  -- unassigned row would be dropped from "not assigned to Alice", which is
+  -- exactly the set it belongs to.
+  AND (NOT $11::boolean
+       OR (COALESCE(tk.assignee_id = ANY($12::uuid[]), false)
+           OR ($13::boolean AND tk.assignee_id IS NULL)
+          ) <> $14::boolean)
+  AND ($15::text = '' OR tk.title ILIKE $15::text)
+  -- The four v2 date ranges. Half-open: ` + "`" + `after` + "`" + ` is inclusive, ` + "`" + `before` + "`" + ` is
+  -- exclusive, so two adjacent ranges partition the timeline and no row is
+  -- counted in both. (audit_log.sql's date filter is closed at both ends; that
+  -- one is a report window a person reads, this one is a range that has to
+  -- compose.) Both bounds are already resolved to instants by the caller —
+  -- relative tokens never reach SQL, so every gadget in one request compares
+  -- against the same moment.
+  AND ($16::timestamptz IS NULL OR tk.created_at >= $16::timestamptz)
+  AND ($17::timestamptz IS NULL OR tk.created_at < $17::timestamptz)
+  AND ($18::timestamptz IS NULL OR tk.updated_at >= $18::timestamptz)
+  AND ($19::timestamptz IS NULL OR tk.updated_at < $19::timestamptz)
+  -- due_at and resolved_at are NULLABLE. A row with no due date matches NO
+  -- due_at range, in either direction — it is not "due before X" and not "due
+  -- after X" either. That is the intended reading and it is why there is no
+  -- COALESCE here: a null due date is an absent fact, not an early or late one.
+  AND ($20::timestamptz IS NULL OR tk.due_at >= $20::timestamptz)
+  AND ($21::timestamptz IS NULL OR tk.due_at < $21::timestamptz)
+  AND ($22::timestamptz IS NULL OR tk.resolved_at >= $22::timestamptz)
+  AND ($23::timestamptz IS NULL OR tk.resolved_at < $23::timestamptz)
 GROUP BY g.bucket_key, g.bucket_label
 ORDER BY count(*) DESC, g.bucket_key ASC
 `
 
 type BreakdownViewTicketsParams struct {
-	GroupBy           string      `json:"group_by"`
-	OrgID             uuid.UUID   `json:"org_id"`
-	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
-	SharedTicketIds   []uuid.UUID `json:"shared_ticket_ids"`
-	SpaceIds          []uuid.UUID `json:"space_ids"`
-	Statuses          []string    `json:"statuses"`
-	Priorities        []string    `json:"priorities"`
-	FilterAssignee    bool        `json:"filter_assignee"`
-	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
-	IncludeUnassigned bool        `json:"include_unassigned"`
-	TextPattern       string      `json:"text_pattern"`
+	GroupBy           string             `json:"group_by"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID        `json:"readable_space_ids"`
+	SharedTicketIds   []uuid.UUID        `json:"shared_ticket_ids"`
+	SpaceIds          []uuid.UUID        `json:"space_ids"`
+	NotSpaceIds       bool               `json:"not_space_ids"`
+	Statuses          []string           `json:"statuses"`
+	NotStatuses       bool               `json:"not_statuses"`
+	Priorities        []string           `json:"priorities"`
+	NotPriorities     bool               `json:"not_priorities"`
+	FilterAssignee    bool               `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID        `json:"assignee_ids"`
+	IncludeUnassigned bool               `json:"include_unassigned"`
+	NotAssignees      bool               `json:"not_assignees"`
+	TextPattern       string             `json:"text_pattern"`
+	CreatedAfter      pgtype.Timestamptz `json:"created_after"`
+	CreatedBefore     pgtype.Timestamptz `json:"created_before"`
+	UpdatedAfter      pgtype.Timestamptz `json:"updated_after"`
+	UpdatedBefore     pgtype.Timestamptz `json:"updated_before"`
+	DueAfter          pgtype.Timestamptz `json:"due_after"`
+	DueBefore         pgtype.Timestamptz `json:"due_before"`
+	ResolvedAfter     pgtype.Timestamptz `json:"resolved_after"`
+	ResolvedBefore    pgtype.Timestamptz `json:"resolved_before"`
 }
 
 type BreakdownViewTicketsRow struct {
@@ -198,12 +290,24 @@ func (q *Queries) BreakdownViewTickets(ctx context.Context, arg BreakdownViewTic
 		arg.ReadableSpaceIds,
 		arg.SharedTicketIds,
 		arg.SpaceIds,
+		arg.NotSpaceIds,
 		arg.Statuses,
+		arg.NotStatuses,
 		arg.Priorities,
+		arg.NotPriorities,
 		arg.FilterAssignee,
 		arg.AssigneeIds,
 		arg.IncludeUnassigned,
+		arg.NotAssignees,
 		arg.TextPattern,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+		arg.UpdatedAfter,
+		arg.UpdatedBefore,
+		arg.DueAfter,
+		arg.DueBefore,
+		arg.ResolvedAfter,
+		arg.ResolvedBefore,
 	)
 	if err != nil {
 		return nil, err
@@ -231,30 +335,66 @@ WHERE pi.deleted_at IS NULL
   AND s.org_id = $1
   AND (pi.space_id = ANY($2::uuid[])
        OR pi.id = ANY($3::uuid[]))
-  AND (cardinality($4::uuid[]) = 0 OR pi.space_id = ANY($4::uuid[]))
-  AND (cardinality($5::text[]) = 0 OR pi.status = ANY($5::text[]))
-  AND (cardinality($6::text[]) = 0 OR pi.priority = ANY($6::text[]))
-  AND (NOT $7::boolean
-       OR pi.assignee_id = ANY($8::uuid[])
-       OR ($9::boolean AND pi.assignee_id IS NULL))
-  AND (cardinality($10::text[]) = 0 OR pi.kind = ANY($10::text[]))
-  AND (cardinality($11::uuid[]) = 0 OR pi.sprint_id = ANY($11::uuid[]))
-  AND ($12::text = '' OR pi.title ILIKE $12::text)
+  AND (cardinality($4::uuid[]) = 0
+       OR (pi.space_id = ANY($4::uuid[])) <> $5::boolean)
+  AND (cardinality($6::text[]) = 0
+       OR (pi.status = ANY($6::text[])) <> $7::boolean)
+  AND (cardinality($8::text[]) = 0
+       OR (pi.priority = ANY($8::text[])) <> $9::boolean)
+  -- See the note on the ticket half: COALESCE guards the NULLABLE columns, so
+  -- an unassigned row survives "not assigned to Alice" instead of being dropped
+  -- by three-valued logic.
+  AND (NOT $10::boolean
+       OR (COALESCE(pi.assignee_id = ANY($11::uuid[]), false)
+           OR ($12::boolean AND pi.assignee_id IS NULL)
+          ) <> $13::boolean)
+  AND (cardinality($14::text[]) = 0
+       OR (pi.kind = ANY($14::text[])) <> $15::boolean)
+  -- sprint_id is the second nullable column, so it needs the COALESCE for the
+  -- same reason: a backlog item in no sprint belongs in "not in sprint 4".
+  AND (cardinality($16::uuid[]) = 0
+       OR COALESCE(pi.sprint_id = ANY($16::uuid[]), false) <> $17::boolean)
+  AND ($18::text = '' OR pi.title ILIKE $18::text)
+  -- The four v2 date ranges — half-open, and identical to the ticket half. Read
+  -- the note there; the two blocks must stay the same predicate or a count
+  -- gadget and the list it counts would disagree.
+  AND ($19::timestamptz IS NULL OR pi.created_at >= $19::timestamptz)
+  AND ($20::timestamptz IS NULL OR pi.created_at < $20::timestamptz)
+  AND ($21::timestamptz IS NULL OR pi.updated_at >= $21::timestamptz)
+  AND ($22::timestamptz IS NULL OR pi.updated_at < $22::timestamptz)
+  AND ($23::timestamptz IS NULL OR pi.due_at >= $23::timestamptz)
+  AND ($24::timestamptz IS NULL OR pi.due_at < $24::timestamptz)
+  AND ($25::timestamptz IS NULL OR pi.resolved_at >= $25::timestamptz)
+  AND ($26::timestamptz IS NULL OR pi.resolved_at < $26::timestamptz)
 `
 
 type CountViewProjectItemsParams struct {
-	OrgID             uuid.UUID   `json:"org_id"`
-	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
-	SharedItemIds     []uuid.UUID `json:"shared_item_ids"`
-	SpaceIds          []uuid.UUID `json:"space_ids"`
-	Statuses          []string    `json:"statuses"`
-	Priorities        []string    `json:"priorities"`
-	FilterAssignee    bool        `json:"filter_assignee"`
-	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
-	IncludeUnassigned bool        `json:"include_unassigned"`
-	Kinds             []string    `json:"kinds"`
-	SprintIds         []uuid.UUID `json:"sprint_ids"`
-	TextPattern       string      `json:"text_pattern"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID        `json:"readable_space_ids"`
+	SharedItemIds     []uuid.UUID        `json:"shared_item_ids"`
+	SpaceIds          []uuid.UUID        `json:"space_ids"`
+	NotSpaceIds       bool               `json:"not_space_ids"`
+	Statuses          []string           `json:"statuses"`
+	NotStatuses       bool               `json:"not_statuses"`
+	Priorities        []string           `json:"priorities"`
+	NotPriorities     bool               `json:"not_priorities"`
+	FilterAssignee    bool               `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID        `json:"assignee_ids"`
+	IncludeUnassigned bool               `json:"include_unassigned"`
+	NotAssignees      bool               `json:"not_assignees"`
+	Kinds             []string           `json:"kinds"`
+	NotKinds          bool               `json:"not_kinds"`
+	SprintIds         []uuid.UUID        `json:"sprint_ids"`
+	NotSprintIds      bool               `json:"not_sprint_ids"`
+	TextPattern       string             `json:"text_pattern"`
+	CreatedAfter      pgtype.Timestamptz `json:"created_after"`
+	CreatedBefore     pgtype.Timestamptz `json:"created_before"`
+	UpdatedAfter      pgtype.Timestamptz `json:"updated_after"`
+	UpdatedBefore     pgtype.Timestamptz `json:"updated_before"`
+	DueAfter          pgtype.Timestamptz `json:"due_after"`
+	DueBefore         pgtype.Timestamptz `json:"due_before"`
+	ResolvedAfter     pgtype.Timestamptz `json:"resolved_after"`
+	ResolvedBefore    pgtype.Timestamptz `json:"resolved_before"`
 }
 
 // The Vector half. Structurally identical to CountViewTickets plus the two
@@ -265,14 +405,28 @@ func (q *Queries) CountViewProjectItems(ctx context.Context, arg CountViewProjec
 		arg.ReadableSpaceIds,
 		arg.SharedItemIds,
 		arg.SpaceIds,
+		arg.NotSpaceIds,
 		arg.Statuses,
+		arg.NotStatuses,
 		arg.Priorities,
+		arg.NotPriorities,
 		arg.FilterAssignee,
 		arg.AssigneeIds,
 		arg.IncludeUnassigned,
+		arg.NotAssignees,
 		arg.Kinds,
+		arg.NotKinds,
 		arg.SprintIds,
+		arg.NotSprintIds,
 		arg.TextPattern,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+		arg.UpdatedAfter,
+		arg.UpdatedBefore,
+		arg.DueAfter,
+		arg.DueBefore,
+		arg.ResolvedAfter,
+		arg.ResolvedBefore,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -287,26 +441,68 @@ WHERE tk.deleted_at IS NULL
   AND s.org_id = $1
   AND (tk.space_id = ANY($2::uuid[])
        OR tk.id = ANY($3::uuid[]))
-  AND (cardinality($4::uuid[]) = 0 OR tk.space_id = ANY($4::uuid[]))
-  AND (cardinality($5::text[]) = 0 OR tk.status = ANY($5::text[]))
-  AND (cardinality($6::text[]) = 0 OR tk.priority = ANY($6::text[]))
-  AND (NOT $7::boolean
-       OR tk.assignee_id = ANY($8::uuid[])
-       OR ($9::boolean AND tk.assignee_id IS NULL))
-  AND ($10::text = '' OR tk.title ILIKE $10::text)
+  AND (cardinality($4::uuid[]) = 0
+       OR (tk.space_id = ANY($4::uuid[])) <> $5::boolean)
+  AND (cardinality($6::text[]) = 0
+       OR (tk.status = ANY($6::text[])) <> $7::boolean)
+  AND (cardinality($8::text[]) = 0
+       OR (tk.priority = ANY($8::text[])) <> $9::boolean)
+  -- COALESCE is load-bearing here and nowhere else in this block. assignee_id
+  -- is the only NULLABLE column the ticket half negates (verified against the
+  -- database, not the migrations: space_id, status and priority are NOT NULL on
+  -- both tables). For a row with no assignee, ` + "`" + `assignee_id = ANY(...)` + "`" + ` is NULL
+  -- rather than false, and ` + "`" + `NULL <> true` + "`" + ` is NULL — so without the COALESCE an
+  -- unassigned row would be dropped from "not assigned to Alice", which is
+  -- exactly the set it belongs to.
+  AND (NOT $10::boolean
+       OR (COALESCE(tk.assignee_id = ANY($11::uuid[]), false)
+           OR ($12::boolean AND tk.assignee_id IS NULL)
+          ) <> $13::boolean)
+  AND ($14::text = '' OR tk.title ILIKE $14::text)
+  -- The four v2 date ranges. Half-open: ` + "`" + `after` + "`" + ` is inclusive, ` + "`" + `before` + "`" + ` is
+  -- exclusive, so two adjacent ranges partition the timeline and no row is
+  -- counted in both. (audit_log.sql's date filter is closed at both ends; that
+  -- one is a report window a person reads, this one is a range that has to
+  -- compose.) Both bounds are already resolved to instants by the caller —
+  -- relative tokens never reach SQL, so every gadget in one request compares
+  -- against the same moment.
+  AND ($15::timestamptz IS NULL OR tk.created_at >= $15::timestamptz)
+  AND ($16::timestamptz IS NULL OR tk.created_at < $16::timestamptz)
+  AND ($17::timestamptz IS NULL OR tk.updated_at >= $17::timestamptz)
+  AND ($18::timestamptz IS NULL OR tk.updated_at < $18::timestamptz)
+  -- due_at and resolved_at are NULLABLE. A row with no due date matches NO
+  -- due_at range, in either direction — it is not "due before X" and not "due
+  -- after X" either. That is the intended reading and it is why there is no
+  -- COALESCE here: a null due date is an absent fact, not an early or late one.
+  AND ($19::timestamptz IS NULL OR tk.due_at >= $19::timestamptz)
+  AND ($20::timestamptz IS NULL OR tk.due_at < $20::timestamptz)
+  AND ($21::timestamptz IS NULL OR tk.resolved_at >= $21::timestamptz)
+  AND ($22::timestamptz IS NULL OR tk.resolved_at < $22::timestamptz)
 `
 
 type CountViewTicketsParams struct {
-	OrgID             uuid.UUID   `json:"org_id"`
-	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
-	SharedTicketIds   []uuid.UUID `json:"shared_ticket_ids"`
-	SpaceIds          []uuid.UUID `json:"space_ids"`
-	Statuses          []string    `json:"statuses"`
-	Priorities        []string    `json:"priorities"`
-	FilterAssignee    bool        `json:"filter_assignee"`
-	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
-	IncludeUnassigned bool        `json:"include_unassigned"`
-	TextPattern       string      `json:"text_pattern"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID        `json:"readable_space_ids"`
+	SharedTicketIds   []uuid.UUID        `json:"shared_ticket_ids"`
+	SpaceIds          []uuid.UUID        `json:"space_ids"`
+	NotSpaceIds       bool               `json:"not_space_ids"`
+	Statuses          []string           `json:"statuses"`
+	NotStatuses       bool               `json:"not_statuses"`
+	Priorities        []string           `json:"priorities"`
+	NotPriorities     bool               `json:"not_priorities"`
+	FilterAssignee    bool               `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID        `json:"assignee_ids"`
+	IncludeUnassigned bool               `json:"include_unassigned"`
+	NotAssignees      bool               `json:"not_assignees"`
+	TextPattern       string             `json:"text_pattern"`
+	CreatedAfter      pgtype.Timestamptz `json:"created_after"`
+	CreatedBefore     pgtype.Timestamptz `json:"created_before"`
+	UpdatedAfter      pgtype.Timestamptz `json:"updated_after"`
+	UpdatedBefore     pgtype.Timestamptz `json:"updated_before"`
+	DueAfter          pgtype.Timestamptz `json:"due_after"`
+	DueBefore         pgtype.Timestamptz `json:"due_before"`
+	ResolvedAfter     pgtype.Timestamptz `json:"resolved_after"`
+	ResolvedBefore    pgtype.Timestamptz `json:"resolved_before"`
 }
 
 // The Beacon half of a saved view's count (P5).
@@ -327,12 +523,24 @@ func (q *Queries) CountViewTickets(ctx context.Context, arg CountViewTicketsPara
 		arg.ReadableSpaceIds,
 		arg.SharedTicketIds,
 		arg.SpaceIds,
+		arg.NotSpaceIds,
 		arg.Statuses,
+		arg.NotStatuses,
 		arg.Priorities,
+		arg.NotPriorities,
 		arg.FilterAssignee,
 		arg.AssigneeIds,
 		arg.IncludeUnassigned,
+		arg.NotAssignees,
 		arg.TextPattern,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+		arg.UpdatedAfter,
+		arg.UpdatedBefore,
+		arg.DueAfter,
+		arg.DueBefore,
+		arg.ResolvedAfter,
+		arg.ResolvedBefore,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -928,48 +1136,84 @@ WHERE pi.deleted_at IS NULL
   AND s.org_id = $2
   AND (pi.space_id = ANY($3::uuid[])
        OR pi.id = ANY($4::uuid[]))
-  AND (cardinality($5::uuid[]) = 0 OR pi.space_id = ANY($5::uuid[]))
-  AND (cardinality($6::text[]) = 0 OR pi.status = ANY($6::text[]))
-  AND (cardinality($7::text[]) = 0 OR pi.priority = ANY($7::text[]))
-  AND (NOT $8::boolean
-       OR pi.assignee_id = ANY($9::uuid[])
-       OR ($10::boolean AND pi.assignee_id IS NULL))
-  AND (cardinality($11::text[]) = 0 OR pi.kind = ANY($11::text[]))
-  AND (cardinality($12::uuid[]) = 0 OR pi.sprint_id = ANY($12::uuid[]))
-  AND ($13::text = '' OR pi.title ILIKE $13::text)
-  AND ($14::text = ''
-       OR ($15::boolean
-           AND (k.sort_key < $14::text
-                OR (k.sort_key = $14::text AND pi.id < $16::uuid)))
-       OR (NOT $15::boolean
-           AND (k.sort_key > $14::text
-                OR (k.sort_key = $14::text AND pi.id > $16::uuid))))
+  AND (cardinality($5::uuid[]) = 0
+       OR (pi.space_id = ANY($5::uuid[])) <> $6::boolean)
+  AND (cardinality($7::text[]) = 0
+       OR (pi.status = ANY($7::text[])) <> $8::boolean)
+  AND (cardinality($9::text[]) = 0
+       OR (pi.priority = ANY($9::text[])) <> $10::boolean)
+  -- See the note on the ticket half: COALESCE guards the NULLABLE columns, so
+  -- an unassigned row survives "not assigned to Alice" instead of being dropped
+  -- by three-valued logic.
+  AND (NOT $11::boolean
+       OR (COALESCE(pi.assignee_id = ANY($12::uuid[]), false)
+           OR ($13::boolean AND pi.assignee_id IS NULL)
+          ) <> $14::boolean)
+  AND (cardinality($15::text[]) = 0
+       OR (pi.kind = ANY($15::text[])) <> $16::boolean)
+  -- sprint_id is the second nullable column, so it needs the COALESCE for the
+  -- same reason: a backlog item in no sprint belongs in "not in sprint 4".
+  AND (cardinality($17::uuid[]) = 0
+       OR COALESCE(pi.sprint_id = ANY($17::uuid[]), false) <> $18::boolean)
+  AND ($19::text = '' OR pi.title ILIKE $19::text)
+  -- The four v2 date ranges — half-open, and identical to the ticket half. Read
+  -- the note there; the two blocks must stay the same predicate or a count
+  -- gadget and the list it counts would disagree.
+  AND ($20::timestamptz IS NULL OR pi.created_at >= $20::timestamptz)
+  AND ($21::timestamptz IS NULL OR pi.created_at < $21::timestamptz)
+  AND ($22::timestamptz IS NULL OR pi.updated_at >= $22::timestamptz)
+  AND ($23::timestamptz IS NULL OR pi.updated_at < $23::timestamptz)
+  AND ($24::timestamptz IS NULL OR pi.due_at >= $24::timestamptz)
+  AND ($25::timestamptz IS NULL OR pi.due_at < $25::timestamptz)
+  AND ($26::timestamptz IS NULL OR pi.resolved_at >= $26::timestamptz)
+  AND ($27::timestamptz IS NULL OR pi.resolved_at < $27::timestamptz)
+  AND ($28::text = ''
+       OR ($29::boolean
+           AND (k.sort_key < $28::text
+                OR (k.sort_key = $28::text AND pi.id < $30::uuid)))
+       OR (NOT $29::boolean
+           AND (k.sort_key > $28::text
+                OR (k.sort_key = $28::text AND pi.id > $30::uuid))))
 ORDER BY
-    CASE WHEN $15::boolean THEN k.sort_key END DESC,
-    CASE WHEN $15::boolean THEN pi.id END DESC,
-    CASE WHEN NOT $15::boolean THEN k.sort_key END ASC,
-    CASE WHEN NOT $15::boolean THEN pi.id END ASC
-LIMIT $17
+    CASE WHEN $29::boolean THEN k.sort_key END DESC,
+    CASE WHEN $29::boolean THEN pi.id END DESC,
+    CASE WHEN NOT $29::boolean THEN k.sort_key END ASC,
+    CASE WHEN NOT $29::boolean THEN pi.id END ASC
+LIMIT $31
 `
 
 type ListViewProjectItemsParams struct {
-	SortField         string      `json:"sort_field"`
-	OrgID             uuid.UUID   `json:"org_id"`
-	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
-	SharedItemIds     []uuid.UUID `json:"shared_item_ids"`
-	SpaceIds          []uuid.UUID `json:"space_ids"`
-	Statuses          []string    `json:"statuses"`
-	Priorities        []string    `json:"priorities"`
-	FilterAssignee    bool        `json:"filter_assignee"`
-	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
-	IncludeUnassigned bool        `json:"include_unassigned"`
-	Kinds             []string    `json:"kinds"`
-	SprintIds         []uuid.UUID `json:"sprint_ids"`
-	TextPattern       string      `json:"text_pattern"`
-	CursorKey         string      `json:"cursor_key"`
-	Descending        bool        `json:"descending"`
-	CursorID          uuid.UUID   `json:"cursor_id"`
-	RowLimit          int32       `json:"row_limit"`
+	SortField         string             `json:"sort_field"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID        `json:"readable_space_ids"`
+	SharedItemIds     []uuid.UUID        `json:"shared_item_ids"`
+	SpaceIds          []uuid.UUID        `json:"space_ids"`
+	NotSpaceIds       bool               `json:"not_space_ids"`
+	Statuses          []string           `json:"statuses"`
+	NotStatuses       bool               `json:"not_statuses"`
+	Priorities        []string           `json:"priorities"`
+	NotPriorities     bool               `json:"not_priorities"`
+	FilterAssignee    bool               `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID        `json:"assignee_ids"`
+	IncludeUnassigned bool               `json:"include_unassigned"`
+	NotAssignees      bool               `json:"not_assignees"`
+	Kinds             []string           `json:"kinds"`
+	NotKinds          bool               `json:"not_kinds"`
+	SprintIds         []uuid.UUID        `json:"sprint_ids"`
+	NotSprintIds      bool               `json:"not_sprint_ids"`
+	TextPattern       string             `json:"text_pattern"`
+	CreatedAfter      pgtype.Timestamptz `json:"created_after"`
+	CreatedBefore     pgtype.Timestamptz `json:"created_before"`
+	UpdatedAfter      pgtype.Timestamptz `json:"updated_after"`
+	UpdatedBefore     pgtype.Timestamptz `json:"updated_before"`
+	DueAfter          pgtype.Timestamptz `json:"due_after"`
+	DueBefore         pgtype.Timestamptz `json:"due_before"`
+	ResolvedAfter     pgtype.Timestamptz `json:"resolved_after"`
+	ResolvedBefore    pgtype.Timestamptz `json:"resolved_before"`
+	CursorKey         string             `json:"cursor_key"`
+	Descending        bool               `json:"descending"`
+	CursorID          uuid.UUID          `json:"cursor_id"`
+	RowLimit          int32              `json:"row_limit"`
 }
 
 type ListViewProjectItemsRow struct {
@@ -1015,14 +1259,28 @@ func (q *Queries) ListViewProjectItems(ctx context.Context, arg ListViewProjectI
 		arg.ReadableSpaceIds,
 		arg.SharedItemIds,
 		arg.SpaceIds,
+		arg.NotSpaceIds,
 		arg.Statuses,
+		arg.NotStatuses,
 		arg.Priorities,
+		arg.NotPriorities,
 		arg.FilterAssignee,
 		arg.AssigneeIds,
 		arg.IncludeUnassigned,
+		arg.NotAssignees,
 		arg.Kinds,
+		arg.NotKinds,
 		arg.SprintIds,
+		arg.NotSprintIds,
 		arg.TextPattern,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+		arg.UpdatedAfter,
+		arg.UpdatedBefore,
+		arg.DueAfter,
+		arg.DueBefore,
+		arg.ResolvedAfter,
+		arg.ResolvedBefore,
 		arg.CursorKey,
 		arg.Descending,
 		arg.CursorID,
@@ -1086,48 +1344,90 @@ WHERE tk.deleted_at IS NULL
   AND s.org_id = $2
   AND (tk.space_id = ANY($3::uuid[])
        OR tk.id = ANY($4::uuid[]))
-  AND (cardinality($5::uuid[]) = 0 OR tk.space_id = ANY($5::uuid[]))
-  AND (cardinality($6::text[]) = 0 OR tk.status = ANY($6::text[]))
-  AND (cardinality($7::text[]) = 0 OR tk.priority = ANY($7::text[]))
-  AND (NOT $8::boolean
-       OR tk.assignee_id = ANY($9::uuid[])
-       OR ($10::boolean AND tk.assignee_id IS NULL))
+  AND (cardinality($5::uuid[]) = 0
+       OR (tk.space_id = ANY($5::uuid[])) <> $6::boolean)
+  AND (cardinality($7::text[]) = 0
+       OR (tk.status = ANY($7::text[])) <> $8::boolean)
+  AND (cardinality($9::text[]) = 0
+       OR (tk.priority = ANY($9::text[])) <> $10::boolean)
+  -- COALESCE is load-bearing here and nowhere else in this block. assignee_id
+  -- is the only NULLABLE column the ticket half negates (verified against the
+  -- database, not the migrations: space_id, status and priority are NOT NULL on
+  -- both tables). For a row with no assignee, ` + "`" + `assignee_id = ANY(...)` + "`" + ` is NULL
+  -- rather than false, and ` + "`" + `NULL <> true` + "`" + ` is NULL — so without the COALESCE an
+  -- unassigned row would be dropped from "not assigned to Alice", which is
+  -- exactly the set it belongs to.
+  AND (NOT $11::boolean
+       OR (COALESCE(tk.assignee_id = ANY($12::uuid[]), false)
+           OR ($13::boolean AND tk.assignee_id IS NULL)
+          ) <> $14::boolean)
   -- The pattern arrives already escaped by access.EscapeLike. It is not
   -- escaped again here: repeating the replace(replace(replace(...))) idiom
   -- from users.sql and tickets.sql would be a third copy of the same escape,
   -- and the caller's ` + "`" + `%` + "`" + ` or ` + "`" + `_` + "`" + ` must match itself either way.
-  AND ($11::text = '' OR tk.title ILIKE $11::text)
-  AND ($12::text = ''
-       OR ($13::boolean
-           AND (k.sort_key < $12::text
-                OR (k.sort_key = $12::text AND tk.id < $14::uuid)))
-       OR (NOT $13::boolean
-           AND (k.sort_key > $12::text
-                OR (k.sort_key = $12::text AND tk.id > $14::uuid))))
+  AND ($15::text = '' OR tk.title ILIKE $15::text)
+  -- The four v2 date ranges. Half-open: ` + "`" + `after` + "`" + ` is inclusive, ` + "`" + `before` + "`" + ` is
+  -- exclusive, so two adjacent ranges partition the timeline and no row is
+  -- counted in both. (audit_log.sql's date filter is closed at both ends; that
+  -- one is a report window a person reads, this one is a range that has to
+  -- compose.) Both bounds are already resolved to instants by the caller —
+  -- relative tokens never reach SQL, so every gadget in one request compares
+  -- against the same moment.
+  AND ($16::timestamptz IS NULL OR tk.created_at >= $16::timestamptz)
+  AND ($17::timestamptz IS NULL OR tk.created_at < $17::timestamptz)
+  AND ($18::timestamptz IS NULL OR tk.updated_at >= $18::timestamptz)
+  AND ($19::timestamptz IS NULL OR tk.updated_at < $19::timestamptz)
+  -- due_at and resolved_at are NULLABLE. A row with no due date matches NO
+  -- due_at range, in either direction — it is not "due before X" and not "due
+  -- after X" either. That is the intended reading and it is why there is no
+  -- COALESCE here: a null due date is an absent fact, not an early or late one.
+  AND ($20::timestamptz IS NULL OR tk.due_at >= $20::timestamptz)
+  AND ($21::timestamptz IS NULL OR tk.due_at < $21::timestamptz)
+  AND ($22::timestamptz IS NULL OR tk.resolved_at >= $22::timestamptz)
+  AND ($23::timestamptz IS NULL OR tk.resolved_at < $23::timestamptz)
+  AND ($24::text = ''
+       OR ($25::boolean
+           AND (k.sort_key < $24::text
+                OR (k.sort_key = $24::text AND tk.id < $26::uuid)))
+       OR (NOT $25::boolean
+           AND (k.sort_key > $24::text
+                OR (k.sort_key = $24::text AND tk.id > $26::uuid))))
 ORDER BY
-    CASE WHEN $13::boolean THEN k.sort_key END DESC,
-    CASE WHEN $13::boolean THEN tk.id END DESC,
-    CASE WHEN NOT $13::boolean THEN k.sort_key END ASC,
-    CASE WHEN NOT $13::boolean THEN tk.id END ASC
-LIMIT $15
+    CASE WHEN $25::boolean THEN k.sort_key END DESC,
+    CASE WHEN $25::boolean THEN tk.id END DESC,
+    CASE WHEN NOT $25::boolean THEN k.sort_key END ASC,
+    CASE WHEN NOT $25::boolean THEN tk.id END ASC
+LIMIT $27
 `
 
 type ListViewTicketsParams struct {
-	SortField         string      `json:"sort_field"`
-	OrgID             uuid.UUID   `json:"org_id"`
-	ReadableSpaceIds  []uuid.UUID `json:"readable_space_ids"`
-	SharedTicketIds   []uuid.UUID `json:"shared_ticket_ids"`
-	SpaceIds          []uuid.UUID `json:"space_ids"`
-	Statuses          []string    `json:"statuses"`
-	Priorities        []string    `json:"priorities"`
-	FilterAssignee    bool        `json:"filter_assignee"`
-	AssigneeIds       []uuid.UUID `json:"assignee_ids"`
-	IncludeUnassigned bool        `json:"include_unassigned"`
-	TextPattern       string      `json:"text_pattern"`
-	CursorKey         string      `json:"cursor_key"`
-	Descending        bool        `json:"descending"`
-	CursorID          uuid.UUID   `json:"cursor_id"`
-	RowLimit          int32       `json:"row_limit"`
+	SortField         string             `json:"sort_field"`
+	OrgID             uuid.UUID          `json:"org_id"`
+	ReadableSpaceIds  []uuid.UUID        `json:"readable_space_ids"`
+	SharedTicketIds   []uuid.UUID        `json:"shared_ticket_ids"`
+	SpaceIds          []uuid.UUID        `json:"space_ids"`
+	NotSpaceIds       bool               `json:"not_space_ids"`
+	Statuses          []string           `json:"statuses"`
+	NotStatuses       bool               `json:"not_statuses"`
+	Priorities        []string           `json:"priorities"`
+	NotPriorities     bool               `json:"not_priorities"`
+	FilterAssignee    bool               `json:"filter_assignee"`
+	AssigneeIds       []uuid.UUID        `json:"assignee_ids"`
+	IncludeUnassigned bool               `json:"include_unassigned"`
+	NotAssignees      bool               `json:"not_assignees"`
+	TextPattern       string             `json:"text_pattern"`
+	CreatedAfter      pgtype.Timestamptz `json:"created_after"`
+	CreatedBefore     pgtype.Timestamptz `json:"created_before"`
+	UpdatedAfter      pgtype.Timestamptz `json:"updated_after"`
+	UpdatedBefore     pgtype.Timestamptz `json:"updated_before"`
+	DueAfter          pgtype.Timestamptz `json:"due_after"`
+	DueBefore         pgtype.Timestamptz `json:"due_before"`
+	ResolvedAfter     pgtype.Timestamptz `json:"resolved_after"`
+	ResolvedBefore    pgtype.Timestamptz `json:"resolved_before"`
+	CursorKey         string             `json:"cursor_key"`
+	Descending        bool               `json:"descending"`
+	CursorID          uuid.UUID          `json:"cursor_id"`
+	RowLimit          int32              `json:"row_limit"`
 }
 
 type ListViewTicketsRow struct {
@@ -1210,12 +1510,24 @@ func (q *Queries) ListViewTickets(ctx context.Context, arg ListViewTicketsParams
 		arg.ReadableSpaceIds,
 		arg.SharedTicketIds,
 		arg.SpaceIds,
+		arg.NotSpaceIds,
 		arg.Statuses,
+		arg.NotStatuses,
 		arg.Priorities,
+		arg.NotPriorities,
 		arg.FilterAssignee,
 		arg.AssigneeIds,
 		arg.IncludeUnassigned,
+		arg.NotAssignees,
 		arg.TextPattern,
+		arg.CreatedAfter,
+		arg.CreatedBefore,
+		arg.UpdatedAfter,
+		arg.UpdatedBefore,
+		arg.DueAfter,
+		arg.DueBefore,
+		arg.ResolvedAfter,
+		arg.ResolvedBefore,
 		arg.CursorKey,
 		arg.Descending,
 		arg.CursorID,

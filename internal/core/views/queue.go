@@ -48,9 +48,20 @@ type DefaultQueue struct {
 	build func(spaceID uuid.UUID, open, done []string) Query
 }
 
+// queueQuery builds one default queue's document.
+//
+// It stamps the LOWEST version the document needs rather than the newest this
+// build can write — which for these documents is 1, since they use nothing v2
+// added.
+//
+// These rows are PERSISTED, one set per Beacon space, so the difference is not
+// cosmetic. A document stamped 2 for no reason is one an older binary refuses
+// to read, which would turn a routine rollback into every queue in the product
+// failing to load. Stamping what the document actually requires keeps that door
+// open for as long as the document stays inside v1's vocabulary, and closes it
+// only for the documents that genuinely need v2.
 func queueQuery(spaceID uuid.UUID, statuses []string, assignees []string, sort Sort) Query {
-	return Query{
-		V: Version,
+	q := Query{
 		Filter: Filter{
 			Modules:   []Module{ModuleBeacon},
 			SpaceIDs:  []uuid.UUID{spaceID},
@@ -59,6 +70,8 @@ func queueQuery(spaceID uuid.UUID, statuses []string, assignees []string, sort S
 		},
 		Sort: sort,
 	}
+	q.V = q.RequiredVersion()
+	return q
 }
 
 // DefaultQueues is the JSM-parity starting set.

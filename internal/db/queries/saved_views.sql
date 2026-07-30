@@ -154,17 +154,47 @@ WHERE tk.deleted_at IS NULL
   AND s.org_id = @org_id
   AND (tk.space_id = ANY(@readable_space_ids::uuid[])
        OR tk.id = ANY(@shared_ticket_ids::uuid[]))
-  AND (cardinality(@space_ids::uuid[]) = 0 OR tk.space_id = ANY(@space_ids::uuid[]))
-  AND (cardinality(@statuses::text[]) = 0 OR tk.status = ANY(@statuses::text[]))
-  AND (cardinality(@priorities::text[]) = 0 OR tk.priority = ANY(@priorities::text[]))
+  AND (cardinality(@space_ids::uuid[]) = 0
+       OR (tk.space_id = ANY(@space_ids::uuid[])) <> @not_space_ids::boolean)
+  AND (cardinality(@statuses::text[]) = 0
+       OR (tk.status = ANY(@statuses::text[])) <> @not_statuses::boolean)
+  AND (cardinality(@priorities::text[]) = 0
+       OR (tk.priority = ANY(@priorities::text[])) <> @not_priorities::boolean)
+  -- COALESCE is load-bearing here and nowhere else in this block. assignee_id
+  -- is the only NULLABLE column the ticket half negates (verified against the
+  -- database, not the migrations: space_id, status and priority are NOT NULL on
+  -- both tables). For a row with no assignee, `assignee_id = ANY(...)` is NULL
+  -- rather than false, and `NULL <> true` is NULL — so without the COALESCE an
+  -- unassigned row would be dropped from "not assigned to Alice", which is
+  -- exactly the set it belongs to.
   AND (NOT @filter_assignee::boolean
-       OR tk.assignee_id = ANY(@assignee_ids::uuid[])
-       OR (@include_unassigned::boolean AND tk.assignee_id IS NULL))
+       OR (COALESCE(tk.assignee_id = ANY(@assignee_ids::uuid[]), false)
+           OR (@include_unassigned::boolean AND tk.assignee_id IS NULL)
+          ) <> @not_assignees::boolean)
   -- The pattern arrives already escaped by access.EscapeLike. It is not
   -- escaped again here: repeating the replace(replace(replace(...))) idiom
   -- from users.sql and tickets.sql would be a third copy of the same escape,
   -- and the caller's `%` or `_` must match itself either way.
   AND (@text_pattern::text = '' OR tk.title ILIKE @text_pattern::text)
+  -- The four v2 date ranges. Half-open: `after` is inclusive, `before` is
+  -- exclusive, so two adjacent ranges partition the timeline and no row is
+  -- counted in both. (audit_log.sql's date filter is closed at both ends; that
+  -- one is a report window a person reads, this one is a range that has to
+  -- compose.) Both bounds are already resolved to instants by the caller —
+  -- relative tokens never reach SQL, so every gadget in one request compares
+  -- against the same moment.
+  AND (sqlc.narg(created_after)::timestamptz IS NULL OR tk.created_at >= sqlc.narg(created_after)::timestamptz)
+  AND (sqlc.narg(created_before)::timestamptz IS NULL OR tk.created_at < sqlc.narg(created_before)::timestamptz)
+  AND (sqlc.narg(updated_after)::timestamptz IS NULL OR tk.updated_at >= sqlc.narg(updated_after)::timestamptz)
+  AND (sqlc.narg(updated_before)::timestamptz IS NULL OR tk.updated_at < sqlc.narg(updated_before)::timestamptz)
+  -- due_at and resolved_at are NULLABLE. A row with no due date matches NO
+  -- due_at range, in either direction — it is not "due before X" and not "due
+  -- after X" either. That is the intended reading and it is why there is no
+  -- COALESCE here: a null due date is an absent fact, not an early or late one.
+  AND (sqlc.narg(due_after)::timestamptz IS NULL OR tk.due_at >= sqlc.narg(due_after)::timestamptz)
+  AND (sqlc.narg(due_before)::timestamptz IS NULL OR tk.due_at < sqlc.narg(due_before)::timestamptz)
+  AND (sqlc.narg(resolved_after)::timestamptz IS NULL OR tk.resolved_at >= sqlc.narg(resolved_after)::timestamptz)
+  AND (sqlc.narg(resolved_before)::timestamptz IS NULL OR tk.resolved_at < sqlc.narg(resolved_before)::timestamptz)
   AND (@cursor_key::text = ''
        OR (@descending::boolean
            AND (k.sort_key < @cursor_key::text
@@ -213,15 +243,37 @@ WHERE pi.deleted_at IS NULL
   AND s.org_id = @org_id
   AND (pi.space_id = ANY(@readable_space_ids::uuid[])
        OR pi.id = ANY(@shared_item_ids::uuid[]))
-  AND (cardinality(@space_ids::uuid[]) = 0 OR pi.space_id = ANY(@space_ids::uuid[]))
-  AND (cardinality(@statuses::text[]) = 0 OR pi.status = ANY(@statuses::text[]))
-  AND (cardinality(@priorities::text[]) = 0 OR pi.priority = ANY(@priorities::text[]))
+  AND (cardinality(@space_ids::uuid[]) = 0
+       OR (pi.space_id = ANY(@space_ids::uuid[])) <> @not_space_ids::boolean)
+  AND (cardinality(@statuses::text[]) = 0
+       OR (pi.status = ANY(@statuses::text[])) <> @not_statuses::boolean)
+  AND (cardinality(@priorities::text[]) = 0
+       OR (pi.priority = ANY(@priorities::text[])) <> @not_priorities::boolean)
+  -- See the note on the ticket half: COALESCE guards the NULLABLE columns, so
+  -- an unassigned row survives "not assigned to Alice" instead of being dropped
+  -- by three-valued logic.
   AND (NOT @filter_assignee::boolean
-       OR pi.assignee_id = ANY(@assignee_ids::uuid[])
-       OR (@include_unassigned::boolean AND pi.assignee_id IS NULL))
-  AND (cardinality(@kinds::text[]) = 0 OR pi.kind = ANY(@kinds::text[]))
-  AND (cardinality(@sprint_ids::uuid[]) = 0 OR pi.sprint_id = ANY(@sprint_ids::uuid[]))
+       OR (COALESCE(pi.assignee_id = ANY(@assignee_ids::uuid[]), false)
+           OR (@include_unassigned::boolean AND pi.assignee_id IS NULL)
+          ) <> @not_assignees::boolean)
+  AND (cardinality(@kinds::text[]) = 0
+       OR (pi.kind = ANY(@kinds::text[])) <> @not_kinds::boolean)
+  -- sprint_id is the second nullable column, so it needs the COALESCE for the
+  -- same reason: a backlog item in no sprint belongs in "not in sprint 4".
+  AND (cardinality(@sprint_ids::uuid[]) = 0
+       OR COALESCE(pi.sprint_id = ANY(@sprint_ids::uuid[]), false) <> @not_sprint_ids::boolean)
   AND (@text_pattern::text = '' OR pi.title ILIKE @text_pattern::text)
+  -- The four v2 date ranges — half-open, and identical to the ticket half. Read
+  -- the note there; the two blocks must stay the same predicate or a count
+  -- gadget and the list it counts would disagree.
+  AND (sqlc.narg(created_after)::timestamptz IS NULL OR pi.created_at >= sqlc.narg(created_after)::timestamptz)
+  AND (sqlc.narg(created_before)::timestamptz IS NULL OR pi.created_at < sqlc.narg(created_before)::timestamptz)
+  AND (sqlc.narg(updated_after)::timestamptz IS NULL OR pi.updated_at >= sqlc.narg(updated_after)::timestamptz)
+  AND (sqlc.narg(updated_before)::timestamptz IS NULL OR pi.updated_at < sqlc.narg(updated_before)::timestamptz)
+  AND (sqlc.narg(due_after)::timestamptz IS NULL OR pi.due_at >= sqlc.narg(due_after)::timestamptz)
+  AND (sqlc.narg(due_before)::timestamptz IS NULL OR pi.due_at < sqlc.narg(due_before)::timestamptz)
+  AND (sqlc.narg(resolved_after)::timestamptz IS NULL OR pi.resolved_at >= sqlc.narg(resolved_after)::timestamptz)
+  AND (sqlc.narg(resolved_before)::timestamptz IS NULL OR pi.resolved_at < sqlc.narg(resolved_before)::timestamptz)
   AND (@cursor_key::text = ''
        OR (@descending::boolean
            AND (k.sort_key < @cursor_key::text
@@ -372,13 +424,43 @@ WHERE tk.deleted_at IS NULL
   AND s.org_id = @org_id
   AND (tk.space_id = ANY(@readable_space_ids::uuid[])
        OR tk.id = ANY(@shared_ticket_ids::uuid[]))
-  AND (cardinality(@space_ids::uuid[]) = 0 OR tk.space_id = ANY(@space_ids::uuid[]))
-  AND (cardinality(@statuses::text[]) = 0 OR tk.status = ANY(@statuses::text[]))
-  AND (cardinality(@priorities::text[]) = 0 OR tk.priority = ANY(@priorities::text[]))
+  AND (cardinality(@space_ids::uuid[]) = 0
+       OR (tk.space_id = ANY(@space_ids::uuid[])) <> @not_space_ids::boolean)
+  AND (cardinality(@statuses::text[]) = 0
+       OR (tk.status = ANY(@statuses::text[])) <> @not_statuses::boolean)
+  AND (cardinality(@priorities::text[]) = 0
+       OR (tk.priority = ANY(@priorities::text[])) <> @not_priorities::boolean)
+  -- COALESCE is load-bearing here and nowhere else in this block. assignee_id
+  -- is the only NULLABLE column the ticket half negates (verified against the
+  -- database, not the migrations: space_id, status and priority are NOT NULL on
+  -- both tables). For a row with no assignee, `assignee_id = ANY(...)` is NULL
+  -- rather than false, and `NULL <> true` is NULL — so without the COALESCE an
+  -- unassigned row would be dropped from "not assigned to Alice", which is
+  -- exactly the set it belongs to.
   AND (NOT @filter_assignee::boolean
-       OR tk.assignee_id = ANY(@assignee_ids::uuid[])
-       OR (@include_unassigned::boolean AND tk.assignee_id IS NULL))
-  AND (@text_pattern::text = '' OR tk.title ILIKE @text_pattern::text);
+       OR (COALESCE(tk.assignee_id = ANY(@assignee_ids::uuid[]), false)
+           OR (@include_unassigned::boolean AND tk.assignee_id IS NULL)
+          ) <> @not_assignees::boolean)
+  AND (@text_pattern::text = '' OR tk.title ILIKE @text_pattern::text)
+  -- The four v2 date ranges. Half-open: `after` is inclusive, `before` is
+  -- exclusive, so two adjacent ranges partition the timeline and no row is
+  -- counted in both. (audit_log.sql's date filter is closed at both ends; that
+  -- one is a report window a person reads, this one is a range that has to
+  -- compose.) Both bounds are already resolved to instants by the caller —
+  -- relative tokens never reach SQL, so every gadget in one request compares
+  -- against the same moment.
+  AND (sqlc.narg(created_after)::timestamptz IS NULL OR tk.created_at >= sqlc.narg(created_after)::timestamptz)
+  AND (sqlc.narg(created_before)::timestamptz IS NULL OR tk.created_at < sqlc.narg(created_before)::timestamptz)
+  AND (sqlc.narg(updated_after)::timestamptz IS NULL OR tk.updated_at >= sqlc.narg(updated_after)::timestamptz)
+  AND (sqlc.narg(updated_before)::timestamptz IS NULL OR tk.updated_at < sqlc.narg(updated_before)::timestamptz)
+  -- due_at and resolved_at are NULLABLE. A row with no due date matches NO
+  -- due_at range, in either direction — it is not "due before X" and not "due
+  -- after X" either. That is the intended reading and it is why there is no
+  -- COALESCE here: a null due date is an absent fact, not an early or late one.
+  AND (sqlc.narg(due_after)::timestamptz IS NULL OR tk.due_at >= sqlc.narg(due_after)::timestamptz)
+  AND (sqlc.narg(due_before)::timestamptz IS NULL OR tk.due_at < sqlc.narg(due_before)::timestamptz)
+  AND (sqlc.narg(resolved_after)::timestamptz IS NULL OR tk.resolved_at >= sqlc.narg(resolved_after)::timestamptz)
+  AND (sqlc.narg(resolved_before)::timestamptz IS NULL OR tk.resolved_at < sqlc.narg(resolved_before)::timestamptz);
 
 -- name: CountViewProjectItems :one
 -- The Vector half. Structurally identical to CountViewTickets plus the two
@@ -390,15 +472,37 @@ WHERE pi.deleted_at IS NULL
   AND s.org_id = @org_id
   AND (pi.space_id = ANY(@readable_space_ids::uuid[])
        OR pi.id = ANY(@shared_item_ids::uuid[]))
-  AND (cardinality(@space_ids::uuid[]) = 0 OR pi.space_id = ANY(@space_ids::uuid[]))
-  AND (cardinality(@statuses::text[]) = 0 OR pi.status = ANY(@statuses::text[]))
-  AND (cardinality(@priorities::text[]) = 0 OR pi.priority = ANY(@priorities::text[]))
+  AND (cardinality(@space_ids::uuid[]) = 0
+       OR (pi.space_id = ANY(@space_ids::uuid[])) <> @not_space_ids::boolean)
+  AND (cardinality(@statuses::text[]) = 0
+       OR (pi.status = ANY(@statuses::text[])) <> @not_statuses::boolean)
+  AND (cardinality(@priorities::text[]) = 0
+       OR (pi.priority = ANY(@priorities::text[])) <> @not_priorities::boolean)
+  -- See the note on the ticket half: COALESCE guards the NULLABLE columns, so
+  -- an unassigned row survives "not assigned to Alice" instead of being dropped
+  -- by three-valued logic.
   AND (NOT @filter_assignee::boolean
-       OR pi.assignee_id = ANY(@assignee_ids::uuid[])
-       OR (@include_unassigned::boolean AND pi.assignee_id IS NULL))
-  AND (cardinality(@kinds::text[]) = 0 OR pi.kind = ANY(@kinds::text[]))
-  AND (cardinality(@sprint_ids::uuid[]) = 0 OR pi.sprint_id = ANY(@sprint_ids::uuid[]))
-  AND (@text_pattern::text = '' OR pi.title ILIKE @text_pattern::text);
+       OR (COALESCE(pi.assignee_id = ANY(@assignee_ids::uuid[]), false)
+           OR (@include_unassigned::boolean AND pi.assignee_id IS NULL)
+          ) <> @not_assignees::boolean)
+  AND (cardinality(@kinds::text[]) = 0
+       OR (pi.kind = ANY(@kinds::text[])) <> @not_kinds::boolean)
+  -- sprint_id is the second nullable column, so it needs the COALESCE for the
+  -- same reason: a backlog item in no sprint belongs in "not in sprint 4".
+  AND (cardinality(@sprint_ids::uuid[]) = 0
+       OR COALESCE(pi.sprint_id = ANY(@sprint_ids::uuid[]), false) <> @not_sprint_ids::boolean)
+  AND (@text_pattern::text = '' OR pi.title ILIKE @text_pattern::text)
+  -- The four v2 date ranges — half-open, and identical to the ticket half. Read
+  -- the note there; the two blocks must stay the same predicate or a count
+  -- gadget and the list it counts would disagree.
+  AND (sqlc.narg(created_after)::timestamptz IS NULL OR pi.created_at >= sqlc.narg(created_after)::timestamptz)
+  AND (sqlc.narg(created_before)::timestamptz IS NULL OR pi.created_at < sqlc.narg(created_before)::timestamptz)
+  AND (sqlc.narg(updated_after)::timestamptz IS NULL OR pi.updated_at >= sqlc.narg(updated_after)::timestamptz)
+  AND (sqlc.narg(updated_before)::timestamptz IS NULL OR pi.updated_at < sqlc.narg(updated_before)::timestamptz)
+  AND (sqlc.narg(due_after)::timestamptz IS NULL OR pi.due_at >= sqlc.narg(due_after)::timestamptz)
+  AND (sqlc.narg(due_before)::timestamptz IS NULL OR pi.due_at < sqlc.narg(due_before)::timestamptz)
+  AND (sqlc.narg(resolved_after)::timestamptz IS NULL OR pi.resolved_at >= sqlc.narg(resolved_after)::timestamptz)
+  AND (sqlc.narg(resolved_before)::timestamptz IS NULL OR pi.resolved_at < sqlc.narg(resolved_before)::timestamptz);
 
 -- name: BreakdownViewTickets :many
 -- Counts grouped by one field, over the Beacon half of a saved view (P5).
@@ -448,13 +552,43 @@ WHERE tk.deleted_at IS NULL
   AND s.org_id = @org_id
   AND (tk.space_id = ANY(@readable_space_ids::uuid[])
        OR tk.id = ANY(@shared_ticket_ids::uuid[]))
-  AND (cardinality(@space_ids::uuid[]) = 0 OR tk.space_id = ANY(@space_ids::uuid[]))
-  AND (cardinality(@statuses::text[]) = 0 OR tk.status = ANY(@statuses::text[]))
-  AND (cardinality(@priorities::text[]) = 0 OR tk.priority = ANY(@priorities::text[]))
+  AND (cardinality(@space_ids::uuid[]) = 0
+       OR (tk.space_id = ANY(@space_ids::uuid[])) <> @not_space_ids::boolean)
+  AND (cardinality(@statuses::text[]) = 0
+       OR (tk.status = ANY(@statuses::text[])) <> @not_statuses::boolean)
+  AND (cardinality(@priorities::text[]) = 0
+       OR (tk.priority = ANY(@priorities::text[])) <> @not_priorities::boolean)
+  -- COALESCE is load-bearing here and nowhere else in this block. assignee_id
+  -- is the only NULLABLE column the ticket half negates (verified against the
+  -- database, not the migrations: space_id, status and priority are NOT NULL on
+  -- both tables). For a row with no assignee, `assignee_id = ANY(...)` is NULL
+  -- rather than false, and `NULL <> true` is NULL — so without the COALESCE an
+  -- unassigned row would be dropped from "not assigned to Alice", which is
+  -- exactly the set it belongs to.
   AND (NOT @filter_assignee::boolean
-       OR tk.assignee_id = ANY(@assignee_ids::uuid[])
-       OR (@include_unassigned::boolean AND tk.assignee_id IS NULL))
+       OR (COALESCE(tk.assignee_id = ANY(@assignee_ids::uuid[]), false)
+           OR (@include_unassigned::boolean AND tk.assignee_id IS NULL)
+          ) <> @not_assignees::boolean)
   AND (@text_pattern::text = '' OR tk.title ILIKE @text_pattern::text)
+  -- The four v2 date ranges. Half-open: `after` is inclusive, `before` is
+  -- exclusive, so two adjacent ranges partition the timeline and no row is
+  -- counted in both. (audit_log.sql's date filter is closed at both ends; that
+  -- one is a report window a person reads, this one is a range that has to
+  -- compose.) Both bounds are already resolved to instants by the caller —
+  -- relative tokens never reach SQL, so every gadget in one request compares
+  -- against the same moment.
+  AND (sqlc.narg(created_after)::timestamptz IS NULL OR tk.created_at >= sqlc.narg(created_after)::timestamptz)
+  AND (sqlc.narg(created_before)::timestamptz IS NULL OR tk.created_at < sqlc.narg(created_before)::timestamptz)
+  AND (sqlc.narg(updated_after)::timestamptz IS NULL OR tk.updated_at >= sqlc.narg(updated_after)::timestamptz)
+  AND (sqlc.narg(updated_before)::timestamptz IS NULL OR tk.updated_at < sqlc.narg(updated_before)::timestamptz)
+  -- due_at and resolved_at are NULLABLE. A row with no due date matches NO
+  -- due_at range, in either direction — it is not "due before X" and not "due
+  -- after X" either. That is the intended reading and it is why there is no
+  -- COALESCE here: a null due date is an absent fact, not an early or late one.
+  AND (sqlc.narg(due_after)::timestamptz IS NULL OR tk.due_at >= sqlc.narg(due_after)::timestamptz)
+  AND (sqlc.narg(due_before)::timestamptz IS NULL OR tk.due_at < sqlc.narg(due_before)::timestamptz)
+  AND (sqlc.narg(resolved_after)::timestamptz IS NULL OR tk.resolved_at >= sqlc.narg(resolved_after)::timestamptz)
+  AND (sqlc.narg(resolved_before)::timestamptz IS NULL OR tk.resolved_at < sqlc.narg(resolved_before)::timestamptz)
 GROUP BY g.bucket_key, g.bucket_label
 ORDER BY count(*) DESC, g.bucket_key ASC;
 
@@ -489,14 +623,36 @@ WHERE pi.deleted_at IS NULL
   AND s.org_id = @org_id
   AND (pi.space_id = ANY(@readable_space_ids::uuid[])
        OR pi.id = ANY(@shared_item_ids::uuid[]))
-  AND (cardinality(@space_ids::uuid[]) = 0 OR pi.space_id = ANY(@space_ids::uuid[]))
-  AND (cardinality(@statuses::text[]) = 0 OR pi.status = ANY(@statuses::text[]))
-  AND (cardinality(@priorities::text[]) = 0 OR pi.priority = ANY(@priorities::text[]))
+  AND (cardinality(@space_ids::uuid[]) = 0
+       OR (pi.space_id = ANY(@space_ids::uuid[])) <> @not_space_ids::boolean)
+  AND (cardinality(@statuses::text[]) = 0
+       OR (pi.status = ANY(@statuses::text[])) <> @not_statuses::boolean)
+  AND (cardinality(@priorities::text[]) = 0
+       OR (pi.priority = ANY(@priorities::text[])) <> @not_priorities::boolean)
+  -- See the note on the ticket half: COALESCE guards the NULLABLE columns, so
+  -- an unassigned row survives "not assigned to Alice" instead of being dropped
+  -- by three-valued logic.
   AND (NOT @filter_assignee::boolean
-       OR pi.assignee_id = ANY(@assignee_ids::uuid[])
-       OR (@include_unassigned::boolean AND pi.assignee_id IS NULL))
-  AND (cardinality(@kinds::text[]) = 0 OR pi.kind = ANY(@kinds::text[]))
-  AND (cardinality(@sprint_ids::uuid[]) = 0 OR pi.sprint_id = ANY(@sprint_ids::uuid[]))
+       OR (COALESCE(pi.assignee_id = ANY(@assignee_ids::uuid[]), false)
+           OR (@include_unassigned::boolean AND pi.assignee_id IS NULL)
+          ) <> @not_assignees::boolean)
+  AND (cardinality(@kinds::text[]) = 0
+       OR (pi.kind = ANY(@kinds::text[])) <> @not_kinds::boolean)
+  -- sprint_id is the second nullable column, so it needs the COALESCE for the
+  -- same reason: a backlog item in no sprint belongs in "not in sprint 4".
+  AND (cardinality(@sprint_ids::uuid[]) = 0
+       OR COALESCE(pi.sprint_id = ANY(@sprint_ids::uuid[]), false) <> @not_sprint_ids::boolean)
   AND (@text_pattern::text = '' OR pi.title ILIKE @text_pattern::text)
+  -- The four v2 date ranges — half-open, and identical to the ticket half. Read
+  -- the note there; the two blocks must stay the same predicate or a count
+  -- gadget and the list it counts would disagree.
+  AND (sqlc.narg(created_after)::timestamptz IS NULL OR pi.created_at >= sqlc.narg(created_after)::timestamptz)
+  AND (sqlc.narg(created_before)::timestamptz IS NULL OR pi.created_at < sqlc.narg(created_before)::timestamptz)
+  AND (sqlc.narg(updated_after)::timestamptz IS NULL OR pi.updated_at >= sqlc.narg(updated_after)::timestamptz)
+  AND (sqlc.narg(updated_before)::timestamptz IS NULL OR pi.updated_at < sqlc.narg(updated_before)::timestamptz)
+  AND (sqlc.narg(due_after)::timestamptz IS NULL OR pi.due_at >= sqlc.narg(due_after)::timestamptz)
+  AND (sqlc.narg(due_before)::timestamptz IS NULL OR pi.due_at < sqlc.narg(due_before)::timestamptz)
+  AND (sqlc.narg(resolved_after)::timestamptz IS NULL OR pi.resolved_at >= sqlc.narg(resolved_after)::timestamptz)
+  AND (sqlc.narg(resolved_before)::timestamptz IS NULL OR pi.resolved_at < sqlc.narg(resolved_before)::timestamptz)
 GROUP BY g.bucket_key, g.bucket_label
 ORDER BY count(*) DESC, g.bucket_key ASC;

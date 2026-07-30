@@ -1,20 +1,20 @@
 {
   "headline": {
-    "total": 77,
-    "clean": 34,
+    "total": 78,
+    "clean": 35,
     "approximated": 22,
     "preserved": 2,
     "unmappable": 19,
-    "clean_pct": 44.15584415584416,
-    "approximated_pct": 28.571428571428573,
-    "preserved_pct": 2.5974025974025974,
-    "lost_pct": 24.675324675324674
+    "clean_pct": 44.87179487179487,
+    "approximated_pct": 28.205128205128204,
+    "preserved_pct": 2.5641025641025643,
+    "lost_pct": 24.358974358974358
   },
   "sources": [
     {
       "kind": "jira",
       "path": "(stream)",
-      "rows": 46,
+      "rows": 47,
       "attachments": 0,
       "attachment_bytes": 0,
       "unknown_types": [
@@ -316,11 +316,11 @@
       },
       {
         "name": "Jira saved filters (JQL)",
-        "observed": 3,
+        "observed": 4,
         "findings": [
           {
             "verdict": "clean",
-            "count": 1,
+            "count": 2,
             "reason": "every clause maps onto the saved-view filter vocabulary and the query's shape is flat"
           },
           {
@@ -604,9 +604,35 @@
           "raw": "created \u003e= -30d",
           "field": "created",
           "operator": "\u003e=",
-          "verdict": "not_expressible",
-          "reason": "the vocabulary has no comparison operators — fields hold value lists matched for equality, so \u003e, \u003c, \u003e= and \u003c= have nothing to translate to"
+          "verdict": "expressible",
+          "filter_field": "created_at",
+          "reason": "the created_at range maps onto the range's \"after\" bound, which is inclusive exactly as \u003e= is"
         }
+      ],
+      "verdict": "expressible"
+    },
+    {
+      "raw": "assignee = currentUser() OR status != Done",
+      "clauses": [
+        {
+          "raw": "assignee = currentUser()",
+          "field": "assignee",
+          "operator": "=",
+          "verdict": "expressible",
+          "filter_field": "assignees",
+          "reason": "currentUser() maps exactly onto the \"me\" token, which the filter resolves per viewer at query time"
+        },
+        {
+          "raw": "status != Done",
+          "field": "status",
+          "operator": "!=",
+          "verdict": "expressible",
+          "filter_field": "statuses",
+          "reason": "v2 negates this field: the values carry across unchanged and `not` is set for it, giving \"everything except these\""
+        }
+      ],
+      "structural": [
+        "an OR spans two different fields; the filter ANDs across fields and ORs only within one, so a cross-field OR cannot be expressed"
       ],
       "verdict": "not_expressible"
     }

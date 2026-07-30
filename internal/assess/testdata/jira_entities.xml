@@ -77,13 +77,25 @@ It should become three: prerequisites, install, verify.</description>
 
   <Worklog id="14000" issue="10100" author="bob" timeworked="3600"/>
 
-  <!-- Saved filters: one fully expressible, one partial, one not. -->
+  <!-- Saved filters, spanning all three JQL classifications.
+
+       "Recently created" (15002) is the one to watch. Its `created >= -30d`
+       clause was UNMAPPABLE under filter document v1, which had no date
+       predicate at all; v2's ranges made it expressible. It is left here in its
+       original form precisely so the report records the change.
+
+       15003 takes over as the unmappable case, and does so for a reason v2 does
+       not remove: an OR spanning two different fields. The document ANDs across
+       fields and ORs only within one, which is a decision rather than a gap, so
+       this case is expected to stay lost for as long as that decision holds. -->
   <SearchRequest id="15000" name="My open docs work" author="alice"
                  request="project = DOCS AND status = Open AND assignee = currentUser()"/>
   <SearchRequest id="15001" name="Anything mentioning pooling" author="bob"
                  request="text ~ &quot;pool&quot;"/>
   <SearchRequest id="15002" name="Recently created" author="alice"
                  request="project IN (DOCS, PLAT) AND created &gt;= -30d ORDER BY created DESC"/>
+  <SearchRequest id="15003" name="Mine or unresolved" author="bob"
+                 request="assignee = currentUser() OR status != Done"/>
 
   <!-- Entity types the assessor does not classify. They must still be counted. -->
   <OSPropertyEntry id="20000" entityName="ApplicationUser" entityId="1" propertyKey="user.avatar.id"/>

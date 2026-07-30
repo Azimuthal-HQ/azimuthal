@@ -35,6 +35,26 @@ type Viewer struct {
 	// always exactly one entity. See the header on ListViewTickets.
 	SharedTicketIDs []uuid.UUID
 	SharedItemIDs   []uuid.UUID
+
+	// At is the instant this request resolves relative date bounds against.
+	//
+	// It lives on the Viewer for one reason: the Viewer is assembled ONCE per
+	// request, so everything evaluated during that request shares this field
+	// without anyone having to remember to pass it. Two gadgets reading "-7d"
+	// therefore land on the same boundary, and a row created between them
+	// cannot appear in one count and not the other.
+	//
+	// A time.Now() inside buildParams would read the clock once per
+	// evaluation instead, and the disagreement it produced would be invisible:
+	// two tiles differing by one, occasionally, for rows written in the
+	// microseconds between two calls.
+	//
+	// The zero value is not defaulted to "now". buildParams refuses a query
+	// carrying a relative bound when At is zero, because a caller that forgot
+	// to set it would otherwise resolve "-7d" against year 1 and match
+	// everything — a silently wider result set, which is the failure this
+	// package refuses everywhere else.
+	At time.Time
 }
 
 // Result is one row of a saved view's results, from either module. The shape
@@ -92,7 +112,33 @@ type FanoutParams struct {
 	SprintIDs         []uuid.UUID
 	// TextPattern is a complete, already-escaped ILIKE pattern, or "".
 	TextPattern string
-	SortField   string
+
+	// The v2 negation flags. Each says "everything except the values in the
+	// field beside it" and is meaningless without them — validate() refuses a
+	// flag set over an empty field, so a true here always has values to negate.
+	NotSpaceIDs   bool
+	NotStatuses   bool
+	NotPriorities bool
+	NotAssignees  bool
+	NotKinds      bool
+	NotSprintIDs  bool
+
+	// The v2 date bounds, ALREADY RESOLVED to instants. Relative tokens do not
+	// reach this struct: buildParams resolves them against Viewer.At, so the
+	// fan-out compares timestamps and never parses a grammar. Nil means the
+	// bound is absent, which the SQL reads as no predicate at all.
+	//
+	// Half-open, matching the SQL: *After is inclusive, *Before is exclusive.
+	CreatedAfter   *time.Time
+	CreatedBefore  *time.Time
+	UpdatedAfter   *time.Time
+	UpdatedBefore  *time.Time
+	DueAfter       *time.Time
+	DueBefore      *time.Time
+	ResolvedAfter  *time.Time
+	ResolvedBefore *time.Time
+
+	SortField string
 	Descending  bool
 	CursorKey   string
 	CursorID    uuid.UUID
@@ -170,6 +216,7 @@ func Resolve(ctx context.Context, store ResultStore, q Query, v Viewer, cursor s
 		// already refuses them alongside Beacon, so this is belt and braces
 		// rather than the enforcement.
 		p.Kinds, p.SprintIDs = nil, nil
+		p.NotKinds, p.NotSprintIDs = false, false
 		rows, err := store.ListTickets(ctx, p)
 		if err != nil {
 			return Page{}, fmt.Errorf("resolving beacon results: %w", err)
@@ -267,7 +314,72 @@ func buildParams(q Query, v Viewer, cur cursorPos, limit int) (FanoutParams, err
 	if t := strings.TrimSpace(q.Filter.Text); t != "" {
 		p.TextPattern = "%" + access.EscapeLike(t) + "%"
 	}
+
+	// Negation is carried through unchanged. It is a flag on the field it
+	// negates, so there is nothing to resolve — the SQL flips the membership
+	// test rather than the filter naming a different set of values.
+	p.NotSpaceIDs = q.Filter.Not.SpaceIDs
+	p.NotStatuses = q.Filter.Not.Statuses
+	p.NotPriorities = q.Filter.Not.Priorities
+	p.NotAssignees = q.Filter.Not.Assignees
+	p.NotKinds = q.Filter.Not.Kinds
+	p.NotSprintIDs = q.Filter.Not.SprintIDs
+
+	// THE RELATIVE DATE TOKENS, RESOLVED HERE AND NOWHERE ELSE.
+	//
+	// The same rule as the `me` token above, for the same reason, against the
+	// same per-request value: one instant serves every bound in this query and
+	// every other query built from this Viewer.
+	if err := resolveDates(&p, q.Filter, v.At); err != nil {
+		return FanoutParams{}, err
+	}
 	return p, nil
+}
+
+// resolveDates turns the four stored ranges into instants.
+func resolveDates(p *FanoutParams, f Filter, at time.Time) error {
+	for _, d := range []struct {
+		name   string
+		value  *DateRange
+		after  **time.Time
+		before **time.Time
+	}{
+		{"created_at", f.CreatedAt, &p.CreatedAfter, &p.CreatedBefore},
+		{"updated_at", f.UpdatedAt, &p.UpdatedAfter, &p.UpdatedBefore},
+		{"due_at", f.DueAt, &p.DueAfter, &p.DueBefore},
+		{"resolved_at", f.ResolvedAt, &p.ResolvedAfter, &p.ResolvedBefore},
+	} {
+		if d.value == nil {
+			continue
+		}
+		for _, side := range []struct {
+			raw  string
+			into **time.Time
+		}{
+			{d.value.After, d.after},
+			{d.value.Before, d.before},
+		} {
+			if side.raw == "" {
+				continue
+			}
+			b, err := ParseDateBound(side.raw)
+			if err != nil {
+				// Unreachable through the API — Validate refuses this on the
+				// way in — but a stored document is still data, and a bound
+				// that cannot be parsed must not silently become "no bound",
+				// which would widen the view rather than narrow it.
+				return fmt.Errorf("stored filter names an unparseable %s bound %q: %w", d.name, side.raw, err)
+			}
+			if b.Relative && at.IsZero() {
+				return fmt.Errorf(
+					"filter uses the relative date %q but the request carries no evaluation instant (Viewer.At is unset)",
+					side.raw)
+			}
+			t := b.Resolve(at)
+			*side.into = &t
+		}
+	}
+	return nil
 }
 
 // sortResults orders the merged rows exactly as the database ordered each half.
