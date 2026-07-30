@@ -725,3 +725,82 @@ func TestViewAggregate_VectorCountAgreesWithTheVectorList(t *testing.T) {
 	}
 	require.Equal(t, res.Total, summed, "the Vector breakdown fan-out filters differently again")
 }
+
+// TestViewResults_ResolvedAtRangeIsWiredEvenThoughNothingWritesIt closes the
+// last uncovered date field.
+//
+// Nothing in the product sets resolved_at — sorting by it has been an equally
+// silent no-op since P4, and that is recorded as found-and-not-fixed rather
+// than repaired here. The PREDICATE is still wired, and this proves it against
+// rows written directly, so that when the workflow track starts populating the
+// column the filter is already known to work rather than assumed to.
+func TestViewResults_ResolvedAtRangeIsWiredEvenThoughNothingWritesIt(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	ctx := context.Background()
+	org := testutil.CreateTestOrg(t, db.Pool)
+	user := testutil.CreateTestUser(t, db.Pool, org.ID)
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
+
+	now := time.Now().UTC()
+	recent := insertTicket(t, db.Pool, space.ID, user.ID, 1, "resolved recently", "closed", "high", nil)
+	longAgo := insertTicket(t, db.Pool, space.ID, user.ID, 2, "resolved long ago", "closed", "high", nil)
+	never := insertTicket(t, db.Pool, space.ID, user.ID, 3, "never resolved", "open", "high", nil)
+	setResolvedAt(t, db, recent, now.AddDate(0, 0, -2))
+	setResolvedAt(t, db, longAgo, now.AddDate(0, 0, -60))
+
+	a := adapters.NewSavedViewAdapter(db.Pool)
+	viewer := views.Viewer{UserID: user.ID, ReadableSpaceIDs: []uuid.UUID{space.ID}, At: now}
+
+	page, err := views.Resolve(ctx, orgStore(a, org.ID),
+		v2Query(t, `"modules":["beacon"],"resolved_at":{"after":"-7d"}`), viewer, "", 50)
+	require.NoError(t, err)
+	got := resultIDs(page)
+	require.True(t, got[recent], "a ticket resolved two days ago is inside a seven-day window")
+	require.False(t, got[longAgo], "one resolved sixty days ago is not")
+	require.False(t, got[never], "and one never resolved matches no resolved_at range at all")
+}
+
+// TestViewResults_NegatedSprintKeepsSprintlessItems is the second nullable
+// column's negation, and the fixture shape is again the test.
+//
+// sprint_id is NULL for backlog items. Without the COALESCE, "not in sprint 4"
+// would drop every backlog item — the work most likely to be what somebody
+// means by "everything except that sprint".
+func TestViewResults_NegatedSprintKeepsSprintlessItems(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	ctx := context.Background()
+	org := testutil.CreateTestOrg(t, db.Pool)
+	user := testutil.CreateTestUser(t, db.Pool, org.ID)
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
+
+	sprint := uuid.New()
+	_, err := db.Pool.Exec(ctx,
+		`INSERT INTO sprints (id, space_id, name, status, created_by) VALUES ($1,$2,$3,'planned',$4)`,
+		sprint, space.ID, "Sprint 4", user.ID)
+	require.NoError(t, err)
+
+	inSprint := insertItem(t, db.Pool, org.ID, space.ID, user.ID, 1, "in the sprint", "open", "high", "task", nil)
+	backlog := insertItem(t, db.Pool, org.ID, space.ID, user.ID, 2, "in the backlog", "open", "high", "task", nil)
+	_, err = db.Pool.Exec(ctx, `UPDATE project_items SET sprint_id = $2 WHERE id = $1`, inSprint, sprint)
+	require.NoError(t, err)
+
+	a := adapters.NewSavedViewAdapter(db.Pool)
+	viewer := views.Viewer{UserID: user.ID, ReadableSpaceIDs: []uuid.UUID{space.ID}, At: time.Now().UTC()}
+
+	page, err := views.Resolve(ctx, orgStore(a, org.ID),
+		v2Query(t, `"modules":["vector"],"sprint_ids":["`+sprint.String()+`"],"not":{"sprint_ids":true}`),
+		viewer, "", 50)
+	require.NoError(t, err)
+	got := resultIDs(page)
+	require.False(t, got[inSprint], "the excluded sprint's item must not be returned")
+	require.True(t, got[backlog],
+		"a BACKLOG item is not in the excluded sprint, so it belongs in the result — "+
+			"if this fails, the negated sprint predicate is losing NULL rows to three-valued logic")
+}
+
+func setResolvedAt(t *testing.T, db *testutil.TestDB, id uuid.UUID, at time.Time) {
+	t.Helper()
+	_, err := db.Pool.Exec(context.Background(),
+		`UPDATE tickets SET resolved_at = $2 WHERE id = $1`, id, at)
+	require.NoError(t, err)
+}
