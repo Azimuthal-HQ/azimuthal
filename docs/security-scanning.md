@@ -43,7 +43,7 @@ gate above. The path classification lives in the `changes` job in
 |--------------|--------------------------|------------------------|-----------------|
 | gosec        | Go source code (SAST)    | HIGH+ severity         | `sast`          |
 | govulncheck  | Go module dependencies   | Any known CVE          | `vuln-scan`     |
-| gitleaks     | Git history + files      | Any detected secret    | `secret-scan`   |
+| gitleaks     | Working tree (not history) | Any detected secret  | `secret-scan`   |
 | trivy        | Container image layers   | HIGH/CRITICAL CVEs     | `container-scan`|
 
 ---
@@ -78,7 +78,7 @@ go install github.com/securego/gosec/v2/cmd/gosec@latest
 
 **Local usage:**
 ```bash
-# Run all checks (mirrors CI exactly)
+# Same flags as CI — but see the version note below
 make scan-sast
 
 # Or directly:
@@ -282,7 +282,7 @@ curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/inst
 
 **Local usage:**
 ```bash
-# Build image then scan (mirrors CI)
+# Build image then scan (see the caveat below — this is NOT what CI scans)
 make scan-container
 
 # Or directly:
@@ -339,6 +339,27 @@ It requires all three of a **documented justification**, a **tracking issue**, a
 an **expiry date** (maximum 90 days). Undocumented suppressions are rejected in
 review. Never suppress a whole file or package — suppress the narrowest thing
 that works.
+
+> **What is actually in the tree, and an unresolved question about it.** There are
+> **36** gosec-facing annotations today — 8 `#nosec` and 27 `//nolint:gosec`, plus
+> one prose reference. **None carries a tracking issue or an expiry date.** Every
+> one carries a reason.
+>
+> Whether that is 36 policy violations depends on a distinction this document has
+> never drawn: between *"the rule does not apply here"* (`G304` on a
+> `t.TempDir()` path — there is no risk to track and nothing to expire) and
+> *"the finding is real and we are accepting it for now"* (an unpatched CVE),
+> which is the case the issue-and-expiry requirement plainly exists for. Every
+> annotation in the tree is the first kind.
+>
+> Reading the requirement as covering only the second kind would make the
+> repository compliant and the rule meaningful. That reading is **not recorded
+> anywhere**, so it is flagged for a maintainer rather than adopted here. Until it
+> is settled, write the reason, keep it narrow, and do not treat the existing 36
+> as precedent for skipping the ceremony on an accepted risk.
+>
+> There is no `.trivyignore`, and `trivy-ignore.yaml` holds no active rules — so
+> no accepted-risk suppression exists in the repository at all right now.
 
 **Do not create a new exemption file to hold a suppression.** In particular, do
 not add a `.gitleaks.toml` allowlist: gitleaks has no allowlist in this
@@ -489,6 +510,33 @@ make pre-push
 > directly, as shown in the [gitleaks section](#gitleaks--secret-detection),
 > until the target is corrected.
 
+### Two ways a local run differs from the CI gate
+
+Neither is a reason to skip the local run — a finding it reports is real. But a
+*clean* local run is weaker evidence than it looks, so do not read one as "the
+gate will pass."
+
+**1. Versions.** CI pins every scanner (`.github/workflows/ci.yml`, the `env:`
+block): `GOSEC_VERSION`, `GITLEAKS_VERSION`, `GOVULNCHECK_VERSION`. Every install
+instruction in this document, and every `which || go install` line in the
+Makefile, fetches `@latest` instead. Scanner rulesets change between releases in
+both directions, so a local pass and a CI failure on identical code is an
+expected outcome, not a mystery. Install the pinned version when a result matters:
+
+```bash
+go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1   # match ci.yml
+```
+
+The one exception is govulncheck, whose advisory database is fetched live at scan
+time — so there the *database* matches CI even when the binary does not.
+
+**2. The container scan does not scan the same image.** CI builds
+`build/Dockerfile.ci` around the server binary produced by the `build` job.
+`make scan-container` and the command in the trivy section build
+`build/Dockerfile`, which is a different Dockerfile compiling its own binary. The
+local scan is a useful approximation of the base image and the Go module graph;
+it is not the artifact the gate examines.
+
 **Prerequisites for local scanning:**
 
 | Tool        | Install command                                               |
@@ -507,12 +555,15 @@ make pre-push
 
 | Level    | Build impact        | Examples                               |
 |----------|---------------------|----------------------------------------|
-| CRITICAL | ❌ Fails CI         | SQL injection, command injection       |
-| HIGH     | ❌ Fails CI         | Weak crypto, hardcoded creds, G706     |
+| HIGH     | ❌ Fails CI         | SQL injection, command injection, weak crypto, hardcoded creds, G706 |
 | MEDIUM   | ℹ️ Informational    | Weak file permissions, integer overflow|
 | LOW      | ℹ️ Informational    | Minor issues, informational notes      |
 
 CI flags: `-severity high -confidence high`
+
+gosec emits **HIGH, MEDIUM and LOW only** — there is no CRITICAL tier. An earlier
+version of this table listed one, which made `-severity high` look like it let a
+worse class of finding through. It does not: `high` is the top of the scale.
 
 ### govulncheck severity levels
 
