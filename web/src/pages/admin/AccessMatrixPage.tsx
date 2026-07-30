@@ -6,6 +6,7 @@ import {
   useAccessMatrix,
   useBulkApplyGrants,
   useBulkPreviewGrants,
+  useTicketRefRequired,
   type BulkChange,
   type BulkResult,
   type GrantRole,
@@ -504,6 +505,7 @@ function PreviewDialog({ orgId, changes, teams, spaces, onClose, onApplied }: {
   onClose: () => void;
   onApplied: (result: BulkResult) => void;
 }) {
+  const ticketRefRequired = useTicketRefRequired(orgId);
   const preview = useBulkPreviewGrants(orgId);
   const apply = useBulkApplyGrants(orgId);
   const [ticketRef, setTicketRef] = useState('');
@@ -576,6 +578,7 @@ function PreviewDialog({ orgId, changes, teams, spaces, onClose, onApplied }: {
             orgId={orgId}
             value={ticketRef}
             onChange={setTicketRef}
+            required={ticketRefRequired}
             testId="matrix-ticket-ref"
             hint={
               ticketRef.trim()
@@ -594,7 +597,16 @@ function PreviewDialog({ orgId, changes, teams, spaces, onClose, onApplied }: {
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
-            disabled={!previewData || interesting.length === 0 || apply.isPending}
+            // Bulk-apply carries the reference in its body rather than the
+            // query string — a shipped contract — but the same
+            // ticketref.Policy decides whether it is mandatory, so the gate
+            // here is the same as everywhere else.
+            disabled={
+              !previewData ||
+              interesting.length === 0 ||
+              apply.isPending ||
+              (ticketRefRequired && !ticketRef.trim())
+            }
             data-testid="matrix-apply-button"
             onClick={() => {
               setError(null);

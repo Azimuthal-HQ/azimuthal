@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 
-	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
@@ -65,7 +64,7 @@ var verifySplitCmd = &cobra.Command{
 }
 
 func runVerifySplit(_ *cobra.Command, _ []string) error {
-	cfg, err := config.Load()
+	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
@@ -242,7 +241,7 @@ func isUniqueViolation(err error) bool {
 
 // runCreateUser connects to the database and creates a user, organization, and membership.
 func runCreateUser(_ *cobra.Command, _ []string) error {
-	cfg, err := config.Load()
+	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
@@ -343,7 +342,7 @@ func init() {
 
 // runResetPassword looks up a user by email and updates their password hash.
 func runResetPassword(_ *cobra.Command, _ []string) error {
-	cfg, err := config.Load()
+	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}

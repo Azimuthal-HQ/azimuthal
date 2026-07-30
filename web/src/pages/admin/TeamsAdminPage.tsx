@@ -34,6 +34,7 @@ import {
   useRemoveTeamMember,
   useTeamMembers,
   useTeams,
+  useTicketRefRequired,
   useUpdateTeam,
   type SpaceType,
   type Team,
@@ -269,6 +270,7 @@ interface TeamRowProps {
 
 function TeamRow({ orgId, node, onEdit, onDelete, deletePending }: TeamRowProps) {
   const { team, depth } = node;
+  const ticketRefRequired = useTicketRefRequired(orgId);
   const [expanded, setExpanded] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteTicketRef, setDeleteTicketRef] = useState('');
@@ -321,7 +323,7 @@ function TeamRow({ orgId, node, onEdit, onDelete, deletePending }: TeamRowProps)
               variant="destructive"
               size="sm"
               data-testid="team-delete-confirm"
-              disabled={deletePending}
+              disabled={deletePending || (ticketRefRequired && !deleteTicketRef.trim())}
               onClick={() => {
                 setConfirmingDelete(false);
                 onDelete(team, deleteTicketRef);
@@ -350,13 +352,17 @@ function TeamRow({ orgId, node, onEdit, onDelete, deletePending }: TeamRowProps)
       </div>
 
       {/* The delete confirmation is an inline two-step, not a dialog, so the
-          optional reference appears with the second step and disappears with
-          it. Confirm delete never waits on it. */}
+          reference appears with the second step and disappears with it. It is
+          optional unless the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED, in
+          which case Confirm delete waits for one — the server refuses the
+          request either way, and a disabled button says so before the round
+          trip instead of after it. */}
       {confirmingDelete && (
         <TicketRefField
           orgId={orgId}
           value={deleteTicketRef}
           onChange={setDeleteTicketRef}
+          required={ticketRefRequired}
           testId="team-delete-ticket-ref"
           className="ml-6 max-w-sm"
           hint={`Recorded on the audit event for deleting ${team.name}.`}
@@ -376,6 +382,7 @@ function TeamRow({ orgId, node, onEdit, onDelete, deletePending }: TeamRowProps)
 export function TeamsAdminPage() {
   const { user } = useAuth();
   const orgId = user?.orgId ?? '';
+  const ticketRefRequired = useTicketRefRequired(orgId);
 
   const teamsQuery = useTeams(orgId);
   const createTeam = useCreateTeamWithSpaces(orgId);
@@ -607,6 +614,7 @@ export function TeamsAdminPage() {
               orgId={orgId}
               value={createTicketRef}
               onChange={setCreateTicketRef}
+              required={ticketRefRequired}
               testId="team-create-ticket-ref"
               hint="Recorded on the audit event for creating this team."
             />
@@ -625,7 +633,12 @@ export function TeamsAdminPage() {
             <Button
               data-testid="team-create-submit"
               onClick={handleCreate}
-              disabled={createTeam.isPending || !createName.trim() || !createSlug.trim()}
+              disabled={
+                createTeam.isPending ||
+                !createName.trim() ||
+                !createSlug.trim() ||
+                (ticketRefRequired && !createTicketRef.trim())
+              }
             >
               {createTeam.isPending ? 'Creating…' : 'Create team'}
             </Button>
@@ -680,6 +693,7 @@ export function TeamsAdminPage() {
                 orgId={orgId}
                 value={editTicketRef}
                 onChange={setEditTicketRef}
+                required={ticketRefRequired}
                 testId="team-edit-ticket-ref"
                 hint="Recorded on the audit event for this change."
               />
@@ -699,7 +713,11 @@ export function TeamsAdminPage() {
             <Button
               data-testid="team-edit-submit"
               onClick={handleEditSave}
-              disabled={updateTeam.isPending || !editName.trim()}
+              disabled={
+                updateTeam.isPending ||
+                !editName.trim() ||
+                (ticketRefRequired && !editTicketRef.trim())
+              }
             >
               {updateTeam.isPending ? 'Saving…' : 'Save'}
             </Button>

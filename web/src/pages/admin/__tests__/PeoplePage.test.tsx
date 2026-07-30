@@ -30,6 +30,12 @@ const lifecycleMutate = vi.fn();
 const removePersonMutate = vi.fn();
 const createInvitesMutate = vi.fn();
 
+// vi.mock factories are hoisted above module-scope declarations, so the
+// required-mode switch these tests flip has to be hoisted with them.
+// vi.hoisted is the sanctioned way; a plain `let` here throws
+// "Cannot access before initialization" inside the factory.
+const deployment = vi.hoisted(() => ({ ticketRefRequired: false }));
+
 vi.mock('../../../lib/api', () => ({
   friendlyErrorMessage: (_e: unknown, f: string) => f,
   useOrgPeople: () => ({ data: [PERSON], isLoading: false, error: null }),
@@ -44,6 +50,7 @@ vi.mock('../../../lib/api', () => ({
   useResendInvite: () => ({ mutate: resendMutate, isPending: false }),
   // A3: the invite and confirm dialogs now carry a TicketRefField.
   useTicketRefSuggestions: () => ({ data: [], isLoading: false, error: null }),
+  useTicketRefRequired: () => deployment.ticketRefRequired,
 }));
 
 vi.mock('../../../lib/auth', () => ({

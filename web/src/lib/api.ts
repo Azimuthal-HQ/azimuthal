@@ -858,8 +858,9 @@ async function createGrant(
   orgId: string,
   spaceId: string,
   req: CreateGrantRequest,
+  ticketRef?: string,
 ): Promise<SpaceGrant> {
-  return apiFetch<SpaceGrant>(`/orgs/${orgId}/spaces/${spaceId}/grants`, {
+  return apiFetch<SpaceGrant>(`/orgs/${orgId}/spaces/${spaceId}/grants${ticketRefQuery(ticketRef)}`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -870,17 +871,27 @@ async function updateGrant(
   spaceId: string,
   grantId: string,
   role: GrantRole,
+  ticketRef?: string,
 ): Promise<SpaceGrant> {
-  return apiFetch<SpaceGrant>(`/orgs/${orgId}/spaces/${spaceId}/grants/${grantId}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ role }),
-  });
+  return apiFetch<SpaceGrant>(
+    `/orgs/${orgId}/spaces/${spaceId}/grants/${grantId}${ticketRefQuery(ticketRef)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    },
+  );
 }
 
-async function revokeGrant(orgId: string, spaceId: string, grantId: string): Promise<void> {
-  return apiFetch<void>(`/orgs/${orgId}/spaces/${spaceId}/grants/${grantId}`, {
-    method: 'DELETE',
-  });
+async function revokeGrant(
+  orgId: string,
+  spaceId: string,
+  grantId: string,
+  ticketRef?: string,
+): Promise<void> {
+  return apiFetch<void>(
+    `/orgs/${orgId}/spaces/${spaceId}/grants/${grantId}${ticketRefQuery(ticketRef)}`,
+    { method: 'DELETE' },
+  );
 }
 
 async function fetchEffectiveAccess(
@@ -2301,6 +2312,7 @@ export const queryKeys = {
   memberSearch: (orgId: string, q: string) => ['memberSearch', orgId, q] as const,
   ticketRefSuggestions: (orgId: string, q: string) =>
     ['ticketRefSuggestions', orgId, q] as const,
+  deploymentConfig: (orgId: string) => ['deploymentConfig', orgId] as const,
   invites: (orgId: string) => ['invites', orgId] as const,
   accessMatrix: (orgId: string) => ['accessMatrix', orgId] as const,
   auditLog: (orgId: string, filter: AuditFilter) => ['auditLog', orgId, filter] as const,
@@ -3358,9 +3370,21 @@ export function useCreateTeamWithSpaces(orgId: string) {
     APIError,
     CreateTeamRequest & { modules: SpaceType[]; ticketRef?: string }
   >({
-    // One operator action, so one reference: it rides every mutation the
-    // composite performs. The grant creation takes none — POST /grants has
-    // no ticket_ref parameter — so it is left as it was.
+    // One operator action, so one reference: it rides EVERY request this
+    // composite makes — one team create plus two per module (the space, then
+    // its grant). Since POST /grants gained ticket_ref, no step is exempt.
+    //
+    // That matters more than tidiness. This mutationFn has no rollback: it
+    // awaits team, then space, then grant, in sequence. An exempt step would
+    // be either silently unaudited or, under AZIMUTHAL_TICKET_REF_REQUIRED, a
+    // 400 halfway through an orchestration that has already created a team and
+    // a space — leaving a half-built module behind a retry that then 409s on
+    // the duplicate slug. With the reference threaded, the only
+    // reference-less failure is the FIRST request, before anything exists.
+    //
+    // api.ticket-ref.test.ts pins all 1+2N URLs; the backend proof that the
+    // whole orchestration survives required mode is
+    // TestTicketRefRequired_TeamWithAutoSpaces_OneReferenceCoversTheWholeOrchestration.
     mutationFn: async ({ modules, ticketRef, ...teamReq }) => {
       const team = await createTeam(orgId, teamReq, ticketRef);
       const spaces: Space[] = [];
@@ -3371,11 +3395,16 @@ export function useCreateTeamWithSpaces(orgId: string) {
           type: module,
           owner_team_id: team.id,
         }, ticketRef);
-        await createGrant(orgId, space.id, {
-          subject_type: 'team',
-          subject_id: team.id,
-          role: 'contributor',
-        });
+        await createGrant(
+          orgId,
+          space.id,
+          {
+            subject_type: 'team',
+            subject_id: team.id,
+            role: 'contributor',
+          },
+          ticketRef,
+        );
         spaces.push(space);
       }
       return { team, spaces };
@@ -3465,8 +3494,8 @@ export function useSpaceGrants(orgId: string, spaceId: string, opts?: QueryOpts<
 
 export function useCreateGrant(orgId: string, spaceId: string) {
   const queryClient = useQueryClient();
-  return useMutation<SpaceGrant, APIError, CreateGrantRequest>({
-    mutationFn: (req) => createGrant(orgId, spaceId, req),
+  return useMutation<SpaceGrant, APIError, CreateGrantRequest & { ticketRef?: string }>({
+    mutationFn: ({ ticketRef, ...req }) => createGrant(orgId, spaceId, req, ticketRef),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.spaceGrants(orgId, spaceId) });
     },
@@ -3475,8 +3504,13 @@ export function useCreateGrant(orgId: string, spaceId: string) {
 
 export function useUpdateGrant(orgId: string, spaceId: string) {
   const queryClient = useQueryClient();
-  return useMutation<SpaceGrant, APIError, { grantId: string; role: GrantRole }>({
-    mutationFn: ({ grantId, role }) => updateGrant(orgId, spaceId, grantId, role),
+  return useMutation<
+    SpaceGrant,
+    APIError,
+    { grantId: string; role: GrantRole; ticketRef?: string }
+  >({
+    mutationFn: ({ grantId, role, ticketRef }) =>
+      updateGrant(orgId, spaceId, grantId, role, ticketRef),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.spaceGrants(orgId, spaceId) });
     },
@@ -3485,8 +3519,12 @@ export function useUpdateGrant(orgId: string, spaceId: string) {
 
 export function useRevokeGrant(orgId: string, spaceId: string) {
   const queryClient = useQueryClient();
-  return useMutation<void, APIError, string>({
-    mutationFn: (grantId) => revokeGrant(orgId, spaceId, grantId),
+  // The variable is the grant id, or { id, ticketRef } — see IdWithTicketRef.
+  return useMutation<void, APIError, IdWithTicketRef>({
+    mutationFn: (v) => {
+      const { id, ticketRef } = splitIdRef(v);
+      return revokeGrant(orgId, spaceId, id, ticketRef);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.spaceGrants(orgId, spaceId) });
     },
@@ -3549,6 +3587,58 @@ export function useMemberSearch(orgId: string, q: string, opts?: QueryOpts<Perso
  * does not ask, so the two pickers behave identically from the operator's
  * side.
  */
+/**
+ * DeploymentConfig is GET /orgs/{orgId}/config — the boot-time flags the
+ * server publishes to org members. The Go type is spaces.BootConfig; the name
+ * differs here on purpose, because `BoardConfig` already exists in this file
+ * and one letter of difference in a 4000-line module is a bug waiting to
+ * happen.
+ *
+ * The server decides what may appear here through an explicit allowlist in
+ * code. Do not widen this interface speculatively — a field the server does
+ * not send is a lie about the contract.
+ */
+export interface DeploymentConfig {
+  ticket_ref_required: boolean;
+}
+
+async function fetchDeploymentConfig(orgId: string): Promise<DeploymentConfig> {
+  return apiFetch<DeploymentConfig>(`/orgs/${orgId}/config`);
+}
+
+/**
+ * useDeploymentConfig reads the deployment's boot-time flags.
+ *
+ * `staleTime: Infinity` is load-bearing rather than tuning. These values are
+ * read once at server start and cannot change while the server is running —
+ * that is the design of AZIMUTHAL_TICKET_REF_REQUIRED, not an accident — so a
+ * refetch can never return anything new. Unexported: every consumer wants one
+ * flag, and going through a selector keeps the fail-safe in exactly one place.
+ */
+function useDeploymentConfig(orgId: string) {
+  return useQuery<DeploymentConfig, APIError>({
+    queryKey: queryKeys.deploymentConfig(orgId),
+    queryFn: () => fetchDeploymentConfig(orgId),
+    enabled: !!orgId,
+    staleTime: Infinity,
+  });
+}
+
+/**
+ * useTicketRefRequired reports whether this deployment demands a ticket
+ * reference on administrative changes. Callers pass it to TicketRefField's
+ * `required` prop and use it to gate their own submit button.
+ *
+ * It fails safe to FALSE while loading or on error, and the direction matters.
+ * The server enforces the requirement either way and is the authority; a
+ * client that guessed `true` on a failed fetch would lock every administrative
+ * dialog on the instance behind a field the operator may not even need.
+ * Guessing `false` costs one 400 with a message that says exactly what to do.
+ */
+export function useTicketRefRequired(orgId: string): boolean {
+  return useDeploymentConfig(orgId).data?.ticket_ref_required ?? false;
+}
+
 export function useTicketRefSuggestions(
   orgId: string,
   q: string,
@@ -3828,15 +3918,21 @@ async function fetchEntityShares(
   );
 }
 
-async function createShare(orgId: string, req: CreateShareRequest): Promise<Share> {
-  return apiFetch<Share>(`/orgs/${orgId}/shares`, {
+async function createShare(
+  orgId: string,
+  req: CreateShareRequest,
+  ticketRef?: string,
+): Promise<Share> {
+  return apiFetch<Share>(`/orgs/${orgId}/shares${ticketRefQuery(ticketRef)}`, {
     method: 'POST',
     body: JSON.stringify(req),
   });
 }
 
-async function revokeShare(orgId: string, shareId: string): Promise<void> {
-  return apiFetch<void>(`/orgs/${orgId}/shares/${shareId}`, { method: 'DELETE' });
+async function revokeShare(orgId: string, shareId: string, ticketRef?: string): Promise<void> {
+  return apiFetch<void>(`/orgs/${orgId}/shares/${shareId}${ticketRefQuery(ticketRef)}`, {
+    method: 'DELETE',
+  });
 }
 
 async function fetchSharedEntity(
@@ -3932,8 +4028,8 @@ export function useEntityShares(
 
 export function useCreateShare(orgId: string, entityType: ShareEntityType, entityId: string) {
   const queryClient = useQueryClient();
-  return useMutation<Share, APIError, CreateShareRequest>({
-    mutationFn: (req) => createShare(orgId, req),
+  return useMutation<Share, APIError, CreateShareRequest & { ticketRef?: string }>({
+    mutationFn: ({ ticketRef, ...req }) => createShare(orgId, req, ticketRef),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.entityShares(orgId, entityType, entityId) });
       // The page ShareBadge reads the space-wide badge list; refresh it so a
@@ -3945,8 +4041,12 @@ export function useCreateShare(orgId: string, entityType: ShareEntityType, entit
 
 export function useRevokeShare(orgId: string, entityType: ShareEntityType, entityId: string) {
   const queryClient = useQueryClient();
-  return useMutation<void, APIError, string>({
-    mutationFn: (shareId) => revokeShare(orgId, shareId),
+  // The variable is the share id, or { id, ticketRef } — see IdWithTicketRef.
+  return useMutation<void, APIError, IdWithTicketRef>({
+    mutationFn: (v) => {
+      const { id, ticketRef } = splitIdRef(v);
+      return revokeShare(orgId, id, ticketRef);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.entityShares(orgId, entityType, entityId) });
       queryClient.invalidateQueries({ queryKey: ['spacePageShares'] });

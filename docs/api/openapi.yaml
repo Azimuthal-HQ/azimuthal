@@ -1178,6 +1178,16 @@ components:
           type: array
           uniqueItems: false
       type: object
+    spaces.BootConfig:
+      properties:
+        ticket_ref_required:
+          description: |-
+            TicketRefRequired mirrors AZIMUTHAL_TICKET_REF_REQUIRED. The UI marks
+            its ticket-reference fields required and refuses to submit without one,
+            so an operator meets the requirement before the request rather than
+            after the 400.
+          type: boolean
+      type: object
     tickets.ticketRefSuggestion:
       properties:
         assigned_to_me:
@@ -2032,6 +2042,42 @@ paths:
       summary: Audit log batch events (admin)
       tags:
       - admin
+  /orgs/{orgID}/config:
+    get:
+      description: 'Boot-time flags the UI needs, on an explicit allowlist in code
+        — never secrets, connection strings or credentials. Process-wide: the organization
+        in the path authorises the read, it does not scope the values.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/spaces.BootConfig'
+          description: Deployment flags
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not a member of this organization
+      security:
+      - BearerAuth: []
+      summary: Deployment flags
+      tags:
+      - spaces
   /orgs/{orgID}/custom-fields:
     get:
       parameters:
@@ -3043,6 +3089,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3067,7 +3119,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Validation error
+          description: Validation error, or a missing/over-long ticket_ref
         "401":
           content:
             application/json:
@@ -3114,9 +3166,21 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "204":
           description: Revoked
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID, or a missing/over-long ticket_ref
         "401":
           content:
             application/json:
@@ -3790,6 +3854,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3814,7 +3884,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Subject not an org member / invalid role
+          description: Subject not an org member / invalid role, or a missing/over-long
+            ticket_ref
         "401":
           content:
             application/json:
@@ -3867,9 +3938,21 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       responses:
         "204":
           description: Revoked
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID, or a missing/over-long ticket_ref
         "401":
           content:
             application/json:
@@ -3914,6 +3997,12 @@ paths:
         required: true
         schema:
           type: string
+      - description: Operator ticket reference recorded on the audit event (max 200
+          characters); required when the deployment sets AZIMUTHAL_TICKET_REF_REQUIRED
+        in: query
+        name: ticket_ref
+        schema:
+          type: string
       requestBody:
         content:
           application/json:
@@ -3938,7 +4027,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Invalid role
+          description: Invalid role, or a missing/over-long ticket_ref
         "401":
           content:
             application/json:

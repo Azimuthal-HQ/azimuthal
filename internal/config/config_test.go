@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/Azimuthal-HQ/azimuthal/internal/config"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 )
 
 func TestLoad_MissingRequiredVars(t *testing.T) {
@@ -288,5 +291,109 @@ func TestConfig_InvalidInviteDeliveryRejected(t *testing.T) {
 
 	if _, err := config.Load(); err == nil {
 		t.Fatal("expected a configuration error for an unknown invite delivery mode")
+	}
+}
+
+// --- AZIMUTHAL_BCRYPT_COST (B1) ---
+//
+// The floor is the entire security claim of making the work factor
+// configurable, so it gets a test that fails when the check is deleted and a
+// test that pins the APP_ENV hole shut.
+
+func TestLoad_BcryptCost_BelowFloorRejected(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
+	t.Setenv("AZIMUTHAL_BCRYPT_COST", "4")
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected a cost below the floor to be refused, got nil")
+	}
+	if !strings.Contains(err.Error(), "AZIMUTHAL_BCRYPT_COST") {
+		t.Errorf("error should name AZIMUTHAL_BCRYPT_COST, got: %s", err.Error())
+	}
+}
+
+// TestLoad_BcryptCost_FloorNotRelaxedByAppEnv is the regression test for the
+// design that was rejected: a floor with an "unless APP_ENV=test" exemption.
+// APP_ENV is an ordinary environment variable, so such an exemption would be
+// a one-line downgrade of every password in a production database.
+func TestLoad_BcryptCost_FloorNotRelaxedByAppEnv(t *testing.T) {
+	for _, env := range []string{"test", "development", "production", ""} {
+		t.Run("APP_ENV="+env, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
+			t.Setenv("APP_ENV", env)
+			t.Setenv("AZIMUTHAL_BCRYPT_COST", "4")
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("APP_ENV=%q must not relax the bcrypt floor", env)
+			}
+			if !strings.Contains(err.Error(), "AZIMUTHAL_BCRYPT_COST") {
+				t.Errorf("error should name AZIMUTHAL_BCRYPT_COST, got: %s", err.Error())
+			}
+		})
+	}
+}
+
+func TestLoad_BcryptCost_DefaultAndAboveFloor(t *testing.T) {
+	t.Run("unset defaults to 12", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
+		t.Setenv("AZIMUTHAL_BCRYPT_COST", "")
+
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.BcryptCost != config.DefaultBcryptCost {
+			t.Errorf("expected the default %d, got %d", config.DefaultBcryptCost, cfg.BcryptCost)
+		}
+	})
+
+	t.Run("raising it is allowed", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
+		t.Setenv("AZIMUTHAL_BCRYPT_COST", "14")
+
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.BcryptCost != 14 {
+			t.Errorf("expected 14, got %d", cfg.BcryptCost)
+		}
+	})
+
+	t.Run("a non-integer names itself", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/testdb")
+		t.Setenv("AZIMUTHAL_BCRYPT_COST", "twelve")
+
+		_, err := config.Load()
+		if err == nil {
+			t.Fatal("expected an error for a non-integer cost")
+		}
+		// The message must echo what was typed. Viper coerces garbage to 0,
+		// and "must be between 12 and 31: got 0" sends the operator hunting
+		// for a numeric bug that is not there.
+		if !strings.Contains(err.Error(), "twelve") {
+			t.Errorf("error should quote the offending value, got: %s", err.Error())
+		}
+	})
+}
+
+// TestBcryptFloorMatchesAuthPackage is what makes duplicating the constants
+// safe instead of dangerous: internal/config deliberately imports nothing
+// from internal/core, so the bounds are stated twice, and this fails the
+// moment the two statements disagree.
+func TestBcryptFloorMatchesAuthPackage(t *testing.T) {
+	if config.MinBcryptCost != auth.MinBcryptCost {
+		t.Errorf("config.MinBcryptCost (%d) != auth.MinBcryptCost (%d)",
+			config.MinBcryptCost, auth.MinBcryptCost)
+	}
+	if config.DefaultBcryptCost != auth.DefaultBcryptCost {
+		t.Errorf("config.DefaultBcryptCost (%d) != auth.DefaultBcryptCost (%d)",
+			config.DefaultBcryptCost, auth.DefaultBcryptCost)
+	}
+	if config.MaxBcryptCost != bcrypt.MaxCost {
+		t.Errorf("config.MaxBcryptCost (%d) != bcrypt.MaxCost (%d)",
+			config.MaxBcryptCost, bcrypt.MaxCost)
 	}
 }

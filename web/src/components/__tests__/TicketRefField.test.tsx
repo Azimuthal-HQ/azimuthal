@@ -221,3 +221,39 @@ describe('TicketRefField — the suggestion list', () => {
     expect(suggestionsHook).toHaveBeenLastCalledWith('org-1', 'PRE-1');
   });
 });
+
+// B5: the `required` prop was dormant until GET /orgs/{orgID}/config existed
+// to tell the client whether the deployment mandates a reference. It had no
+// test in either direction; these are that coverage.
+//
+// Note what `required` does NOT do here, deliberately: it does not validate,
+// does not show an error, and does not block a keystroke. The affordance that
+// actually pre-empts the server's 400 is the calling dialog's disabled submit
+// button, and each admin page tests its own.
+describe('TicketRefField — the required marker', () => {
+  it('is optional by default: the label says so and the input is not required', () => {
+    render(<Harness />);
+
+    expect(screen.getByText(/optional/i)).toBeInTheDocument();
+    expect(input()).not.toBeRequired();
+  });
+
+  it('drops the optional marker and marks the input required when told to', () => {
+    render(<Harness required />);
+
+    expect(screen.queryByText(/optional/i)).not.toBeInTheDocument();
+    expect(input()).toBeRequired();
+  });
+
+  it('still accepts any free text when required', () => {
+    render(<Harness required />);
+
+    fireEvent.change(input(), { target: { value: 'not-a-known-ticket' } });
+
+    expect(onChange).toHaveBeenLastCalledWith('not-a-known-ticket');
+    expect(input()).toHaveValue('not-a-known-ticket');
+    // No validation message, ever — required marks the field, it does not
+    // turn this component into a constraint the server does not have.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});

@@ -27,6 +27,12 @@ const SPACE = {
   updated_at: '',
 };
 
+// vi.mock factories are hoisted above module-scope declarations, so the
+// required-mode switch these tests flip has to be hoisted with them.
+// vi.hoisted is the sanctioned way; a plain `let` here throws
+// "Cannot access before initialization" inside the factory.
+const deployment = vi.hoisted(() => ({ ticketRefRequired: false }));
+
 vi.mock('../../../lib/api', () => ({
   useSpaces: vi.fn(() => ({ data: [SPACE], isLoading: false, error: null })),
   useTeams: vi.fn(() => ({ data: [{ id: 't1', name: 'Default', slug: 'default', is_default: true }], isLoading: false })),
@@ -36,6 +42,7 @@ vi.mock('../../../lib/api', () => ({
   friendlyErrorMessage: vi.fn((_err: unknown, fallback: string) => fallback),
   // A3: the edit and delete dialogs now carry a TicketRefField.
   useTicketRefSuggestions: vi.fn(() => ({ data: [], isLoading: false, error: null })),
+  useTicketRefRequired: () => deployment.ticketRefRequired,
 }));
 
 vi.mock('../../../lib/auth', () => ({

@@ -72,6 +72,7 @@ var routeAccounting = map[string]string{
 	// Org-scoped reads (membership required; 404 for non-members).
 	"GET /api/v1/orgs/{orgID}/":                    "org-member",
 	"PATCH /api/v1/orgs/{orgID}/":                  "org-admin",
+	"GET /api/v1/orgs/{orgID}/config":              "org-member: boot-time deployment flags on an explicit code allowlist, never secrets or connection strings; the orgID authorises the read, it does not scope the values (they are process-wide)",
 	"GET /api/v1/orgs/{orgID}/labels/":             "org-member",
 	"POST /api/v1/orgs/{orgID}/labels/":            "org-member: org-wide metadata, any member (status quo)",
 	"DELETE /api/v1/orgs/{orgID}/labels/{labelID}": "org-member: org-wide metadata, any member (status quo)",

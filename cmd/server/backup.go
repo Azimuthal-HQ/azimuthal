@@ -46,7 +46,7 @@ type backupManifest struct {
 
 // runBackup creates a full backup archive at the path specified by --output.
 func runBackup(_ *cobra.Command, _ []string) error {
-	cfg, err := config.Load()
+	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}

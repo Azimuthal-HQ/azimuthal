@@ -20,7 +20,7 @@ var (
 //
 // # It takes no DSN, and that is structural
 //
-// Every other subcommand begins by calling config.Load(), which is what reaches
+// Every other subcommand begins by calling loadConfig, which is what reaches
 // DATABASE_URL. This one never does, and never imports internal/config,
 // internal/db or a driver. The root command has no PersistentPreRun, so nothing
 // acquires a connection on a subcommand's behalf either — which is what makes

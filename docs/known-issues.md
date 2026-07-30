@@ -537,11 +537,27 @@ them:
 
 ---
 
-## 18. The race detector, not the database, is the largest single cost in the Test job
+## 18. ~~The race detector, not the database, is the largest single cost in the Test job~~ (RESOLVED)
 
 **Severity**: Low (CI wall-clock only; no user-facing defect)
-**Status**: Open. Measured by the CI optimization pass, deliberately not fixed there — the lever
-is in product code, which that pass was scoped out of.
+**Status**: Resolved on the backend test-speed branch. The work factor is now a variable whose
+boot value is chosen by `testing.Testing()`, so a test binary hashes at `bcrypt.MinCost` and
+anything built by `go build` hashes at 12.
+
+The floor this entry insisted on is not merely preserved, it is enforced in places it was not
+before. `AZIMUTHAL_BCRYPT_COST` lets an operator RAISE the cost; `internal/config` refuses any
+value below 12 in every environment — there is deliberately no `APP_ENV=test` exemption, because
+APP_ENV is an ordinary environment variable a production deployment can hold any value of — and
+`auth.SetPasswordCost` re-checks the same floor for callers that never go through config. Every
+command in `cmd/server` applies it through one `loadConfig`, with a drift test that fails on any
+file reaching past it: `azimuthal admin create-user` and `admin reset-password` were silently
+discarding the setting until that landed.
+
+`password_test.go` keeps its assertions unchanged. One new test pays the real cost 12 and reads
+the work factor back out of the emitted hash with `bcrypt.Cost`, so it cannot be satisfied by the
+constant it guards.
+
+<details><summary>Original entry</summary>
 
 `internal/core/auth` and `internal/core/api/auth` cost 142s of the 793s `go test` step on CI, and
 almost none of it is database work. `bcryptCost = 12` (`internal/core/auth/password.go:11`) costs
@@ -572,12 +588,29 @@ hash for exactly this reason, so the precedent is in the repository; what is mis
 treatment for the paths that hash at run time. Any such change is product code and needs its own
 review — it is recorded here rather than done in passing.
 
+</details>
+
 ---
 
-## 19. `newTestServerOn` generates a fresh RSA-2048 key for every integration test
+## 19. ~~`newTestServerOn` generates a fresh RSA-2048 key for every integration test~~ (RESOLVED)
 
 **Severity**: Low (CI wall-clock only)
-**Status**: Open. Measured by the CI optimization pass, deliberately not taken there.
+**Status**: Resolved on the backend test-speed branch. Each affected package memoises one key with
+`sync.OnceValue`; a Go test binary is per package, so the sharing never crosses a package boundary
+and never reaches production code.
+
+**One correction to this entry, and it is the part that needed care.** It states that "no test
+asserts that two servers have different signing keys, and if one did it would fail loudly rather
+than pass weakly". One does: `TestJWTService_WrongKey` in `internal/core/auth` issues a token from
+one service and requires a second to reject it. It sits in a different package from the one this
+entry examined. Handing it the shared key twice would have left it passing while asserting
+nothing, so it now calls `freshTestKey` explicitly, twice, with the reason written beside it.
+
+`TestHarness_ServersShareOneSigningKey` locks the sharing in from the other side: two
+independently built servers must each accept the other's token, which is true only while they hold
+one key.
+
+<details><summary>Original entry</summary>
 
 `internal/core/api/routes_integration_test.go:114` calls `rsa.GenerateKey(rand.Reader, 2048)` on
 every `newTestServerOn`, and that helper backs 203 of the 208 `NewTestDB` calls in
@@ -592,6 +625,8 @@ signing keys, and if one did it would fail loudly rather than pass weakly.
 
 **Proper fix**: one `var testSigningKey = sync.OnceValue(func() *rsa.PrivateKey { ... })`, used by
 `newTestServerOn` and by `setupRouter` in `router_test.go`.
+
+</details>
 
 ---
 

@@ -327,6 +327,21 @@ func (a *ContentTxAdapter) deleteEntityAndRevokeShares(ctx context.Context, enti
 
 // writeShareRevokedTx records one share.revoked event through the mutation's
 // own transaction. Failing to record it fails the mutation.
+//
+// # No ticket_ref, deliberately
+//
+// These events are the system enforcing ADR-0008 — a share cannot outlive its
+// entity moving out of the shared space or being deleted — not an operator
+// administrative change. AZIMUTHAL_TICKET_REF_REQUIRED governs administrative
+// mutations; moving or deleting a page is authoring, and demanding a change
+// reference for it would put a change-management gate on ordinary editing.
+//
+// The payload's "reason" (entity_moved / entity_deleted) is the causal record,
+// and the mutation that caused it is audited in its own right. So the column
+// stays SQL NULL here, and share.revoked rows are written from two places with
+// deliberately different postures: the operator revoke in
+// internal/core/api/shares carries a reference, this one does not.
+// TestShare_RevokeOnDelete_WritesNoTicketRef pins both halves.
 func writeShareRevokedTx(ctx context.Context, qtx *generated.Queries, actorID uuid.UUID, share generated.EntityShare, reason string) error {
 	meta := map[string]string{
 		"entity_type": share.EntityType,

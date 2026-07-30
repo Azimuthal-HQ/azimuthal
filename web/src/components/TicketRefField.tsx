@@ -22,10 +22,21 @@ export interface TicketRefFieldProps {
   hint?: ReactNode;
   placeholder?: string;
   /**
-   * Marks the field required in the UI. Nothing sets it today — the mandate
-   * lives in the deployment's AZIMUTHAL_TICKET_REF_REQUIRED, which no API
-   * response exposes to the client yet. It exists so the surface can say so
-   * once one does; it does NOT make the component validate anything.
+   * Marks the field required in the UI: the label drops its "optional"
+   * marker and the input carries the `required` attribute.
+   *
+   * Callers pass `useTicketRefRequired(orgId)` from lib/api.ts, which reads
+   * the deployment's AZIMUTHAL_TICKET_REF_REQUIRED from
+   * GET /orgs/{orgID}/config and fails safe to false — the server enforces
+   * the 400 either way, so a config fetch that fails must not lock the dialog.
+   *
+   * It still does NOT make this component validate anything. Free text stays
+   * fully valid, an unmatched value is never an error, and nothing here blocks
+   * a keystroke or a submit. Pre-empting the server's 400 is the calling
+   * dialog's job, and every one of them does it the way they already gate
+   * their other required fields: by disabling their own submit button while
+   * the value is blank. An error message, an aria-invalid or a red border here
+   * would be the constraint the main doc comment below forbids.
    */
   required?: boolean;
   disabled?: boolean;

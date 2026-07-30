@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,23 @@ import (
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 )
+
+// testSigningKey is the one RS256 key this test binary signs with
+// (known-issues #19). setupHandler alone is called sixteen times and
+// rsa.GenerateKey(rand.Reader, 2048) is not cheap — several times less cheap
+// under -race — and no test here asserts anything about the key itself.
+//
+// It hands out the same key every time, so it cannot be used to prove that a
+// token signed by one service is rejected by another. The one test in the
+// repository that needs that property — TestJWTService_WrongKey in
+// internal/core/auth — mints its second key explicitly and says why.
+var testSigningKey = sync.OnceValue(func() *rsa.PrivateKey {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic("generating the shared test signing key: " + err.Error())
+	}
+	return key
+})
 
 type mockUserRepo struct {
 	users map[uuid.UUID]*auth.User
@@ -134,10 +152,7 @@ func (m *failingMembershipResolver) PrimaryOrgForUser(_ context.Context, _ uuid.
 
 func setupHandler(t *testing.T) (*authapi.Handler, *auth.JWTService) {
 	t.Helper()
-	pk, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pk := testSigningKey()
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
 		PrivateKey: pk,
 		PublicKey:  &pk.PublicKey,
@@ -450,10 +465,7 @@ func TestRefreshWithValidToken(t *testing.T) {
 }
 
 func TestLoginMembershipResolutionFailure(t *testing.T) {
-	pk, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pk := testSigningKey()
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
 		PrivateKey: pk,
 		PublicKey:  &pk.PublicKey,
@@ -495,10 +507,7 @@ func TestRegister_DisabledByDefault_404s_Regression(t *testing.T) {
 	// setter is the ONLY way to open registration, so a handler built
 	// without it must answer 404 before touching the body. Verified to
 	// fail against the pre-P2.5 handler (which had no gate) and pass now.
-	pk, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pk := testSigningKey()
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
 		PrivateKey: pk, PublicKey: &pk.PublicKey,
 		AccessTTL: time.Hour, RefreshTTL: 24 * time.Hour, Issuer: "test",

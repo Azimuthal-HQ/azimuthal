@@ -16,6 +16,12 @@ const previewMutate = vi.fn();
 const applyMutate = vi.fn();
 const suggestSpy = vi.fn();
 
+// vi.mock factories are hoisted above module-scope declarations, so the
+// required-mode switch these tests flip has to be hoisted with them.
+// vi.hoisted is the sanctioned way; a plain `let` here throws
+// "Cannot access before initialization" inside the factory.
+const deployment = vi.hoisted(() => ({ ticketRefRequired: false }));
+
 vi.mock('../../../lib/api', () => ({
   friendlyErrorMessage: (_err: unknown, fallback: string) => fallback,
   useAccessMatrix: () => ({
@@ -27,6 +33,7 @@ vi.mock('../../../lib/api', () => ({
   useBulkApplyGrants: () => ({ mutate: applyMutate, isPending: false }),
   // A1: the ticket_ref input is now TicketRefField, which reaches for the
   // typeahead. The matrix cares about the value it produces, not the list.
+  useTicketRefRequired: () => deployment.ticketRefRequired,
   useTicketRefSuggestions: (orgId: string, q: string) => {
     suggestSpy(orgId, q);
     return { data: [], isLoading: false, error: null };
