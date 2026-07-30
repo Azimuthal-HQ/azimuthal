@@ -1662,3 +1662,61 @@ the two below were not, each for a stated reason.
   that validates priorities runs to completion over an arbitrarily long list, which is the DoS shape
   the other bounds exist to prevent. Pre-existing, and adding a `Max*` constant would require the
   frontend bound-parity map to learn it in the same change; noted rather than smuggled in here.
+
+---
+
+## P6 — cross-module search
+
+### D82 — §7's "tagged with module and owning team" collides with matrix case 16 — **RESOLVED BY DERIVATION, matrix wins**
+
+- **§7 says** search results are *"tagged with module and owning team"*.
+- **Matrix case 16 says** a share-read must not disclose its container. It is not prose: it is
+  enforced field-by-field at `internal/core/api/entity_shares_integration_test.go`, which asserts
+  the absence of the container fields by exact key on the `/shared` read route.
+- **The collision:** a search hit reached ONLY through a share is a share-read that arrived by a
+  different route. Tagging it with its owning team — or with `space_key` / `space_name`, which
+  every other cross-space list returns — tells a viewer who cannot enter the space that the space
+  exists, what it is called, and who owns it. An outsider holding one share on one page in
+  "Acquisition Planning" would learn the name of the space and the identity of its team.
+- **Resolution:** the enforced matrix case wins over the §7 sentence. A share-only hit carries no
+  container identity at all — no space id, key or name — and renders the way `/shared` already
+  renders one: module chip, entity title, shared-provenance chip. A hit in a space the viewer CAN
+  read is unaffected and carries its container as usual.
+- **Why this is a derivation and not a new decision:** case 16 already governs share-reads, and
+  nothing about arriving via search changes what the viewer is permitted to learn. §7's sentence
+  was written for the ordinary case and does not appear to have contemplated the share-only one.
+- **Where it is enforced:** once, in `search.redactSharedContainers`, rather than in the
+  serializer — so a second response shape cannot forget it. The decision is by SPACE, not by share
+  membership: an entity that is both shared and in a readable space keeps its container, because
+  the viewer can already see it.
+- **Tested both directions**, with the negative half mutation-tested: leaving the fields populated
+  fails on "a share-only hit must not carry its space id".
+
+### D83 — `shared-surfaces.md` said the route accounting table holds 185 rows; it holds 217 — **fourth occurrence**
+
+The figure was already stale before this phase started: the whole #85–#92 wave (portal, workflow
+tiers, dashboards, the cleanup sweep, the maintenance pass and filter vocabulary v2) landed rows
+after the sentence was last written. P6 adds one more, for `GET /orgs/{orgID}/search/`.
+
+Corrected to 217, and the standing warning in that section is updated from "wrong three times" to
+"wrong four times". The warning itself is the useful part — **count the map, do not quote the
+number** — and it is now correct about its own history. This entry exists mainly to record that
+the pattern recurred exactly as the warning predicted, in the same way D52/D56 record the
+migration table's repeats.
+
+### D84 — §4's search sketch predates `project_items.item_key`, so the shipped vector is a superset
+
+§4's "Full-text search" sketch specifies `setweight(title,'A') || setweight(description,'B')` for
+both `tickets` and `project_items`. That was written against the schema at migration 028;
+`project_items.item_key` arrived later, in 031.
+
+Migration 049 ships the sketch's expression for `tickets` verbatim and **adds `item_key` at weight
+A** for `project_items`, so an item is findable by its key. This is an extension of the sketch, not
+a contradiction of it, and it is recorded here rather than silently absorbed.
+
+`tickets` deliberately does NOT gain an equivalent: a ticket has no key column — its reference is
+composed from `spaces.key` and `number` by `tickets.ComposeRef` — and a generated column may only
+reference columns of its own row, so `spaces.key` is unreachable from the expression. Ticket
+references stay served by the `/ticketref` resolver, which is an exact lookup and a better answer
+than a ranked match. Both vectors still carry title `A` and body `B`, so cross-type rank
+comparability is unaffected by the asymmetry.

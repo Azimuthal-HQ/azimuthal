@@ -361,6 +361,29 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/views/{viewID}/results": "org-member: run a view; +ResolveShares, results resolve against the CALLER's readable spaces unioned with their shares",
 	"POST /api/v1/orgs/{orgID}/views/aggregate":       "org-member: count or group an unsaved query in SQL; +ResolveShares, counted over the CALLER's own readable set so two people legitimately see different totals",
 
+	// Cross-module search (P6, spec §5/§7; ADR-0009/ADR-0010). Org-scoped for
+	// the same reason saved views are: a search spans containers by
+	// definition, so there is no {spaceID} to scope it to and
+	// RequireSpaceReadable has nothing to check.
+	//
+	// Org-member rather than capability-gated: searching reads nothing the
+	// caller could not already read one entity at a time, so a gate here would
+	// be a capability every role holds. What bounds the answer is the
+	// per-viewer access set applied INSIDE each of the three fan-out queries —
+	// ADR-0010's rule for every cross-space read path.
+	//
+	// It carries ResolveShares, unlike the dashboard family: search reads
+	// pages, tickets and project items directly, so a share is the only way an
+	// entity outside the caller's readable spaces can legitimately appear. For
+	// pages that includes cascade SUBTREES, whose (space, pattern) pairing is
+	// the D46 accessor. As with the view result routes, share coverage widens
+	// what is returned; it does not authorise the route.
+	//
+	// A hit reached ONLY through a share carries no container identity — no
+	// space id, key or name — because matrix case 16 forbids a share-only read
+	// from disclosing the space it lives in, and a search hit is still a read.
+	"GET /api/v1/orgs/{orgID}/search/": "org-member: cross-module search; +ResolveShares, results filtered per viewer (readable spaces + direct shares + cascade subtrees) and share-only hits are container-stripped",
+
 	// Dashboards (P5, ADR-0009). Org-scoped for the same reason saved views
 	// are: a dashboard arranges gadgets that cross containers, so it has no
 	// {spaceID} to hang off (ADR-0010). Who may see or change one is decided

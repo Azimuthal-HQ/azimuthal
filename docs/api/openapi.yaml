@@ -3586,6 +3586,56 @@ paths:
       summary: Search org members
       tags:
       - admin
+  /orgs/{orgID}/search:
+    get:
+      description: Ranked, permission-filtered results across pages, tickets and project
+        items. Supports the `type:` and `tag:` operators.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        schema:
+          type: string
+      - description: Page size (default 20, max 50)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: Opaque cursor from a previous page
+        in: query
+        name: cursor
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Ranked results, the effective module set, and the result state
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid parameters or cursor
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+      summary: Search across Codex, Beacon and Vector
+      tags:
+      - search
   /orgs/{orgID}/shared/{entityType}/{entityID}:
     get:
       description: Returns a shared entity with no container information — no space,

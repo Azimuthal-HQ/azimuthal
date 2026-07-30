@@ -190,11 +190,12 @@ Every route carries **exactly one** guard class:
 router — never a hand-maintained list — and fails **bidirectionally**: on any route present in the
 router but missing from the table, and on any table row whose route no longer exists. It also
 asserts at least 90 routes were enumerated, so a broken walk cannot pass vacuously. The table
-holds **185 rows** as of the backend test-speed and pre-cutover pass, keyed `"METHOD /path"` —
+holds **217 rows** as of P6 cross-module search, keyed `"METHOD /path"` —
 mostly under `/api/v1`, except `/health`, `/ready`, `/api/docs` and `/api/docs/openapi.yaml`.
 
-**Count the map; do not quote that number.** It has been wrong three times: 142 until P4 counted
-them, 172 until this pass did, and 172 was already stale before this pass started — P4 PR-B's queue
+**Count the map; do not quote that number.** It has now been wrong four times: 142 until P4 counted
+them, 172 until the pre-cutover pass did, 185 until P6 did — 185 was already stale before P6 started,
+by the whole #85-#92 wave — and 172 was already stale before the pre-cutover pass started — P4 PR-B's queue
 rows, the Codex UX pass, and this one all landed after the sentence was last written. A figure three
 consecutive phases have had to correct does not belong in prose, and it is recorded here only
 because deleting it outright would leave a reader wondering whether the table is ten rows or two
