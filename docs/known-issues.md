@@ -775,9 +775,73 @@ No test was written asserting the current behaviour: pinning it would encode the
 
 ---
 
-## 24. Five handlers answer 500 where their own OpenAPI annotations promise 4xx
+## 24. ~~Five handlers answer 500 where their own OpenAPI annotations promise 4xx~~ (RESOLVED)
 
 **Severity**: Medium (a client is told to retry something that will never succeed)
+**Status**: Resolved by the maintenance mini-pass. All five answer their documented class, each
+through the standard error envelope, and each has the negative test that would have caught it —
+every one of which fails against the unfixed source with the 500 this entry describes.
+
+**Three of the five were fixed at the layer that was missing the sentinel, not at the switch.** The
+error vocabulary this entry left to a decision turned out to be already written down in every case:
+`wiki.ErrParentPageNotFound` existed and had one producer, `projects.ErrLabelDuplicate` existed and
+had none, and `projects.LabelRepository`'s own doc comment already promised it. The only genuinely
+new sentinel is `wiki.ErrMalformedDocument`.
+
+| Site | Now answers | How |
+|---|---|---|
+| `POST /wiki` with an unknown `parent_id` | **404 NOT_FOUND** | `wiki.Service.CreatePage` maps `pgx.ErrNoRows` to the existing `ErrParentPageNotFound`; `handleWikiError` gained the arm |
+| a `doc` that is valid JSON but not a ProseMirror document, on draft-save and publish | **400 VALIDATION_ERROR** | new `wiki.ErrMalformedDocument` wraps `doc.Validate` at both call sites; `handleDocumentError` gained the arm |
+| `ItemAdapter.UpdateStatus`, `ItemAdapter.Update`, `SprintAdapter.Update`, `SprintAdapter.UpdateStatus` | **404 NOT_FOUND** | each maps `pgx.ErrNoRows` to `projects.ErrNotFound`, in the idiom their own sibling getters use |
+| `LabelAdapter.Create` on a repeated name | **409 CONFLICT** | maps the `labels_org_id_name_key` violation to `projects.ErrLabelDuplicate`, which makes `handleProjectError`'s arm live for the first time |
+
+**One annotation was wrong, and it was the annotation that changed.** `CreatePage` declared only
+400, 401 and 500 — there was no `@Failure 404` for the table's "400/404" to refer to. Since
+`ErrParentPageNotFound` already means 404 on the move route, answering 400 on create would have
+given one sentinel two statuses in one switch, so the route gained `@Failure 404 "Parent page not
+found"` and `docs/api/openapi.yaml` was regenerated (a six-line diff, `make docs-check` green). No
+other annotation needed a change: the item-status route already declares 404 and the label route
+already declares 409.
+
+**Three corrections to the entry below, verified rather than assumed.**
+
+1. **A sixth site was found, and a seventh, both unrecorded.** `handleWikiError` matched *none* of
+   the four tree sentinels the move path raises — `ErrParentPageNotFound`, `ErrTargetSpaceNotFound`,
+   `ErrParentNotInTargetSpace`, `ErrPageMoveCycle` — so `POST /wiki/{pageID}/move` answered 500 for
+   all four while annotating both 400 and 404. Fixing site 1 required adding the first arm anyway;
+   leaving the other three at 500 in the same switch would have been arbitrary, so all four are
+   mapped (404 for the two "names something that does not exist" cases, 400 for the two "both exist,
+   the combination is wrong" cases). Separately, `SprintAdapter.CompleteWithDisposition` calls
+   `UpdateSprintStatus` a second time inside its transaction and was unmapped there too.
+2. **Site 3 is no longer a plain 404-as-500.** Commit `7950307` (P-W workflow tiers) added a
+   pre-load to `UpdateItemStatus`, so the route 404s before the adapter is reached. Sites 3 and 4
+   are now the same shape — a TOCTOU window between a handler's read and its write. That is why
+   those five are pinned at the adapter boundary rather than over HTTP: reaching them through the
+   router means losing a race with a concurrent delete.
+3. **The "related observation" about `UpdateSprint` is correct as written.** `ItemAdapter.UpdateSprint`
+   calls `UpdateProjectItemSprint`, which is `:exec` and returns only an error, so an item id naming
+   nothing really is silently accepted. (The similarly-named `UpdateSprint` *query* is `:one` — a
+   different query, easy to confuse.) Left alone: the entry is right that `DeleteRelation` and
+   `DeleteLabel` share the shape and are plausibly meant to be idempotent, so it is a maintainer's
+   call about idempotency rather than a status-class defect.
+
+**Tests.** `internal/core/api/wiki_error_classes_integration_test.go` (create, all three reachable
+move refusals, and all four malformed-document shapes on both routes),
+`TestProjectsNeg_DuplicateLabelNameIs409` in
+`internal/core/api/projects_negative_integration_test.go`, and
+`TestProjectWriteAdapters_MissingRow_ReturnsErrNotFound` plus
+`TestLabelAdapter_DuplicateName_ReturnsErrLabelDuplicate` in
+`internal/db/adapters/notfound_integration_test.go`. Each asserts the status *and* the envelope
+code, because a fix that answered 400 with `INTERNAL_ERROR` would be half a fix, and each family
+carries a success case so a handler that refused everything could not pass.
+
+`ErrTargetSpaceNotFound` has no test: an unknown `target_space_id` is refused earlier by the
+destination's `edit_any` guard, which already answers 404, so a test naming a random space uuid
+would pass with the new arm deleted. Its arm is reachable only by losing a race with a space
+deletion. Recorded rather than covered by something vacuous.
+
+<details><summary>Original entry</summary>
+
 **Status**: Open. Found by P5's coverage pass; each one verified empirically with a throwaway probe
 and confirmed against the handler's own `@Failure` annotation. Not fixed — all are in non-test
 source outside P5's surface, and each is somebody's decision about their own error vocabulary.
@@ -817,6 +881,8 @@ parsed and refused by `views.ParseQuery` before the service is entered), and a d
 row id and the stored key. It now has its own branch answering 500 with the fixed fallback.
 `internal/core/api/views_unreadable_document_integration_test.go` drives every affected route and
 fails in both directions.
+
+</details>
 
 ---
 
