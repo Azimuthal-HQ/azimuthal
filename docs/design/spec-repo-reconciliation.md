@@ -1380,7 +1380,7 @@ could fail on existing data, so it is flagged rather than taken.
 
 It assigned `039+` to this table. `039_beacon_queues.sql` shipped from P4 PR-B while P5 was being
 planned, and 040/041 were reserved for a Codex phase running concurrently, so this phase was
-assigned 042 and 043 and the migration was written as **042**. It shipped as **048** — see D74,
+assigned 042 and 043 and the migration was written as **042**. It shipped as **048** — see D81,
 which is the more interesting half of this entry.
 
 Fifth occurrence, and D56 already stated the rule: *the migration table in a design document is a
@@ -1453,7 +1453,7 @@ Also not a spec discrepancy, and also live: `ProductTabs.isHomeActive` enumerate
 top-level paths and omitted `/spaces`, so the space directory rendered with **no product tab lit
 at all**. Found while adding `/dashboards` to the same list. Both are there now.
 
-### D76 — a pre-assigned migration number expires when a higher one merges first
+### D81 — a pre-assigned migration number expires when a higher one merges first
 
 The coordination for these parallel phases pre-assigned migration numbers: 040/041 to the Codex
 phase, 042/043 to P5, and the portal and workflow phases took 044–047. That is sound as collision
@@ -1476,9 +1476,15 @@ where ordering gaps are irrelevant and out-of-order cannot arise. The failure ex
 database with history. It was found by applying `main`'s migrations to a throwaway database and
 then applying this branch's — reproduced in both directions, before and after the fix.
 
+**D73, from the workflow-tiers phase, is the same finding reached independently** — reserved
+out-of-order numbers make goose refuse an existing database. Two phases hitting one behaviour in
+the same week is the argument for treating it as a standing rule rather than as either phase's
+incident.
+
 Numbering is immutable ONCE SHIPPED (§10). This had not shipped, so it moved to **048**, the first
-free number. The rule to carry: a pre-assigned number is a claim on a position in a SEQUENCE, and
-it expires the moment a higher number merges first. Re-check it against `main` when you open the
+free number at the time and still the first free number after 046/047 merged with the workflow
+phase. The rule to carry: a pre-assigned number is a claim on a position in a SEQUENCE, and it
+expires the moment a higher number merges first. Re-check it against `main` when you open the
 PR, not when you plan the phase — and if the branch is long-lived, re-check it again before merge.
 
 ## 2. Decisions taken (justified in the phase report, recorded here)
