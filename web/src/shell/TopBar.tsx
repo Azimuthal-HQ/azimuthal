@@ -9,7 +9,6 @@ import {
   LogOut,
   Menu,
   Plus,
-  Search,
   Settings,
   Shield,
   User,
@@ -33,6 +32,7 @@ import {
 import { Logo } from '../components/layout/Logo';
 import { DarkModeToggle } from '../components/theme/DarkModeToggle';
 import { ProductTabs } from './ProductTabs';
+import { SearchLauncher } from '../components/search/SearchLauncher';
 import { FocusChip } from './FocusChip';
 import { useShellUI } from './ShellUIContext';
 import { isModuleKey, notificationRoute, spacePath, type ModuleKey } from './modules';
@@ -135,30 +135,7 @@ export function TopBar() {
       <FocusChip className="ml-[var(--space-2)]" />
 
       <div className="ml-auto flex shrink-0 items-center gap-[var(--space-2)]">
-        <button
-          type="button"
-          onClick={() => navigate('/search')}
-          className={cn(
-            'hidden h-8 items-center gap-[var(--space-2)] rounded-[var(--radius-md)] px-[var(--space-3)] lg:flex lg:w-[210px]',
-            'border border-[var(--color-border)] bg-[var(--color-bg)]',
-            'text-[var(--text-sm)] text-[var(--color-text-muted)]',
-            'hover:border-[var(--color-primary)] transition-colors duration-150',
-          )}
-        >
-          <Search className="h-4 w-4" />
-          Search everything
-        </button>
-        <button
-          type="button"
-          onClick={() => navigate('/search')}
-          aria-label="Search everything"
-          className={cn(
-            'inline-flex h-9 w-9 items-center justify-center rounded-[var(--radius-md)] lg:hidden',
-            'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]',
-          )}
-        >
-          <Search className="h-[18px] w-[18px]" />
-        </button>
+        <SearchLauncher />
 
         <div className="flex items-center">
           <button
