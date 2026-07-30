@@ -82,7 +82,11 @@ func (a *ItemAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Item
 	return dbProjectItemToItem(row), nil
 }
 
-// Update persists changes to an existing item.
+// Update persists changes to an existing item. An item that is gone by the time
+// the write lands is ErrNotFound, not an internal error: every handler on this
+// path pre-loads the item, so this is the TOCTOU window between the read and
+// the write rather than a plain unknown id — but the caller's answer for "the
+// thing you were editing has been deleted" is 404 either way (known-issues #24).
 func (a *ItemAdapter) Update(ctx context.Context, item *projects.Item) error {
 	_, err := a.q.UpdateProjectItem(ctx, generated.UpdateProjectItemParams{
 		ID:          item.ID,
@@ -99,18 +103,25 @@ func (a *ItemAdapter) Update(ctx context.Context, item *projects.Item) error {
 		// rather than blanking it.
 		Kind: item.Kind,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return projects.ErrNotFound
+	}
 	if err != nil {
 		return fmt.Errorf("item adapter update: %w", err)
 	}
 	return nil
 }
 
-// UpdateStatus changes only the status field.
+// UpdateStatus changes only the status field. See Update on why a missing row
+// is ErrNotFound rather than an internal error.
 func (a *ItemAdapter) UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*projects.Item, error) {
 	row, err := a.q.UpdateProjectItemStatus(ctx, generated.UpdateProjectItemStatusParams{
 		ID:     id,
 		Status: status,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("item adapter update status: %w", err)
 	}
@@ -276,7 +287,9 @@ func (a *SprintAdapter) GetActiveBySpace(ctx context.Context, spaceID uuid.UUID)
 	return dbSprintToProject(row), nil
 }
 
-// Update persists changes to a sprint (name, goal, dates).
+// Update persists changes to a sprint (name, goal, dates). A sprint that is
+// gone by the time the write lands is ErrNotFound, for the reason given on
+// ItemAdapter.Update.
 func (a *SprintAdapter) Update(ctx context.Context, sprint *projects.Sprint) error {
 	_, err := a.q.UpdateSprint(ctx, generated.UpdateSprintParams{
 		ID:       sprint.ID,
@@ -285,6 +298,9 @@ func (a *SprintAdapter) Update(ctx context.Context, sprint *projects.Sprint) err
 		StartsAt: pgTimestampPtr(sprint.StartsAt),
 		EndsAt:   pgTimestampPtr(sprint.EndsAt),
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return projects.ErrNotFound
+	}
 	if err != nil {
 		return fmt.Errorf("sprint adapter update: %w", err)
 	}
@@ -294,13 +310,17 @@ func (a *SprintAdapter) Update(ctx context.Context, sprint *projects.Sprint) err
 // UpdateStatus changes the sprint status. A unique-violation on the
 // one-active-per-space partial index (migration 034) is mapped to
 // ErrSprintActive so a lost race to activate surfaces as 409, not 500 —
-// the same outcome as the service-level GetActiveBySpace guard.
+// the same outcome as the service-level GetActiveBySpace guard. A sprint that
+// is gone is ErrNotFound, for the reason given on ItemAdapter.Update.
 func (a *SprintAdapter) UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*projects.Sprint, error) {
 	row, err := a.q.UpdateSprintStatus(ctx, generated.UpdateSprintStatusParams{
 		ID:     id,
 		Status: status,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, projects.ErrNotFound
+		}
 		if name, ok := uniqueViolation(err); ok && name == "idx_sprints_one_active_per_space" {
 			return nil, projects.ErrSprintActive
 		}
@@ -335,6 +355,12 @@ func (a *SprintAdapter) CompleteWithDisposition(ctx context.Context, id uuid.UUI
 		ID:     id,
 		Status: projects.SprintStatusCompleted,
 	})
+	// The same mapping UpdateStatus makes, because it is the same query: a
+	// sprint that vanished between the handler's read and this write is 404,
+	// not 500. The rollback is already deferred.
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sprint adapter complete: update status: %w", err)
 	}
@@ -487,6 +513,16 @@ func NewLabelAdapter(q *generated.Queries) *LabelAdapter {
 }
 
 // Create persists a new label.
+//
+// A second label with a name the org already uses is ErrLabelDuplicate, which
+// is what projects.LabelRepository's own doc comment has always promised and
+// what handleProjectError has always had a 409 arm for. Without this mapping
+// nothing in the tree could produce that sentinel, so the arm was unreachable
+// and a duplicate name answered 500 (known-issues #24). Matched on the
+// constraint rather than on any 23505, so a future unique index on this table
+// cannot be silently reported as a name clash — labels_org_id_name_key is the
+// name PostgreSQL generated for migration 004's inline UNIQUE (org_id, name),
+// verified against the database rather than read off the migration.
 func (a *LabelAdapter) Create(ctx context.Context, label *projects.Label) error {
 	_, err := a.q.CreateLabel(ctx, generated.CreateLabelParams{
 		ID:    label.ID,
@@ -495,6 +531,9 @@ func (a *LabelAdapter) Create(ctx context.Context, label *projects.Label) error 
 		Color: label.Color,
 	})
 	if err != nil {
+		if name, ok := uniqueViolation(err); ok && name == "labels_org_id_name_key" {
+			return projects.ErrLabelDuplicate
+		}
 		return fmt.Errorf("label adapter create: %w", err)
 	}
 	return nil

@@ -164,6 +164,71 @@ func TestViewsMatrix_SharingWidensToOrgAndTeam(t *testing.T) {
 	})
 }
 
+// TestViewsMatrix_RenamingATeamSharedViewKeepsItsTeam is known-issues #25 over
+// the wire, which is where it was reported.
+//
+// PATCH is a merge, so a request carrying only a new name inherits the row's
+// whole audience — the team included. Inheriting the visibility without the
+// team it names produced "team with no team", and the caller was answered
+// 422 "a team-visible view must name a team" about a field they had not sent.
+//
+// The second half asserts the merge does not overreach: a request that MOVES
+// the view to the org audience drops the team id rather than inheriting it.
+func TestViewsMatrix_RenamingATeamSharedViewKeepsItsTeam(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+
+	member := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	memberToken := ts.tokenFor(t, member.ID, member.Email)
+
+	teamID := uuid.New()
+	_, err := ts.DB.Pool.Exec(ctx,
+		`INSERT INTO teams (id, org_id, slug, name, path) VALUES ($1,$2,$3,$4,ARRAY[$1]::uuid[])`,
+		teamID, ts.OrgID, "renamers-"+uuid.NewString()[:8], "Renamers")
+	require.NoError(t, err)
+	_, err = ts.DB.Pool.Exec(ctx,
+		`INSERT INTO team_members (org_id, team_id, user_id) VALUES ($1,$2,$3)`, ts.OrgID, teamID, member.ID)
+	require.NoError(t, err)
+
+	id := createViewAs(t, ts, memberToken, ts.OrgID, "Squad board", "team", &teamID)
+
+	var out struct {
+		Name             string     `json:"name"`
+		Visibility       string     `json:"visibility"`
+		VisibilityTeamID *uuid.UUID `json:"visibility_team_id"`
+	}
+
+	t.Run("a name-only PATCH keeps the team share", func(t *testing.T) {
+		res := ts.patchAs(t, memberToken, viewsPath(ts.OrgID)+"/"+id.String(), map[string]any{
+			"name": "Squad board v2", "query": json.RawMessage(beaconViewQuery),
+		})
+		require.Equal(t, http.StatusOK, res.StatusCode,
+			"renaming a team-shared view must not require re-naming its team: %s", res.Body)
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		require.Equal(t, "Squad board v2", out.Name)
+		require.Equal(t, "team", out.Visibility)
+		require.Equal(t, &teamID, out.VisibilityTeamID)
+
+		// And it is what was stored, not only what was echoed.
+		res = ts.getAs(t, memberToken, viewsPath(ts.OrgID)+"/"+id.String())
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		require.Equal(t, &teamID, out.VisibilityTeamID)
+	})
+
+	t.Run("moving it to the org audience drops the team", func(t *testing.T) {
+		res := ts.patchAs(t, memberToken, viewsPath(ts.OrgID)+"/"+id.String(), map[string]any{
+			"name": "Everyone's board", "query": json.RawMessage(beaconViewQuery),
+			"visibility": "org",
+		})
+		require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		require.Equal(t, "org", out.Visibility)
+		require.Nil(t, out.VisibilityTeamID,
+			"an org-audience view carrying a team id is a lie the next reader has to interpret")
+	})
+}
+
 // TestViewsMatrix_OwnerSemantics is V3's rule: editing and deleting belong to
 // the owner, with the org-admin bypass that applies everywhere else, and a
 // view the caller cannot see 404s rather than 403s.

@@ -10,7 +10,7 @@ struck, stale premises corrected. No new entries were added in that pass.
 ## 0. ~~Ticket Detail Navigation — Redirect Loop~~ (RESOLVED)
 
 **Severity**: High
-**Status**: Resolved in fix/ticket-detail-auth branch
+**Status**: Resolved in PR #37 (branch `fix/ticket-detail-auth`, since deleted)
 
 **Was:** Clicking a ticket in the service desk caused a redirect loop back to login.
 Two bugs were involved:
@@ -313,7 +313,7 @@ does not map postgres unique constraint violations to `auth.ErrEmailTaken`.
 ## 12. ~~Goose Migration Mutex Required for Parallel Tests~~ (RESOLVED)
 
 **Severity**: Low
-**Status**: Fixed in test/backend-coverage branch
+**Status**: Fixed in PR #33 (branch `test/backend-coverage`, since deleted)
 
 `goose.SetTableName()` uses a package-level global variable. When integration
 tests run in parallel, concurrent `goose.Up()` calls with different schema-scoped
@@ -454,9 +454,9 @@ retrieves an object end-to-end.
 ## 17. ~~eslint is not a CI gate — 46 errors on `main`~~ (gate CLOSED; narrowed to three deferred effects)
 
 **Severity**: Low (code quality; no known user-facing defect)
-**Status**: The gate is on. `npm run lint` is a required step in the `Frontend` job and `eslint .`
-exits 0. There is no baseline file and no `--max-warnings` slack. What remains open is narrower and
-is listed at the end of this entry.
+**Status**: Closed in PR #82. The gate is on: `npm run lint` is a required step in the `Frontend`
+job (`.github/workflows/ci.yml`) and `eslint .` exits 0. There is no baseline file and no
+`--max-warnings` slack. What remains open is narrower and is listed at the end of this entry.
 
 The count above was **46**; the real count when the closing pass measured it was **48 across 33
 files** — it had drifted by two in the phases between. The corrected inventory and its disposition:
@@ -522,10 +522,38 @@ closing pass read all 13 effects and three of them looked like more than style. 
 change and its own test, which is why a pass contracted to zero behaviour change did not touch
 them:
 
-1. **`CustomFieldsSection.tsx:38`** — `CustomFieldRow` re-seeds its local `value` from
-   `field.value` on every query refetch. A background refetch landing while somebody is typing in a
-   custom field appears able to discard what they typed. `BoardConfigSection.tsx:70` guards the
-   same pattern with a `dirty` flag; this one does not.
+1. ~~**`CustomFieldsSection.tsx:38`** — `CustomFieldRow` re-seeds its local `value` from
+   `field.value` on every query refetch.~~ **CLOSED** by the maintenance mini-pass, together with a
+   third instance the closing pass's own list did not name as a defect: **`OrgSettingsPage.tsx:28`**
+   carries the identical unguarded pattern, and because its effect depends on the whole `org`
+   object, a change to *either* field re-seeded *both*.
+
+   Both now carry `BoardConfigSection`'s `dirty` guard. One adaptation was needed and is worth
+   knowing before the pattern is copied a fourth time: `BoardConfigSection` can clear the flag the
+   moment a save resolves because its mutations `setQueryData` before invalidating, so the fresh
+   value is already in the cache. `useSetItemField` and `useUpdateOrganization` only invalidate, so
+   for one render after a successful save the query still holds the *pre-save* value — clearing on
+   success there would flash the old text back into the field somebody had just left. Both clear the
+   flag when the **server catches up** with what is on screen instead, which covers the save and
+   also covers typing a change and then typing it back.
+
+   Tests: `keeps an in-progress edit when a refetch changes the server value` (and its
+   organisation twin) fail before the guard; the "picks up a server change when there is no edit in
+   progress" and "follows the server again once the save has landed" cases guard the other
+   direction, so a flag that never cleared could not pass. Both suites re-render with a **different**
+   server value on purpose — the seeding effect depends on a string, so a re-render with identical
+   data cannot fail under either implementation.
+
+   The sibling audit found no fourth instance. `AccessMatrixPage` stages edits as an overlay over
+   the query data and never copies it into state — the shape the other three should probably have
+   used. `ItemTypesAdminPage`, `PeoplePage`, `TeamsAdminPage`, `SpacesAdminPage` and the two
+   dashboard dialogs all seed on an explicit open/click or at the mount of a per-edit dialog, which
+   a refetch cannot stomp. `SpacesAdminPage` carries the *inverse* hazard rather than this one — its
+   open dialog holds a Space object captured at click time, so a refetch leaves it stale rather than
+   overwriting it. That is a different question and was left alone.
+
+   The eslint rule stays off for all three files: the guard is still a `setState` in an effect, and
+   the config's own note on this group already anticipated the fix.
 2. **`WikiPage.tsx:145`** — the auto-select-first-page effect carries a comment recording that an
    earlier `useMemo` implementation of the same logic was wrong. Whatever that defect was, no
    regression test captures it.
@@ -540,9 +568,9 @@ them:
 ## 18. ~~The race detector, not the database, is the largest single cost in the Test job~~ (RESOLVED)
 
 **Severity**: Low (CI wall-clock only; no user-facing defect)
-**Status**: Resolved on the backend test-speed branch. The work factor is now a variable whose
-boot value is chosen by `testing.Testing()`, so a test binary hashes at `bcrypt.MinCost` and
-anything built by `go build` hashes at 12.
+**Status**: Resolved in PR #84. The work factor is now a variable whose boot value is chosen by
+`testing.Testing()`, so a test binary hashes at `bcrypt.MinCost` and anything built by `go build`
+hashes at 12.
 
 The floor this entry insisted on is not merely preserved, it is enforced in places it was not
 before. `AZIMUTHAL_BCRYPT_COST` lets an operator RAISE the cost; `internal/config` refuses any
@@ -595,9 +623,9 @@ review — it is recorded here rather than done in passing.
 ## 19. ~~`newTestServerOn` generates a fresh RSA-2048 key for every integration test~~ (RESOLVED)
 
 **Severity**: Low (CI wall-clock only)
-**Status**: Resolved on the backend test-speed branch. Each affected package memoises one key with
-`sync.OnceValue`; a Go test binary is per package, so the sharing never crosses a package boundary
-and never reaches production code.
+**Status**: Resolved in PR #84. Each affected package memoises one key with `sync.OnceValue`; a Go
+test binary is per package, so the sharing never crosses a package boundary and never reaches
+production code.
 
 **One correction to this entry, and it is the part that needed care.** It states that "no test
 asserts that two servers have different signing keys, and if one did it would fail loudly rather
@@ -775,9 +803,73 @@ No test was written asserting the current behaviour: pinning it would encode the
 
 ---
 
-## 24. Five handlers answer 500 where their own OpenAPI annotations promise 4xx
+## 24. ~~Five handlers answer 500 where their own OpenAPI annotations promise 4xx~~ (RESOLVED)
 
 **Severity**: Medium (a client is told to retry something that will never succeed)
+**Status**: Resolved by the maintenance mini-pass. All five answer their documented class, each
+through the standard error envelope, and each has the negative test that would have caught it —
+every one of which fails against the unfixed source with the 500 this entry describes.
+
+**Three of the five were fixed at the layer that was missing the sentinel, not at the switch.** The
+error vocabulary this entry left to a decision turned out to be already written down in every case:
+`wiki.ErrParentPageNotFound` existed and had one producer, `projects.ErrLabelDuplicate` existed and
+had none, and `projects.LabelRepository`'s own doc comment already promised it. The only genuinely
+new sentinel is `wiki.ErrMalformedDocument`.
+
+| Site | Now answers | How |
+|---|---|---|
+| `POST /wiki` with an unknown `parent_id` | **404 NOT_FOUND** | `wiki.Service.CreatePage` maps `pgx.ErrNoRows` to the existing `ErrParentPageNotFound`; `handleWikiError` gained the arm |
+| a `doc` that is valid JSON but not a ProseMirror document, on draft-save and publish | **400 VALIDATION_ERROR** | new `wiki.ErrMalformedDocument` wraps `doc.Validate` at both call sites; `handleDocumentError` gained the arm |
+| `ItemAdapter.UpdateStatus`, `ItemAdapter.Update`, `SprintAdapter.Update`, `SprintAdapter.UpdateStatus` | **404 NOT_FOUND** | each maps `pgx.ErrNoRows` to `projects.ErrNotFound`, in the idiom their own sibling getters use |
+| `LabelAdapter.Create` on a repeated name | **409 CONFLICT** | maps the `labels_org_id_name_key` violation to `projects.ErrLabelDuplicate`, which makes `handleProjectError`'s arm live for the first time |
+
+**One annotation was wrong, and it was the annotation that changed.** `CreatePage` declared only
+400, 401 and 500 — there was no `@Failure 404` for the table's "400/404" to refer to. Since
+`ErrParentPageNotFound` already means 404 on the move route, answering 400 on create would have
+given one sentinel two statuses in one switch, so the route gained `@Failure 404 "Parent page not
+found"` and `docs/api/openapi.yaml` was regenerated (a six-line diff, `make docs-check` green). No
+other annotation needed a change: the item-status route already declares 404 and the label route
+already declares 409.
+
+**Three corrections to the entry below, verified rather than assumed.**
+
+1. **A sixth site was found, and a seventh, both unrecorded.** `handleWikiError` matched *none* of
+   the four tree sentinels the move path raises — `ErrParentPageNotFound`, `ErrTargetSpaceNotFound`,
+   `ErrParentNotInTargetSpace`, `ErrPageMoveCycle` — so `POST /wiki/{pageID}/move` answered 500 for
+   all four while annotating both 400 and 404. Fixing site 1 required adding the first arm anyway;
+   leaving the other three at 500 in the same switch would have been arbitrary, so all four are
+   mapped (404 for the two "names something that does not exist" cases, 400 for the two "both exist,
+   the combination is wrong" cases). Separately, `SprintAdapter.CompleteWithDisposition` calls
+   `UpdateSprintStatus` a second time inside its transaction and was unmapped there too.
+2. **Site 3 is no longer a plain 404-as-500.** Commit `7950307` (P-W workflow tiers) added a
+   pre-load to `UpdateItemStatus`, so the route 404s before the adapter is reached. Sites 3 and 4
+   are now the same shape — a TOCTOU window between a handler's read and its write. That is why
+   those five are pinned at the adapter boundary rather than over HTTP: reaching them through the
+   router means losing a race with a concurrent delete.
+3. **The "related observation" about `UpdateSprint` is correct as written.** `ItemAdapter.UpdateSprint`
+   calls `UpdateProjectItemSprint`, which is `:exec` and returns only an error, so an item id naming
+   nothing really is silently accepted. (The similarly-named `UpdateSprint` *query* is `:one` — a
+   different query, easy to confuse.) Left alone: the entry is right that `DeleteRelation` and
+   `DeleteLabel` share the shape and are plausibly meant to be idempotent, so it is a maintainer's
+   call about idempotency rather than a status-class defect.
+
+**Tests.** `internal/core/api/wiki_error_classes_integration_test.go` (create, all three reachable
+move refusals, and all four malformed-document shapes on both routes),
+`TestProjectsNeg_DuplicateLabelNameIs409` in
+`internal/core/api/projects_negative_integration_test.go`, and
+`TestProjectWriteAdapters_MissingRow_ReturnsErrNotFound` plus
+`TestLabelAdapter_DuplicateName_ReturnsErrLabelDuplicate` in
+`internal/db/adapters/notfound_integration_test.go`. Each asserts the status *and* the envelope
+code, because a fix that answered 400 with `INTERNAL_ERROR` would be half a fix, and each family
+carries a success case so a handler that refused everything could not pass.
+
+`ErrTargetSpaceNotFound` has no test: an unknown `target_space_id` is refused earlier by the
+destination's `edit_any` guard, which already answers 404, so a test naming a random space uuid
+would pass with the new arm deleted. Its arm is reachable only by losing a race with a space
+deletion. Recorded rather than covered by something vacuous.
+
+<details><summary>Original entry</summary>
+
 **Status**: Open. Found by P5's coverage pass; each one verified empirically with a throwaway probe
 and confirmed against the handler's own `@Failure` annotation. Not fixed — all are in non-test
 source outside P5's surface, and each is somebody's decision about their own error vocabulary.
@@ -818,9 +910,49 @@ row id and the stored key. It now has its own branch answering 500 with the fixe
 `internal/core/api/views_unreadable_document_integration_test.go` drives every affected route and
 fails in both directions.
 
+</details>
+
 ---
 
-## 25. A team-shared saved view cannot be renamed without re-naming its team
+## 25. ~~A team-shared saved view cannot be renamed without re-naming its team~~ (RESOLVED)
+
+**Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
+**Status**: Resolved by the maintenance mini-pass. PATCH is a merge: `views.Service.Update` now
+inherits `existing.VisibilityTeamID` alongside `existing.Visibility`, and stops inheriting the
+moment the caller changes the audience.
+
+**The semantics that were decided**, since the entry below records the decision as open. Every
+unspecified field inherits, exactly as the other fields already did. The team id inherits when the
+visibility is unspecified **or unchanged** — restating `"visibility":"team"` on a view that is
+already team-shared keeps the team it is shared with. Explicitly *changing* the visibility still
+states the whole pair: `org` and `private` drop the team id, and a move **to** `team` that names no
+team is still refused with `ErrTeamRequired`. That refusal is the half of this entry that was always
+defensible, and it is now asserted on its own so the inheritance cannot swallow it.
+
+**Where.** `internal/core/views/view.go`, in `Service.Update`. Two lines and the reasoning above
+them. Nothing in `internal/core/views/filter.go` or the query vocabulary was touched.
+
+**A twin exists and was NOT fixed.** `internal/core/dashboards/dashboard.go`'s `Service.Update`
+carries the identical omission — it inherits `Visibility` and `Module` and not `VisibilityTeamID`,
+so a team-shared **dashboard** cannot be renamed either. It is the same two-line repair against the
+same `views.Audience.Normalise`. It was left alone because the dashboards surface belongs to another
+track in flight, not because it is correct. Recorded as its own entry, #26.
+
+**Tests.** `TestViewUpdate_TheTeamInheritsWithTheVisibility` (four cases) and
+`TestViewUpdate_MovingToATeamAudienceStillNamesTheTeam` in
+`internal/core/views/view_refusals_test.go` replace the pin-test named below, and
+`TestViewsMatrix_RenamingATeamSharedViewKeepsItsTeam` in
+`internal/core/api/views_endpoint_matrix_integration_test.go` asserts it over HTTP, which is where
+it was reported. They fail against the unfixed service with the exact 422 quoted below.
+
+**One thing found while fixing it.** `failingStore.Create` and `failingStore.Update` in
+`internal/core/views/service_errors_test.go` returned the *stored* view rather than the view they
+were handed, so every assertion on an updated field was vacuous — the service could compute anything
+and the test still saw the pristine row. Both now return their argument, which is what the real
+store does (`UpdateSavedView` is `:one ... RETURNING *`). No existing assertion was changed; several
+became load-bearing for the first time.
+
+<details><summary>Original entry</summary>
 
 **Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
 **Status**: Open. Found by P5's coverage pass, verified over HTTP. Not fixed — it is P4 behaviour
@@ -857,3 +989,91 @@ shape again: one field cannot distinguish "absent" from "cleared".
 `TestViewUpdate_OmittingTheTeamOnATeamViewIsRefused` in
 `internal/core/views/view_refusals_test.go` fails if somebody changes it, which is the point — the
 fix is to invert that test rather than to discover the change downstream.
+
+</details>
+
+---
+
+## 26. A team-shared dashboard cannot be renamed without re-naming its team
+
+**Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
+**Status**: Open. Found by the maintenance mini-pass while closing #25, which is the identical
+defect one model over. Not fixed — the dashboards surface belongs to another track in flight, and
+a one-line change there would have been a merge conflict in somebody else's file rather than a
+favour.
+
+`dashboards.Service.Update` (`internal/core/dashboards/dashboard.go`) inherits two fields when the
+request omits them and not the third:
+
+```go
+if d.Visibility == "" {
+    d.Visibility = existing.Visibility
+}
+if d.Module == "" {
+    d.Module = existing.Module
+}
+```
+
+`existing.VisibilityTeamID` is never inherited, so a PATCH carrying only a new name against a
+team-shared dashboard merges to `team` with no team, and `views.Audience.Normalise` — the same
+shared rule saved views use — refuses it with `ErrTeamRequired`. Dashboards and saved views share
+`Audience` precisely so this rule has one implementation (see the type's own comment on why), and
+they have now drifted on the *merge* rather than on the rule.
+
+**What closing it takes.** The two lines #25 took, in `dashboards.Service.Update`:
+
+```go
+if d.VisibilityTeamID == nil && d.Visibility == existing.Visibility {
+    d.VisibilityTeamID = existing.VisibilityTeamID
+}
+```
+
+with the same decided semantics (#25): inherit while the audience is unchanged, never across an
+explicit change. Plus the mirror of the saved-view tests — a rename-only case that fails before the
+fix, and a move-to-team-without-a-team case that must keep failing after it.
+
+**Not pinned.** Unlike #25 there is no test asserting the current behaviour, so nothing will fail
+when somebody fixes this. `internal/core/dashboards/service_test.go:196` renames a dashboard, but
+the fixture is a private one, which is the visibility that carries no payload — so it passes either
+way and says nothing about this.
+
+---
+
+## 27. `POST /wiki` accepts a `parent_id` in another space, and roots the new page under it
+
+**Severity**: Medium (silent tree corruption; no disclosure beyond what the endpoint already told
+you, no data loss)
+**Status**: Open. Found by the maintenance mini-pass while closing #24's first site, and verified
+over HTTP. Not fixed — it is a new refusal rather than a status-class repair, so it needs its own
+decision about what to do with pages already in this state.
+
+`wiki.Service.CreatePage` (`internal/core/wiki/page.go`) resolves the parent with a bare
+`s.store.GetPageByID(ctx, *input.ParentID)` and never compares `parent.SpaceID` to
+`input.SpaceID`. The move path does compare — `resolveMoveParent` in
+`internal/db/adapters/content_tx.go` raises `wiki.ErrParentNotInTargetSpace` for exactly this — so
+the two paths that set a page's parent disagree about whether a cross-space parent is legal.
+
+Verified against a real server: creating in space B with a `parent_id` from space A answers **201**,
+and the row comes back with `space_id` = B while `path` is rooted at A's page:
+
+```
+space_id: ca5310ba-…            (B, the caller's space)
+parent_id: 8530e5fb-…           (a page in A)
+path: 8530e5fb-….4f9a73e1-…     (rooted outside its own space)
+```
+
+`GET /wiki` for space B then lists it as a page whose `parent_id` names nothing in the list — an
+orphan the tree cannot render under anything. The materialised path is what
+`PathWithinSubtree` and the share-revocation subtree queries operate on, so the wrong root is not
+cosmetic.
+
+**Not made worse by #24's fix, and not made better either.** Before it, an unknown parent answered
+500 and a known one 201, so a caller could already tell whether a page id existed; now it is 404 and
+201. The cross-space case was 201 before and is 201 still.
+
+**What closing it takes.** The comparison the move path already makes, raised as the sentinel that
+already exists (`ErrParentNotInTargetSpace`, now mapped to 400), plus a decision the fix cannot make
+on its own: whether any page is already stored this way, and what to do about it. A create-time
+refusal leaves existing bad rows unrepaired, and a migration that re-roots them is a data change
+somebody has to sign off. That is why it is recorded rather than fixed in a pass scoped to error
+classes.
