@@ -408,6 +408,18 @@ describe('v2 date bounds', () => {
         doc({ created_at: { after: '2026-02-01T00:00:00Z', before: '2026-01-01T00:00:00Z' } }),
       ),
     ).toMatch(/starts at or after it ends/);
+    // Two RELATIVE bounds are ordered on the same fixed number line the server
+    // uses, so this half must be caught too — the client mirrors the server's
+    // rule rather than a weaker version of it.
+    expect(validateQueryDoc(doc({ due_at: { after: '-1d', before: '-7d' } }))).toMatch(
+      /starts at or after it ends/,
+    );
+    expect(validateQueryDoc(doc({ due_at: { after: '+7d', before: 'now' } }))).toMatch(
+      /starts at or after it ends/,
+    );
+    expect(validateQueryDoc(doc({ due_at: { after: '-1mo', before: '-1d' } }))).toBeNull();
+    expect(validateQueryDoc(doc({ due_at: { after: 'now', before: '+7d' } }))).toBeNull();
+
     // A mixed absolute/relative pair cannot be ordered without knowing when the
     // query runs, so it is accepted here exactly as the server accepts it.
     expect(

@@ -606,3 +606,122 @@ func assigneeFor(i int32, id uuid.UUID) *uuid.UUID {
 	}
 	return &id
 }
+
+// TestViewResults_VectorHalfAppliesEveryV2Filter is the test whose absence let a
+// real defect ship in this change's first draft.
+//
+// Every other v2 test here is Beacon-only, and the one cross-module test
+// compared a count against a list — two queries that had BOTH lost the same
+// parameters, so they agreed with each other about the wrong set of rows. The
+// project_items adapters were silently dropping the four shared negation flags
+// and all eight date bounds, and nothing said so.
+//
+// So this exercises the VECTOR half directly, on its own, for each v2
+// capability. Fails-before: remove any of those twelve fields from
+// ListViewProjectItemsParams in the adapter and one of these assertions fails.
+func TestViewResults_VectorHalfAppliesEveryV2Filter(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	ctx := context.Background()
+	org := testutil.CreateTestOrg(t, db.Pool)
+	user := testutil.CreateTestUser(t, db.Pool, org.ID)
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
+
+	now := time.Now().UTC()
+	old := insertItem(t, db.Pool, org.ID, space.ID, user.ID, 1, "old bug", "open", "high", "bug", nil)
+	recentBug := insertItem(t, db.Pool, org.ID, space.ID, user.ID, 2, "recent bug", "open", "high", "bug", nil)
+	recentTask := insertItem(t, db.Pool, org.ID, space.ID, user.ID, 3, "recent task", "closed", "low", "task", nil)
+	backdateItem(t, db, old, now.AddDate(0, 0, -30))
+	backdateItem(t, db, recentBug, now.AddDate(0, 0, -1))
+	backdateItem(t, db, recentTask, now.AddDate(0, 0, -1))
+
+	a := adapters.NewSavedViewAdapter(db.Pool)
+	viewer := views.Viewer{UserID: user.ID, ReadableSpaceIDs: []uuid.UUID{space.ID}, At: now}
+
+	cases := []struct {
+		name           string
+		body           string
+		wantIn, wantNo uuid.UUID
+	}{
+		{
+			"updated_at range",
+			`"modules":["vector"],"updated_at":{"after":"-7d"}`,
+			recentBug, old,
+		},
+		{
+			"created_at range",
+			`"modules":["vector"],"created_at":{"after":"-7d"}`,
+			recentBug, old,
+		},
+		{
+			"negated statuses",
+			`"modules":["vector"],"statuses":["closed"],"not":{"statuses":true}`,
+			recentBug, recentTask,
+		},
+		{
+			"negated priorities",
+			`"modules":["vector"],"priorities":["low"],"not":{"priorities":true}`,
+			recentBug, recentTask,
+		},
+		{
+			"negated kinds",
+			`"modules":["vector"],"kinds":["task"],"not":{"kinds":true}`,
+			recentBug, recentTask,
+		},
+		{
+			"negated space_ids still bounded by access",
+			`"modules":["vector"],"space_ids":["` + uuid.New().String() + `"],"not":{"space_ids":true}`,
+			recentBug, uuid.Nil,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			page, err := views.Resolve(ctx, orgStore(a, org.ID), v2Query(t, c.body), viewer, "", 50)
+			require.NoError(t, err)
+			got := resultIDs(page)
+			require.True(t, got[c.wantIn], "the matching item must be returned")
+			if c.wantNo != uuid.Nil {
+				require.False(t, got[c.wantNo], "the excluded item must not be returned")
+			}
+		})
+	}
+}
+
+// TestViewAggregate_VectorCountAgreesWithTheVectorList closes the other half of
+// the same gap: the Vector COUNT and BREAKDOWN adapters, on their own.
+//
+// The existing cross-module parity test could not see this, because a count and
+// a list that have both lost the same parameters agree with each other
+// perfectly. Comparing the Vector count against the Vector list only works as a
+// check once the list itself is known correct, which the test above establishes.
+func TestViewAggregate_VectorCountAgreesWithTheVectorList(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	ctx := context.Background()
+	org := testutil.CreateTestOrg(t, db.Pool)
+	user := testutil.CreateTestUser(t, db.Pool, org.ID)
+	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
+
+	now := time.Now().UTC()
+	for i := int32(1); i <= 6; i++ {
+		id := insertItem(t, db.Pool, org.ID, space.ID, user.ID, i, "v", statusFor(i), "high", "task", nil)
+		backdateItem(t, db, id, now.AddDate(0, 0, -int(i)*3))
+	}
+
+	a := adapters.NewSavedViewAdapter(db.Pool)
+	viewer := views.Viewer{UserID: user.ID, ReadableSpaceIDs: []uuid.UUID{space.ID}, At: now}
+	q := v2Query(t, `"modules":["vector"],"statuses":["closed"],"not":{"statuses":true},`+
+		`"updated_at":{"after":"-20d","before":"-2d"}`)
+
+	page, err := views.Resolve(ctx, orgStore(a, org.ID), q, viewer, "", 200)
+	require.NoError(t, err)
+	res, err := views.Aggregate(ctx, orgAggStore(a, org.ID), q, viewer, views.GroupStatus)
+	require.NoError(t, err)
+
+	require.NotZero(t, len(page.Results), "the fixture must match something, or this proves nothing")
+	require.Equal(t, int64(len(page.Results)), res.Total,
+		"the Vector count fan-out filters differently from the Vector list fan-out")
+	var summed int64
+	for _, b := range res.Buckets {
+		summed += b.Count
+	}
+	require.Equal(t, res.Total, summed, "the Vector breakdown fan-out filters differently again")
+}

@@ -446,9 +446,12 @@ func (c *jiraCollector) foldFilters(l *Ledger) {
 	cl.Add(VerdictClean, counts[jql.Expressible],
 		"every clause maps onto the saved-view filter vocabulary and the query's shape is flat")
 	cl.Add(VerdictApproximated, counts[jql.Partial],
-		"the filter translates but narrows — a text clause becomes a title-only substring match, or a type/sprint clause restricts the view to Vector")
+		"the filter translates but narrows — a text clause becomes a title-only substring match, a type/sprint clause restricts the view to Vector, or a date bound shifts by one instant because the filter's range is half-open")
+	// Kept in step with jql.Classify by hand. Date predicates and negation left
+	// this list in filter document v2; a description that still named them
+	// would tell a self-hoster their filters are lost when they translate.
 	cl.Add(VerdictUnmappable, counts[jql.NotExpressible],
-		"at least one clause or the query's shape has no representation: date predicates, negation, comparison operators, history operators, cross-field OR and grouping are all outside the vocabulary")
+		"at least one clause or the query's shape has no representation: history operators, calendar-boundary date functions such as startOfDay(), sub-day date offsets, comparison operators on non-date fields, text negation, cross-field OR and grouping are all outside the vocabulary")
 }
 
 func sortedKeys(m map[string]int) []string {

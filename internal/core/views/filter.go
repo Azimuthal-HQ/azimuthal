@@ -240,9 +240,9 @@ func (n Negate) any() bool {
 //
 //	an RFC3339 instant   "2026-01-31T00:00:00Z"
 //	the token "now"
-//	a relative token     [+-]<1..999><d|w|m>
+//	a relative token     [+-]<1..999><d|w|mo>
 //
-// It is the single definition of the grammar. The API validator, the two SQL
+// It is the single definition of the grammar. The API validator, the six SQL
 // fan-outs and the JQL classifier all describe what this function accepts, and
 // they describe it correctly only for as long as none of them re-implements it.
 func ParseDateBound(s string) (DateBound, error) {

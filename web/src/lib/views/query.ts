@@ -470,11 +470,20 @@ function validateV2(doc: QueryDoc): string | null {
         return `"${bound}" is not a date or a relative period (use ${DATE_NOW}, or a sign, a number up to ${QUERY_LIMITS.relative_units} and d, w or mo — for example -7d).`;
       }
     }
-    // Only an absolute pair can be ordered without knowing when the query
-    // runs; the server applies the same rule and skips mixed pairs for the
-    // same reason.
-    if (range.after && range.before && !isRelativeBound(range.after) && !isRelativeBound(range.before)) {
-      if (Date.parse(range.after) >= Date.parse(range.before)) {
+    // An inverted range is caught for the two cases that can be ordered
+    // WITHOUT a clock, which is exactly what the server checks: two absolute
+    // bounds compare directly, and two relative bounds compare on a fixed
+    // number line. A MIXED pair is skipped on both sides, because which comes
+    // first depends on when the query runs — and a check against the wall
+    // clock would let a stored view become invalid without anyone touching it.
+    if (range.after && range.before) {
+      const rel = [isRelativeBound(range.after), isRelativeBound(range.before)];
+      const inverted =
+        rel[0] === rel[1] &&
+        (rel[0]
+          ? relativeOrder(range.after) >= relativeOrder(range.before)
+          : Date.parse(range.after) >= Date.parse(range.before));
+      if (inverted) {
         return `The ${DATE_LABEL[field]} filter starts at or after it ends.`;
       }
     }
@@ -501,4 +510,22 @@ function validateV2(doc: QueryDoc): string | null {
 /** Whether a bound is relative rather than an absolute instant. */
 export function isRelativeBound(value: string): boolean {
   return value === DATE_NOW || RELATIVE_TOKEN_RE.test(value);
+}
+
+/**
+ * A relative bound's position on a deterministic number line, mirroring
+ * `orderingDays` in filter.go. Used ONLY to catch an inverted range before a
+ * round trip — never to compute a date.
+ *
+ * A month counts as 30 days here, which the calendar disagrees with. That is
+ * tolerable for an ordering check and intolerable for a comparison, which is
+ * why the two are kept apart on this side too: nothing here ever resolves a
+ * token to an instant. The server does that, once per request.
+ */
+function relativeOrder(value: string): number {
+  if (value === DATE_NOW) return 0;
+  const m = RELATIVE_TOKEN_RE.exec(value);
+  if (!m) return 0;
+  const n = Number(m[2]) * (m[1] === '-' ? -1 : 1);
+  return n * (m[3] === 'w' ? 7 : m[3] === 'mo' ? 30 : 1);
 }

@@ -292,9 +292,17 @@ func (a *SavedViewAdapter) ListTickets(ctx context.Context, p views.FanoutParams
 	return out, nil
 }
 
-// ListProjectItems runs the Vector half of a view's results.
-func (a *SavedViewAdapter) ListProjectItems(ctx context.Context, p views.FanoutParams) ([]views.Result, error) {
-	rows, err := a.q.ListViewProjectItems(ctx, generated.ListViewProjectItemsParams{
+// listItemParams builds the Vector list fan-out's parameters.
+//
+// Extracted only because the literal outgrew the function-length limit once v2
+// added twelve fields. It is deliberately still an EXHAUSTIVE named-field
+// literal rather than anything cleverer:
+// TestSavedViewAdapters_AssignEveryGeneratedParam parses this file and requires
+// every field of the generated struct to appear by name, because a field
+// omitted here is a zero value rather than a compile error — and a zero value
+// reads to SQL as "this filter is absent".
+func listItemParams(p views.FanoutParams) generated.ListViewProjectItemsParams {
+	return generated.ListViewProjectItemsParams{
 		SortField:         p.SortField,
 		OrgID:             p.OrgID,
 		ReadableSpaceIds:  nonNilUUIDs(p.ReadableSpaceIDs),
@@ -309,12 +317,29 @@ func (a *SavedViewAdapter) ListProjectItems(ctx context.Context, p views.FanoutP
 		SprintIds:         nonNilUUIDs(p.SprintIDs),
 		NotKinds:          p.NotKinds,
 		NotSprintIds:      p.NotSprintIDs,
+		NotSpaceIds:       p.NotSpaceIDs,
+		NotStatuses:       p.NotStatuses,
+		NotPriorities:     p.NotPriorities,
+		NotAssignees:      p.NotAssignees,
+		CreatedAfter:      pgTimestampPtr(p.CreatedAfter),
+		CreatedBefore:     pgTimestampPtr(p.CreatedBefore),
+		UpdatedAfter:      pgTimestampPtr(p.UpdatedAfter),
+		UpdatedBefore:     pgTimestampPtr(p.UpdatedBefore),
+		DueAfter:          pgTimestampPtr(p.DueAfter),
+		DueBefore:         pgTimestampPtr(p.DueBefore),
+		ResolvedAfter:     pgTimestampPtr(p.ResolvedAfter),
+		ResolvedBefore:    pgTimestampPtr(p.ResolvedBefore),
 		TextPattern:       p.TextPattern,
 		CursorKey:         p.CursorKey,
 		Descending:        p.Descending,
 		CursorID:          p.CursorID,
 		RowLimit:          p.Limit,
-	})
+	}
+}
+
+// ListProjectItems runs the Vector half of a view's results.
+func (a *SavedViewAdapter) ListProjectItems(ctx context.Context, p views.FanoutParams) ([]views.Result, error) {
+	rows, err := a.q.ListViewProjectItems(ctx, listItemParams(p))
 	if err != nil {
 		return nil, fmt.Errorf("saved view adapter list project items: %w", err)
 	}

@@ -197,6 +197,16 @@ func bindToSpace(q Query, spaceID uuid.UUID) (Query, error) {
 	}
 	q.Filter.Modules = []Module{ModuleBeacon}
 	q.Filter.SpaceIDs = []uuid.UUID{spaceID}
+	// The binding is not negotiable, so the NEGATION of it is cleared too.
+	//
+	// Overwriting SpaceIDs while leaving Not.SpaceIDs set would turn "this
+	// space" into "every space except this one" — the exact inversion of the
+	// binding, on a route whose guard established readability of THIS space and
+	// nothing else. The access union still bounds the result to spaces the
+	// viewer may read, so this is a scope violation rather than a leak; it is
+	// cleared here because a queue that searches somewhere other than the space
+	// it belongs to is a defect its author cannot see.
+	q.Filter.Not.SpaceIDs = false
 	return q, nil
 }
 

@@ -152,8 +152,8 @@ Every entity counted appears in exactly one row above; the arithmetic is checked
 4 entities.
 
 - **2 maps cleanly** — every clause maps onto the saved-view filter vocabulary and the query's shape is flat
-- **1 maps with approximation** — the filter translates but narrows — a text clause becomes a title-only substring match, or a type/sprint clause restricts the view to Vector
-- **1 unmappable** — at least one clause or the query's shape has no representation: date predicates, negation, comparison operators, history operators, cross-field OR and grouping are all outside the vocabulary
+- **1 maps with approximation** — the filter translates but narrows — a text clause becomes a title-only substring match, a type/sprint clause restricts the view to Vector, or a date bound shifts by one instant because the filter's range is half-open
+- **1 unmappable** — at least one clause or the query's shape has no representation: history operators, calendar-boundary date functions such as startOfDay(), sub-day date offsets, comparison operators on non-date fields, text negation, cross-field OR and grouping are all outside the vocabulary
 
 ### Confluence spaces → spaces
 

@@ -88,6 +88,11 @@ const (
 // negatableFields are the six membership fields v2's `not` record can flip.
 // The four date fields are absent because v2 defines no date negation, and
 // `text` is absent because a substring match is not a set membership.
+//
+// This is a SECOND vocabulary, and the drift guard over views.Filter's JSON
+// tags cannot see it — that one learns only that a field called "not" exists.
+// TestVocabulary_NegatableFieldsMatchTheRealNegateRecord checks this list
+// against views.Negate's own tags, in both directions.
 var negatableFields = map[string]struct{}{
 	fieldSpaceIDs: {}, fieldStatuses: {}, fieldPriorities: {},
 	fieldAssignees: {}, fieldKinds: {}, fieldSprintIDs: {},
@@ -489,9 +494,20 @@ func classifyField(c Clause, field string, tokens []token) Clause {
 	}
 	if neg, hit := classifyNegation(c.Operator, m.filterField); hit {
 		// Negation can only narrow. A clause that was already partial for its
-		// field stays partial even when its negation maps exactly.
+		// FIELD stays partial even when its negation maps exactly — and it must
+		// keep the field's reason, because that is the reason it is partial.
+		//
+		// Overwriting unconditionally would have produced the worst kind of
+		// report line: the verdict "partial" beside a reason that says the
+		// clause carries across unchanged. The reader would have no way to know
+		// what the approximation was.
 		if rank(neg.Verdict) > rank(c.Verdict) {
-			c.Verdict = neg.Verdict
+			c.Verdict, c.Reason = neg.Verdict, neg.Reason
+			return c
+		}
+		if rank(neg.Verdict) < rank(c.Verdict) {
+			c.Reason += "; the negation itself maps exactly, but the field's own limitation stands"
+			return c
 		}
 		c.Reason = neg.Reason
 	}

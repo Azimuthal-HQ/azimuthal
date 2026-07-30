@@ -311,3 +311,45 @@ func TestQueueQuery_DeclaresTheLowestVersionItNeeds(t *testing.T) {
 		}
 	}
 }
+
+// TestBindToSpace_ClearsTheSpaceNegation is the regression test for a queue
+// that could search everywhere except itself.
+//
+// bindToSpace overwrites a queue's space_ids with the space it belongs to. v2
+// added a flag beside that field, and overwriting the values while leaving the
+// flag set turns "this space" into "every space except this one" — on a route
+// whose guard established readability of THIS space and nothing else.
+//
+// Fails before the Not.SpaceIDs reset in bindToSpace, passes after.
+func TestBindToSpace_ClearsTheSpaceNegation(t *testing.T) {
+	space := uuid.New()
+	q := Query{
+		V: 2,
+		Filter: Filter{
+			Modules:  []Module{ModuleBeacon},
+			SpaceIDs: []uuid.UUID{uuid.New()},
+			Not:      Negate{SpaceIDs: true, Statuses: true},
+			Statuses: []string{"closed"},
+		},
+		Sort: DefaultSort(),
+	}
+	bound, err := bindToSpace(q, space)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bound.Filter.SpaceIDs; len(got) != 1 || got[0] != space {
+		t.Fatalf("the queue is bound to %v, want exactly [%v]", got, space)
+	}
+	if bound.Filter.Not.SpaceIDs {
+		t.Error("the space negation survived the binding — this queue searches every space the " +
+			"viewer can read EXCEPT its own")
+	}
+	// Every OTHER negation is the author's and must survive untouched: only the
+	// space binding is imposed by the route.
+	if !bound.Filter.Not.Statuses {
+		t.Error("bindToSpace cleared a negation that was not its to clear")
+	}
+	if err := bound.Validate(); err != nil {
+		t.Errorf("the bound document must still validate: %v", err)
+	}
+}

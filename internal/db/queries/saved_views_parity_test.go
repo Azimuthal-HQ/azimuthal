@@ -81,14 +81,44 @@ func TestSavedViewFanouts_CarryIdenticalFilterPredicates(t *testing.T) {
 		}
 	}
 
-	// A canary on the guard itself. If queryBody or filterParams ever stops
+	// Canaries on the guard itself. If queryBody or either extractor stops
 	// matching — a renamed query, a reshaped predicate — every set above goes
 	// empty and every comparison passes vacuously, which is the one failure
 	// mode a parity test must not have.
-	if n := len(got[ticketQueries[0]]); n < 8 {
-		t.Fatalf("only %d filter parameters found in %s; the extractor has stopped matching "+
-			"and this test is no longer checking anything", n, ticketQueries[0])
+	//
+	// The two extractors are checked SEPARATELY and each against a floor above
+	// what the other alone could supply. A single combined threshold is the
+	// weaker check it looks like: the eleven @-style parameters would satisfy a
+	// count of eight on their own, so a total failure of the sqlc.narg
+	// extractor — which is where every date bound comes from — would slip
+	// through it unnoticed.
+	ticketParams := got[ticketQueries[0]]
+	if n := countMatching(ticketParams, dateParamNames); n != 8 {
+		t.Fatalf("found %d of the 8 date-bound parameters in %s; the sqlc.narg extractor has "+
+			"stopped matching and every date predicate is now unchecked", n, ticketQueries[0])
 	}
+	if len(ticketParams) < 15 {
+		t.Fatalf("only %d filter parameters found in %s; an extractor has stopped matching "+
+			"and this test is no longer checking anything", len(ticketParams), ticketQueries[0])
+	}
+}
+
+// dateParamNames are the eight bounds, which reach the queries ONLY through
+// sqlc.narg — so they are exactly the set that vanishes if that extractor
+// breaks.
+var dateParamNames = []string{
+	"created_after", "created_before", "updated_after", "updated_before",
+	"due_after", "due_before", "resolved_after", "resolved_before",
+}
+
+func countMatching(have, want []string) int {
+	n := 0
+	for _, w := range want {
+		if contains(have, w) {
+			n++
+		}
+	}
+	return n
 }
 
 // TestSavedViewFanouts_NegateNullableColumnsWithCoalesce pins the three-valued

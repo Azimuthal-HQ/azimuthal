@@ -1630,3 +1630,35 @@ decision a maintainer should confirm rather than inherit.
   `components/views/QueryFilterBuilder.tsx` has the other, which also needs the inverse. Two is the
   point at which a third would be a defect: if another surface needs them, lift both halves into
   `lib/` rather than writing a third.
+
+### Filter v2, after adversarial review
+
+An adversarial review of this branch confirmed thirteen findings. Eleven were fixed on the branch;
+the two below were not, each for a stated reason.
+
+- **The six fan-out adapters had no wiring guard, and the first draft of v2 was broken because of
+  it.** The four shared negation flags and all eight date bounds were wired into the three TICKET
+  adapters and missing from the three ITEM adapters — a bulk edit anchored on two adjacent lines
+  that the item literals separate with `Kinds` and `SprintIds`. It compiled, sqlc regenerated
+  cleanly, and the whole suite passed: a missing field in a Go composite literal is a zero value,
+  which reads to SQL as "this filter is absent", and the cross-module count-versus-list parity test
+  compared a list and a count that had BOTH lost the same parameters, so they agreed with each other
+  about the wrong rows. On a Vector view, `not` inverted to plain inclusion and every date range was
+  silently dropped.
+
+  `TestSavedViewAdapters_AssignEveryGeneratedParam` now parses the adapter sources and requires
+  every field of each generated `*Params` struct to be assigned by name. It is structural on
+  purpose: it fails when a parameter is added, not when somebody notices.
+
+- **NOT FIXED — `internal/core/dashboards/registry.go` stamps `views.Version` on two gadget
+  queries that need only v1.** This is the rule `queueQuery` was changed to follow, so the
+  inconsistency is real. It is left alone because that file belongs to the dashboards surface,
+  which is in flight on another track, and because the practical impact is nil: `MyWorkQuery` and
+  `RecentWorkQuery` have no production caller at all and neither document is ever persisted, so
+  no stored row carries the stamp. **For a maintainer:** two lines, `q.V = q.RequiredVersion()`,
+  whenever the dashboards track next touches that file.
+
+- **NOT FIXED — `Filter.Priorities` has no length bound.** Every other list field has one. The loop
+  that validates priorities runs to completion over an arbitrarily long list, which is the DoS shape
+  the other bounds exist to prevent. Pre-existing, and adding a `Max*` constant would require the
+  frontend bound-parity map to learn it in the same change; noted rather than smuggled in here.

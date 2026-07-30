@@ -74,6 +74,51 @@ func TestVocabulary_MatchesTheRealFilterDocument(t *testing.T) {
 	}
 }
 
+// TestVocabulary_NegatableFieldsMatchTheRealNegateRecord is the drift guard for
+// v2's `not` record, and it exists because the guard above cannot see it.
+//
+// TestVocabulary_MatchesTheRealFilterDocument walks views.Filter's JSON tags,
+// so it sees that a field called "not" exists and nothing more. WHICH fields
+// that record can negate is a second vocabulary, duplicated here as
+// negatableFields — and a classifier that believed the wrong six would report
+// confident verdicts about a negation the server refuses, which is the exact
+// failure the first guard was written to prevent, one level down.
+//
+// Fails in both directions: a field added to views.Negate with no entry here,
+// and an entry here naming a field views.Negate does not have.
+func TestVocabulary_NegatableFieldsMatchTheRealNegateRecord(t *testing.T) {
+	t.Parallel()
+
+	defined := map[string]struct{}{}
+	rt := reflect.TypeOf(views.Negate{})
+	for i := range rt.NumField() {
+		name := strings.Split(rt.Field(i).Tag.Get("json"), ",")[0]
+		if name != "" && name != "-" {
+			defined[name] = struct{}{}
+		}
+	}
+
+	for f := range defined {
+		require.Contains(t, negatableFields, f,
+			"views.Negate can negate %q and this package does not know it — a JQL negation on that "+
+				"field is being reported as unmappable when it maps", f)
+	}
+	for f := range negatableFields {
+		require.Contains(t, defined, f,
+			"this package believes %q is negatable and views.Negate has no such field — a JQL "+
+				"negation on it is being reported as mappable when the server would refuse it", f)
+	}
+
+	// The four date fields must NOT be negatable. v2 refuses date negation by
+	// having no key for it, and the classifier's story about why depends on
+	// that staying true.
+	for _, d := range []string{fieldCreatedAt, fieldUpdatedAt, fieldDueAt, fieldResolvedAt} {
+		require.NotContains(t, defined, d,
+			"views.Negate gained the date field %q; v2's stated design is that a range's bounds "+
+				"already express exclusion, and the classifier says so", d)
+	}
+}
+
 // TestVocabulary_SortFieldsMatchTheRealSortVocabulary guards the ORDER BY half
 // the same way. views.Sort's allowed set lives in an unexported map, so it is
 // probed through the exported validator instead.
@@ -232,6 +277,12 @@ func TestClassify_NegationAgainstV2NotRecord(t *testing.T) {
 	} {
 		q := Classify(jql)
 		require.Equal(t, Partial, q.Clauses[0].Verdict, "query: %s", jql)
+		// The REASON must be the field's, not the negation's. A "partial"
+		// verdict beside a reason saying the clause carries across unchanged is
+		// the worst line a migration report can print: the reader is told there
+		// is an approximation and not told what it is.
+		require.Contains(t, q.Clauses[0].Reason, "the field's own limitation stands",
+			"query: %s — the negation reason overwrote the field's", jql)
 	}
 
 	// The fields v2 deliberately left out of the `not` record.
