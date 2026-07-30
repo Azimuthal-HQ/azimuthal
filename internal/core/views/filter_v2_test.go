@@ -168,13 +168,13 @@ func TestValidate_V2Refusals(t *testing.T) {
 	cases := map[string]string{
 		// "Everything except nothing" is everything, which the filter already
 		// says by leaving the field out.
-		"negation with no values":    `"modules":["beacon"],"not":{"statuses":true}`,
-		"empty range":                `"modules":["beacon"],"updated_at":{}`,
-		"unknown token":              `"modules":["beacon"],"updated_at":{"after":"-7 fortnights"}`,
-		"unknown key inside a range": `"modules":["beacon"],"updated_at":{"since":"-7d"}`,
-		"inverted absolute bounds":   `"modules":["beacon"],"updated_at":{"after":"2026-02-01T00:00:00Z","before":"2026-01-01T00:00:00Z"}`,
-		"inverted relative bounds":   `"modules":["beacon"],"updated_at":{"after":"-1d","before":"-7d"}`,
-		"equal absolute bounds":      `"modules":["beacon"],"updated_at":{"after":"2026-02-01T00:00:00Z","before":"2026-02-01T00:00:00Z"}`,
+		"negation with no values":      `"modules":["beacon"],"not":{"statuses":true}`,
+		"empty range":                  `"modules":["beacon"],"updated_at":{}`,
+		"unrecognised relative period": `"modules":["beacon"],"updated_at":{"after":"-7 fortnights"}`,
+		"unknown key inside a range":   `"modules":["beacon"],"updated_at":{"since":"-7d"}`,
+		"inverted absolute bounds":     `"modules":["beacon"],"updated_at":{"after":"2026-02-01T00:00:00Z","before":"2026-01-01T00:00:00Z"}`,
+		"inverted relative bounds":     `"modules":["beacon"],"updated_at":{"after":"-1d","before":"-7d"}`,
+		"equal absolute bounds":        `"modules":["beacon"],"updated_at":{"after":"2026-02-01T00:00:00Z","before":"2026-02-01T00:00:00Z"}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

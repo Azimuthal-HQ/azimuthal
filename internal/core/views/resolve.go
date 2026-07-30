@@ -138,11 +138,11 @@ type FanoutParams struct {
 	ResolvedAfter  *time.Time
 	ResolvedBefore *time.Time
 
-	SortField string
-	Descending  bool
-	CursorKey   string
-	CursorID    uuid.UUID
-	Limit       int32
+	SortField  string
+	Descending bool
+	CursorKey  string
+	CursorID   uuid.UUID
+	Limit      int32
 	// GroupBy names the breakdown field for the two grouped fan-outs, and is
 	// empty for every other query. It lives on this struct rather than on a
 	// third parameter type for the reason stated above: the two tables differ

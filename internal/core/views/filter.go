@@ -369,44 +369,56 @@ func (r *DateRange) validate(field string) error {
 	if r.After == "" && r.Before == "" {
 		return fmt.Errorf("the %q filter names neither a start nor an end; remove it or give it a bound", field)
 	}
-	var after, before DateBound
-	if r.After != "" {
-		b, err := ParseDateBound(r.After)
-		if err != nil {
-			return fmt.Errorf("%s after: %w", field, err)
-		}
-		after = b
+	after, err := parseSide(field, "after", r.After)
+	if err != nil {
+		return err
 	}
-	if r.Before != "" {
-		b, err := ParseDateBound(r.Before)
-		if err != nil {
-			return fmt.Errorf("%s before: %w", field, err)
-		}
-		before = b
+	before, err := parseSide(field, "before", r.Before)
+	if err != nil {
+		return err
 	}
 	if r.After == "" || r.Before == "" {
 		return nil
 	}
+	if inverted(after, before) {
+		return fmt.Errorf("the %q filter starts at or after it ends (%s is not before %s)", field, r.After, r.Before)
+	}
+	return nil
+}
 
-	// Both bounds present. Compare only what is comparable without a clock.
+// parseSide parses one bound, naming the field and the side in the error so the
+// message says which of eight bounds is wrong.
+func parseSide(field, side, raw string) (DateBound, error) {
+	if raw == "" {
+		return DateBound{}, nil
+	}
+	b, err := ParseDateBound(raw)
+	if err != nil {
+		return DateBound{}, fmt.Errorf("%s %s: %w", field, side, err)
+	}
+	return b, nil
+}
+
+// inverted reports a range that is knowably backwards WITHOUT consulting a
+// clock.
+//
+// Two absolute bounds compare directly. Two relative bounds compare on the
+// deterministic number line orderingDays defines. A MIXED pair is never
+// reported: which of them comes first depends on when the query runs, so any
+// answer here would be one that could stop being true tomorrow — and a stored
+// view that became invalid without anyone touching it is worse than an
+// inverted range, which simply returns no rows.
+func inverted(after, before DateBound) bool {
 	switch {
 	case !after.Relative && !before.Relative:
-		if !after.Absolute.Before(before.Absolute) {
-			return fmt.Errorf("the %q filter starts at or after it ends (%s is not before %s)", field, r.After, r.Before)
-		}
+		return !after.Absolute.Before(before.Absolute)
 	case after.Relative && before.Relative:
 		ad, _ := after.orderingDays()
 		bd, _ := before.orderingDays()
-		if ad >= bd {
-			return fmt.Errorf("the %q filter starts at or after it ends (%s is not before %s)", field, r.After, r.Before)
-		}
+		return ad >= bd
 	default:
-		// One absolute, one relative. Their order depends on when the query
-		// runs, so there is nothing to check here that would still be true
-		// tomorrow. An inverted pair returns no rows, which is the correct
-		// answer to a range that excludes everything.
+		return false
 	}
-	return nil
 }
 
 // Priorities are CHECK-constrained to these four on both tickets and
