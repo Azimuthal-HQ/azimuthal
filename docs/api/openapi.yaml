@@ -3613,6 +3613,12 @@ paths:
         name: cursor
         schema:
           type: string
+      - description: Include ts_headline excerpts (costs one query per module in the
+          page)
+        in: query
+        name: snippet
+        schema:
+          type: boolean
       responses:
         "200":
           content:
@@ -3633,6 +3639,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Not authenticated
+      security:
+      - BearerAuth: []
       summary: Search across Codex, Beacon and Vector
       tags:
       - search

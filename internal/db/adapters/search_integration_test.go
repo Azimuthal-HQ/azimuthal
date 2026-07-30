@@ -454,3 +454,62 @@ func TestSearch_ParsedQueryDistinguishesEmptyFromNoMatch(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, parsed, "a real query parses to something")
 }
+
+// TestSearch_SnippetsHighlightWithoutMarkup covers ts_headline end to end,
+// including the decision that matters for the surface: the delimiters are
+// control characters, never HTML.
+//
+// ts_headline escapes NOTHING — it returns the source text with the delimiters
+// inserted. With `StartSel=<mark>` a page body containing a script tag produces
+// a snippet carrying that script verbatim, and any client rendering the snippet
+// as HTML executes it. STX/ETX cannot occur in ordinary prose, so the client
+// splits on them and wraps the pieces in real elements instead.
+func TestSearch_SnippetsHighlightWithoutMarkup(t *testing.T) {
+	ctx := context.Background()
+	f := newSearchFixture(t)
+
+	const stx, etx = "\x02", "\x03"
+
+	// A body carrying markup, to prove the snippet does not become markup.
+	hostile := f.page(t, f.openSp, "Runbook",
+		"before the kestrel appears <script>alert(1)</script> and after", "")
+
+	got, err := f.adapter.Snippets(ctx, search.ModuleCodex, "kestrel", []uuid.UUID{hostile})
+	require.NoError(t, err)
+	snippet := got[hostile]
+	require.NotEmpty(t, snippet, "a matching body must produce a snippet")
+
+	require.Contains(t, snippet, stx+"kestrel"+etx,
+		"the matched term is wrapped in the control-character delimiters")
+	require.NotContains(t, snippet, "<mark>", "the delimiters must not be markup")
+	require.NotContains(t, snippet, "<b>", "the delimiters must not be markup")
+
+	// MEASURED, and not what the first version of this test assumed: the text
+	// search parser recognises HTML tags as their own token type and DROPS them,
+	// so `<script>alert(1)</script>` reaches the snippet as the bare text
+	// "alert(1)". Tag stripping is a property of the parser, not a guarantee this
+	// code arranged, so it is pinned here — if a future configuration change
+	// stopped dropping tags, an HTML-rendering client would become injectable and
+	// nothing else would notice.
+	require.NotContains(t, snippet, "<script>",
+		"the text search parser drops HTML tags; if this ever changes, the delimiters "+
+			"being control characters is the only thing standing between stored content and the DOM")
+	require.Contains(t, snippet, "alert(1)",
+		"the tag's CONTENT still survives as text, which is why a snippet is text and never markup")
+
+	// Empty input is not a query.
+	none, err := f.adapter.Snippets(ctx, search.ModuleCodex, "kestrel", nil)
+	require.NoError(t, err)
+	require.Empty(t, none)
+
+	// Tickets and items headline their description.
+	tkt := f.ticket(t, f.openSp, 1, "Outage", "the kestrel service failed")
+	gotT, err := f.adapter.Snippets(ctx, search.ModuleBeacon, "kestrel", []uuid.UUID{tkt})
+	require.NoError(t, err)
+	require.Contains(t, gotT[tkt], stx+"kestrel"+etx)
+
+	item := f.item(t, f.openSp, 1, "VEC-1", "Rollout", "the kestrel migration")
+	gotI, err := f.adapter.Snippets(ctx, search.ModuleVector, "kestrel", []uuid.UUID{item})
+	require.NoError(t, err)
+	require.Contains(t, gotI[item], stx+"kestrel"+etx)
+}

@@ -72,11 +72,13 @@ type resultResponse struct {
 // @Summary     Search across Codex, Beacon and Vector
 // @Description Ranked, permission-filtered results across pages, tickets and project items. Supports the `type:` and `tag:` operators.
 // @Tags        search
+// @Security    BearerAuth
 // @Produce     json
 // @Param       orgID  path     string true  "Organization ID"
 // @Param       q      query    string true  "Search query"
 // @Param       limit  query    int    false "Page size (default 20, max 50)"
-// @Param       cursor query    string false "Opaque cursor from a previous page"
+// @Param       cursor  query    string false "Opaque cursor from a previous page"
+// @Param       snippet query    bool   false "Include ts_headline excerpts (costs one query per module in the page)"
 // @Success     200 {object} map[string]interface{} "Ranked results, the effective module set, and the result state"
 // @Failure     400 {object} api.SwaggerErrorResponse "Invalid parameters or cursor"
 // @Failure     401 {object} api.SwaggerErrorResponse "Not authenticated"
@@ -158,6 +160,10 @@ func requestFrom(r *http.Request) search.Request {
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil {
 		req.Limit = n
 	}
+	// Snippets are opt-in. The typeahead runs on every keystroke and renders
+	// only titles, so it must not pay for ts_headline; the full results page
+	// asks for them explicitly.
+	req.Snippets = r.URL.Query().Get("snippet") == "true"
 	if res := access.FromContext(ctx); res != nil {
 		req.ReadableSpaceIDs = res.ReadableSpaceIDs()
 	}

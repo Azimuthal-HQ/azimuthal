@@ -204,3 +204,56 @@ LIMIT sqlc.arg(row_limit);
 -- `!'zebra'`, which matches every row the viewer can read at rank 0 — an
 -- unbounded read and a total collapse of the rank ordering onto the tiebreaker.
 SELECT websearch_to_tsquery('english', sqlc.arg(query)::text)::text AS parsed;
+
+-- ── Snippets ─────────────────────────────────────────────────────────────────
+--
+-- ts_headline runs ONLY over the ids of the page actually being returned, never
+-- over the match set. It is the expensive half of a text search — it re-parses
+-- the document body per row rather than reading the index — so computing it for
+-- rows nobody will see is exactly the cost the fan-out limit exists to avoid.
+-- Three queries, one per module, and only for the modules the page contains.
+--
+-- The ids are already permission-filtered: they come out of the fan-out above,
+-- in the same request. These queries deliberately do NOT re-derive access and
+-- must never be called with ids from any other source. `deleted_at IS NULL` is
+-- still spelled out, so a row soft-deleted between the fan-out and here drops
+-- its snippet rather than resurrecting its text.
+--
+-- THE DELIMITERS ARE CONTROL CHARACTERS, NOT MARKUP.
+-- ts_headline escapes nothing. It returns the source text with the delimiters
+-- inserted, so `StartSel=<mark>` over a body containing `<script>` produces a
+-- snippet carrying that script, and any client rendering the snippet as HTML
+-- executes it. STX and ETX (U+0002 / U+0003) cannot occur in ordinary prose and
+-- JSON-encode as  and , so the client splits on them and wraps the
+-- pieces in real elements — highlighting without ever interpreting stored
+-- content as markup.
+
+-- name: HeadlinePages :many
+SELECT p.id,
+       ts_headline('english', coalesce(p.content, ''),
+                   websearch_to_tsquery('english', sqlc.arg(query)::text),
+                   'MaxFragments=1, MaxWords=28, MinWords=10, ShortWord=3, StartSel='
+                       || chr(2) || ', StopSel=' || chr(3)
+       ) AS snippet
+FROM pages p
+WHERE p.id = ANY(sqlc.arg(ids)::uuid[]) AND p.deleted_at IS NULL;
+
+-- name: HeadlineTickets :many
+SELECT t.id,
+       ts_headline('english', coalesce(t.description, ''),
+                   websearch_to_tsquery('english', sqlc.arg(query)::text),
+                   'MaxFragments=1, MaxWords=28, MinWords=10, ShortWord=3, StartSel='
+                       || chr(2) || ', StopSel=' || chr(3)
+       ) AS snippet
+FROM tickets t
+WHERE t.id = ANY(sqlc.arg(ids)::uuid[]) AND t.deleted_at IS NULL;
+
+-- name: HeadlineProjectItems :many
+SELECT i.id,
+       ts_headline('english', coalesce(i.description, ''),
+                   websearch_to_tsquery('english', sqlc.arg(query)::text),
+                   'MaxFragments=1, MaxWords=28, MinWords=10, ShortWord=3, StartSel='
+                       || chr(2) || ', StopSel=' || chr(3)
+       ) AS snippet
+FROM project_items i
+WHERE i.id = ANY(sqlc.arg(ids)::uuid[]) AND i.deleted_at IS NULL;

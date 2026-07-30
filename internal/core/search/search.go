@@ -121,6 +121,12 @@ type Store interface {
 	SearchPages(ctx context.Context, p FanoutParams) ([]Result, error)
 	SearchTickets(ctx context.Context, p FanoutParams) ([]Result, error)
 	SearchProjectItems(ctx context.Context, p FanoutParams) ([]Result, error)
+
+	// Snippets returns ts_headline excerpts keyed by id, for ids of ONE module.
+	// Callers pass only the ids of the page being returned: ts_headline
+	// re-parses each body rather than reading the index, so it is the expensive
+	// half of a search and must never run over the match set.
+	Snippets(ctx context.Context, m Module, query string, ids []uuid.UUID) (map[uuid.UUID]string, error)
 }
 
 // Request is one search as the handler received it.
@@ -129,6 +135,10 @@ type Request struct {
 	Raw    string
 	Cursor string
 	Limit  int
+	// Snippets asks for ts_headline excerpts. Off by default because it costs
+	// one extra query per module present in the page, and the typeahead — the
+	// caller that runs on every keystroke — does not render them.
+	Snippets bool
 
 	// The viewer's resolved access, exactly as the middleware computed it.
 	ReadableSpaceIDs []uuid.UUID
@@ -215,15 +225,64 @@ func (s *Service) Search(ctx context.Context, req Request) (Page, error) {
 	}
 	p = resolved
 
-	merged, err := s.fanout(ctx, q.Modules, p)
+	results, next, err := s.run(ctx, q, req, p, limit)
 	if err != nil {
 		return Page{}, err
 	}
+	page.Results, page.NextCursor = results, next
+	return page, nil
+}
+
+// run performs the fan-out and everything that shapes its output: the merge,
+// the page cut, the disclosure rule, and the optional snippets.
+//
+// Split from Search so the guard sequence at the top of that function stays
+// readable as a sequence of guards. The ORDER here is load-bearing in one place:
+// redaction happens before snippets, so a share-only hit has already lost its
+// container by the time anything else touches the row.
+func (s *Service) run(ctx context.Context, q Query, req Request, p FanoutParams, limit int) ([]Result, string, error) {
+	merged, err := s.fanout(ctx, q.Modules, p)
+	if err != nil {
+		return nil, "", err
+	}
 
 	sortResults(merged)
-	page.Results, page.NextCursor = cut(merged, limit)
-	redactSharedContainers(page.Results, req.ReadableSpaceIDs)
-	return page, nil
+	results, next := cut(merged, limit)
+	redactSharedContainers(results, req.ReadableSpaceIDs)
+
+	if req.Snippets {
+		if err := s.fillSnippets(ctx, q.Text, results); err != nil {
+			return nil, "", err
+		}
+	}
+	return results, next, nil
+}
+
+// fillSnippets attaches ts_headline excerpts to the VISIBLE page only.
+//
+// One query per module actually present, not three unconditionally and not one
+// per row. The ids handed down came out of the permission-filtered fan-out in
+// this same request, which is what makes it safe for the snippet queries not to
+// re-derive access — and why they must never be given ids from anywhere else.
+func (s *Service) fillSnippets(ctx context.Context, query string, rows []Result) error {
+	byModule := map[Module][]uuid.UUID{}
+	for _, r := range rows {
+		byModule[r.Module] = append(byModule[r.Module], r.ID)
+	}
+	snippets := make(map[uuid.UUID]string, len(rows))
+	for m, ids := range byModule {
+		got, err := s.store.Snippets(ctx, m, query, ids)
+		if err != nil {
+			return fmt.Errorf("building %s snippets: %w", m, err)
+		}
+		for id, text := range got {
+			snippets[id] = text
+		}
+	}
+	for i := range rows {
+		rows[i].Snippet = snippets[rows[i].ID]
+	}
+	return nil
 }
 
 // clampLimit bounds one page. A zero or negative limit is the default rather

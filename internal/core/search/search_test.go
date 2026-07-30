@@ -18,15 +18,16 @@ import (
 // branches ran, how the halves merged, what the cursor said, and what the
 // response was allowed to disclose.
 type fakeStore struct {
-	parsed    string
-	parseErr  error
-	tagID     uuid.UUID
-	tagErr    error
-	pages     []Result
-	tickets   []Result
-	items     []Result
-	calls     []Module
-	lastParam FanoutParams
+	parsed       string
+	parseErr     error
+	tagID        uuid.UUID
+	tagErr       error
+	pages        []Result
+	tickets      []Result
+	items        []Result
+	calls        []Module
+	lastParam    FanoutParams
+	snippetCalls int
 }
 
 func (f *fakeStore) ParsedQuery(_ context.Context, text string) (string, error) {
@@ -41,6 +42,15 @@ func (f *fakeStore) ParsedQuery(_ context.Context, text string) (string, error) 
 
 func (f *fakeStore) ResolveTagSlug(context.Context, uuid.UUID, string) (uuid.UUID, error) {
 	return f.tagID, f.tagErr
+}
+
+func (f *fakeStore) Snippets(_ context.Context, _ Module, _ string, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	f.snippetCalls++
+	out := make(map[uuid.UUID]string, len(ids))
+	for _, id := range ids {
+		out[id] = "snippet"
+	}
+	return out, nil
 }
 
 func (f *fakeStore) SearchPages(_ context.Context, p FanoutParams) ([]Result, error) {

@@ -187,3 +187,64 @@ func sortKeyText(v any) string {
 		return ""
 	}
 }
+
+// Snippets returns ts_headline excerpts for the ids of one module.
+//
+// The highlight delimiters are STX and ETX (U+0002 / U+0003), not markup.
+// ts_headline escapes nothing — it returns the source text with the delimiters
+// inserted — so HTML delimiters over a body containing a script tag would
+// produce a snippet carrying that script, and any client rendering it as HTML
+// would execute it. Control characters cannot occur in ordinary prose, so the
+// client can split on them and wrap the pieces in real elements: highlighting
+// without ever interpreting stored content as markup.
+func (a *SearchAdapter) Snippets(ctx context.Context, m search.Module, query string, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	if len(ids) == 0 {
+		return map[uuid.UUID]string{}, nil
+	}
+	switch m {
+	case search.ModuleCodex:
+		return a.pageSnippets(ctx, query, ids)
+	case search.ModuleBeacon:
+		return a.ticketSnippets(ctx, query, ids)
+	case search.ModuleVector:
+		return a.itemSnippets(ctx, query, ids)
+	default:
+		return nil, fmt.Errorf("search: unknown module %q", m)
+	}
+}
+
+func (a *SearchAdapter) pageSnippets(ctx context.Context, query string, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	rows, err := a.q.HeadlinePages(ctx, generated.HeadlinePagesParams{Query: query, Ids: ids})
+	if err != nil {
+		return nil, fmt.Errorf("headlining pages: %w", err)
+	}
+	out := make(map[uuid.UUID]string, len(rows))
+	for _, r := range rows {
+		out[r.ID] = string(r.Snippet)
+	}
+	return out, nil
+}
+
+func (a *SearchAdapter) ticketSnippets(ctx context.Context, query string, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	rows, err := a.q.HeadlineTickets(ctx, generated.HeadlineTicketsParams{Query: query, Ids: ids})
+	if err != nil {
+		return nil, fmt.Errorf("headlining tickets: %w", err)
+	}
+	out := make(map[uuid.UUID]string, len(rows))
+	for _, r := range rows {
+		out[r.ID] = string(r.Snippet)
+	}
+	return out, nil
+}
+
+func (a *SearchAdapter) itemSnippets(ctx context.Context, query string, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	rows, err := a.q.HeadlineProjectItems(ctx, generated.HeadlineProjectItemsParams{Query: query, Ids: ids})
+	if err != nil {
+		return nil, fmt.Errorf("headlining project items: %w", err)
+	}
+	out := make(map[uuid.UUID]string, len(rows))
+	for _, r := range rows {
+		out[r.ID] = string(r.Snippet)
+	}
+	return out, nil
+}
