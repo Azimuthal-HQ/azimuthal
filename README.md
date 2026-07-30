@@ -130,7 +130,7 @@ generate.
 | `APP_ENV` | `development` | `development`, `test`, or `production`. Selects environment-dependent behaviour; it is **not** a security exemption — see the note below. |
 | `APP_PORT` | `8080` | HTTP listen port. |
 | `APP_BASE_URL` | `http://localhost:8080` | Public URL of this instance. Used to build the links that go out in invites and portal sign-in emails, so a wrong value produces links nobody can follow. |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |
+| `LOG_LEVEL` | `info` | **Currently inert — see below.** Intended to select `debug`, `info`, `warn`, or `error`. |
 
 ### Object storage (MinIO / S3-compatible)
 
@@ -140,7 +140,7 @@ generate.
 | `STORAGE_ACCESS_KEY` | — (empty) | S3/MinIO access key. |
 | `STORAGE_SECRET_KEY` | — (empty) | S3/MinIO secret key. |
 | `STORAGE_BUCKET` | `azimuthal` | Bucket name for attachments. |
-| `STORAGE_USE_SSL` | `false` | Whether to reach the endpoint over TLS. |
+| `STORAGE_USE_SSL` | `false` | Reach the endpoint over TLS. An `https://` prefix on `STORAGE_ENDPOINT` forces this to `true` regardless of what you set here; `http://` leaves your setting alone. |
 
 ### Authentication and access
 
@@ -188,6 +188,13 @@ generate.
 > production deployment can hold any value of, so the bcrypt floor is enforced even under
 > `APP_ENV=test`; test binaries get cheap hashing from the linker knowing they are test binaries,
 > not from configuration.
+
+> **`LOG_LEVEL` does nothing today.** `config.Load` parses it into `Config.LogLevel`, and nothing
+> reads that field: `cmd/server/serve.go` builds the logger with a hardcoded `slog.LevelInfo`, and
+> it does so *before* configuration is loaded, so the value could not reach it as written. Setting
+> `LOG_LEVEL=debug` changes nothing. Documented here rather than quietly dropped from the table,
+> because the variable is real and the gap is in the wiring — closing it is a code change and needs
+> its own review.
 
 ## Project Structure
 

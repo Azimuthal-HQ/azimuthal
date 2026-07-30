@@ -105,7 +105,7 @@ access. You can then log in at `http://localhost:8080/login` with these credenti
 | `JWT_EXPIRY` | `24h` | Access token lifetime (Go duration format) |
 | `SMTP_HOST` | `localhost` | SMTP relay host for outbound email |
 | `SMTP_PORT` | `25` | SMTP relay port. Note this is the Compose default; the binary's own default is `1025`. |
-| `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+| `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error`. **Currently inert** — the value is parsed but nothing reads it; the logger is built with a hardcoded `info` level before config loads. Setting this changes nothing today. |
 | `DATABASE_URL` | (auto) | PostgreSQL connection string. Auto-constructed in Docker Compose from `POSTGRES_PASSWORD` |
 
 `APP_ENV` is **not** settable through `.env` in this deployment: `build/docker-compose.yml`
@@ -149,7 +149,7 @@ To use any of these with the bundled Compose file, add the variable to the `app`
 | `AZIMUTHAL_PORTAL_LINK_TTL` | `1h` | How long a portal sign-in link stays redeemable. Must be positive. |
 | `AZIMUTHAL_PORTAL_SESSION_TTL` | `72h` | Lifetime of the session a redeemed portal link produces. Must be positive. |
 | `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. Required when `AZIMUTHAL_INVITE_DELIVERY=email`. |
-| `STORAGE_USE_SSL` | `false` | Reach the object-storage endpoint over TLS. The bundled Compose file talks to MinIO over the internal network on plain HTTP. |
+| `STORAGE_USE_SSL` | `false` | Reach the object-storage endpoint over TLS. An `https://` prefix on `STORAGE_ENDPOINT` forces this to `true` regardless of what you set. The bundled Compose file sets `http://storage:9000`, so MinIO is reached over the internal network on plain HTTP. |
 
 ## Running Migrations Manually
 
