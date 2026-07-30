@@ -89,7 +89,30 @@ func TestTicketAdapter_Search(t *testing.T) {
 	}
 	require.NoError(t, adapter.Create(ctx, tkt))
 
+	// A second ticket that must NOT match. Without it this test asserted
+	// nothing: it ended at `_ = results`, which stays green if the
+	// `search_vector @@ ...` predicate is deleted outright — and stayed green
+	// through migration 049's rewrite of the very column it depends on.
+	other := &tickets.Ticket{
+		ID: uuid.New(), SpaceID: space.ID,
+		Title: "Payment gateway outage", Status: tickets.StatusOpen, Priority: tickets.PriorityHigh,
+		ReporterID: &reporterPtr,
+	}
+	require.NoError(t, adapter.Create(ctx, other))
+
 	results, err := adapter.Search(ctx, space.ID, "login", 10)
 	require.NoError(t, err)
-	_ = results
+	ids := make([]uuid.UUID, 0, len(results))
+	for _, r := range results {
+		ids = append(ids, r.ID)
+	}
+	require.Equal(t, []uuid.UUID{tkt.ID}, ids,
+		"search must return exactly the matching ticket — not the non-matching one, and not nothing")
+
+	// The title half of the vector, proven separately: a word that appears
+	// only in the other ticket's title must find that ticket and only it.
+	results, err = adapter.Search(ctx, space.ID, "gateway", 10)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, other.ID, results[0].ID)
 }

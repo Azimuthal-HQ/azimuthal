@@ -129,10 +129,32 @@ func TestItemAdapter_Search(t *testing.T) {
 	}
 	require.NoError(t, adapter.Create(ctx, item))
 
+	// An item that must NOT match. The previous version of this test ended at
+	// `_ = results` under the comment "Result count may vary by search
+	// implementation; just check no error" — which is exactly the reasoning
+	// §2 forbids: it stays green if the `search_vector @@ ...` predicate is
+	// deleted, and it stayed green through migration 049's rewrite of the
+	// column it depends on.
+	other := &projects.Item{
+		ID: uuid.New(), SpaceID: space.ID,
+		Kind: "task", Title: "Payment gateway outage", Status: "open", Priority: "medium",
+		ReporterID: user.ID,
+	}
+	require.NoError(t, adapter.Create(ctx, other))
+
 	results, err := adapter.Search(ctx, space.ID, "migration", 10)
 	require.NoError(t, err)
-	// Result count may vary by search implementation; just check no error.
-	_ = results
+	ids := make([]uuid.UUID, 0, len(results))
+	for _, r := range results {
+		ids = append(ids, r.ID)
+	}
+	require.Equal(t, []uuid.UUID{item.ID}, ids,
+		"search must return exactly the matching item — not the non-matching one, and not nothing")
+
+	results, err = adapter.Search(ctx, space.ID, "gateway", 10)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, other.ID, results[0].ID)
 }
 
 // --- SprintAdapter extended tests ---

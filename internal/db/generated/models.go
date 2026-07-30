@@ -307,13 +307,13 @@ type ProjectItem struct {
 	DueAt           pgtype.Timestamptz `json:"due_at"`
 	ResolvedAt      pgtype.Timestamptz `json:"resolved_at"`
 	Rank            string             `json:"rank"`
-	SearchVector    interface{}        `json:"search_vector"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
 	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
 	OrgID           uuid.UUID          `json:"org_id"`
 	ItemKey         string             `json:"item_key"`
+	SearchVector    interface{}        `json:"search_vector"`
 }
 
 type ProjectItemSequence struct {
@@ -481,12 +481,12 @@ type Ticket struct {
 	DueAt           pgtype.Timestamptz `json:"due_at"`
 	ResolvedAt      pgtype.Timestamptz `json:"resolved_at"`
 	Rank            string             `json:"rank"`
-	SearchVector    interface{}        `json:"search_vector"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
 	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
 	RequesterID     pgtype.UUID        `json:"requester_id"`
+	SearchVector    interface{}        `json:"search_vector"`
 }
 
 type User struct {
