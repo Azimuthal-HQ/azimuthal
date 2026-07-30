@@ -522,10 +522,38 @@ closing pass read all 13 effects and three of them looked like more than style. 
 change and its own test, which is why a pass contracted to zero behaviour change did not touch
 them:
 
-1. **`CustomFieldsSection.tsx:38`** — `CustomFieldRow` re-seeds its local `value` from
-   `field.value` on every query refetch. A background refetch landing while somebody is typing in a
-   custom field appears able to discard what they typed. `BoardConfigSection.tsx:70` guards the
-   same pattern with a `dirty` flag; this one does not.
+1. ~~**`CustomFieldsSection.tsx:38`** — `CustomFieldRow` re-seeds its local `value` from
+   `field.value` on every query refetch.~~ **CLOSED** by the maintenance mini-pass, together with a
+   third instance the closing pass's own list did not name as a defect: **`OrgSettingsPage.tsx:28`**
+   carries the identical unguarded pattern, and because its effect depends on the whole `org`
+   object, a change to *either* field re-seeded *both*.
+
+   Both now carry `BoardConfigSection`'s `dirty` guard. One adaptation was needed and is worth
+   knowing before the pattern is copied a fourth time: `BoardConfigSection` can clear the flag the
+   moment a save resolves because its mutations `setQueryData` before invalidating, so the fresh
+   value is already in the cache. `useSetItemField` and `useUpdateOrganization` only invalidate, so
+   for one render after a successful save the query still holds the *pre-save* value — clearing on
+   success there would flash the old text back into the field somebody had just left. Both clear the
+   flag when the **server catches up** with what is on screen instead, which covers the save and
+   also covers typing a change and then typing it back.
+
+   Tests: `keeps an in-progress edit when a refetch changes the server value` (and its
+   organisation twin) fail before the guard; the "picks up a server change when there is no edit in
+   progress" and "follows the server again once the save has landed" cases guard the other
+   direction, so a flag that never cleared could not pass. Both suites re-render with a **different**
+   server value on purpose — the seeding effect depends on a string, so a re-render with identical
+   data cannot fail under either implementation.
+
+   The sibling audit found no fourth instance. `AccessMatrixPage` stages edits as an overlay over
+   the query data and never copies it into state — the shape the other three should probably have
+   used. `ItemTypesAdminPage`, `PeoplePage`, `TeamsAdminPage`, `SpacesAdminPage` and the two
+   dashboard dialogs all seed on an explicit open/click or at the mount of a per-edit dialog, which
+   a refetch cannot stomp. `SpacesAdminPage` carries the *inverse* hazard rather than this one — its
+   open dialog holds a Space object captured at click time, so a refetch leaves it stale rather than
+   overwriting it. That is a different question and was left alone.
+
+   The eslint rule stays off for all three files: the guard is still a `setState` in an effect, and
+   the config's own note on this group already anticipated the fix.
 2. **`WikiPage.tsx:145`** — the auto-select-first-page effect carries a comment recording that an
    earlier `useMemo` implementation of the same logic was wrong. Whatever that defect was, no
    regression test captures it.

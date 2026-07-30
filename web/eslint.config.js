@@ -121,8 +121,11 @@ export default defineConfig([
   //
   //  - Controlled-form seeding (copy fetched data into editable local state):
   //      CustomFieldsSection.tsx, admin/OrgSettingsPage.tsx,
-  //      space/BoardConfigSection.tsx — the last guards on `dirty` precisely so
-  //      a refetch never stomps unsaved edits.
+  //      space/BoardConfigSection.tsx — all three guard on `dirty` so a refetch
+  //      never stomps unsaved edits. BoardConfigSection always did; the other
+  //      two were the defect recorded as known-issues #17 item 1, closed by the
+  //      maintenance mini-pass. The guard is still a setState in an effect, so
+  //      the rule stays off for all three.
   //  - The `?create=…` deep link (read the param, open the dialog, clear the
   //      param): beacon/TicketListPage.tsx, home/HomeOverviewPage.tsx,
   //      vector/BacklogPage.tsx, shell/sidebars/CodexSidebar.tsx. The clear is
