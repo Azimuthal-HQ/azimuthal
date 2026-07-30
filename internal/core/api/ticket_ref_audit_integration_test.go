@@ -23,6 +23,7 @@ import (
 	teamsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/ticketref"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
@@ -31,6 +32,7 @@ import (
 	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
@@ -611,6 +613,15 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 	// The one value every handler shares — the same shape main.go builds.
 	required := ticketref.Policy{Required: true}
 
+	// The ADR-0011 tier gate, for the reason the TicketHandler comment below
+	// gives: this builder mirrors newTestServerOn's collaborators, and
+	// TestHarness_NoDarkDependencies cannot see this one because it walks
+	// newTestServer only. A nil gate here would make every status transition in
+	// these tests answer 500 rather than transitioning ungated.
+	refTierStore := adapters.NewWorkflowTierAdapter(queries)
+	refTierGate := tiergate.New(workflow.NewTierService(refTierStore), refTierStore)
+	refTransitionTx := adapters.NewWorkflowTransitionTxAdapter(pool)
+
 	cfg := api.RouterConfig{
 		Authenticator: authenticator,
 		SpaceHandler: spacesapi.NewHandler(queries).
@@ -645,7 +656,8 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 		TicketHandler: ticketsapi.NewHandler(ticketSvc).
 			WithAuditLogger(auditLog).
 			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
-			WithSuggestions(tickets.NewSuggestionService(adapters.NewTicketAdapter(queries))),
+			WithSuggestions(tickets.NewSuggestionService(adapters.NewTicketAdapter(queries))).
+			WithWorkflowTiers(refTierGate, refTransitionTx),
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
 			if err != nil {

@@ -232,7 +232,13 @@ local-only until the integrity pass, and with them every drift guard written as 
 the ADR-0012 editor-vocabulary equality, whose failure mode is silent data loss, and none of them
 had ever run on a pull request.
 
-`npm run lint` is **not** a gate. eslint reports 46 errors on `main` — mostly
+`npm run lint` **is** a required CI gate as of #82 (the `Frontend` job runs it, with no baseline
+file and per-filename exemptions in `web/eslint.config.js`). The paragraph below described the
+state before that change and is kept for the reasoning it records; the factual claim in its first
+sentence is corrected here rather than deleted, per §5. A new React surface must be eslint-clean
+on first push.
+
+*Superseded:* `npm run lint` is **not** a gate. eslint reports 46 errors on `main` — mostly
 `react-refresh/only-export-components` and `react-hooks/set-state-in-effect` — so gating on it
 today would fail every pull request, and the alternative is a baseline file, which is an exemption
 ledger. The inventory and what closing it would take are in `docs/known-issues.md`. Do not add a
