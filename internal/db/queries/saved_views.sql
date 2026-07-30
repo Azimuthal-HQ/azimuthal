@@ -328,8 +328,8 @@ ORDER BY ws.position ASC;
 --
 -- Audience-blind on purpose, and the one query in this file that is. Its
 -- caller is the P5 dashboard loader, which has to tell "this gadget's view was
--- deleted" from "this gadget's view is not yours to see" â€” two different tiles
--- under ADR-0009 â€” and filtering by audience here would collapse both into
+-- deleted" from "this gadget's view is not yours to see" — two different tiles
+-- under ADR-0009 — and filtering by audience here would collapse both into
 -- "absent". The audience is applied in Go by views.Audience.Reaches, which is
 -- the same rule ListSavedViewsForViewer's WHERE clause spells in SQL.
 --
@@ -407,7 +407,7 @@ WHERE pi.deleted_at IS NULL
 -- 038's saved_view_sort_key uses for sorting: the choice is collapsed into one
 -- expression rather than spread across one query per field. Four fields times
 -- two modules would otherwise be eight near-identical queries, which is eight
--- chances for one of them to drift from the access predicate above it â€” and a
+-- chances for one of them to drift from the access predicate above it — and a
 -- drifted copy of THAT is not a display bug.
 --
 -- The bucket is (key, label) rather than one column because an assignee's key
@@ -418,7 +418,7 @@ WHERE pi.deleted_at IS NULL
 -- exactly what a breakdown is for, and collapsing it away would make the
 -- buckets stop summing to the count.
 --
--- ELSE '' is unreachable through the API â€” views.ParseGroupField refuses
+-- ELSE '' is unreachable through the API — views.ParseGroupField refuses
 -- anything outside the closed set before this runs, and 'kind' is refused
 -- alongside Beacon so it never reaches this query at all. It is written as a
 -- single bucket rather than as NULL so that a field added on one side only
@@ -460,7 +460,7 @@ ORDER BY count(*) DESC, g.bucket_key ASC;
 
 -- name: BreakdownViewProjectItems :many
 -- The Vector half. 'kind' appears here and not in the ticket query because
--- project_items has the column and tickets does not â€” the same asymmetry the
+-- project_items has the column and tickets does not — the same asymmetry the
 -- filter vocabulary records, enforced the same way.
 SELECT g.bucket_key::text AS bucket_key,
        g.bucket_label::text AS bucket_label,

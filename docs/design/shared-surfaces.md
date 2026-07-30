@@ -10,7 +10,8 @@ already exists, extend it. A second implementation of anything on this page is a
 convenience.
 
 Verified against `main` at migration 028; sections 9 and 10 added at migration 036; section 13
-and the section 5 corrections added at migration 038 (P4 saved views).
+and the section 5 corrections added at migration 038 (P4 saved views); sections 15, 16 and 17
+added at migration 048 (P5 dashboards).
 
 ---
 
@@ -652,6 +653,77 @@ process-wide. If they ever become per-org, that is a migration and a different e
 On the client, `useTicketRefRequired` fails safe to **false**. The server enforces the requirement
 either way and is the authority; guessing `true` on a failed fetch would lock every administrative
 dialog on the instance behind a field the operator may not need.
+## 17. The gadget registry — two halves, one vocabulary
+
+**Where:** `internal/core/dashboards/registry.go` (server) and
+`web/src/lib/dashboards/registry.ts` (client), with the definitions in
+`web/src/components/dashboards/gadgets.tsx`.
+
+The server half owns what may be WRITTEN: the closed key set, the four configuration keys
+(`title`, `limit`, `group_by`, `body`) and every bound. The client half owns what is DRAWN.
+Neither is complete without the other, and they are pinned together by
+`web/src/lib/dashboards/registry.test.ts`, which reads the Go file and fails in **both**
+directions — a key the server accepts and the client cannot draw renders an "unknown gadget"
+placeholder for something that is not unknown, and a key the client offers and the server refuses
+is a picker entry whose Add button always 422s.
+
+> **The rule: no `switch` over a gadget key anywhere in the render path.** ADR-0009 decision 5
+> calls one a defect because it closes the extension seam permanently; more immediately, it
+> scatters "what may this gadget carry" across every function that has to ask. Dispatch is a map
+> read on both sides. `TestRegistry_NoSwitchOverGadgetKey` parses the Go package's own AST and
+> fails on any switch whose subject is a gadget key.
+
+**Strict on write, tolerant on read.** A key this build does not know is refused at the API
+boundary; a key this build does not know that is ALREADY STORED must still load, as an inert
+labelled placeholder (decision log C5). That is why migration 048 puts no CHECK on `gadget_key`
+and why `dashboards.Gadget.Key` is a `string` rather than a `GadgetKey`.
+
+**Adding a gadget** is one `registerGadget` call on each side plus one line in the drift test's
+expectations. It is deliberately not less than that.
+
+## 18. Aggregates go through the saved-view fan-out, never through the client
+
+**Where:** `internal/core/views/aggregate.go`, backed by `CountViewTickets`,
+`CountViewProjectItems`, `BreakdownViewTickets` and `BreakdownViewProjectItems` in
+`internal/db/queries/saved_views.sql`.
+
+Counts and breakdowns are the same read a results page performs, answered with `COUNT` and
+`GROUP BY` instead of a row set — the same filter vocabulary, the same fan-out, the same
+per-viewer access union, the same ADR-0008 exception (§13).
+
+> **The rule: never fetch pages and count them.** That form is bounded by `MaxPageSize` and would
+> silently under-report any view with more than two hundred results, which is precisely the view
+> somebody puts a count gadget on. `TestViewAggregate_CountIsNotBoundedByThePageSize` fails if it
+> is ever done that way.
+
+Two more properties the callers depend on: a breakdown's buckets always sum to its total (anything
+past the bucket cap is rolled into one explicit `other` bucket, never dropped), and the empty
+bucket key is a REAL bucket — unassigned work is what a breakdown is for.
+
+**A bucket key is a disclosure.** A status that exists only in a space the caller cannot read must
+not appear as a bucket, and `TestViewAggregate_BreakdownLeaksNoBucketFromAnUnreadableSpace` is
+written so that widening either access array fails it.
+
+## 19. `Markdown` — the only read-only markdown renderer
+
+**Where:** `web/src/components/Markdown.tsx`.
+
+Four pages had each hand-rolled the same `<ReactMarkdown>` plus the same six-line `prose` class
+list before a fifth was about to ship with the P5 note gadget. The three non-Codex call sites
+(`TicketDetailPage`, `ItemDetailPage`, `SharedEntityPage`) now use this one.
+
+> **The rule: raw HTML stays off.** react-markdown v10 escapes embedded HTML by default; turning it
+> back on means `rehype-raw`, and there is no sanitiser behind it anywhere in this codebase. A note
+> gadget's body lands on somebody else's dashboard the moment the dashboard is shared.
+
+`pages/codex/WikiPage.tsx` keeps its own call site because it DOES pass `rehype-raw`, for legacy
+wiki content. That is a Codex decision with a real XSS surface behind it; it is recorded here so
+that nobody copies that block, and in the P5 phase report so that somebody eventually decides
+about it.
+
+**Every prose colour is pinned to a token.** The app's theme is the `.dark` class while
+`prose-invert` keys off the OS media query, so a body styled with `dark:prose-invert` alone renders
+light-on-light for anybody whose system theme disagrees with their app theme.
 
 ---
 

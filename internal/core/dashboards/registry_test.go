@@ -152,3 +152,30 @@ func mentionsGadgetKey(e ast.Expr) bool {
 	})
 	return found
 }
+
+// registerGadget panics on a duplicate rather than overwriting: two
+// definitions for one key would otherwise resolve differently depending on
+// file order, which is a bug that only appears after an unrelated rename.
+func TestRegistry_RefusesADuplicateKey(t *testing.T) {
+	require.Panics(t, func() {
+		registerGadget(Definition{Key: GadgetNote, Name: "Duplicate", Render: RenderNote})
+	}, "a second definition for a registered key must be a programming error, not a silent overwrite")
+}
+
+func TestDefinition_AllowsModule(t *testing.T) {
+	d := Definition{Modules: []Module{ModuleVector}}
+	require.True(t, d.AllowsModule(ModuleVector))
+	require.False(t, d.AllowsModule(ModuleHome),
+		"a gadget restricted to one module must not sit on another — this fails if AllowsModule ever returns true by default")
+	require.False(t, d.AllowsModule("codex"))
+}
+
+func TestValidModule(t *testing.T) {
+	for _, m := range []Module{ModuleHome, ModuleBeacon, ModuleVector} {
+		require.True(t, ValidModule(m))
+	}
+	// There is no Codex dashboard module: a saved view cannot query pages, so
+	// a Codex dashboard could hold nothing but notes.
+	require.False(t, ValidModule("codex"))
+	require.False(t, ValidModule(""))
+}

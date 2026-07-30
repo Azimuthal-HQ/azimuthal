@@ -661,3 +661,199 @@ neither would be obvious from the failure message.
 
 **Proper fix**: give the status badge a `data-testid` and assert on that; drop the reload from the
 first test and leave persistence to the second, which already proves it.
+
+---
+
+## 21. `comment.created` audit events are silently discarded
+
+**Severity**: Medium (the append-only log is missing a whole entity's history)
+**Status**: Open. Found by P5 while assessing whether an activity-feed gadget could be built.
+Not fixed there: changing what the append-only log contains is not a dashboard phase's call.
+
+`audit.dbLogger.Log` (`internal/core/audit/db_logger.go`) drops any event whose `OrgID` does not
+parse — `slog.Warn`, then `return nil`, so the caller sees success:
+
+```go
+orgID, err := uuid.Parse(event.OrgID)
+if err != nil {
+    slog.Warn("audit: dropping event with invalid org_id", ...)
+    return nil
+}
+```
+
+A scan of every non-test `audit.Event{...}` literal found exactly two that set no `OrgID` at all:
+
+- `internal/core/api/comments/handler.go:264` — `EventTypeCommentCreated`. **Every comment ever
+  posted is absent from the audit log.**
+- `internal/core/api/auth/handler.go:153` — `EventTypeLoginFailed`. Arguably intentional (the
+  event fires pre-authentication, so there may be no org to name), but it is a real gap in the
+  failed-login trail and it is a gap by accident rather than by decision.
+
+**What closing it takes.** For comments, `OrgID: claims.OrgID` at the call site, plus a regression
+test that posts a comment and asserts the row exists — which fails before the fix. For failed
+logins, a decision first: either resolve the org from the submitted email, or record that
+pre-auth events are deliberately not audited and make `Log` say so rather than warn.
+
+**Why it went unnoticed.** `Log`'s return value is discarded at every call site (`_ = h.auditLog.Log(...)`),
+which is correct — an audit write must not fail a user's request — so the only signal is a warning
+line nobody reads.
+
+---
+
+## 22. `audit_log` has no `space_id`, so no activity feed can be scoped to a viewer
+
+**Severity**: Low (a feature cannot be built, rather than something being broken)
+**Status**: Open. Recorded by P5, which shipped no activity gadget because of it.
+
+ADR-0009's gadget list names a recent-activity gadget and P5's brief asked for one "scoped to the
+viewer's readable containers". It is not currently buildable from anything that exists:
+
+- **`audit_log` carries `org_id` and no `space_id`**, and none in `payload`. Scoping it to a
+  viewer's readable set means deriving the container by joining `(entity_kind, entity_id)` back to
+  `tickets`, `project_items` and `pages` — a new query, and a new member-visible read path over a
+  table whose routes are `org-admin-404` today. It also structurally loses deletions: the join
+  drops soft-deleted entities, so `ticket.deleted` events disappear, and a `LEFT JOIN` does not
+  help because those rows then have no container to authorise against.
+- **`notifications` is not a candidate.** It is a per-recipient inbox with exactly ONE producer in
+  the whole product (`TicketService.Assign` → `queueAssignmentNotifier`), no org or space filter,
+  and no consultation of the readable set — migration 030's own comment says so. A feed built on
+  it would contain assignment rows and nothing else.
+
+**What closing it takes.** A nullable `audit_log.space_id` populated at write time, which is
+exactly the precedent migration 030 set for `notifications.entity_space_id`: nullable, no backfill,
+a routing/scoping hint captured where the writer already knows the answer. Then one query with the
+readable-space array as its access control, and one accounting row for the new read path.
+
+Item 21 is a prerequisite for the feed being worth having: a "recent activity" list with no
+comments in it is a poor feed.
+
+---
+
+## 23. `POST /tickets/{id}/assign` performs no referential check, and its 500 discloses SQL
+
+**Severity**: High (information disclosure, and a cross-organisation write)
+**Status**: Open. Found by P5's coverage pass, confirmed live against real PostgreSQL. Deliberately
+**not fixed there**: a dashboards phase must not quietly rewrite the ticket assignment path, and
+two of the three parts need a policy decision rather than a patch.
+
+`internal/core/api/tickets/handler.go` `Assign` writes `assignee_id` with no check that the id
+names anybody this organisation knows. Three consequences, in increasing order of seriousness:
+
+**a. A nonexistent user answers 500 with the driver's message.** A well-formed uuid naming no user
+reaches the UPDATE, violates `tickets_assignee_id_fkey`, and `handleTicketError`'s default branch
+returns it to the caller:
+
+```
+ticket operation failed: assigning ticket: ticket adapter update: ERROR: insert or update on
+table "tickets" violates foreign key constraint "tickets_assignee_id_fkey" (SQLSTATE 23503)
+```
+
+Table name, constraint name and SQLSTATE, to any caller holding `edit_any_item`. A client error
+reported as a server fault, and internal wording that must not reach a user.
+
+**b. The disclosure mechanism is the fallback itself.** `handleTicketError`'s default arm formats
+the underlying error into the client-visible message —
+`fmt.Sprintf("ticket operation failed: %v", err)`. Every other 500 in the API uses a fixed string.
+Any future unmapped repository error will ship the same way.
+
+**c. A ticket can be assigned to a user in ANOTHER organisation.** `tickets.assignee_id` references
+the global `users` table, so the FK is satisfied and the write lands: HTTP 200, and the row now
+names somebody with no membership in the org and no access to the space. The notification enqueuer
+then targets that foreign user id. Confirmed live with a user seeded into a second organisation.
+
+**Why this is a gap rather than a new rule.** The grants surface already enforces exactly this
+obligation (`access.ErrSubjectNotOrgMember`, "grant subject is not a member of this organisation"),
+and so does the share audience (`ErrShareAudienceTeamNotFound`). Assignment is the one referential
+write that skips it.
+
+**What closing it takes.** (a) and (b) are mechanical: an org-membership check before the write
+returning 400, and a fixed fallback message. (c) is the same check. The weaker sibling case —
+assigning an org member who holds no grant on the ticket's space — returns 200 too; that one is
+arguably policy and wants a maintainer's decision alongside.
+
+No test was written asserting the current behaviour: pinning it would encode the defect.
+
+---
+
+## 24. Five handlers answer 500 where their own OpenAPI annotations promise 4xx
+
+**Severity**: Medium (a client is told to retry something that will never succeed)
+**Status**: Open. Found by P5's coverage pass; each one verified empirically with a throwaway probe
+and confirmed against the handler's own `@Failure` annotation. Not fixed — all are in non-test
+source outside P5's surface, and each is somebody's decision about their own error vocabulary.
+
+Every one has the same shape: a repository returns a bare `pgx.ErrNoRows` or a raw unique
+violation, the domain layer wraps it without mapping it to a sentinel, and the handler's error
+switch falls through to `default` → 500.
+
+| Where | Symptom | Documented as |
+|---|---|---|
+| `internal/core/wiki/page.go:143` (via `api/wiki/handler.go:839`) | `POST /wiki` with an unknown `parent_id` returns 500 and echoes *"fetching parent page: no rows in result set"* | 400/404 |
+| `api/wiki/document_handler.go:351` | a `doc` that is valid JSON but not a ProseMirror document returns 500 on both draft-save and publish | 400 "Malformed document" (`document_handler.go:90`, `:188`) |
+| `db/adapters/projects.go:109` | `ItemAdapter.UpdateStatus` does not map `ErrNoRows`, so a status change on an unknown item returns 500 | 404 (`api/projects/handler.go:621`) |
+| `db/adapters/projects.go:86, :280, :298` | the same omission on `ItemAdapter.Update`, `SprintAdapter.Update` and `SprintAdapter.UpdateStatus` — narrower, because the handlers pre-load, so it is a TOCTOU window rather than a plain 404-as-500 | 404 |
+| `db/adapters/projects.go:490` | `LabelAdapter.Create` does not map the `UNIQUE (org_id, name)` violation, so a duplicate label returns 500 — **and `handleProjectError`'s `ErrLabelDuplicate` arm is therefore dead code** | 409 (`api/projects/handler.go:1557`) |
+
+Every sibling getter in those same files maps `ErrNoRows` correctly, so these are omissions rather
+than design choices.
+
+**One related observation, lower confidence.** `MoveToSprint`, `MoveToBacklog` and `AssignToSprint`
+route through `ItemAdapter.UpdateSprint`, whose query is `:exec` and cannot report zero rows
+affected — so an item id naming nothing is silently accepted and the handler answers
+`200 {"message":"item moved to backlog"}`. Each declares `@Failure 404`. `DeleteRelation` and
+`DeleteLabel` share the shape and are plausibly meant to be idempotent, so this one is a
+maintainer's judgement rather than a clear defect.
+
+**None of these has a test asserting the current behaviour** — a test that pinned the 500 would
+encode the bug. Each fix wants a regression test written against the documented status.
+
+**A sixth instance was found in the same sweep and FIXED rather than recorded**, because it sat on
+P5's own inherited surface. `views.ErrUnknownField` — raised when a *stored* filter document names
+a key this build does not know — was listed in `api/views/handler.go`'s 422 branch, so every
+saved-view, queue, dashboard and Home route answered `422 VALIDATION_ERROR` carrying the internal
+wording *"saved view <uuid> holds an unreadable filter document: unknown field \"...\""*. Two faults
+in one: the wrong class (nothing the caller sent was invalid — every caller-supplied document is
+parsed and refused by `views.ParseQuery` before the service is entered), and a disclosure of the
+row id and the stored key. It now has its own branch answering 500 with the fixed fallback.
+`internal/core/api/views_unreadable_document_integration_test.go` drives every affected route and
+fails in both directions.
+
+---
+
+## 25. A team-shared saved view cannot be renamed without re-naming its team
+
+**Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
+**Status**: Open. Found by P5's coverage pass, verified over HTTP. Not fixed — it is P4 behaviour
+outside this phase's surface, and the repair is a decision about PATCH semantics rather than an
+omission.
+
+`views.Service.Update` inherits the row's own visibility when the request omits it:
+
+```go
+if d.Visibility == "" {
+    d.Visibility = existing.Visibility
+}
+```
+
+It does not inherit `existing.VisibilityTeamID`. For the one visibility that carries a payload the
+inheritance therefore cannot succeed — the merged draft is `team` with no team, which `Normalise`
+refuses:
+
+```
+PATCH /api/v1/orgs/{org}/views/{id}   {"name":"Renamed","query":{...}}
+422 {"error":{"code":"VALIDATION_ERROR","message":"a team-visible view must name a team"}}
+```
+
+The message describes a field the caller did not send and state they did not create. Naming the
+team explicitly works, so this is a gap in the inheritance rather than a rule about team views.
+
+**What closing it takes.** One line — inherit `existing.VisibilityTeamID` alongside the visibility
+when the request omits both. The decision it needs first is whether an omitted `visibility_team_id`
+alongside an explicit `"visibility":"team"` should mean "unchanged" or "you must say"; today it
+means the latter, consistently, and that part is defensible. It is the partial-PATCH tri-state
+shape again: one field cannot distinguish "absent" from "cleared".
+
+**The current behaviour is pinned**, not left unasserted:
+`TestViewUpdate_OmittingTheTeamOnATeamViewIsRefused` in
+`internal/core/views/view_refusals_test.go` fails if somebody changes it, which is the point — the
+fix is to invert that test rather than to discover the change downstream.

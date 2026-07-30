@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ChevronRight, Clock, AlertCircle } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import {
   DetailLayout,
@@ -14,6 +13,7 @@ import { EntityShareControl } from '../../components/EntityShareControl';
 import { ModuleChip } from '../../shell/ModuleChip';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
+import { Markdown } from '../../components/Markdown';
 import {
   useTicket,
   useTransitionTicketStatus,
@@ -182,27 +182,17 @@ export function TicketDetailPage() {
             <ModuleChip module="beacon" />
           </div>
 
-          {/* Description — prose colors pinned to the theme tokens: the app's
-              theme is the .dark class, while prose-invert keys off the OS
-              media query, so the two can desync. */}
-          <div
-            className={cn(
-              'prose prose-sm dark:prose-invert max-w-none leading-[1.7]',
-              'prose-headings:text-[var(--color-text)] prose-headings:font-semibold',
-              'prose-p:text-[var(--color-text)] prose-li:text-[var(--color-text)] prose-strong:text-[var(--color-text)]',
-              'prose-a:text-[var(--color-primary)]',
-              'prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5',
-              'prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]',
-            )}
-          >
-            {ticket.description ? (
-              <ReactMarkdown>{ticket.description}</ReactMarkdown>
-            ) : (
+          {/* The shared renderer (P5). It was four copies of the same prose
+              block until a fifth was about to ship with the note gadget. */}
+          <Markdown
+            fallback={
               <span className="italic text-[var(--color-text-muted)] text-[var(--text-sm)]">
                 No description provided.
               </span>
-            )}
-          </div>
+            }
+          >
+            {ticket.description ?? ''}
+          </Markdown>
 
           {/* Comments section */}
           <div className="mt-6 border-t border-[var(--color-border)] pt-5">

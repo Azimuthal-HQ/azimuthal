@@ -1,5 +1,4 @@
 import { useParams } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
 import { FileText, Ticket as TicketIcon, ListChecks } from 'lucide-react';
 import {
   useMe,
@@ -9,6 +8,7 @@ import {
   type ShareEntityType,
 } from '../../lib/api';
 import { ShareBadge } from '../../components/ShareBadge';
+import { Markdown } from '../../components/Markdown';
 import { SharedAttachmentImage, SharedAttachmentLink } from './SharedAttachment';
 import { Badge } from '../../components/ui';
 import { PriorityPill, normalizePriority } from '../../components/priority';
@@ -106,12 +106,9 @@ export function SharedEntityPage() {
             </div>
           )}
 
-          <div
-            className="prose prose-sm dark:prose-invert max-w-none leading-[1.7] prose-headings:text-[var(--color-text)] prose-headings:font-semibold prose-p:text-[var(--color-text)] prose-li:text-[var(--color-text)] prose-strong:text-[var(--color-text)] prose-a:text-[var(--color-primary)] prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5 prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]"
-            data-testid="shared-body"
-          >
-            <ReactMarkdown>{entity.data.body || ''}</ReactMarkdown>
-          </div>
+          {/* The shared renderer (P5). data-testid preserved: web/e2e asserts
+              on it. */}
+          <Markdown testId="shared-body">{entity.data.body || ''}</Markdown>
 
           {/* Every attachment as a download link — including the ones
               previewed above. The list is deliberately NOT the complement of

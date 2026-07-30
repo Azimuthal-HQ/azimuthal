@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Clock, AlertCircle, Trash2, Link2 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -18,6 +17,7 @@ import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
 import { CustomFieldsSection } from '../../components/CustomFieldsSection';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
+import { Markdown } from '../../components/Markdown';
 import {
   useProjectItem,
   useUpdateProjectItem,
@@ -298,26 +298,16 @@ export function ItemDetailPage() {
                 <ModuleChip module="vector" />
               </div>
 
-              {/* Prose colors pinned to the theme tokens — prose-invert keys
-                  off the OS media query, not the app's .dark class. */}
-              <div
-                className={cn(
-                  'prose prose-sm dark:prose-invert max-w-none leading-[1.7]',
-                  'prose-headings:text-[var(--color-text)] prose-headings:font-semibold',
-                  'prose-p:text-[var(--color-text)] prose-li:text-[var(--color-text)] prose-strong:text-[var(--color-text)]',
-                  'prose-a:text-[var(--color-primary)]',
-                  'prose-code:font-[var(--font-mono)] prose-code:text-[var(--color-text)] prose-code:bg-[var(--color-input)] prose-code:rounded prose-code:px-1.5 prose-code:py-0.5',
-                  'prose-pre:bg-[var(--color-input)] prose-pre:border prose-pre:border-[var(--color-border)]',
-                )}
-              >
-                {item.description ? (
-                  <ReactMarkdown>{item.description}</ReactMarkdown>
-                ) : (
+              {/* The shared renderer (P5). */}
+              <Markdown
+                fallback={
                   <span className="italic text-[var(--color-text-muted)] text-[var(--text-sm)]">
                     No description provided.
                   </span>
-                )}
-              </div>
+                }
+              >
+                {item.description ?? ''}
+              </Markdown>
             </>
           )}
 

@@ -2351,6 +2351,30 @@ export const queryKeys = {
     cursor?: string,
     limit?: number,
   ) => ['queues', orgId, spaceId, queueId, 'results', cursor ?? '', limit ?? 0] as const,
+  // P5 dashboards (ADR-0009). One dashboard and the list nest under
+  // ['dashboards', orgId] so a single prefix invalidation after a create,
+  // rename, layout save or delete catches every cached copy — a stale gadget
+  // list on screen is a layout somebody thinks they saved and did not.
+  //
+  // The third element DISCRIMINATES THE FAMILY, and it is load-bearing rather
+  // than decorative. Without it `dashboards(orgId, 'home')` — the sidebar's
+  // list of Home dashboards — and `homeDashboard(orgId)` — the resolved Home
+  // dashboard with its gadgets — produced the identical key, so whichever
+  // resolved last overwrote the other in the cache and Home rendered an ARRAY
+  // where it expected an object. It cost a blank page. queryKeys.test.ts now
+  // asserts the three families are pairwise disjoint.
+  dashboards: (orgId: string, module?: string) =>
+    ['dashboards', orgId, 'list', module ?? ''] as const,
+  dashboard: (orgId: string, dashboardId: string) =>
+    ['dashboards', orgId, 'one', dashboardId] as const,
+  homeDashboard: (orgId: string) => ['dashboards', orgId, 'home'] as const,
+  // A gadget's data is keyed by the DOCUMENT it resolves, not by the gadget
+  // id: two gadgets showing the same view share one cache entry, and a gadget
+  // repointed at another view gets a new one without an explicit invalidation.
+  gadgetResults: (orgId: string, queryJSON: string, limit: number) =>
+    ['gadget', orgId, 'results', queryJSON, limit] as const,
+  gadgetAggregate: (orgId: string, queryJSON: string, groupBy: string) =>
+    ['gadget', orgId, 'aggregate', queryJSON, groupBy] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -4659,6 +4683,357 @@ export function useDeleteQueue(orgId: string, spaceId: string) {
 }
 
 // Re-export create helpers for direct use
+// ---------------------------------------------------------------------------
+// Dashboards and gadgets (P5, ADR-0009)
+// ---------------------------------------------------------------------------
+//
+// A dashboard owns LAYOUT. Every gadget's data comes from the saved-view
+// layer: the dashboard response hands out the filter document each tile should
+// resolve, and the tile posts it to /views/preview or /views/aggregate — the
+// same two endpoints the filter builder uses. There is no second results path,
+// and none should be added.
+
+/** Which product surface a dashboard belongs to. There is no Codex module. */
+export type DashboardModule = 'home' | 'beacon' | 'vector';
+
+/**
+ * What a tile should render. Computed SERVER-SIDE, covering every ADR-0009
+ * degradation rule, so no client re-derives an audience rule to decide whether
+ * to draw a gadget.
+ */
+export type GadgetState =
+  | 'ready'
+  | 'unknown_gadget'
+  | 'view_required'
+  | 'view_unreadable'
+  | 'scope_unavailable';
+
+/** How the client draws a gadget. The registry dispatches on it. */
+export type GadgetRender = 'list' | 'stat' | 'breakdown' | 'note';
+
+/** A gadget's configuration. Every key is optional and validated server-side. */
+export interface GadgetConfig {
+  title?: string;
+  limit?: number;
+  group_by?: string;
+  body?: string;
+}
+
+/** One resolved tile. */
+export interface DashboardGadget {
+  id: string;
+  gadget_key: string;
+  position: number;
+  col_span: number;
+  saved_view_id: string | null;
+  config: GadgetConfig;
+  state: GadgetState;
+  /** The heading: the config override, else the view's name, else the kind's. */
+  title: string;
+  render?: GadgetRender;
+  /**
+   * The document this tile resolves for its data. Present only when the state
+   * is `ready` and the gadget has a query at all — a note has none, and an
+   * unreadable view's document is deliberately withheld.
+   */
+  query?: QueryDoc;
+  view_name?: string;
+  invalid_reason?: string;
+}
+
+export interface Dashboard {
+  id: string;
+  owner_id: string;
+  owner_name?: string;
+  name: string;
+  description: string;
+  module: DashboardModule;
+  is_default: boolean;
+  /** True when this row came from the starter layout rather than from a person. */
+  is_seeded: boolean;
+  visibility: ViewVisibility;
+  visibility_team_id: string | null;
+  team_name?: string;
+  /** Pre-computed server-side: the client never compares ids to the session. */
+  is_owner: boolean;
+  /** False means "audience unavailable", not "broken". Never an error state. */
+  is_valid: boolean;
+  invalid_reason?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A dashboard with its gadgets. The detail routes return this shape. */
+export interface DashboardDetail extends Dashboard {
+  gadgets: DashboardGadget[];
+}
+
+/** The create and update body. PATCH replaces the whole mutable surface. */
+export interface DashboardRequest {
+  name: string;
+  description: string;
+  module: DashboardModule;
+  visibility: ViewVisibility;
+  /** Required for team visibility; send null otherwise. */
+  visibility_team_id: string | null;
+  /** Omit to leave the flag alone — sending false clears somebody's default. */
+  is_default?: boolean;
+}
+
+/**
+ * One tile in a layout write. There is no position: the ORDER of the array is
+ * the display order and the server assigns positions from it, so a client
+ * cannot produce a gap or a duplicate.
+ */
+export interface GadgetRequest {
+  gadget_key: string;
+  col_span?: number;
+  saved_view_id?: string | null;
+  config?: GadgetConfig;
+}
+
+/** One group of a breakdown. */
+export interface AggregateBucket {
+  key: string;
+  label: string;
+  count: number;
+  /** The rollup carrying everything past the server's bucket cap. */
+  other?: boolean;
+  other_buckets?: number;
+}
+
+export interface AggregateResult {
+  total: number;
+  buckets: AggregateBucket[];
+  truncated: boolean;
+}
+
+interface RawDashboardDetail extends Dashboard {
+  gadgets: DashboardGadget[] | null;
+}
+
+interface RawAggregate {
+  total: number | null;
+  buckets: AggregateBucket[] | null;
+  truncated: boolean | null;
+}
+
+function dashboardBase(orgId: string): string {
+  return `/orgs/${orgId}/dashboards`;
+}
+
+function toDashboardDetail(raw: RawDashboardDetail | null | undefined): DashboardDetail {
+  return {
+    ...(raw as DashboardDetail),
+    gadgets: (raw?.gadgets ?? []).map((g) => ({ ...g, config: g.config ?? {} })),
+  };
+}
+
+async function fetchDashboards(orgId: string, module?: DashboardModule): Promise<Dashboard[]> {
+  const qs = module ? `?module=${encodeURIComponent(module)}` : '';
+  const data = await apiFetch<{ dashboards: Dashboard[] | null }>(`${dashboardBase(orgId)}${qs}`);
+  return data?.dashboards ?? [];
+}
+
+async function fetchDashboard(orgId: string, dashboardId: string): Promise<DashboardDetail> {
+  return toDashboardDetail(
+    await apiFetch<RawDashboardDetail>(`${dashboardBase(orgId)}/${dashboardId}`),
+  );
+}
+
+/**
+ * The Home dashboard. A GET that seeds a starter layout on a first visit —
+ * idempotently, by a database constraint rather than by a check, so two tabs
+ * opening Home cannot produce two dashboards.
+ */
+async function fetchHomeDashboard(orgId: string): Promise<DashboardDetail> {
+  return toDashboardDetail(await apiFetch<RawDashboardDetail>(`${dashboardBase(orgId)}/home`));
+}
+
+async function createDashboard(orgId: string, req: DashboardRequest): Promise<Dashboard> {
+  return apiFetch<Dashboard>(dashboardBase(orgId), {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function updateDashboard(
+  orgId: string,
+  dashboardId: string,
+  req: DashboardRequest,
+): Promise<Dashboard> {
+  return apiFetch<Dashboard>(`${dashboardBase(orgId)}/${dashboardId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+async function deleteDashboard(orgId: string, dashboardId: string): Promise<void> {
+  return apiFetch<void>(`${dashboardBase(orgId)}/${dashboardId}`, { method: 'DELETE' });
+}
+
+/** Replaces the WHOLE gadget collection. Never send a partial layout. */
+async function saveDashboardGadgets(
+  orgId: string,
+  dashboardId: string,
+  gadgets: GadgetRequest[],
+): Promise<DashboardDetail> {
+  return toDashboardDetail(
+    await apiFetch<RawDashboardDetail>(`${dashboardBase(orgId)}/${dashboardId}/gadgets`, {
+      method: 'PUT',
+      body: JSON.stringify({ gadgets }),
+    }),
+  );
+}
+
+/**
+ * Counts a query's results for the CALLER, optionally grouped. The grouping
+ * happens in the database: a count gadget must never fetch pages and count
+ * them, which would stop at the page size and under-report the busy view
+ * somebody put the count on.
+ */
+async function aggregateQuery(
+  orgId: string,
+  query: QueryDoc,
+  groupBy?: string,
+): Promise<AggregateResult> {
+  const raw = await apiFetch<RawAggregate>(`/orgs/${orgId}/views/aggregate`, {
+    method: 'POST',
+    body: JSON.stringify(groupBy ? { query, group_by: groupBy } : { query }),
+  });
+  return {
+    total: raw?.total ?? 0,
+    buckets: raw?.buckets ?? [],
+    truncated: raw?.truncated ?? false,
+  };
+}
+
+/** Every dashboard whose definition reaches the caller. */
+export function useDashboards(
+  orgId: string,
+  module?: DashboardModule,
+  opts?: QueryOpts<Dashboard[]>,
+) {
+  return useQuery<Dashboard[], APIError>({
+    queryKey: queryKeys.dashboards(orgId, module),
+    queryFn: () => fetchDashboards(orgId, module),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+/** One dashboard with its gadgets, resolved for the calling viewer. */
+export function useDashboard(
+  orgId: string,
+  dashboardId: string,
+  opts?: QueryOpts<DashboardDetail>,
+) {
+  return useQuery<DashboardDetail, APIError>({
+    queryKey: queryKeys.dashboard(orgId, dashboardId),
+    queryFn: () => fetchDashboard(orgId, dashboardId),
+    enabled: !!orgId && !!dashboardId,
+    ...opts,
+  });
+}
+
+/** The caller's Home dashboard, seeded on a first visit. */
+export function useHomeDashboard(orgId: string, opts?: QueryOpts<DashboardDetail>) {
+  return useQuery<DashboardDetail, APIError>({
+    queryKey: queryKeys.homeDashboard(orgId),
+    queryFn: () => fetchHomeDashboard(orgId),
+    enabled: !!orgId,
+    ...opts,
+  });
+}
+
+/**
+ * A gadget's rows. Keyed by the DOCUMENT rather than the gadget, so two tiles
+ * showing one view share a cache entry and a repointed tile gets a fresh one.
+ */
+export function useGadgetResults(
+  orgId: string,
+  query: QueryDoc | undefined,
+  limit: number,
+  opts?: QueryOpts<ViewResultPage>,
+) {
+  const queryJSON = query ? JSON.stringify(query) : '';
+  return useQuery<ViewResultPage, APIError>({
+    queryKey: queryKeys.gadgetResults(orgId, queryJSON, limit),
+    queryFn: () => previewViewResults(orgId, JSON.parse(queryJSON) as QueryDoc, undefined, limit),
+    enabled: !!orgId && !!queryJSON,
+    ...opts,
+  });
+}
+
+/** A gadget's count, optionally grouped. */
+export function useGadgetAggregate(
+  orgId: string,
+  query: QueryDoc | undefined,
+  groupBy?: string,
+  opts?: QueryOpts<AggregateResult>,
+) {
+  const queryJSON = query ? JSON.stringify(query) : '';
+  return useQuery<AggregateResult, APIError>({
+    queryKey: queryKeys.gadgetAggregate(orgId, queryJSON, groupBy ?? ''),
+    queryFn: () => aggregateQuery(orgId, JSON.parse(queryJSON) as QueryDoc, groupBy),
+    enabled: !!orgId && !!queryJSON,
+    ...opts,
+  });
+}
+
+export function useCreateDashboard(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Dashboard, APIError, DashboardRequest>({
+    mutationFn: (req) => createDashboard(orgId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboards', orgId] });
+    },
+  });
+}
+
+export interface UpdateDashboardVars {
+  dashboardId: string;
+  req: DashboardRequest;
+}
+
+export function useUpdateDashboard(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<Dashboard, APIError, UpdateDashboardVars>({
+    mutationFn: ({ dashboardId, req }) => updateDashboard(orgId, dashboardId, req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboards', orgId] });
+    },
+  });
+}
+
+export function useDeleteDashboard(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (dashboardId) => deleteDashboard(orgId, dashboardId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboards', orgId] });
+    },
+  });
+}
+
+export interface SaveGadgetsVars {
+  dashboardId: string;
+  gadgets: GadgetRequest[];
+}
+
+export function useSaveDashboardGadgets(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<DashboardDetail, APIError, SaveGadgetsVars>({
+    mutationFn: ({ dashboardId, gadgets }) => saveDashboardGadgets(orgId, dashboardId, gadgets),
+    onSuccess: () => {
+      // The prefix, not the one dashboard: a layout write changes the detail,
+      // and a gadget that gained or lost a view changes what the list's
+      // provenance chips should say.
+      queryClient.invalidateQueries({ queryKey: ['dashboards', orgId] });
+    },
+  });
+}
+
 export {
   createSpace,
   createTicket,
