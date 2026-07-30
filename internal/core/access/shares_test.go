@@ -149,6 +149,67 @@ func TestSharedEntitiesUnionInputs(t *testing.T) {
 	require.Equal(t, []string{pathA}, se.CascadeRootPaths(), "only the cascade root contributes a path")
 }
 
+// TestCascadeSubtreeArraysStayPaired is the D46 guard at the unit level.
+//
+// D46 records that binding cascade paths WITHOUT their spaces makes two
+// independent arrays match the cartesian product, so a page in one root's space
+// whose path sits under another root's subtree leaks across the space boundary.
+// The fix is that the space and the pattern never travel separately, so what
+// this asserts is the pairing itself: element i of one array belongs to element
+// i of the other, for roots deliberately given in an order where a mismatch
+// would be visible.
+//
+// Fails-before: with CascadeRoots/CascadeSubtreeArrays absent there is no way to
+// populate $shared_subtree_space_ids at all, which is the state D46 describes.
+func TestCascadeSubtreeArraysStayPaired(t *testing.T) {
+	spaceA, spaceB := uuid.New(), uuid.New()
+	rootA, rootB := uuid.New(), uuid.New()
+	pathA, pathB := "aaa.branch", "bbb.branch"
+
+	se := NewSharedEntities([]ShareRow{
+		{EntityType: ShareEntityPage, EntityID: rootA, Cascade: true, RootPath: &pathA, RootSpaceID: &spaceA},
+		{EntityType: ShareEntityPage, EntityID: rootB, Cascade: true, RootPath: &pathB, RootSpaceID: &spaceB},
+	})
+
+	roots := se.CascadeRoots()
+	require.ElementsMatch(t,
+		[]CascadeRoot{{SpaceID: spaceA, Path: pathA}, {SpaceID: spaceB, Path: pathB}},
+		roots, "each root carries its own space, not just its path")
+
+	spaceIDs, patterns := se.CascadeSubtreeArrays()
+	require.Len(t, spaceIDs, 2)
+	require.Len(t, patterns, 2, "the two halves must be the same length or unnest silently drops rows")
+
+	// The pairing, asserted positionally: whatever order the roots came out in,
+	// index i of each array must describe the SAME root.
+	got := map[uuid.UUID]string{}
+	for i := range spaceIDs {
+		got[spaceIDs[i]] = patterns[i]
+	}
+	require.Equal(t, map[uuid.UUID]string{
+		spaceA: "aaa.branch.%",
+		spaceB: "bbb.branch.%",
+	}, got, "space i must be paired with pattern i — a swap here is the D46 leak")
+
+	// Patterns are strict-descendant and escaped, so the caller never re-escapes
+	// and never accidentally matches a prefix sibling.
+	pathPct := "50%off"
+	seEsc := NewSharedEntities([]ShareRow{
+		{EntityType: ShareEntityPage, EntityID: uuid.New(), Cascade: true, RootPath: &pathPct, RootSpaceID: &spaceA},
+	})
+	_, escPatterns := seEsc.CascadeSubtreeArrays()
+	require.Equal(t, []string{`50\%off.%`}, escPatterns,
+		"a stored LIKE metacharacter must match itself, never widen the pattern")
+
+	// A non-cascading share contributes no subtree row at all.
+	seDirect := NewSharedEntities([]ShareRow{
+		{EntityType: ShareEntityPage, EntityID: uuid.New(), Cascade: false},
+	})
+	directSpaces, directPatterns := seDirect.CascadeSubtreeArrays()
+	require.Empty(t, directSpaces)
+	require.Empty(t, directPatterns)
+}
+
 // TestResolveSharesRequiresStore proves ResolveShares fails loudly (not
 // silently) when the share store is unconfigured — a wiring mistake must
 // surface as an error, never as silent denial.

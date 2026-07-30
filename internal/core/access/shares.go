@@ -146,15 +146,80 @@ func (se *SharedEntities) DirectIDs(entityType string) []uuid.UUID {
 	return ids
 }
 
-// CascadeRootPaths returns the cascading roots' current paths — the
-// $shared_subtree_path_prefixes input for cross-space read queries. Callers
-// interpolating these into LIKE must run each through EscapeLike first.
+// CascadeRootPaths returns the cascading roots' current paths, WITHOUT their
+// spaces.
+//
+// It is safe only where the space is already pinned by something else — a
+// single-space query, or a check that has the candidate's space in hand like
+// CoversPage. It is NOT the input for a cross-space read query, and binding it
+// as one is the D46 defect: two independent arrays match the CARTESIAN PRODUCT,
+// so a page in root A's space whose path happens to sit under root B's subtree
+// satisfies "space in (A's, B's)" and "path like (A's, B's)" separately, and
+// leaks across the space boundary. Use CascadeSubtreeArrays, whose two halves
+// cannot be mismatched.
+//
+// Callers interpolating these into LIKE must run each through EscapeLike first.
 func (se *SharedEntities) CascadeRootPaths() []string {
 	paths := make([]string, 0, len(se.cascadeRoots))
 	for _, root := range se.cascadeRoots {
 		paths = append(paths, root.path)
 	}
 	return paths
+}
+
+// CascadeRoot is one cascading page share as a whole: the root's space and its
+// current materialized path. The two travel together because separating them is
+// what D46 records as a cross-space widening — see CascadeRootPaths.
+type CascadeRoot struct {
+	SpaceID uuid.UUID
+	Path    string
+}
+
+// CascadeRoots returns the cascading page shares as (space, path) pairs.
+//
+// This is the accessor D46 says P6 must add. ResolveShareRows has always
+// selected the root's space id and cascadeRoot has always stored it, but only
+// the paths were reachable from outside this package, so
+// $shared_subtree_space_ids could not be populated at all — and the obvious
+// workaround, binding the paths alone, is the defect itself.
+func (se *SharedEntities) CascadeRoots() []CascadeRoot {
+	roots := make([]CascadeRoot, 0, len(se.cascadeRoots))
+	for _, root := range se.cascadeRoots {
+		roots = append(roots, CascadeRoot{SpaceID: root.spaceID, Path: root.path})
+	}
+	return roots
+}
+
+// CascadeSubtreeArrays returns the cascade roots as two INDEX-ALIGNED arrays —
+// space ids and LIKE patterns — for the paired form a cross-space query needs:
+//
+//	EXISTS (SELECT 1 FROM unnest($space_ids::uuid[], $patterns::text[])
+//	                    AS root(space_id, pattern)
+//	        WHERE pages.space_id = root.space_id AND pages.path LIKE root.pattern)
+//
+// The pin is per-root, never per-query. Returning both halves from ONE call is
+// the point: a caller cannot build one array here and the other somewhere else,
+// which is the only way the alignment is lost.
+//
+// Patterns are already escaped and already strict-descendant
+// (SubtreeLikePattern, so `a.b.%` matches "a.b.c" and never the sibling
+// "a.bc"). The root page itself is deliberately not matched by its own pattern:
+// every share's entity id, cascade roots included, is in the direct set, so a
+// query unions DirectIDs("page") alongside these and covers the root that way.
+//
+// Both arrays are empty when no cascading share reaches the caller. unnest of
+// two empty arrays yields no rows, so the EXISTS is simply false — correct, but
+// correct by accident of SQL rather than by intent, so callers still
+// short-circuit when the whole access set is empty, as tickets.SuggestionService
+// does.
+func (se *SharedEntities) CascadeSubtreeArrays() (spaceIDs []uuid.UUID, patterns []string) {
+	spaceIDs = make([]uuid.UUID, 0, len(se.cascadeRoots))
+	patterns = make([]string, 0, len(se.cascadeRoots))
+	for _, root := range se.cascadeRoots {
+		spaceIDs = append(spaceIDs, root.spaceID)
+		patterns = append(patterns, SubtreeLikePattern(root.path))
+	}
+	return spaceIDs, patterns
 }
 
 // PathWithinSubtree reports whether path sits at or below root in a
