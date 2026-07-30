@@ -87,43 +87,104 @@ func TestViewUpdate_OmittedVisibilityInheritsTheExistingOne(t *testing.T) {
 	require.Equal(t, VisibilityOrg, updated.Visibility, "a rename must not un-share the view")
 }
 
-// THE INHERITANCE IS HALF DONE, AND THIS PINS THE GAP RATHER THAN THE INTENT.
+// THE TEAM INHERITS ALONGSIDE THE VISIBILITY, AND STOPS INHERITING THE MOMENT
+// THE CALLER CHANGES THE AUDIENCE.
 //
-// Update inherits `existing.Visibility` when the request omits it, but never
-// inherits `existing.VisibilityTeamID`. For the one visibility that carries a
-// payload, the inheritance therefore cannot succeed: the merged draft is
-// "team" with no team, which Normalise refuses.
+// Update used to inherit `existing.Visibility` and never
+// `existing.VisibilityTeamID`, so for the one visibility that carries a payload
+// the inheritance could not succeed: the merged draft was "team" with no team,
+// which Normalise refuses. A caller who PATCHed a team-shared view with only a
+// new name was answered 422 "a team-visible view must name a team" — about a
+// field they had not sent (known-issues #25, now closed).
 //
-// So a caller who PATCHes a team-shared view with only a new name is answered
-// 422 "a team-visible view must name a team" — a message about a field they
-// did not send, describing state they did not create. It is not a disclosure
-// and it is not data loss; it is P4 behaviour outside this phase's scope, and
-// the fix direction (inherit the team alongside the visibility) is a decision
-// about PATCH semantics rather than an obvious repair. Recorded in
-// docs/known-issues.md and reported rather than changed here.
+// PATCH is a merge, so the pair inherits together. The four cases below are the
+// whole rule, and each fails on its own if the corresponding half is removed:
+// delete the team inheritance and the rename fails; delete the
+// visibility-unchanged guard and the team→org case keeps a team id it was told
+// to drop.
+func TestViewUpdate_TheTeamInheritsWithTheVisibility(t *testing.T) {
+	ctx := context.Background()
+	me, team, otherTeam := uuid.New(), uuid.New(), uuid.New()
+
+	teamView := func() *failingStore {
+		store := &failingStore{}
+		store.view = ownedView(me)
+		store.view.Visibility = VisibilityTeam
+		store.view.VisibilityTeamID = &team
+		return store
+	}
+	actor := Actor{UserID: me, EffectiveTeamIDs: []uuid.UUID{team, otherTeam}}
+
+	t.Run("a rename that names no audience keeps the team share", func(t *testing.T) {
+		s := NewService(teamView(), failingResults{}, failingAggregates{})
+		d := draftFor()
+		d.Name = "Renamed"
+		d.Visibility, d.VisibilityTeamID = "", nil
+
+		updated, err := s.Update(ctx, uuid.New(), uuid.New(), actor, d)
+		require.NoError(t, err, "a rename must not have to restate the audience")
+		require.Equal(t, "Renamed", updated.Name)
+		require.Equal(t, VisibilityTeam, updated.Visibility)
+		require.Equal(t, &team, updated.VisibilityTeamID,
+			"the team has to inherit with the visibility, or the merge is half done")
+	})
+
+	t.Run("restating the same audience inherits the team too", func(t *testing.T) {
+		s := NewService(teamView(), failingResults{}, failingAggregates{})
+		d := draftFor()
+		d.Visibility, d.VisibilityTeamID = VisibilityTeam, nil
+
+		updated, err := s.Update(ctx, uuid.New(), uuid.New(), actor, d)
+		require.NoError(t, err, "the audience is unchanged, so the team is unchanged")
+		require.Equal(t, &team, updated.VisibilityTeamID)
+	})
+
+	t.Run("moving to org clears the team rather than inheriting it", func(t *testing.T) {
+		s := NewService(teamView(), failingResults{}, failingAggregates{})
+		d := draftFor()
+		d.Visibility, d.VisibilityTeamID = VisibilityOrg, nil
+
+		updated, err := s.Update(ctx, uuid.New(), uuid.New(), actor, d)
+		require.NoError(t, err)
+		require.Equal(t, VisibilityOrg, updated.Visibility)
+		require.Nil(t, updated.VisibilityTeamID,
+			"a widened view carrying its old team id is a lie the next reader has to interpret")
+	})
+
+	t.Run("an explicit team wins over the inherited one", func(t *testing.T) {
+		s := NewService(teamView(), failingResults{}, failingAggregates{})
+		d := draftFor()
+		d.Visibility, d.VisibilityTeamID = VisibilityTeam, &otherTeam
+
+		updated, err := s.Update(ctx, uuid.New(), uuid.New(), actor, d)
+		require.NoError(t, err)
+		require.Equal(t, &otherTeam, updated.VisibilityTeamID,
+			"inheritance fills a gap; it never overrides what the caller sent")
+	})
+}
+
+// Moving a view TO a team audience still has to name the team. Nothing is
+// inherited here because there is nothing to inherit: the row's own audience is
+// private, so the caller is stating a new pair and has to state all of it.
 //
-// This test asserts what the code DOES. If somebody fixes it, this fails, and
-// the fix is to invert it — which is the point of pinning it.
-func TestViewUpdate_OmittingTheTeamOnATeamViewIsRefused(t *testing.T) {
+// This is the half of known-issues #25 that was always defensible, and it is
+// asserted separately so the fix above cannot quietly swallow it.
+func TestViewUpdate_MovingToATeamAudienceStillNamesTheTeam(t *testing.T) {
 	me, team := uuid.New(), uuid.New()
 	store := &failingStore{}
-	store.view = ownedView(me)
-	store.view.Visibility = VisibilityTeam
-	store.view.VisibilityTeamID = &team
+	store.view = ownedView(me) // VisibilityPrivate, no team
 	s := NewService(store, failingResults{}, failingAggregates{})
+	actor := Actor{UserID: me, EffectiveTeamIDs: []uuid.UUID{team}}
 
 	d := draftFor()
-	d.Visibility, d.VisibilityTeamID = "", nil
-	_, err := s.Update(context.Background(), uuid.New(), uuid.New(),
-		Actor{UserID: me, EffectiveTeamIDs: []uuid.UUID{team}}, d)
-	require.Error(t, err, "the inherited visibility has no inherited team to go with it")
-	require.Contains(t, err.Error(), "must name a team")
+	d.Visibility, d.VisibilityTeamID = VisibilityTeam, nil
+	_, err := s.Update(context.Background(), uuid.New(), uuid.New(), actor, d)
+	require.ErrorIs(t, err, ErrTeamRequired,
+		"a private view has no team to inherit, so the caller must name one")
 
-	// Naming the team explicitly works, which is what makes the above a gap in
-	// the inheritance rather than a rule about team views.
+	// Naming it works, which is what makes the refusal a rule rather than a gap.
 	d.VisibilityTeamID = &team
-	updated, err := s.Update(context.Background(), uuid.New(), uuid.New(),
-		Actor{UserID: me, EffectiveTeamIDs: []uuid.UUID{team}}, d)
+	updated, err := s.Update(context.Background(), uuid.New(), uuid.New(), actor, d)
 	require.NoError(t, err)
 	require.Equal(t, VisibilityTeam, updated.Visibility)
 	require.Equal(t, &team, updated.VisibilityTeamID)

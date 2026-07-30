@@ -35,11 +35,16 @@ type failingStore struct {
 	deleted int64
 }
 
-func (f *failingStore) Create(context.Context, View) (View, error) {
+// Create and Update return the row they were HANDED, which is what the real
+// store does — both queries end in RETURNING *, so the caller gets back what
+// was written. Echoing the pristine f.view instead made every assertion on an
+// updated field vacuous: the service could compute anything, or nothing, and
+// the test still saw the stored row and passed.
+func (f *failingStore) Create(_ context.Context, v View) (View, error) {
 	if f.failCreate {
 		return View{}, errStore
 	}
-	return f.view, nil
+	return v, nil
 }
 
 func (f *failingStore) Get(_ context.Context, _, _ uuid.UUID) (View, error) {
@@ -49,11 +54,11 @@ func (f *failingStore) Get(_ context.Context, _, _ uuid.UUID) (View, error) {
 	return f.view, nil
 }
 
-func (f *failingStore) Update(context.Context, View) (View, error) {
+func (f *failingStore) Update(_ context.Context, v View) (View, error) {
 	if f.failUpdate {
 		return View{}, errStore
 	}
-	return f.view, nil
+	return v, nil
 }
 
 func (f *failingStore) SoftDelete(context.Context, uuid.UUID, uuid.UUID) (int64, error) {

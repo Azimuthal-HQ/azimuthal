@@ -820,7 +820,45 @@ fails in both directions.
 
 ---
 
-## 25. A team-shared saved view cannot be renamed without re-naming its team
+## 25. ~~A team-shared saved view cannot be renamed without re-naming its team~~ (RESOLVED)
+
+**Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
+**Status**: Resolved by the maintenance mini-pass. PATCH is a merge: `views.Service.Update` now
+inherits `existing.VisibilityTeamID` alongside `existing.Visibility`, and stops inheriting the
+moment the caller changes the audience.
+
+**The semantics that were decided**, since the entry below records the decision as open. Every
+unspecified field inherits, exactly as the other fields already did. The team id inherits when the
+visibility is unspecified **or unchanged** — restating `"visibility":"team"` on a view that is
+already team-shared keeps the team it is shared with. Explicitly *changing* the visibility still
+states the whole pair: `org` and `private` drop the team id, and a move **to** `team` that names no
+team is still refused with `ErrTeamRequired`. That refusal is the half of this entry that was always
+defensible, and it is now asserted on its own so the inheritance cannot swallow it.
+
+**Where.** `internal/core/views/view.go`, in `Service.Update`. Two lines and the reasoning above
+them. Nothing in `internal/core/views/filter.go` or the query vocabulary was touched.
+
+**A twin exists and was NOT fixed.** `internal/core/dashboards/dashboard.go`'s `Service.Update`
+carries the identical omission — it inherits `Visibility` and `Module` and not `VisibilityTeamID`,
+so a team-shared **dashboard** cannot be renamed either. It is the same two-line repair against the
+same `views.Audience.Normalise`. It was left alone because the dashboards surface belongs to another
+track in flight, not because it is correct. Recorded as its own entry, #26.
+
+**Tests.** `TestViewUpdate_TheTeamInheritsWithTheVisibility` (four cases) and
+`TestViewUpdate_MovingToATeamAudienceStillNamesTheTeam` in
+`internal/core/views/view_refusals_test.go` replace the pin-test named below, and
+`TestViewsMatrix_RenamingATeamSharedViewKeepsItsTeam` in
+`internal/core/api/views_endpoint_matrix_integration_test.go` asserts it over HTTP, which is where
+it was reported. They fail against the unfixed service with the exact 422 quoted below.
+
+**One thing found while fixing it.** `failingStore.Create` and `failingStore.Update` in
+`internal/core/views/service_errors_test.go` returned the *stored* view rather than the view they
+were handed, so every assertion on an updated field was vacuous — the service could compute anything
+and the test still saw the pristine row. Both now return their argument, which is what the real
+store does (`UpdateSavedView` is `:one ... RETURNING *`). No existing assertion was changed; several
+became load-bearing for the first time.
+
+<details><summary>Original entry</summary>
 
 **Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
 **Status**: Open. Found by P5's coverage pass, verified over HTTP. Not fixed — it is P4 behaviour
@@ -857,3 +895,50 @@ shape again: one field cannot distinguish "absent" from "cleared".
 `TestViewUpdate_OmittingTheTeamOnATeamViewIsRefused` in
 `internal/core/views/view_refusals_test.go` fails if somebody changes it, which is the point — the
 fix is to invert that test rather than to discover the change downstream.
+
+</details>
+
+---
+
+## 26. A team-shared dashboard cannot be renamed without re-naming its team
+
+**Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
+**Status**: Open. Found by the maintenance mini-pass while closing #25, which is the identical
+defect one model over. Not fixed — the dashboards surface belongs to another track in flight, and
+a one-line change there would have been a merge conflict in somebody else's file rather than a
+favour.
+
+`dashboards.Service.Update` (`internal/core/dashboards/dashboard.go`) inherits two fields when the
+request omits them and not the third:
+
+```go
+if d.Visibility == "" {
+    d.Visibility = existing.Visibility
+}
+if d.Module == "" {
+    d.Module = existing.Module
+}
+```
+
+`existing.VisibilityTeamID` is never inherited, so a PATCH carrying only a new name against a
+team-shared dashboard merges to `team` with no team, and `views.Audience.Normalise` — the same
+shared rule saved views use — refuses it with `ErrTeamRequired`. Dashboards and saved views share
+`Audience` precisely so this rule has one implementation (see the type's own comment on why), and
+they have now drifted on the *merge* rather than on the rule.
+
+**What closing it takes.** The two lines #25 took, in `dashboards.Service.Update`:
+
+```go
+if d.VisibilityTeamID == nil && d.Visibility == existing.Visibility {
+    d.VisibilityTeamID = existing.VisibilityTeamID
+}
+```
+
+with the same decided semantics (#25): inherit while the audience is unchanged, never across an
+explicit change. Plus the mirror of the saved-view tests — a rename-only case that fails before the
+fix, and a move-to-team-without-a-team case that must keep failing after it.
+
+**Not pinned.** Unlike #25 there is no test asserting the current behaviour, so nothing will fail
+when somebody fixes this. `internal/core/dashboards/service_test.go:196` renames a dashboard, but
+the fixture is a private one, which is the visibility that carries no payload — so it passes either
+way and says nothing about this.
