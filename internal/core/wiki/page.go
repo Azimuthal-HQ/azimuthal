@@ -140,6 +140,16 @@ func (s *Service) CreatePage(ctx context.Context, input CreatePageInput) (genera
 	if input.ParentID != nil {
 		parentID = pgtype.UUID{Bytes: *input.ParentID, Valid: true}
 		parent, err := s.store.GetPageByID(ctx, *input.ParentID)
+		// A parent_id naming nothing is the caller's mistake, not the server's.
+		// Unmapped, this returned a bare pgx.ErrNoRows that no arm of
+		// handleWikiError matched, so the request answered 500 and echoed
+		// "fetching parent page: no rows in result set" (known-issues #24). The
+		// sentinel already existed for the move path; the create path is now
+		// the second producer of it, so the two routes answer the same status
+		// for the same condition.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return generated.Page{}, ErrParentPageNotFound
+		}
 		if err != nil {
 			return generated.Page{}, fmt.Errorf("fetching parent page: %w", err)
 		}

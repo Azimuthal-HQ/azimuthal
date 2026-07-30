@@ -31,12 +31,36 @@ export function CustomFieldsSection({ spaceId, itemId }: { spaceId: string; item
 function CustomFieldRow({ field, spaceId, itemId }: { field: ItemCustomField; spaceId: string; itemId: string }) {
   const setMut = useSetItemField(spaceId, itemId);
   const [value, setValue] = useState(field.value);
+  const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Keep local state in sync when the query refetches.
+  // Seed the value from the server, but never stomp an edit in progress —
+  // BoardConfigSection's guard, on the same hazard. Every successful field save
+  // invalidates the whole item's field list, so a refetch lands on rows the
+  // person may still be typing in; unguarded, it discarded what they had typed.
+  //
+  // The flag clears when the SERVER CATCHES UP rather than the moment a save
+  // resolves, because useSetItemField only invalidates the query — it does not
+  // write the new value through the cache the way the board mutations do. For
+  // one render after a successful save field.value is still the pre-save value,
+  // and clearing on success would flash that old text back into the input the
+  // person had just left. Once the server agrees with what is on screen there
+  // is nothing left to protect and the row follows refetches again, which also
+  // covers typing a change and then typing it back.
   useEffect(() => {
-    setValue(field.value);
-  }, [field.value]);
+    if (!dirty) {
+      setValue(field.value);
+    } else if (field.value === value) {
+      setDirty(false);
+    }
+  }, [field.value, dirty, value]);
+
+  // Every local edit goes through here, so there is one place the flag is set
+  // rather than one per control.
+  function edit(next: string) {
+    setValue(next);
+    setDirty(true);
+  }
 
   function persist(next: string) {
     if (next === field.value) return;
@@ -78,7 +102,7 @@ function CustomFieldRow({ field, spaceId, itemId }: { field: ItemCustomField; sp
         id={`cf-${field.slug}`}
         value={value}
         onChange={(e) => {
-          setValue(e.target.value);
+          edit(e.target.value);
           persist(e.target.value);
         }}
         className={cn(
@@ -100,7 +124,7 @@ function CustomFieldRow({ field, spaceId, itemId }: { field: ItemCustomField; sp
         id={`cf-${field.slug}`}
         type={inputType}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => edit(e.target.value)}
         onBlur={() => persist(value)}
       />
     );

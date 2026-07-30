@@ -681,6 +681,38 @@ func TestProjectsNeg_ValidationRefusalsAre400(t *testing.T) {
 	}
 }
 
+// TestProjectsNeg_DuplicateLabelNameIs409 walks the arm of handleProjectError
+// that nothing in the tree could reach.
+//
+// projects.LabelRepository's own doc comment says Create "Returns
+// ErrLabelDuplicate if the name exists in the org", and handleProjectError has
+// had a 409 arm for that sentinel since it was written — but LabelAdapter.Create
+// never mapped the unique violation, so the only producer of the sentinel was a
+// test double and a repeated name answered
+// `500 "project operation failed: ... duplicate key value violates unique
+// constraint"` (known-issues #24), leaking the constraint name with it.
+//
+// This is the end-to-end half of TestLabelAdapter_DuplicateName in
+// internal/db/adapters: that one proves the mapping, this one proves the arm is
+// reachable through the router.
+func TestProjectsNeg_DuplicateLabelNameIs409(t *testing.T) {
+	f := newProjNegFixture(t)
+
+	first := f.as(t, f.ts.Token, http.MethodPost, f.orgBase+"/labels",
+		map[string]any{"name": "escalated", "color": "#ff0000"})
+	require.Equal(t, http.StatusCreated, first.StatusCode, "%s", first.Body)
+
+	projNegRequireError(t, f.as(t, f.ts.Token, http.MethodPost, f.orgBase+"/labels",
+		map[string]any{"name": "escalated", "color": "#00ff00"}),
+		http.StatusConflict, "CONFLICT", "already exists")
+
+	// A different name still succeeds, so the 409 above is the clash and not a
+	// handler that refuses every second label.
+	second := f.as(t, f.ts.Token, http.MethodPost, f.orgBase+"/labels",
+		map[string]any{"name": "deferred", "color": "#00ff00"})
+	require.Equal(t, http.StatusCreated, second.StatusCode, "%s", second.Body)
+}
+
 // --- Board configuration ---
 
 // TestProjectsNeg_BoardColumnDeleteUnknownColumnIs404 covers the branch of

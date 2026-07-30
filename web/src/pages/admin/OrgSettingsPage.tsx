@@ -23,14 +23,28 @@ export function OrgSettingsPage() {
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // The same guard BoardConfigSection carries and for the same reason: this
+  // form copies fetched data into editable state, so a refetch landing while
+  // somebody is typing discarded what they had typed. Both fields go at once
+  // here — the effect depends on the whole `org` object, so a change to either
+  // one re-seeded both.
+  //
+  // The flag clears when the server catches up rather than when the save
+  // resolves; useUpdateOrganization only invalidates, so for one render after a
+  // successful save `org` still holds the pre-save values. See the fuller note
+  // in CustomFieldsSection.
   useEffect(() => {
-    if (org) {
+    if (!org) return;
+    if (!dirty) {
       setName(org.name ?? '');
       setDescription(org.description ?? '');
+    } else if ((org.name ?? '') === name && (org.description ?? '') === description) {
+      setDirty(false);
     }
-  }, [org]);
+  }, [org, dirty, name, description]);
 
   async function handleSave() {
     if (!name.trim()) return;
@@ -58,7 +72,7 @@ export function OrgSettingsPage() {
               id="admin-org-name"
               data-testid="admin-org-name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => { setName(e.target.value); setDirty(true); }}
             />
           </div>
 
@@ -82,7 +96,7 @@ export function OrgSettingsPage() {
               data-testid="admin-org-description"
               rows={3}
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => { setDescription(e.target.value); setDirty(true); }}
               className={cn(
                 'flex w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
                 'bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',

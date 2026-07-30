@@ -467,6 +467,15 @@ func handleDocumentError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, doc.ErrTooDeep):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
 			"This page is nested more deeply than the editor supports.")
+	// A document that is valid JSON but not a ProseMirror document. Both routes
+	// annotate 400 "Malformed document" and both answered 500, because the
+	// shape refusals reached no arm of this switch (known-issues #24). The
+	// message is fixed rather than err.Error(): the wrapped cause is a JSON
+	// decoder's wording about the caller's bytes, which tells a person nothing
+	// and tells the wrong reader something.
+	case errors.Is(err, wiki.ErrMalformedDocument):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
+			"That document is not in a format the editor can save.")
 	case handleImageError(w, r, err):
 	default:
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "the page could not be saved")

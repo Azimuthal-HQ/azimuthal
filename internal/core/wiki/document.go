@@ -41,6 +41,22 @@ var (
 	// ErrImageNotAnImage is returned when an image node names an attachment whose
 	// stored bytes are not a supported image.
 	ErrImageNotAnImage = errors.New("attachment is not a supported image")
+
+	// ErrMalformedDocument is returned when the caller's document is not a
+	// well-formed ProseMirror document — valid JSON, but not an object, or not
+	// rooted at type "doc", or carrying a node with no type, or with a
+	// "content" member that is not an array.
+	//
+	// ONE SENTINEL RATHER THAN ONE PER SHAPE, applied at the call to
+	// doc.Validate rather than inside doc itself. Three of the four refusals
+	// already carry an exported sentinel and the fourth does not, so a handler
+	// switch that enumerated them would have answered 400 for three shapes of
+	// the same mistake and 500 for the fourth — which is the defect this fixes,
+	// reintroduced one case smaller (known-issues #24). Wrapping the whole
+	// validation is exhaustive by construction, including for any refusal
+	// doc.Validate learns later, and it keeps the classification out of a
+	// package ADR-0012 governs.
+	ErrMalformedDocument = errors.New("document is malformed")
 )
 
 // SourceFormat describes where a page's editable document came from.
@@ -330,7 +346,7 @@ type SaveDraftInput struct {
 // belongs to publish, which is the moment anything becomes visible to a reader.
 func (s *DocumentService) SaveDraft(ctx context.Context, in SaveDraftInput) (DraftDocument, error) {
 	if err := doc.Validate(in.Doc); err != nil {
-		return DraftDocument{}, fmt.Errorf("draft document is malformed: %w", err)
+		return DraftDocument{}, fmt.Errorf("%w: draft: %w", ErrMalformedDocument, err)
 	}
 	if in.BaseVersion < 1 {
 		return DraftDocument{}, fmt.Errorf("%w: base_version must be the version the draft was started from", ErrVersionConflict)
@@ -464,7 +480,7 @@ func (s *DocumentService) Publish(ctx context.Context, in PublishInput) (Publish
 		return PublishResult{}, ErrEmptyTitle
 	}
 	if err := doc.Validate(in.Doc); err != nil {
-		return PublishResult{}, fmt.Errorf("document is malformed: %w", err)
+		return PublishResult{}, fmt.Errorf("%w: %w", ErrMalformedDocument, err)
 	}
 
 	page, err := s.page(ctx, in.PageID)

@@ -164,6 +164,7 @@ func (h *Handler) ListPages(w http.ResponseWriter, r *http.Request) {
 // @Success      201      {object}  map[string]interface{}         "Created page"
 // @Failure      400      {object}  api.SwaggerErrorResponse       "Validation error"
 // @Failure      401      {object}  api.SwaggerErrorResponse       "Not authenticated"
+// @Failure      404      {object}  api.SwaggerErrorResponse       "Parent page not found"
 // @Failure      500      {object}  api.SwaggerErrorResponse       "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/wiki [post]
 func (h *Handler) CreatePage(w http.ResponseWriter, r *http.Request) {
@@ -843,6 +844,21 @@ func handleWikiError(w http.ResponseWriter, r *http.Request, err error) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
 	case errors.Is(err, wiki.ErrRevisionNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
+	// The tree-shape refusals. All four were raised by the domain and matched
+	// by nothing here, so every one of them fell to the default arm and
+	// answered 500 — on create for the first, and on move for all four —
+	// while both routes annotate 404 and 400 (known-issues #24).
+	//
+	// A named page or space that does not exist is 404, which is also what
+	// keeps the move route from confirming that a space it refused exists. The
+	// other two are 400: both things exist and it is the COMBINATION the caller
+	// asked for that is wrong, which is a fact about the request.
+	case errors.Is(err, wiki.ErrParentPageNotFound),
+		errors.Is(err, wiki.ErrTargetSpaceNotFound):
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
+	case errors.Is(err, wiki.ErrParentNotInTargetSpace),
+		errors.Is(err, wiki.ErrPageMoveCycle):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
 	default:
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
 			fmt.Sprintf("wiki operation failed: %v", err))

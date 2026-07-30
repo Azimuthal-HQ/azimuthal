@@ -250,8 +250,25 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, a Actor, d Dr
 		}
 		return View{}, ErrNotOwner
 	}
+	// PATCH is a merge: a field the request does not carry keeps the value the
+	// row already holds. Visibility inherits so that renaming a view cannot
+	// un-share it as a side effect — and the team it is shared WITH has to
+	// inherit alongside it, or the one visibility that carries a payload is the
+	// one the inheritance cannot express. Inheriting half the pair produced a
+	// merged draft of "team" with no team, which Normalise refuses: a caller
+	// who sent only a new name was answered "a team-visible view must name a
+	// team", about a field they did not send (known-issues #25).
+	//
+	// The team inherits only while the visibility is UNCHANGED. A request that
+	// moves the view to another audience is stating the pair, and carrying a
+	// stale team into an explicit change would be the merge overruling what the
+	// caller said. So org and private still drop the team id (Normalise does
+	// it), and a move TO team that names no team is still refused.
 	if d.Visibility == "" {
 		d.Visibility = existing.Visibility
+	}
+	if d.VisibilityTeamID == nil && d.Visibility == existing.Visibility {
+		d.VisibilityTeamID = existing.VisibilityTeamID
 	}
 	if err := d.validate(a); err != nil {
 		return View{}, err
