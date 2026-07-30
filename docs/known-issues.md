@@ -1036,3 +1036,44 @@ fix, and a move-to-team-without-a-team case that must keep failing after it.
 when somebody fixes this. `internal/core/dashboards/service_test.go:196` renames a dashboard, but
 the fixture is a private one, which is the visibility that carries no payload — so it passes either
 way and says nothing about this.
+
+---
+
+## 27. `POST /wiki` accepts a `parent_id` in another space, and roots the new page under it
+
+**Severity**: Medium (silent tree corruption; no disclosure beyond what the endpoint already told
+you, no data loss)
+**Status**: Open. Found by the maintenance mini-pass while closing #24's first site, and verified
+over HTTP. Not fixed — it is a new refusal rather than a status-class repair, so it needs its own
+decision about what to do with pages already in this state.
+
+`wiki.Service.CreatePage` (`internal/core/wiki/page.go`) resolves the parent with a bare
+`s.store.GetPageByID(ctx, *input.ParentID)` and never compares `parent.SpaceID` to
+`input.SpaceID`. The move path does compare — `resolveMoveParent` in
+`internal/db/adapters/content_tx.go` raises `wiki.ErrParentNotInTargetSpace` for exactly this — so
+the two paths that set a page's parent disagree about whether a cross-space parent is legal.
+
+Verified against a real server: creating in space B with a `parent_id` from space A answers **201**,
+and the row comes back with `space_id` = B while `path` is rooted at A's page:
+
+```
+space_id: ca5310ba-…            (B, the caller's space)
+parent_id: 8530e5fb-…           (a page in A)
+path: 8530e5fb-….4f9a73e1-…     (rooted outside its own space)
+```
+
+`GET /wiki` for space B then lists it as a page whose `parent_id` names nothing in the list — an
+orphan the tree cannot render under anything. The materialised path is what
+`PathWithinSubtree` and the share-revocation subtree queries operate on, so the wrong root is not
+cosmetic.
+
+**Not made worse by #24's fix, and not made better either.** Before it, an unknown parent answered
+500 and a known one 201, so a caller could already tell whether a page id existed; now it is 404 and
+201. The cross-space case was 201 before and is 201 still.
+
+**What closing it takes.** The comparison the move path already makes, raised as the sentinel that
+already exists (`ErrParentNotInTargetSpace`, now mapped to 400), plus a decision the fix cannot make
+on its own: whether any page is already stored this way, and what to do about it. A create-time
+refusal leaves existing bad rows unrepaired, and a migration that re-roots them is a data change
+somebody has to sign off. That is why it is recorded rather than fixed in a pass scoped to error
+classes.
