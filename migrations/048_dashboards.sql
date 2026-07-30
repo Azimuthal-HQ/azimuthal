@@ -13,14 +13,36 @@
 -- vocabulary of internal/core/views/filter.go to live.
 --
 --
--- Migration number: 042
+-- Migration number: 048
 -- ---------------------
 -- The spec's §4 table says "039+ unassigned — Dashboards — P5". 039 shipped as
--- Beacon queues while this phase was being planned, and 040/041 are reserved
--- for a Codex phase running concurrently. Numbering is immutable once shipped
--- and the spec's unassigned rows have been wrong every time they were tested,
--- so this file takes 042 and the spec table is corrected in the same PR.
--- 043 was reserved for this phase and is NOT used; it stays free.
+-- Beacon queues while this phase was being planned, and 040/041 were reserved
+-- for a Codex phase running concurrently, so this phase was assigned 042 and
+-- 043 and this file was written as 042.
+--
+-- IT COULD NOT STAY THERE, and the reason is worth recording because the same
+-- trap is waiting for the next phase that runs long. While this branch was
+-- open, a customer-portal phase merged 044 and 045 to main. goose refuses a
+-- migration numbered BELOW the current version — `found 1 missing migrations
+-- before current version 45` — and internal/db/migrate.go runs goose.UpContext
+-- at BOOT. So a 042 landing after 045 would not have produced a failed
+-- migration; it would have produced a server that does not start, on every
+-- deployment already carrying the portal.
+--
+-- Nothing in CI would have caught it. Every CI database is built fresh from an
+-- empty schema, where numbering gaps are irrelevant and out-of-order does not
+-- arise. The failure only exists on a database with history — which is to say,
+-- only in production.
+--
+-- Numbering is immutable ONCE SHIPPED. This migration had not shipped, so it
+-- moves: 048, the first free number (main is at 045; a workflow phase holds
+-- 046 and 047 on an open branch). 042 and 043 were reserved for this phase and
+-- neither is used; both stay free.
+--
+-- The rule this leaves behind: a pre-assigned migration number is a claim on a
+-- position in a SEQUENCE, and it expires the moment a higher number merges
+-- first. Re-check it against main before you open the PR, not when you plan
+-- the phase.
 --
 --
 -- Visibility: the same three audiences as saved_views, and the same FK

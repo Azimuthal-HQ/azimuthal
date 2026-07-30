@@ -299,7 +299,7 @@ func TestDashboardInvariant_AnUnreadableGadgetDoesNotBreakTheDashboard(t *testin
 // older or newer build already left behind.
 //
 // Fails-before: make resolveGadgets return an error on an unknown key (or add
-// a CHECK constraint to migration 042) and this returns 500 with no tiles at
+// a CHECK constraint to migration 048) and this returns 500 with no tiles at
 // all, taking every other gadget on the dashboard with it.
 func TestDashboardInvariant_AnUnknownGadgetKeyRendersAPlaceholder(t *testing.T) {
 	ts := newTestServer(t)

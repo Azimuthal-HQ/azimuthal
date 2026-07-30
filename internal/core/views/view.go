@@ -160,7 +160,7 @@ func (a Actor) inTeam(id uuid.UUID) bool {
 }
 
 // Audience is the view's (visibility, team) pair. The rule it encodes is
-// shared with dashboards (migration 042) and lives in audience.go so there is
+// shared with dashboards (migration 048) and lives in audience.go so there is
 // one implementation of it.
 func (v *View) Audience() Audience {
 	return Audience{Visibility: v.Visibility, TeamID: v.VisibilityTeamID}

@@ -15,7 +15,7 @@ import (
 )
 
 // DashboardAdapter implements dashboards.Store over the dashboards and
-// dashboard_gadgets tables (migration 042).
+// dashboard_gadgets tables (migration 048).
 //
 // It holds the pool as well as the queries because two of its writes are
 // several statements that must land together: replacing a layout, and seeding
@@ -158,7 +158,7 @@ func (a *DashboardAdapter) Get(ctx context.Context, orgID, id uuid.UUID) (dashbo
 // When the row claims the default slot the write is a transaction: the
 // previous holder is stood down first, because dashboards_one_default is a
 // plain partial unique index rather than a deferrable constraint. Migration
-// 042 says why it is not deferrable — layout writes are delete-then-insert and
+// 048 says why it is not deferrable — layout writes are delete-then-insert and
 // never pass through a colliding state — so this one caller pays for it
 // explicitly rather than every reader paying for a deferral it does not need.
 func (a *DashboardAdapter) Update(ctx context.Context, d dashboards.Dashboard) (dashboards.Dashboard, error) {

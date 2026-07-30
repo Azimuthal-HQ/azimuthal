@@ -1,5 +1,5 @@
 // Package dashboards implements dashboards and the gadget registry (P5,
-// ADR-0009, migration 042): composable grids of gadgets whose data always
+// ADR-0009, migration 048): composable grids of gadgets whose data always
 // comes from the saved-view layer, resolved per viewer on every render.
 //
 // This file is the single place the gadget vocabulary is defined. It is the
@@ -31,7 +31,7 @@
 // build does not know that is ALREADY STORED — written by an older or newer
 // build — must still load, as an inert labelled placeholder (decision log C5:
 // "unknown gadget_key — placeholder tile, never crashes"). That is why
-// migration 042 puts no CHECK on gadget_key and why Gadget.Key is a string
+// migration 048 puts no CHECK on gadget_key and why Gadget.Key is a string
 // rather than a GadgetKey.
 package dashboards
 
@@ -72,7 +72,7 @@ const (
 //
 // Deliberately NOT views.Module. A views.Module names which TABLE a query
 // reads; this names which part of the product lists a dashboard, and 'home' is
-// an answer to the second question and not to the first. Migration 042's
+// an answer to the second question and not to the first. Migration 048's
 // dashboards_module_valid holds the same three values.
 type Module string
 
@@ -130,7 +130,7 @@ type Definition struct {
 	Key  GadgetKey
 	Name string
 	// DefaultSpan is the column span a freshly added gadget takes, in the
-	// four-column grid migration 042's col_span CHECK bounds.
+	// four-column grid migration 048's col_span CHECK bounds.
 	DefaultSpan int32
 	// Modules is which dashboard modules may host this gadget.
 	Modules []Module

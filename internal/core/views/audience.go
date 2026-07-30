@@ -6,7 +6,7 @@ import "github.com/google/uuid"
 // may see a definition. It says nothing about results.
 //
 // WHY IT IS A TYPE RATHER THAN A PAIR OF FIELDS ON EACH MODEL. Saved views
-// (migration 038) and dashboards (migration 042) carry the identical rule:
+// (migration 038) and dashboards (migration 048) carry the identical rule:
 // three audiences, an owner who always reaches their own row, an org-admin
 // bypass, a subject-side expanded team set, and a degraded team row whose team
 // was deleted that must match nobody. Written twice, the two copies drift, and

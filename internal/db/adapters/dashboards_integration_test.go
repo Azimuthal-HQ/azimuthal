@@ -14,7 +14,7 @@ import (
 )
 
 // The dashboards store against a real database. These are the tests that hold
-// migration 042's constraints in place: the FK that must not cascade, the
+// migration 048's constraints in place: the FK that must not cascade, the
 // partial unique index behind "one default", and the whole-collection layout
 // write that must not leave a dashboard half-arranged.
 
@@ -83,13 +83,13 @@ func TestDashboardStore_GetIsScopedToTheOrg(t *testing.T) {
 		"a dashboard id from another organisation must not resolve, even with a correct uuid")
 }
 
-// MIGRATION 042's FK, THE ONE D57 IS ABOUT. Deleting a team must NULL the
+// MIGRATION 048's FK, THE ONE D57 IS ABOUT. Deleting a team must NULL the
 // column, never delete the dashboard. Under ON DELETE CASCADE — which is what
 // the spec sketch declares, character for character — this test fails by
 // finding no row at all: somebody else's saved work, destroyed as a side
 // effect of an unrelated administrative action.
 //
-// Fails-before: change the reference in migration 042 to ON DELETE CASCADE and
+// Fails-before: change the reference in migration 048 to ON DELETE CASCADE and
 // the Get below returns ErrNotFound.
 func TestDashboardStore_TeamDeletionDegradesRatherThanDestroys(t *testing.T) {
 	db := testutil.NewTestDB(t)
@@ -437,7 +437,7 @@ func TestDashboardStore_DeletingADashboardCascadesToItsGadgets(t *testing.T) {
 }
 
 // A stored key this build does not define must LOAD — that is what makes the
-// placeholder tile possible. Migration 042 deliberately puts no CHECK on
+// placeholder tile possible. Migration 048 deliberately puts no CHECK on
 // gadget_key for exactly this.
 //
 // Fails-before: add a CHECK constraint listing the known keys and the insert

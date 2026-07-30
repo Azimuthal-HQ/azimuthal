@@ -68,7 +68,7 @@ func (d *Dashboard) CanSee(a views.Actor) bool { return d.Audience().Reaches(d.O
 // markValidity fills InvalidReason.
 //
 // One rule, and no query: a dashboard's only scope is its audience, and the
-// only way that can degrade is the team being deleted, which migration 042
+// only way that can degrade is the team being deleted, which migration 048
 // records by nulling the column rather than cascading the row away. Saved
 // views need a query here because they also name spaces; dashboards name none.
 func (d *Dashboard) markValidity() {
@@ -111,7 +111,7 @@ const (
 	StateUnknownGadget GadgetState = "unknown_gadget"
 	// StateViewRequired is ADR-0009's fourth degradation rule: the gadget
 	// needs a saved view and has none, because the view was deleted (migration
-	// 042 nulls the column) or was never chosen. A recoverable empty state
+	// 048 nulls the column) or was never chosen. A recoverable empty state
 	// offering to pick another view.
 	StateViewRequired GadgetState = "view_required"
 	// StateViewUnreadable is decision log C2: the gadget names a view whose
@@ -251,7 +251,7 @@ func (d *Draft) validate(a views.Actor) error {
 	if !ValidModule(d.Module) {
 		return ErrModuleInvalid
 	}
-	// The write-path half of migration 042's deliberately absent CHECK: the
+	// The write-path half of migration 048's deliberately absent CHECK: the
 	// (team, NULL) state must be representable but never reachable by a write.
 	aud, err := views.Audience{Visibility: d.Visibility, TeamID: d.VisibilityTeamID}.Normalise(a)
 	if err != nil {
@@ -470,7 +470,7 @@ func resolveGadget(g Gadget, live map[uuid.UUID]views.View, a views.Actor) Resol
 			r.Query = &q
 		}
 	case g.SavedViewID == nil:
-		// The fourth degradation rule. Migration 042 nulls the column when a
+		// The fourth degradation rule. Migration 048 nulls the column when a
 		// view is hard-deleted, so this is also how a deleted view arrives
 		// here.
 		r.State = StateViewRequired

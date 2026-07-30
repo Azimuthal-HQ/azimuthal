@@ -1,4 +1,4 @@
--- Dashboards and gadgets (ADR-0009, migration 042).
+-- Dashboards and gadgets (ADR-0009, migration 048).
 --
 -- Everything here is ordinary org-scoped CRUD over two tables the caller owns
 -- or has been shared. There is no cross-space read in this file and there must
@@ -68,7 +68,7 @@ WHERE id = @id AND org_id = @org_id AND deleted_at IS NULL;
 -- subject-side expanded by the resolver, ADR-0007).
 --
 -- visibility_team_id IS NOT NULL is load-bearing on the team branch, exactly
--- as it is on ListSavedViewsForViewer. Migration 042 nulls the column when the
+-- as it is on ListSavedViewsForViewer. Migration 048 nulls the column when the
 -- team is deleted rather than cascading the row away, so a dashboard whose
 -- audience team is gone must match nobody but its owner. Without the explicit
 -- test that would rest on `= ANY('{}')` being false, which is SQL trivia

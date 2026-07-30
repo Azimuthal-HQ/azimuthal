@@ -9,7 +9,7 @@ import (
 )
 
 // The audience rule is now shared between saved views (migration 038) and
-// dashboards (migration 042). It is the one place "who may see this
+// dashboards (migration 048). It is the one place "who may see this
 // definition" is answered, so it is tested directly rather than only through
 // whichever model happens to call it.
 //
@@ -49,7 +49,7 @@ func TestAudience_TeamReachesOnlyTheEffectiveSet(t *testing.T) {
 		"no team at all must not reach a team-shared definition")
 }
 
-// A degraded team audience — the team was deleted, so migration 038/042 nulled
+// A degraded team audience — the team was deleted, so migration 038/048 nulled
 // the column — must match NOBODY but the owner. Fail closed, then prompt.
 //
 // Fails-before: drop the `a.TeamID != nil` guard in Reaches and
