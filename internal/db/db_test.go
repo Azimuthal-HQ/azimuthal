@@ -469,7 +469,7 @@ func TestCreateItemWithoutLabels(t *testing.T) {
 		Description: "",
 		Status:      "open",
 		Priority:    "medium",
-		ReporterID:  user.ID,
+		ReporterID:  pgtype.UUID{Bytes: user.ID, Valid: true},
 		Labels:      []string{},
 		Rank:        "a",
 	})
@@ -529,13 +529,14 @@ func TestCreateItemAdaptersDefaultLabels(t *testing.T) {
 
 	// Test ticket adapter with nil labels.
 	ticketAdapter := adapters.NewTicketAdapter(q)
+	reporterID := user.ID
 	tk := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    ticketSpace.ID,
 		Title:      "Ticket without labels",
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporterID,
 		Rank:       "a",
 	}
 	if err := ticketAdapter.Create(ctx, tk); err != nil {

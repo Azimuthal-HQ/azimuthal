@@ -954,6 +954,8 @@ components:
           type: string
         reporter_id:
           type: string
+        requester_id:
+          type: string
         resolved_at:
           $ref: '#/components/schemas/pgtype.Timestamptz'
         search_vector: {}
@@ -1136,6 +1138,129 @@ components:
         valid:
           type: boolean
       type: object
+    portal.adminPortalView:
+      properties:
+        enabled:
+          type: boolean
+        intro:
+          type: string
+        name:
+          type: string
+        portal_id:
+          type: string
+        portal_key:
+          type: string
+      type: object
+    portal.createPortalRequest:
+      properties:
+        intro:
+          type: string
+        name:
+          type: string
+      type: object
+    portal.messageView:
+      properties:
+        author:
+          type: string
+        body:
+          type: string
+        created_at:
+          type: string
+        from_requester:
+          type: boolean
+        id:
+          type: string
+      type: object
+    portal.newRequestBody:
+      properties:
+        description:
+          type: string
+        summary:
+          type: string
+      type: object
+    portal.portalView:
+      properties:
+        intro:
+          type: string
+        name:
+          type: string
+      type: object
+    portal.redeemRequest:
+      properties:
+        token:
+          type: string
+      type: object
+    portal.replyBody:
+      properties:
+        body:
+          type: string
+      type: object
+    portal.requestDetailResponse:
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/portal.messageView'
+          type: array
+          uniqueItems: false
+        request:
+          $ref: '#/components/schemas/portal.requestView'
+      type: object
+    portal.requestLinkRequest:
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+      type: object
+    portal.requestLinkResponse:
+      properties:
+        delivered:
+          type: boolean
+        magic_link_url:
+          type: string
+        status:
+          type: string
+      type: object
+    portal.requestView:
+      properties:
+        created_at:
+          type: string
+        description:
+          type: string
+        reference:
+          type: string
+        status:
+          description: Status is requester-facing language, not the internal status
+            string.
+          type: string
+        summary:
+          type: string
+        updated_at:
+          type: string
+      type: object
+    portal.requesterV:
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+      type: object
+    portal.sessionResponse:
+      properties:
+        expires_in:
+          type: integer
+        portal:
+          $ref: '#/components/schemas/portal.portalView'
+        requester:
+          $ref: '#/components/schemas/portal.requesterV'
+        session_token:
+          type: string
+      type: object
+    portal.setEnabledRequest:
+      properties:
+        enabled:
+          type: boolean
+      type: object
     projects.boardColumnRequest:
       properties:
         id:
@@ -1313,7 +1438,10 @@ components:
       type: object
   securitySchemes:
     BearerAuth:
-      description: 'JWT Bearer token. Format: "Bearer <token>". Obtain via POST /api/v1/auth/login'
+      description: 'Customer-portal session token. Format: "Bearer <token>". Obtained
+        via POST /api/v1/portal/auth/redeem. NOT interchangeable with BearerAuth:
+        the two token families carry different audience claims and each parser refuses
+        the other''s tokens.'
       in: header
       name: Authorization
       type: apiKey
@@ -4220,6 +4348,145 @@ paths:
       summary: Remove space member
       tags:
       - members
+  /orgs/{orgID}/spaces/{spaceID}/portal:
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.adminPortalView'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing manage_space
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No portal on this space
+      security:
+      - BearerAuth: []
+      summary: Get a space's customer portal configuration
+      tags:
+      - portal
+    patch:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/portal.setEnabledRequest'
+              description: Desired state
+              summary: request
+        description: Desired state
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.adminPortalView'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing manage_space
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No portal on this space
+      security:
+      - BearerAuth: []
+      summary: Enable or disable a space's customer portal
+      tags:
+      - portal
+    post:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/portal.createPortalRequest'
+              description: Portal name and introduction
+              summary: request
+        description: Portal name and introduction
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.adminPortalView'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing name, or not a Beacon space
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing manage_space
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: This space already has a portal
+      security:
+      - BearerAuth: []
+      summary: Enable the customer portal on a Beacon space
+      tags:
+      - portal
   /orgs/{orgID}/spaces/{spaceID}/projects/backlog:
     get:
       description: Returns the unassigned backlog items for a space
@@ -11031,6 +11298,294 @@ paths:
       summary: Delete workflow transition
       tags:
       - workflows
+  /portal/{portalKey}:
+    get:
+      description: Returns the public name and introduction for a portal. Unauthenticated.
+      parameters:
+      - description: Opaque portal key
+        in: path
+        name: portalKey
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.portalView'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No such portal
+      summary: Describe a customer portal
+      tags:
+      - portal
+  /portal/{portalKey}/auth/request-link:
+    post:
+      description: Sends a single-use sign-in link. Always answers 202, whether or
+        not the address is known.
+      parameters:
+      - description: Opaque portal key
+        in: path
+        name: portalKey
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/portal.requestLinkRequest'
+              description: Email address
+              summary: request
+        description: Email address
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.requestLinkResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Malformed address
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No such portal
+      summary: Request a portal sign-in link
+      tags:
+      - portal
+  /portal/{portalKey}/my/auth/sign-out:
+    post:
+      parameters:
+      - description: Opaque portal key
+        in: path
+        name: portalKey
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Signed out
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No portal session
+      security:
+      - PortalSessionAuth: []
+      summary: Sign out of the portal
+      tags:
+      - portal
+  /portal/{portalKey}/my/requests:
+    get:
+      parameters:
+      - description: Opaque portal key
+        in: path
+        name: portalKey
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/portal.requestView'
+                type: array
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No portal session
+      security:
+      - PortalSessionAuth: []
+      summary: List my requests
+      tags:
+      - portal
+    post:
+      parameters:
+      - description: Opaque portal key
+        in: path
+        name: portalKey
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/portal.newRequestBody'
+              description: Summary and description
+              summary: request
+        description: Summary and description
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.requestView'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Missing summary
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No portal session
+      security:
+      - PortalSessionAuth: []
+      summary: Submit a request
+      tags:
+      - portal
+  /portal/{portalKey}/my/requests/{requestID}:
+    get:
+      parameters:
+      - description: Opaque portal key
+        in: path
+        name: portalKey
+        required: true
+        schema:
+          type: string
+      - description: Request reference
+        in: path
+        name: requestID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.requestDetailResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No portal session
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No such request, or not yours
+      security:
+      - PortalSessionAuth: []
+      summary: Get one of my requests
+      tags:
+      - portal
+  /portal/{portalKey}/my/requests/{requestID}/replies:
+    post:
+      parameters:
+      - description: Opaque portal key
+        in: path
+        name: portalKey
+        required: true
+        schema:
+          type: string
+      - description: Request reference
+        in: path
+        name: requestID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/portal.replyBody'
+              description: Message text
+              summary: request
+        description: Message text
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.messageView'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Empty message
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No portal session
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: No such request, or not yours
+      security:
+      - PortalSessionAuth: []
+      summary: Reply to one of my requests
+      tags:
+      - portal
+  /portal/auth/redeem:
+    post:
+      description: Exchanges a single-use sign-in token for a portal session token.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/portal.redeemRequest'
+              description: Sign-in token
+              summary: request
+        description: Sign-in token
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/portal.sessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Malformed body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unknown, used, superseded or expired link
+      summary: Redeem a portal sign-in link
+      tags:
+      - portal
   /ready:
     get:
       description: Returns {"status":"ready"} when the server is ready to accept traffic.

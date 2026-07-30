@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
+	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -40,6 +42,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/portal"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
@@ -85,6 +88,12 @@ type testServer struct {
 	// a test can plant an object the upload gate would never have accepted —
 	// which is the only way to reach the serve path's own type check.
 	AvatarBlobs *storage.MemoryStore
+	// PortalNotifications records what the portal enqueued. cmd/server/main.go
+	// passes a real notifier, so the harness must pass one too or the reply
+	// notification would be dark — non-nil and never exercised, which is the
+	// softer version of the dark-dependency problem and the exact shape the
+	// comments handler has been in since it was written.
+	PortalNotifications *portalNotificationRecorder
 }
 
 // tokenFor issues an access token for an arbitrary user of the org —
@@ -121,6 +130,10 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		AccessTTL:  24 * time.Hour,
 		RefreshTTL: 7 * 24 * time.Hour,
 		Issuer:     "azimuthal-test",
+		// Mirrors cmd/server/main.go. Without it the harness would exercise a
+		// deployment with no audience separation at all, and every portal
+		// boundary test would be measuring a configuration nobody ships.
+		Audience: auth.AudienceInternal,
 	})
 
 	userAdapter := adapters.NewUserAdapter(pool, org.ID)
@@ -211,6 +224,32 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// the config below and fails on any handler dependency left nil.
 	savedViewAdapter := adapters.NewSavedViewAdapter(pool)
 
+	// Customer portal. DiscloseLink is on so tests can follow a sign-in link
+	// without a mailbox; config.validate refuses that combination in
+	// production, which is the only place it would be unsafe.
+	portalSvc := portal.NewService(
+		adapters.NewPortalAdapter(pool),
+		portal.NewTokenService(portal.TokenConfig{
+			PrivateKey: privateKey,
+			PublicKey:  &privateKey.PublicKey,
+			SessionTTL: 72 * time.Hour,
+			Issuer:     "azimuthal-test",
+		}),
+		nil,
+		portal.Config{LinkTTL: time.Hour, DiscloseLink: true, BaseURL: "http://portal.test"},
+	)
+	portalNotifs := &portalNotificationRecorder{}
+	portalHandler := portalapi.NewHandler(portalSvc).
+		WithAuditLogger(auditLog).
+		WithNotifier(portalNotifs.record).
+		WithSpaceTypes(func(ctx context.Context, spaceID uuid.UUID) (string, error) {
+			sp, err := queries.GetSpaceByID(ctx, spaceID)
+			if err != nil {
+				return "", fmt.Errorf("resolving space type: %w", err)
+			}
+			return sp.Type, nil
+		})
+
 	cfg := api.RouterConfig{
 		Authenticator: authenticator,
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner, userAdapter).
@@ -246,7 +285,9 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			views.NewService(savedViewAdapter, savedViewAdapter),
 			views.NewQueueService(savedViewAdapter),
 		),
-		SPAHandler: nil,
+		PortalHandler: portalHandler,
+		PortalService: portalSvc,
+		SPAHandler:    nil,
 		SpaceOrgResolver: func(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, error) {
 			s, err := queries.GetSpaceByID(ctx, spaceID)
 			if err != nil {
@@ -269,6 +310,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		Token: pair.AccessToken, WorkflowAdapter: workflowAdapter,
 		JWT: jwtSvc, TeamService: teamSvc, GrantService: grantSvc,
 		RouterCfg: cfg, AuditLog: auditLog, AvatarBlobs: avatarBlobs,
+		PortalNotifications: portalNotifs,
 	}
 }
 
@@ -1970,4 +2012,27 @@ func TestIntegration_Projects_RankItem(t *testing.T) {
 	}, true)
 	require.True(t, r.StatusCode == http.StatusOK || r.StatusCode == http.StatusNoContent || r.StatusCode == http.StatusNotFound,
 		"rank item: %d %s", r.StatusCode, r.Body)
+}
+
+// portalNotificationRecorder captures the notifications the portal enqueues, so
+// a test can assert that a customer reply actually reaches the assignee rather
+// than assuming the wiring is live.
+type portalNotificationRecorder struct {
+	mu   sync.Mutex
+	args []jobs.NotificationArgs
+}
+
+func (r *portalNotificationRecorder) record(a jobs.NotificationArgs) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.args = append(r.args, a)
+}
+
+// All returns a copy of what was recorded.
+func (r *portalNotificationRecorder) All() []jobs.NotificationArgs {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]jobs.NotificationArgs, len(r.args))
+	copy(out, r.args)
+	return out
 }

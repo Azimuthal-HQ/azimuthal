@@ -27,7 +27,7 @@ func TestDbTicketToTicket(t *testing.T) {
 		Description: "A test ticket",
 		Status:      "open",
 		Priority:    "high",
-		ReporterID:  reporterID,
+		ReporterID:  pgtype.UUID{Bytes: reporterID, Valid: true},
 		AssigneeID:  pgtype.UUID{Bytes: assigneeID, Valid: true},
 		Labels:      []string{"bug", "auth"},
 		DueAt:       pgtype.Timestamptz{Time: due, Valid: true},
@@ -60,7 +60,7 @@ func TestDbTicketToTicket(t *testing.T) {
 	if got.Priority != tickets.PriorityHigh {
 		t.Errorf("Priority mismatch: got %v, want %v", got.Priority, tickets.PriorityHigh)
 	}
-	if got.ReporterID != reporterID {
+	if got.ReporterID == nil || *got.ReporterID != reporterID {
 		t.Errorf("ReporterID mismatch")
 	}
 	if got.AssigneeID == nil || *got.AssigneeID != assigneeID {
@@ -91,7 +91,7 @@ func TestDbTicketToTicketNilOptionals(t *testing.T) {
 		Title:      "Minimal ticket",
 		Status:     "open",
 		Priority:   "medium",
-		ReporterID: uuid.New(),
+		ReporterID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		AssigneeID: pgtype.UUID{},
 		DueAt:      pgtype.Timestamptz{},
 		ResolvedAt: pgtype.Timestamptz{},
@@ -114,11 +114,11 @@ func TestDbTicketToTicketNilOptionals(t *testing.T) {
 func TestDbTicketsToTickets(t *testing.T) {
 	dbTickets := []generated.Ticket{
 		{ID: uuid.New(), SpaceID: uuid.New(), Number: 1, Title: "First", Status: "open",
-			Priority: "medium", ReporterID: uuid.New(),
+			Priority: "medium", ReporterID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
 			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}},
 		{ID: uuid.New(), SpaceID: uuid.New(), Number: 2, Title: "Second", Status: "open",
-			Priority: "high", ReporterID: uuid.New(),
+			Priority: "high", ReporterID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
 			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 			UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}},
 	}
@@ -137,6 +137,7 @@ func TestDbTicketsToTicketsEmpty(t *testing.T) {
 }
 
 func TestTicketCreateParamsValidation(t *testing.T) {
+	reporter := uuid.New()
 	assignee := uuid.New()
 	due := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
 	tk := &tickets.Ticket{
@@ -146,7 +147,7 @@ func TestTicketCreateParamsValidation(t *testing.T) {
 		Description: "Desc",
 		Status:      tickets.StatusOpen,
 		Priority:    tickets.PriorityHigh,
-		ReporterID:  uuid.New(),
+		ReporterID:  &reporter,
 		AssigneeID:  &assignee,
 		Labels:      []string{"bug"},
 		DueAt:       &due,
@@ -162,7 +163,7 @@ func TestTicketCreateParamsValidation(t *testing.T) {
 		Description: tk.Description,
 		Status:      string(tk.Status),
 		Priority:    string(tk.Priority),
-		ReporterID:  tk.ReporterID,
+		ReporterID:  pgUUID(tk.ReporterID),
 		AssigneeID:  pgUUID(tk.AssigneeID),
 		Labels:      coalesceLabels(tk.Labels),
 		DueAt:       pgTimestampPtr(tk.DueAt),
@@ -196,13 +197,14 @@ func TestTicketCreateParamsValidation(t *testing.T) {
 }
 
 func TestTicketCreateParamsNilOptionals(t *testing.T) {
+	reporter := uuid.New()
 	tk := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    uuid.New(),
 		Title:      "Minimal",
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityMedium,
-		ReporterID: uuid.New(),
+		ReporterID: &reporter,
 	}
 
 	params := generated.CreateTicketParams{
@@ -213,7 +215,7 @@ func TestTicketCreateParamsNilOptionals(t *testing.T) {
 		Description: tk.Description,
 		Status:      string(tk.Status),
 		Priority:    string(tk.Priority),
-		ReporterID:  tk.ReporterID,
+		ReporterID:  pgUUID(tk.ReporterID),
 		AssigneeID:  pgUUID(tk.AssigneeID),
 		Labels:      coalesceLabels(tk.Labels),
 		DueAt:       pgTimestampPtr(tk.DueAt),

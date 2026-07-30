@@ -38,7 +38,22 @@ import (
 // intentionallyAbsent lists handler dependencies that are legitimately nil in
 // the harness, each with the reason. Adding an entry is deliberate; it is the
 // act this test exists to force. Key format: "FieldName.dependencyField".
-var intentionallyAbsent = map[string]string{}
+var intentionallyAbsent = map[string]string{
+	// The portal's email sender is nil in LINK delivery mode, which is the
+	// default and what the harness runs. cmd/server/main.go leaves it nil in
+	// exactly the same case — `var portalSender portal.Sender` is assigned
+	// only when AZIMUTHAL_PORTAL_LINK_DELIVERY=email — so the harness is
+	// faithful to production here rather than diverging from it, which is
+	// what this test actually polices.
+	//
+	// Nothing goes dark as a result. portal.Service.deliver checks both the
+	// flag and the pointer and reports Delivered=false rather than failing,
+	// so the sign-in path is fully exercised in link mode; the tests read the
+	// URL out of the response, which is that mode's entire purpose. The email
+	// body is covered by adapters.PortalLinkSender's own test, not through
+	// the router.
+	"PortalService.sender": "nil in link-delivery mode, matching cmd/server/main.go; deliver() checks both the flag and the pointer, and the link path is exercised through the returned URL",
+}
 
 // dependencyKinds are the field kinds that can be nil and therefore can go
 // dark. Value fields (a ticketref.Policy, an int) cannot, and their zero

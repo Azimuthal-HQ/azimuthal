@@ -146,6 +146,15 @@ func TestDocsSpec_AllProtectedEndpointsHaveSecurity(t *testing.T) {
 		// are public by design (see route_accounting_test's public rows).
 		"/invites/{token}": {"get": true},
 		"/invites/accept":  {"post": true},
+		// Customer portal (unauthenticated half). An external requester holds
+		// no account by design (migration 044), so these three cannot carry a
+		// BearerAuth requirement. Possession of the emailed magic-link token
+		// is the credential — the same reasoning as the invite pair above.
+		// The requester-authenticated half (/portal/{portalKey}/my/...) is
+		// NOT listed here and must keep its security requirement.
+		"/portal/{portalKey}":                   {"get": true},
+		"/portal/{portalKey}/auth/request-link": {"post": true},
+		"/portal/auth/redeem":                   {"post": true},
 	}
 
 	var unsecured []string

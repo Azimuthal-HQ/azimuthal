@@ -383,7 +383,7 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 		Description: itemDesc,
 		Status:      "open",
 		Priority:    "medium",
-		ReporterID:  user.ID,
+		ReporterID:  pgtype.UUID{Bytes: user.ID, Valid: true},
 		Labels:      []string{},
 		Rank:        "a0",
 	})
@@ -403,7 +403,7 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 		ID:         uuid.New(),
 		EntityType: "ticket",
 		EntityID:   item.ID,
-		AuthorID:   user.ID,
+		AuthorID:   pgtype.UUID{Bytes: user.ID, Valid: true},
 		Body:       "Round-trip comment body.",
 	})
 	require.NoError(t, err)

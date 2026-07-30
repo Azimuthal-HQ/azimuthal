@@ -557,7 +557,7 @@ func TestComments(t *testing.T) {
 	defer func() { _ = q.SoftDeleteProjectItem(ctx, item.ID) }()
 	comment, err := q.CreateComment(ctx, generated.CreateCommentParams{
 		ID: uuid.New(), EntityType: "project_item", EntityID: item.ID,
-		AuthorID: user.ID, Body: "This is a comment",
+		AuthorID: pgtype.UUID{Bytes: user.ID, Valid: true}, Body: "This is a comment",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment: %v", err)
@@ -590,7 +590,7 @@ func TestComments(t *testing.T) {
 	parentUID := pgtype.UUID{Bytes: comment.ID, Valid: true}
 	reply, err := q.CreateComment(ctx, generated.CreateCommentParams{
 		ID: uuid.New(), EntityType: "project_item", EntityID: item.ID, ParentID: parentUID,
-		AuthorID: user.ID, Body: "This is a reply",
+		AuthorID: pgtype.UUID{Bytes: user.ID, Valid: true}, Body: "This is a reply",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment reply: %v", err)
@@ -612,7 +612,7 @@ func TestComments(t *testing.T) {
 	}
 	pageComment, err := q.CreateComment(ctx, generated.CreateCommentParams{
 		ID: uuid.New(), EntityType: "page", EntityID: page.ID,
-		AuthorID: user.ID, Body: "Page comment",
+		AuthorID: pgtype.UUID{Bytes: user.ID, Valid: true}, Body: "Page comment",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment on page: %v", err)

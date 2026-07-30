@@ -1,26 +1,61 @@
+-- CreateComment writes an AGENT comment.
+--
+-- THE EMPTY STRING MEANS INTERNAL, and the COALESCE is what makes that true
+-- rather than a convention. sqlc turns visibility into a required Go
+-- parameter, so migration 045's column DEFAULT can never fire on this
+-- statement — every insert sends a value, including the zero value. Without
+-- the COALESCE a caller that simply forgot the field would send "", which
+-- satisfies no branch of comments_visibility_valid and fails the write.
+--
+-- Failing loudly would be defensible; defaulting to the safe value is better,
+-- because the two mistakes are not symmetric. A forgotten field that becomes
+-- 'internal' is a comment the customer has to wait for. A forgotten field
+-- that became 'public' would be a disclosure. The zero value must therefore
+-- be the private one, and this is where that is enforced for every caller at
+-- once instead of in each handler.
+--
+-- A requester's own reply does NOT come through here — see
+-- CreateRequesterComment in portal.sql, which is a separate statement so that
+-- the author columns cannot be mixed up.
 -- name: CreateComment :one
-INSERT INTO comments (id, entity_type, entity_id, parent_id, author_id, body)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO comments (id, entity_type, entity_id, parent_id, author_id, body, visibility)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF(sqlc.arg(visibility)::text, ''), 'internal'))
 RETURNING *;
 
 -- name: GetCommentByID :one
 SELECT * FROM comments WHERE id = $1 AND deleted_at IS NULL;
 
+-- ListCommentsByEntity is the AGENT-side thread: every comment on the entity,
+-- internal and public alike, with the visibility carried so the UI can mark
+-- which ones the customer can read.
+--
+-- THE AUTHOR JOINS ARE LEFT, AND MUST STAY LEFT. Migration 045 made
+-- author_id nullable so a requester's reply can be attributed to a
+-- requesters row instead of a users row. The INNER JOIN this replaced would
+-- have dropped every requester message from the agent's view of the
+-- conversation — silently, with the agent seeing a thread that appeared to
+-- have no customer in it.
 -- name: ListCommentsByEntity :many
 SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
        c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
-       u.display_name AS author_name, u.avatar_url AS author_avatar
+       c.visibility, c.author_requester_id,
+       COALESCE(u.display_name, r.display_name, '') AS author_name,
+       u.avatar_url AS author_avatar
 FROM comments c
-JOIN users u ON u.id = c.author_id
+LEFT JOIN users u ON u.id = c.author_id
+LEFT JOIN requesters r ON r.id = c.author_requester_id
 WHERE c.entity_type = $1 AND c.entity_id = $2 AND c.parent_id IS NULL AND c.deleted_at IS NULL
 ORDER BY c.created_at ASC;
 
 -- name: ListCommentReplies :many
 SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
        c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
-       u.display_name AS author_name, u.avatar_url AS author_avatar
+       c.visibility, c.author_requester_id,
+       COALESCE(u.display_name, r.display_name, '') AS author_name,
+       u.avatar_url AS author_avatar
 FROM comments c
-JOIN users u ON u.id = c.author_id
+LEFT JOIN users u ON u.id = c.author_id
+LEFT JOIN requesters r ON r.id = c.author_requester_id
 WHERE c.parent_id = $1 AND c.deleted_at IS NULL
 ORDER BY c.created_at ASC;
 

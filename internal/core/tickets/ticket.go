@@ -11,6 +11,14 @@ import (
 )
 
 // Ticket represents a service desk ticket.
+//
+// ReporterID and RequesterID are exclusive: exactly one is set, enforced by
+// migration 044's tickets_origin_identity. A ticket raised inside the product
+// has a reporter (a users row); one raised through the customer portal has a
+// requester (an account-less external identity, internal/core/portal). That
+// XOR is why there is no separate `origin` field — "this came from the
+// portal" is RequesterID != nil, derived from the identity itself, so a
+// provenance badge cannot disagree with the data behind it.
 type Ticket struct {
 	ID          uuid.UUID  `json:"id"`
 	SpaceID     uuid.UUID  `json:"space_id"`
@@ -19,7 +27,8 @@ type Ticket struct {
 	Description string     `json:"description"`
 	Status      Status     `json:"status"`
 	Priority    Priority   `json:"priority"`
-	ReporterID  uuid.UUID  `json:"reporter_id"`
+	ReporterID  *uuid.UUID `json:"reporter_id"`
+	RequesterID *uuid.UUID `json:"requester_id"`
 	AssigneeID  *uuid.UUID `json:"assignee_id"`
 	Labels      []string   `json:"labels"`
 	DueAt       *time.Time `json:"due_at"`
@@ -107,13 +116,17 @@ func (s *TicketService) Create(ctx context.Context, params CreateTicketParams) (
 		Description: params.Description,
 		Status:      StatusOpen,
 		Priority:    params.Priority,
-		ReporterID:  params.ReporterID,
-		AssigneeID:  params.AssigneeID,
-		Labels:      params.Labels,
-		DueAt:       params.DueAt,
-		Rank:        "",
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		// The agent create path still REQUIRES a reporter — ErrReporterRequired
+		// above is unchanged. Only the read model widened, so that a ticket
+		// raised through the portal (which does not come through here) can
+		// carry a requester instead. See the Ticket doc comment.
+		ReporterID: &params.ReporterID,
+		AssigneeID: params.AssigneeID,
+		Labels:     params.Labels,
+		DueAt:      params.DueAt,
+		Rank:       "",
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 
 	if err := s.repo.Create(ctx, t); err != nil {

@@ -14,6 +14,7 @@ import (
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
+	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -23,6 +24,7 @@ import (
 	wikiapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/wiki"
 	workflowsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/workflows"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/portal"
 )
 
 // RouterConfig holds all the dependencies needed to build the API router.
@@ -62,7 +64,18 @@ type RouterConfig struct {
 	// family. Cross-container by nature, so it has no {spaceID} to hang off
 	// (ADR-0010).
 	ViewHandler *viewsapi.Handler
-	SPAHandler  http.Handler // serves the embedded frontend; nil disables SPA serving
+	// PortalHandler serves the customer portal: the unauthenticated sign-in
+	// routes and the requester-authenticated request routes. nil leaves the
+	// whole surface unmounted, which is the correct default for a deployment
+	// that has not opted any space in.
+	PortalHandler *portalapi.Handler
+	// PortalService backs RequirePortalSession. It is separate from
+	// PortalHandler because the guard is middleware the ROUTER mounts, not
+	// something the handler can apply to itself — and mounting the handler
+	// without it would leave every requester route unauthenticated.
+	// TestHarness_PortalGuardIsMounted fails if the two ever disagree.
+	PortalService *portal.Service
+	SPAHandler    http.Handler // serves the embedded frontend; nil disables SPA serving
 	// AllowedOrigins is the explicit CORS allow-list, and nil or empty is the
 	// safe default: no CORS headers are emitted and the browser enforces
 	// same-origin. Cross-origin callers are admitted only by an operator
@@ -129,6 +142,33 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	if cfg.InviteHandler != nil {
 		r.Route("/api/v1/invites", func(r chi.Router) {
 			r.Mount("/", cfg.InviteHandler.PublicRoutes())
+		})
+	}
+
+	// The customer portal. Mounted OUTSIDE the /api/v1 group on purpose: that
+	// group's first statement is r.Use(RequireAuth), there is no per-route
+	// opt-out of it, and an external requester holds no internal credential to
+	// satisfy it with. Same placement as the public invite subtree above, for
+	// the same reason.
+	//
+	// Nothing here is org-scoped by URL, so ResolveAccess never runs and no
+	// access.Resolution reaches the context. That is correct rather than
+	// missing: a requester has no membership to resolve (migration 044), and
+	// every capability guard fails closed on a nil resolution anyway.
+	// Authorisation for this subtree is RequirePortalSession plus the
+	// requester-scoped queries behind it.
+	//
+	// The session subtree is a nested r.Route so the guard applies to the
+	// whole of it via r.Use. Since #64 a route added to a guarded GROUP
+	// inherits nothing unless it is inside that closure — the sibling public
+	// routes above are outside it and are meant to be.
+	if cfg.PortalHandler != nil {
+		r.Route("/api/v1/portal", func(r chi.Router) {
+			r.Mount("/", cfg.PortalHandler.PublicRoutes())
+			r.Route("/{portalKey}/my", func(r chi.Router) {
+				r.Use(portalapi.RequirePortalSession(cfg.PortalService))
+				r.Mount("/", cfg.PortalHandler.SessionRoutes())
+			})
 		})
 	}
 
@@ -470,6 +510,19 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 	}
 
 	mountQueueResources(r, cfg, spaceGuard, readableGuard, writeFloor)
+
+	// Customer-portal configuration (agent side). Ordinary space-scoped
+	// routes: org membership, space readability, and manage_space enforced in
+	// the handler. Deliberately NOT under writeFloor — the floor is
+	// create_items, and manage_space sits well above it, so adding the floor
+	// would make the capability check unreachable for anybody it would refuse.
+	if cfg.PortalHandler != nil {
+		r.Route("/spaces/{spaceID}/portal", func(r chi.Router) {
+			r.Use(spaceGuard)
+			r.Use(readableGuard)
+			r.Mount("/", cfg.PortalHandler.AdminRoutes())
+		})
+	}
 
 	// Tickets
 	r.Route("/spaces/{spaceID}/tickets", func(r chi.Router) {

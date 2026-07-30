@@ -27,13 +27,14 @@ func TestCreateItem_MinimumFields(t *testing.T) {
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
+	reporter := user.ID
 	ticket := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    space.ID,
 		Title:      "Minimal ticket",
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporter,
 		// Labels intentionally nil — must not cause SQLSTATE 23502
 	}
 
@@ -51,13 +52,14 @@ func TestCreateItem_LabelsDefaultsToEmptyArray(t *testing.T) {
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
+	reporter := user.ID
 	ticket := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    space.ID,
 		Title:      "Labels test",
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporter,
 		Labels:     nil, // nil — adapter must convert to []
 	}
 
@@ -79,13 +81,14 @@ func TestCreateItem_PriorityStoredAsLowercase(t *testing.T) {
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
+	reporter := user.ID
 	ticket := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    space.ID,
 		Title:      "Priority test",
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporter,
 	}
 
 	err := adapter.Create(context.Background(), ticket)
@@ -105,13 +108,14 @@ func TestCreateItem_StatusStoredAsLowercase(t *testing.T) {
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
+	reporter := user.ID
 	ticket := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    space.ID,
 		Title:      "Status test",
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityHigh,
-		ReporterID: user.ID,
+		ReporterID: &reporter,
 	}
 
 	err := adapter.Create(context.Background(), ticket)
@@ -132,6 +136,7 @@ func TestCreateItem_AllFieldsRoundTrip(t *testing.T) {
 	adapter := adapters.NewTicketAdapter(queries)
 
 	assigneeID := user.ID
+	reporterID := user.ID
 	ticket := &tickets.Ticket{
 		ID:          uuid.New(),
 		SpaceID:     space.ID,
@@ -139,7 +144,7 @@ func TestCreateItem_AllFieldsRoundTrip(t *testing.T) {
 		Description: "A detailed description",
 		Status:      tickets.StatusOpen,
 		Priority:    tickets.PriorityUrgent,
-		ReporterID:  user.ID,
+		ReporterID:  &reporterID,
 		AssigneeID:  &assigneeID,
 		Labels:      []string{"bug", "critical"},
 	}
@@ -168,6 +173,7 @@ func TestCreateItem_AllThreeSpaceTypes(t *testing.T) {
 	ticketAdapter := adapters.NewTicketAdapter(queries)
 	itemAdapter := adapters.NewItemAdapter(queries)
 
+	reporter := user.ID
 	for _, spaceType := range []string{"beacon", "vector"} {
 		space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, spaceType)
 		if spaceType == "beacon" {
@@ -177,7 +183,7 @@ func TestCreateItem_AllThreeSpaceTypes(t *testing.T) {
 				Title:      "Ticket in " + spaceType,
 				Status:     tickets.StatusOpen,
 				Priority:   tickets.PriorityMedium,
-				ReporterID: user.ID,
+				ReporterID: &reporter,
 			}
 			err := ticketAdapter.Create(context.Background(), ticket)
 			require.NoError(t, err, "create ticket in %s", spaceType)
@@ -189,7 +195,7 @@ func TestCreateItem_AllThreeSpaceTypes(t *testing.T) {
 				Title:      "Item in " + spaceType,
 				Status:     "open",
 				Priority:   "medium",
-				ReporterID: user.ID,
+				ReporterID: reporter,
 			}
 			err := itemAdapter.Create(context.Background(), item)
 			require.NoError(t, err, "create item in %s", spaceType)
@@ -206,13 +212,14 @@ func TestCreateTicket_TypeIsTicket(t *testing.T) {
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
+	reporter := user.ID
 	ticket := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    space.ID,
 		Title:      "Type test",
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporter,
 	}
 
 	err := adapter.Create(context.Background(), ticket)
@@ -302,13 +309,14 @@ func TestTicketAdapter_ListBySpace(t *testing.T) {
 	itemAdapter := adapters.NewItemAdapter(queries)
 
 	// Create a ticket.
+	reporter := user.ID
 	ticket := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    space.ID,
 		Title:      "A ticket",
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporter,
 	}
 	err := ticketAdapter.Create(context.Background(), ticket)
 	require.NoError(t, err)
@@ -342,13 +350,14 @@ func TestTicketAdapter_UpdateStatus(t *testing.T) {
 	queries := generated.New(db.Pool)
 	adapter := adapters.NewTicketAdapter(queries)
 
+	reporter := user.ID
 	ticket := &tickets.Ticket{
 		ID:         uuid.New(),
 		SpaceID:    space.ID,
 		Title:      "Status transition",
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityMedium,
-		ReporterID: user.ID,
+		ReporterID: &reporter,
 	}
 	err := adapter.Create(context.Background(), ticket)
 	require.NoError(t, err)

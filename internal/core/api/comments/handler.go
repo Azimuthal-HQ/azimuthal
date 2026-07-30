@@ -169,6 +169,15 @@ func (h *Handler) CreatePageComment(w http.ResponseWriter, r *http.Request) {
 type createCommentRequest struct {
 	Content  string     `json:"content"`
 	ParentID *uuid.UUID `json:"parent_id,omitempty"`
+	// Visibility is "internal" or "public", and OMITTING IT MEANS INTERNAL.
+	//
+	// A pointer rather than a string so that absent and "" are the same
+	// thing and both mean internal. This is the safe direction and it is the
+	// direction an old client — one written before the customer portal
+	// existed — necessarily takes: it sends no visibility, and its comments
+	// stay internal. Had the zero value meant public, shipping this would
+	// have retroactively published every comment posted by a stale tab.
+	Visibility *string `json:"visibility,omitempty"`
 }
 
 type commentResponse struct {
@@ -176,12 +185,48 @@ type commentResponse struct {
 	EntityType string     `json:"entity_type"`
 	EntityID   uuid.UUID  `json:"entity_id"`
 	ParentID   *uuid.UUID `json:"parent_id,omitempty"`
-	AuthorID   uuid.UUID  `json:"author_id"`
+	// AuthorID is null for a comment written by an external requester, who
+	// has no users row by design (migration 044). AuthorName carries their
+	// name in both cases.
+	AuthorID   *uuid.UUID `json:"author_id"`
 	AuthorName string     `json:"author_name"`
-	Body       string     `json:"body"`
-	Content    string     `json:"content"`
-	CreatedAt  string     `json:"created_at"`
-	UpdatedAt  string     `json:"updated_at"`
+	// FromRequester marks a customer's own message, so the agent thread can
+	// distinguish it without the client having to reason about which of two
+	// author columns is populated.
+	FromRequester bool `json:"from_requester"`
+	// Visibility is "internal" or "public". Present on the AGENT surface
+	// only: the portal's own serialiser has no such field, because the portal
+	// query returns only public rows and there is nothing to disambiguate.
+	Visibility string `json:"visibility"`
+	Body       string `json:"body"`
+	Content    string `json:"content"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+// Comment visibility values. Mirrors migration 045's comments_visibility_valid.
+const (
+	visibilityInternal = "internal"
+	visibilityPublic   = "public"
+)
+
+// resolveVisibility maps the request's optional visibility onto the stored
+// value, defaulting to internal and refusing anything else.
+//
+// AN AGENT'S COMMENT IS INTERNAL UNLESS THEY SAY OTHERWISE. Going public is
+// the explicit act, because the two mistakes are not symmetrical: an internal
+// note the customer never sees is a delay, and a public note the agent
+// thought was private is a disclosure that cannot be recalled.
+func resolveVisibility(v *string) (string, bool) {
+	if v == nil || *v == "" {
+		return visibilityInternal, true
+	}
+	switch *v {
+	case visibilityInternal, visibilityPublic:
+		return *v, true
+	default:
+		return "", false
+	}
 }
 
 // list returns all top-level comments for the entity whose ID is carried by
@@ -243,6 +288,20 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idP
 		return
 	}
 
+	visibility, ok := resolveVisibility(req.Visibility)
+	if !ok {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "visibility must be \"internal\" or \"public\"")
+		return
+	}
+	// Only a ticket has a customer who could read a public comment.
+	// Migration 045's comments_public_ticket_only would refuse this anyway;
+	// catching it here turns a constraint violation into an answer that says
+	// what was wrong.
+	if visibility == visibilityPublic && entityType != "ticket" {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "only ticket comments can be public")
+		return
+	}
+
 	parentID := pgtype.UUID{}
 	if req.ParentID != nil {
 		parentID = pgtype.UUID{Bytes: *req.ParentID, Valid: true}
@@ -253,8 +312,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idP
 		EntityType: entityType,
 		EntityID:   entityID,
 		ParentID:   parentID,
-		AuthorID:   claims.UserID,
+		AuthorID:   pgtype.UUID{Bytes: claims.UserID, Valid: true},
 		Body:       req.Content,
+		Visibility: visibility,
 	})
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create comment")
@@ -284,8 +344,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idP
 		EntityType: comment.EntityType,
 		EntityID:   comment.EntityID,
 		ParentID:   parentIDPtr,
-		AuthorID:   comment.AuthorID,
+		AuthorID:   goUUIDPtr(comment.AuthorID),
 		AuthorName: authorName,
+		Visibility: comment.Visibility,
 		Body:       comment.Body,
 		Content:    comment.Body,
 		CreatedAt:  comment.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
@@ -300,15 +361,27 @@ func rowToResponse(row generated.ListCommentsByEntityRow) commentResponse {
 		parentIDPtr = &id
 	}
 	return commentResponse{
-		ID:         row.ID,
-		EntityType: row.EntityType,
-		EntityID:   row.EntityID,
-		ParentID:   parentIDPtr,
-		AuthorID:   row.AuthorID,
-		AuthorName: row.AuthorName,
-		Body:       row.Body,
-		Content:    row.Body,
-		CreatedAt:  row.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:  row.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
+		ID:            row.ID,
+		EntityType:    row.EntityType,
+		EntityID:      row.EntityID,
+		ParentID:      parentIDPtr,
+		AuthorID:      goUUIDPtr(row.AuthorID),
+		AuthorName:    row.AuthorName,
+		FromRequester: row.AuthorRequesterID.Valid,
+		Visibility:    row.Visibility,
+		Body:          row.Body,
+		Content:       row.Body,
+		CreatedAt:     row.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:     row.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
 	}
+}
+
+// goUUIDPtr converts a nullable database UUID to a Go pointer. author_id is
+// nullable since migration 045 — a requester's message has no users row.
+func goUUIDPtr(v pgtype.UUID) *uuid.UUID {
+	if !v.Valid {
+		return nil
+	}
+	id := uuid.UUID(v.Bytes)
+	return &id
 }
