@@ -22,6 +22,12 @@ vi.mock('../../lib/api', () => ({
   useNotifications: () => ({ data: { notifications: [], unread_count: 0 } }),
   useMarkNotificationRead: () => ({ mutate: vi.fn() }),
   useMarkAllNotificationsRead: () => ({ mutate: vi.fn() }),
+  // The top bar's search control (P6) lives in the tree these tests render, so
+  // its data hook has to exist on the mock. Idle by default — this file is
+  // about the contextual Create button, and a launcher that never opens issues
+  // no request anyway; search behaviour has its own tests.
+  useSearch: () => ({ data: undefined, isLoading: false, isError: false }),
+  splitSnippet: () => [],
 }));
 vi.mock('../ShellUIContext', () => ({
   useShellUI: () => ({ mobileNavOpen: false, setMobileNavOpen: vi.fn() }),

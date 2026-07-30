@@ -2286,6 +2286,12 @@ export const queryKeys = {
   wikiDiff: (spaceId: string, pageId: string, from: number, to: number) => ['wikiDiff', spaceId, pageId, from, to] as const,
   orgTags: (orgId: string) => ['orgTags', orgId] as const,
   pagesWithTag: (orgId: string, label: string) => ['pagesWithTag', orgId, label] as const,
+  // Cross-module search (P6). Every input that changes the ANSWER is in the
+  // key: the same text with a different limit, cursor or snippet flag is a
+  // different response, and sharing a cache entry between them is the
+  // whichever-resolved-last bug queryKeys.test.ts exists to stop.
+  search: (orgId: string, q: string, limit: number, cursor: string, snippet: boolean) =>
+    ['search', orgId, q, limit, cursor, snippet] as const,
   pageTags: (spaceId: string, pageId: string) => ['pageTags', spaceId, pageId] as const,
   /** The Codex document surface (issue #15). */
   pageDocument: (spaceId: string, pageId: string) => ['pageDocument', spaceId, pageId] as const,
@@ -5064,3 +5070,135 @@ export {
   type CreateInvitesRequest,
   type UpdatePersonRequest,
 };
+
+// ---------------------------------------------------------------------------
+// Cross-module search (P6, spec §5/§7)
+// ---------------------------------------------------------------------------
+
+export type SearchModule = 'codex' | 'beacon' | 'vector';
+
+/**
+ * How a hit became visible, which decides what may be SAID about it.
+ *
+ * `share` means the entity reached this viewer through a share on the entity
+ * itself; they cannot enter its space. The server therefore sends no
+ * space_id/space_key/space_name for such a hit (matrix case 16), so the surface
+ * must render provenance rather than a container — and must not invent one.
+ */
+export type SearchOrigin = 'space' | 'share';
+
+/**
+ * The three ways a search comes back with nothing. They are NOT the same
+ * answer and must not render alike:
+ *   ok                   — it ran; empty results mean nothing matched
+ *   no_searchable_terms  — the query reduced to an empty tsquery (stopwords,
+ *                          punctuation), so nothing COULD match
+ *   no_readable_scope    — this viewer can read no space and holds no share
+ */
+export type SearchState = 'ok' | 'no_searchable_terms' | 'no_readable_scope';
+
+export interface SearchHit {
+  module: SearchModule;
+  id: string;
+  title: string;
+  origin: SearchOrigin;
+  /** Absent on a share-only hit. */
+  space_id?: string;
+  space_key?: string;
+  space_name?: string;
+  number?: number;
+  item_key?: string;
+  kind?: string;
+  status?: string;
+  priority?: string;
+  path?: string;
+  /**
+   * ts_headline excerpt, present only when requested. Delimited by U+0002 and
+   * U+0003, NOT markup — render it with splitSnippet, never with
+   * dangerouslySetInnerHTML.
+   */
+  snippet?: string;
+  updated_at: string;
+}
+
+export interface SearchResults {
+  results: SearchHit[];
+  next_cursor?: string;
+  /** The EFFECTIVE module set, which a tag: filter can narrow implicitly. */
+  modules: SearchModule[];
+  tag?: string;
+  state: SearchState;
+}
+
+export interface SearchOptions {
+  limit?: number;
+  cursor?: string;
+  /** Ask for ts_headline excerpts. Costs one query per module in the page. */
+  snippet?: boolean;
+}
+
+async function fetchSearch(orgId: string, q: string, opts: SearchOptions): Promise<SearchResults> {
+  const params = new URLSearchParams({ q });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.cursor) params.set('cursor', opts.cursor);
+  if (opts.snippet) params.set('snippet', 'true');
+  return apiFetch<SearchResults>(`/orgs/${orgId}/search?${params.toString()}`);
+}
+
+/**
+ * Cross-module search.
+ *
+ * Disabled on an empty query rather than fired with one: the server answers
+ * no_searchable_terms, which is a correct answer to a question nobody asked,
+ * and issuing it on every keystroke of an empty box wastes the per-request
+ * query budget that is already at its ceiling.
+ */
+export function useSearch(
+  orgId: string,
+  q: string,
+  opts: SearchOptions = {},
+  queryOpts?: QueryOpts<SearchResults>,
+) {
+  const limit = opts.limit ?? 0;
+  const cursor = opts.cursor ?? '';
+  const snippet = opts.snippet ?? false;
+  return useQuery<SearchResults, APIError>({
+    queryKey: queryKeys.search(orgId, q, limit, cursor, snippet),
+    queryFn: () => fetchSearch(orgId, q, opts),
+    enabled: !!orgId && q.trim().length > 0,
+    ...queryOpts,
+  });
+}
+
+/**
+ * Splits a ts_headline snippet into plain and highlighted runs.
+ *
+ * The server delimits matches with U+0002 / U+0003 rather than markup, because
+ * ts_headline escapes NOTHING — it returns the source text with the delimiters
+ * inserted, so HTML delimiters would hand the client a fragment built out of
+ * stored page content. Splitting here and wrapping the pieces in real elements
+ * highlights without ever interpreting stored content as markup, which is why
+ * no caller should reach for dangerouslySetInnerHTML.
+ */
+export function splitSnippet(snippet: string): Array<{ text: string; match: boolean }> {
+  const out: Array<{ text: string; match: boolean }> = [];
+  let rest = snippet;
+  while (rest.length > 0) {
+    const start = rest.indexOf('\u0002');
+    if (start === -1) {
+      out.push({ text: rest, match: false });
+      break;
+    }
+    if (start > 0) out.push({ text: rest.slice(0, start), match: false });
+    const end = rest.indexOf('\u0003', start + 1);
+    if (end === -1) {
+      // Unterminated: treat the remainder as plain text rather than dropping
+      // it. A truncated fragment is a display nuisance; losing it is data.
+      out.push({ text: rest.slice(start + 1), match: false });
+      break;
+    }
+    out.push({ text: rest.slice(start + 1, end), match: true });
+    rest = rest.slice(end + 1);
+  }
+  return out.filter((p) => p.text.length > 0);
+}
