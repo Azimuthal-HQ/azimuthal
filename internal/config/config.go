@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -87,7 +88,13 @@ type Config struct {
 	AppEnv     string
 	AppPort    int
 	AppBaseURL string
-	LogLevel   string
+	// LogLevel is the minimum level the server logs at, read by
+	// cmd/server/serve.go. It is stored PARSED rather than as the raw string
+	// so that a value which is not a level cannot be represented — LOG_LEVEL
+	// is checked at Load like every other malformed setting here, instead of
+	// being accepted and then quietly ignored, which is what it was until the
+	// config & build integrity follow-up.
+	LogLevel slog.Level
 }
 
 // Bcrypt work-factor bounds.
@@ -121,12 +128,25 @@ const (
 	// PortalLinkDeliveryLink returns the sign-in URL in the API response so a
 	// developer or an E2E run can follow it without a mailbox.
 	//
-	// PRODUCTION REFUSES THIS MODE AT STARTUP. The request-link endpoint is
-	// unauthenticated by necessity — an external requester has no credential
-	// yet — so returning the URL to its caller would let anybody sign in as
-	// any address they can name. That is not a misconfiguration to warn
-	// about; it is a total authentication bypass, and the only safe place for
-	// it is a deployment that is not serving real customers.
+	// PRODUCTION NEVER DISCLOSES THE URL — but by a runtime degrade, not a
+	// boot refusal. cmd/server/main.go gates DiscloseLink on
+	// `!cfg.IsProduction()`, so a production server left in this mode mints
+	// sign-in links and hands them to nobody: the portal is inert rather than
+	// unsafe. The disclosure has to be stopped because the request-link
+	// endpoint is unauthenticated by necessity — an external requester has no
+	// credential yet — so returning the URL to its caller would let anybody
+	// sign in as any address they can name. That is not a misconfiguration to
+	// warn about; it is a total authentication bypass.
+	//
+	// WHY validate() DOES NOT REFUSE THIS MODE IN PRODUCTION, which four
+	// comments across three packages used to assert that it did: this is the
+	// default, and the portal has no enable flag. Refusing it at startup would
+	// stop every production deployment that never set the variable from
+	// booting — including the majority that run no customer portal at all —
+	// which is a breaking change to unrelated deployments in the name of a
+	// feature they do not use. The runtime gate already makes the unsafe
+	// outcome unreachable, so the boot-time policy convention is satisfied by
+	// something cheaper than a refusal.
 	PortalLinkDeliveryLink = "link"
 	// PortalLinkDeliveryEmail sends the sign-in link to the address that
 	// asked for it, which is the only delivery that authenticates anything.
@@ -134,13 +154,15 @@ const (
 	PortalLinkDeliveryEmail = "email"
 )
 
-// Load reads configuration from environment variables and returns a validated Config.
-// It fails fast with clear error messages if required variables are missing.
-func Load() (*Config, error) {
-	v := viper.New()
-	v.AutomaticEnv()
-
-	// Sensible defaults
+// setDefaults registers every setting that has one.
+//
+// Split out of Load so that adding a setting does not push Load past the
+// function-length gate, and so the defaults sit in one readable block. These
+// values are the contract build/docker-compose.yml relies on: it forwards
+// operator settings as bare ${KEY}, letting an unset variable fall through to
+// exactly this table rather than repeating it. TestComposeForwardsOperator
+// SettingsWithoutADefault keeps the two from diverging.
+func setDefaults(v *viper.Viper) {
 	v.SetDefault("JWT_EXPIRY", "24h")
 	v.SetDefault("JWT_PRIVATE_KEY_PATH", "./data/jwt-private.pem")
 	v.SetDefault("SMTP_HOST", "localhost")
@@ -161,6 +183,14 @@ func Load() (*Config, error) {
 	v.SetDefault("AZIMUTHAL_PORTAL_LINK_DELIVERY", PortalLinkDeliveryLink)
 	v.SetDefault("AZIMUTHAL_PORTAL_LINK_TTL", "1h")
 	v.SetDefault("AZIMUTHAL_PORTAL_SESSION_TTL", "72h")
+}
+
+// Load reads configuration from environment variables and returns a validated Config.
+// It fails fast with clear error messages if required variables are missing.
+func Load() (*Config, error) {
+	v := viper.New()
+	v.AutomaticEnv()
+	setDefaults(v)
 
 	cfg := &Config{
 		DatabaseURL:        v.GetString("DATABASE_URL"),
@@ -182,7 +212,10 @@ func Load() (*Config, error) {
 		AppEnv:             v.GetString("APP_ENV"),
 		AppPort:            v.GetInt("APP_PORT"),
 		AppBaseURL:         v.GetString("APP_BASE_URL"),
-		LogLevel:           v.GetString("LOG_LEVEL"),
+	}
+
+	if err := cfg.parseLogLevel(v); err != nil {
+		return nil, err
 	}
 
 	if err := cfg.parseDurations(v); err != nil {
@@ -240,6 +273,28 @@ func (c *Config) parseDurations(v *viper.Viper) error {
 		return fmt.Errorf("invalid AZIMUTHAL_PORTAL_SESSION_TTL %q: must be positive", v.GetString("AZIMUTHAL_PORTAL_SESSION_TTL"))
 	}
 	c.PortalSessionTTL = portalSessionTTL
+	return nil
+}
+
+// parseLogLevel reads LOG_LEVEL into a slog.Level.
+//
+// slog.Level.UnmarshalText accepts "debug", "info", "warn" and "error" in any
+// case, plus offsets such as "info+2". Anything else is refused at startup
+// rather than silently run at info, on the same reasoning as every other
+// malformed setting in this file: a value the server ignores is worse than one
+// it rejects, because an operator who typed "warning" and got info-level logs
+// has no way to tell that from a server that is genuinely quiet.
+//
+// The viper default guarantees a non-empty string here — an env var set to ""
+// is treated as unset (AllowEmptyEnv is off), so this sees "info" rather than
+// the empty string, which UnmarshalText would reject.
+func (c *Config) parseLogLevel(v *viper.Viper) error {
+	raw := strings.TrimSpace(v.GetString("LOG_LEVEL"))
+	var lvl slog.Level
+	if err := lvl.UnmarshalText([]byte(raw)); err != nil {
+		return fmt.Errorf("invalid LOG_LEVEL %q: must be debug, info, warn or error", raw)
+	}
+	c.LogLevel = lvl
 	return nil
 }
 
@@ -306,6 +361,47 @@ func parseAllowedOrigins(raw string) []string {
 	return origins
 }
 
+// validateDeliveryMode checks one of the two delivery settings — invites and
+// customer-portal sign-in links — which carry the identical rule: "link" needs
+// nothing, "email" needs an explicitly configured relay, anything else is a
+// typo and refuses boot.
+//
+// ONE IMPLEMENTATION, NOT TWO. The portal setting was added by copying the
+// invite one, and the copy is exactly where a rule like this drifts — the
+// direction being "one of them stops checking". envVar is a parameter so each
+// message still names the setting the operator actually set.
+//
+// The valid values are the invite constants; the portal pair holds the same two
+// strings, and TestDeliveryModeConstantsAgree fails the moment that stops being
+// true. That is the same arrangement MinBcryptCost uses against the auth
+// package, for the same reason.
+func validateDeliveryMode(envVar, mode, smtpFrom string) []string {
+	var errs []string
+	switch mode {
+	case InviteDeliveryLink:
+		// Nothing is sent, so no relay is needed.
+	case InviteDeliveryEmail:
+		// Fail loudly at startup rather than dropping mail at send time.
+		//
+		// Deliberately a raw os.Getenv rather than c.SMTPHost: SMTP_HOST carries
+		// a "localhost" default for a dev relay, so the config field is never
+		// empty and could not distinguish "an operator configured a relay" from
+		// "nobody set anything". This is also why build/docker-compose.yml must
+		// forward SMTP_HOST bare — a `${SMTP_HOST:-localhost}` there satisfies
+		// this check unconditionally and silently disables it.
+		if os.Getenv("SMTP_HOST") == "" {
+			errs = append(errs, envVar+"=email requires SMTP_HOST to be set explicitly")
+		}
+		if smtpFrom == "" {
+			errs = append(errs, envVar+"=email requires SMTP_FROM")
+		}
+	default:
+		errs = append(errs, fmt.Sprintf("invalid %s %q: must be %q or %q",
+			envVar, mode, InviteDeliveryLink, InviteDeliveryEmail))
+	}
+	return errs
+}
+
 // validate checks that all required configuration is present.
 // In test mode (APP_ENV=test) some validations are relaxed.
 func (c *Config) validate() error {
@@ -315,23 +411,20 @@ func (c *Config) validate() error {
 		errs = append(errs, "DATABASE_URL is required")
 	}
 
-	switch c.InviteDelivery {
-	case InviteDeliveryLink:
-		// No SMTP required — the admin copies the link.
-	case InviteDeliveryEmail:
-		// Fail loudly at startup rather than silently dropping invites at
-		// send time. SMTP_HOST carries a localhost default for dev relay,
-		// so "configured" means the operator set it explicitly.
-		if os.Getenv("SMTP_HOST") == "" {
-			errs = append(errs, "AZIMUTHAL_INVITE_DELIVERY=email requires SMTP_HOST to be set explicitly")
-		}
-		if c.SMTPFrom == "" {
-			errs = append(errs, "AZIMUTHAL_INVITE_DELIVERY=email requires SMTP_FROM")
-		}
-	default:
-		errs = append(errs, fmt.Sprintf("invalid AZIMUTHAL_INVITE_DELIVERY %q: must be %q or %q",
-			c.InviteDelivery, InviteDeliveryLink, InviteDeliveryEmail))
-	}
+	errs = append(errs, validateDeliveryMode(
+		"AZIMUTHAL_INVITE_DELIVERY", c.InviteDelivery, c.SMTPFrom)...)
+
+	// The portal's sign-in links run the identical rule. Before this existed an
+	// unrecognised value passed validation and then matched neither branch in
+	// cmd/server/main.go, which sets portalSender only for "email" and
+	// DiscloseLink only for "link" — so a typo left the portal minting sign-in
+	// links and delivering them nowhere, with nothing said at startup and
+	// nothing wrong in the logs. A customer simply never receives a link.
+	//
+	// Note what this deliberately does NOT do: refuse PortalLinkDeliveryLink
+	// in production. See that constant's own comment for why.
+	errs = append(errs, validateDeliveryMode(
+		"AZIMUTHAL_PORTAL_LINK_DELIVERY", c.PortalLinkDelivery, c.SMTPFrom)...)
 
 	// No APP_ENV exemption, by design — see the BcryptCost field comment.
 	if c.BcryptCost < MinBcryptCost || c.BcryptCost > MaxBcryptCost {

@@ -942,7 +942,7 @@ jobs:
             .
 
       - name: Run Trivy (SARIF output)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.BINARY_NAME }}:scan-${{ github.sha }}
           format: sarif
@@ -960,7 +960,7 @@ jobs:
           category: trivy
 
       - name: Fail on HIGH/CRITICAL findings
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.BINARY_NAME }}:scan-${{ github.sha }}
           severity: HIGH,CRITICAL

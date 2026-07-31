@@ -24,10 +24,16 @@ type Config struct {
 	// DeliverByEmail mirrors AZIMUTHAL_PORTAL_LINK_DELIVERY.
 	DeliverByEmail bool
 	// DiscloseLink returns the sign-in URL in the API response instead of only
-	// sending it. This is a DEVELOPMENT AND TEST AFFORDANCE and config
-	// rejects it in production — see config.validate. The request-link
+	// sending it. This is a DEVELOPMENT AND TEST AFFORDANCE. The request-link
 	// endpoint is unauthenticated, so a disclosed URL would let any caller
 	// sign in as any address they can name.
+	//
+	// What keeps it out of production is cmd/server/main.go, which sets this
+	// only when the delivery mode is "link" AND the environment is not
+	// production. config.validate does NOT reject the mode in production —
+	// "link" is the default and refusing it would stop portal-less
+	// deployments booting — so this field's safety rests entirely on its one
+	// assignment site.
 	DiscloseLink bool
 	// BaseURL is the deployment's public base, used to build link URLs.
 	BaseURL string

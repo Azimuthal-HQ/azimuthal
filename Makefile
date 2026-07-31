@@ -152,11 +152,23 @@ scan-vuln:
 	@govulncheck ./...
 	@echo "✓ Dependency scan passed"
 
+# Scanned one path at a time, deliberately. `--no-git` walks the filesystem
+# rather than the git index, so an unscoped run also descends web/node_modules —
+# tens of thousands of vendored files full of sample keys, and 29s instead of
+# 0.6s. `gitleaks detect` takes a single `--source` and accepts NO positional
+# arguments, so a path *list* is silently ignored rather than rejected: the loop
+# is what makes the scoping real.
+GITLEAKS_PATHS := ./internal ./migrations ./cmd
+
 scan-secrets:
 	@echo "→ Scanning for secrets (gitleaks)..."
 	@which gitleaks > /dev/null || \
 		(echo "Install gitleaks: https://github.com/gitleaks/gitleaks" && exit 1)
-	@gitleaks detect --config=.gitleaks.toml --verbose
+	@for p in $(GITLEAKS_PATHS); do \
+		echo "  → $$p"; \
+		gitleaks detect --source=$$p --no-git --redact --verbose --no-banner \
+			--exit-code=1 || exit 1; \
+	done
 	@echo "✓ Secret scan passed"
 
 scan-container: docker-build

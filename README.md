@@ -37,8 +37,9 @@ curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/build/dock
 curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/.env.example
 cp .env.example .env
 
-# 2. Edit .env — set passwords and generate a JWT secret
-#    openssl rand -hex 32
+# 2. Edit .env — set POSTGRES_PASSWORD and the two MINIO_ROOT_* values
+#    (there is no JWT secret to generate: the RS256 signing key is created
+#     and stored in the database on first start — see ADR-0004)
 
 # 3. Start everything
 docker compose up -d
@@ -130,7 +131,7 @@ generate.
 | `APP_ENV` | `development` | `development`, `test`, or `production`. Selects environment-dependent behaviour; it is **not** a security exemption — see the note below. |
 | `APP_PORT` | `8080` | HTTP listen port. |
 | `APP_BASE_URL` | `http://localhost:8080` | Public URL of this instance. Used to build the links that go out in invites and portal sign-in emails, so a wrong value produces links nobody can follow. |
-| `LOG_LEVEL` | `info` | **Currently inert — see below.** Intended to select `debug`, `info`, `warn`, or `error`. |
+| `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` (any case). An unrecognised value is refused at startup. |
 
 ### Object storage (MinIO / S3-compatible)
 
@@ -189,12 +190,12 @@ generate.
 > `APP_ENV=test`; test binaries get cheap hashing from the linker knowing they are test binaries,
 > not from configuration.
 
-> **`LOG_LEVEL` does nothing today.** `config.Load` parses it into `Config.LogLevel`, and nothing
-> reads that field: `cmd/server/serve.go` builds the logger with a hardcoded `slog.LevelInfo`, and
-> it does so *before* configuration is loaded, so the value could not reach it as written. Setting
-> `LOG_LEVEL=debug` changes nothing. Documented here rather than quietly dropped from the table,
-> because the variable is real and the gap is in the wiring — closing it is a code change and needs
-> its own review.
+> **`LOG_LEVEL` is live**, and an unrecognised value is refused at startup rather than quietly run
+> at `info`. It accepts `debug`, `info`, `warn` and `error` in any case, plus `slog` offsets such as
+> `info+2`. The logger is necessarily built before configuration is loaded — loading the config can
+> itself fail, and that failure has to be logged — so it starts at `info` and is re-levelled in
+> place once `LOG_LEVEL` is known. One startup line is therefore always emitted at `info`;
+> everything from `configuration loaded` onwards obeys the setting.
 
 ## Project Structure
 

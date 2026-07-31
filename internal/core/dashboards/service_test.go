@@ -242,6 +242,118 @@ func TestUpdate_ASharedDashboardIs403ToANonOwner(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotOwner, "arranging somebody else's dashboard is changing their work")
 }
 
+// THE TEAM INHERITS ALONGSIDE THE VISIBILITY, AND STOPS INHERITING THE MOMENT
+// THE CALLER CHANGES THE AUDIENCE.
+//
+// Update inherited `existing.Visibility` and `existing.Module` but never
+// `existing.VisibilityTeamID`, so for the one visibility that carries a payload
+// the inheritance could not succeed: the merged draft was "team" with no team,
+// which the shared views.Audience.Normalise refuses. A caller who PATCHed a
+// team-shared dashboard with only a new name was answered 422 "a team-visible
+// dashboard must name a team" — about a field they had not sent.
+//
+// This is known-issues #26, and the third instance of the same half-merge
+// shape; #91 closed the saved-views instance (#25) with this exact pattern.
+// Both models delegate to one Audience rule, so they inherit its defects too.
+//
+// WHAT EACH CASE ACTUALLY PINS, mutation-tested rather than assumed:
+//
+//   - Remove the team inheritance and the first two subtests fail with the
+//     reported 422. They are the regression test.
+//   - Remove the `d.Visibility == existing.Visibility` guard and NOTHING here
+//     fails, because Normalise independently nils the team id for a private or
+//     org audience. The last two subtests therefore pin Normalise's cleanup,
+//     not the guard.
+//
+// The guard is kept anyway, and deliberately: it means this merge never
+// fabricates a pair the caller did not state, rather than relying on a
+// downstream function to tidy one away. That is a weaker claim than "each half
+// is load-bearing", and it is the true one.
+func TestDashboardUpdate_TheTeamInheritsWithTheVisibility(t *testing.T) {
+	ctx := context.Background()
+	team, otherTeam := uuid.New(), uuid.New()
+
+	// A team-shared dashboard owned by an actor who belongs to both teams, so
+	// Normalise's membership check never masks what is under test.
+	teamDashboard := func(t *testing.T) (*Service, *fakeStore, views.Actor, uuid.UUID, Dashboard) {
+		t.Helper()
+		s, store, _, me, org := harness(t)
+		me.EffectiveTeamIDs = []uuid.UUID{team, otherTeam}
+		d, err := s.Create(ctx, org, me, Draft{
+			Name:             "Team board",
+			Visibility:       views.VisibilityTeam,
+			VisibilityTeamID: &team,
+		})
+		require.NoError(t, err)
+		require.Equal(t, &team, d.VisibilityTeamID)
+		return s, store, me, org, d
+	}
+
+	t.Run("a rename that names no audience keeps the team share", func(t *testing.T) {
+		s, store, me, org, d := teamDashboard(t)
+
+		updated, err := s.Update(ctx, org, d.ID, me, Draft{Name: "Renamed"})
+		require.NoError(t, err, "a rename must not have to restate the audience")
+		require.Equal(t, "Renamed", updated.Name)
+		require.Equal(t, views.VisibilityTeam, updated.Visibility)
+		require.Equal(t, &team, updated.VisibilityTeamID,
+			"the team has to inherit with the visibility, or the merge is half done")
+		require.Equal(t, &team, store.dashboards[d.ID].VisibilityTeamID,
+			"and it has to be what was written, not only what was returned")
+	})
+
+	t.Run("restating the same audience inherits the team too", func(t *testing.T) {
+		s, _, me, org, d := teamDashboard(t)
+
+		updated, err := s.Update(ctx, org, d.ID, me, Draft{
+			Name: "Team board", Visibility: views.VisibilityTeam,
+		})
+		require.NoError(t, err, "the audience is unchanged, so the team is unchanged")
+		require.Equal(t, &team, updated.VisibilityTeamID)
+	})
+
+	t.Run("moving to org clears the team rather than inheriting it", func(t *testing.T) {
+		s, _, me, org, d := teamDashboard(t)
+
+		updated, err := s.Update(ctx, org, d.ID, me, Draft{
+			Name: "Team board", Visibility: views.VisibilityOrg,
+		})
+		require.NoError(t, err)
+		require.Equal(t, views.VisibilityOrg, updated.Visibility)
+		require.Nil(t, updated.VisibilityTeamID,
+			"a widened dashboard carrying its old team id is a lie the next reader has to interpret")
+	})
+
+	t.Run("an explicit team wins over the inherited one", func(t *testing.T) {
+		s, _, me, org, d := teamDashboard(t)
+
+		updated, err := s.Update(ctx, org, d.ID, me, Draft{
+			Name: "Team board", Visibility: views.VisibilityTeam, VisibilityTeamID: &otherTeam,
+		})
+		require.NoError(t, err)
+		require.Equal(t, &otherTeam, updated.VisibilityTeamID,
+			"inheritance fills a gap; it never overrides what the caller sent")
+	})
+}
+
+// Moving a dashboard TO a team audience still has to name the team. Nothing is
+// inherited here because there is nothing to inherit: the row's own audience is
+// private, so the caller is stating a new pair and has to state all of it.
+//
+// Asserted separately so the inheritance above cannot quietly swallow it — a
+// fix that inherited unconditionally would widen a hole rather than close one.
+func TestDashboardUpdate_MovingToATeamAudienceStillNamesTheTeam(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, me, org := harness(t)
+	d := mustCreate(t, s, org, me, ModuleHome) // private, no team
+
+	_, err := s.Update(ctx, org, d.ID, me, Draft{
+		Name: "Now shared", Visibility: views.VisibilityTeam,
+	})
+	require.ErrorIs(t, err, views.ErrTeamRequired,
+		"a move to a team audience states a new pair and has to state all of it")
+}
+
 func TestList_FiltersByModuleAndRefusesAnUnknownOne(t *testing.T) {
 	s, _, _, me, org := harness(t)
 	ctx := context.Background()

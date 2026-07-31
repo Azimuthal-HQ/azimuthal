@@ -202,9 +202,20 @@ places — `use.baseURL`, the `webServer` `/health` readiness probe, and the spa
 Note that `.env.test` sets `APP_PORT=8081`; `webServer.env` overrides it, so the E2E server binds
 the `E2E_PORT` value rather than the `.env.test` one.
 
-One trap: `webServer.env` forwards an **explicit allow-list** of variables to the spawned server.
-A new `AZIMUTHAL_*` setting will not reach an E2E server unless it is added to that list, and the
-symptom is a feature behaving as though its flag were never set.
+`webServer.env` is an **override layer, not an allow-list** — a correction, because this file said
+the opposite, and which way round it is changes what you do. Playwright builds the spawned server's
+environment as `{...DEFAULT_ENVIRONMENT_VARIABLES, ...process.env, ...webServer.env}`
+(`web/node_modules/playwright/lib/plugins/webServerPlugin.js`, v1.59.1), so the parent process's
+whole environment reaches the server and the seven entries in `webServer.env` merely *override*
+part of it.
+
+Two consequences, pointing opposite ways. A new `AZIMUTHAL_*` setting **does** reach an E2E server
+without being added to that list, so there is nothing to do when one is added — the older note here
+would have sent you editing `playwright.config.ts` to fix a problem you did not have. But equally,
+anything `make e2e-test` exports reaches the server, including every line of `.env.test` (see
+`ENV_TEST_VARS`) and whatever is ambient in your shell. CI's `e2e` job sets a smaller, explicit
+environment, so a variable that changes E2E behaviour locally can be absent in CI — which is the
+shape that reads as "green in CI, broken on my machine".
 
 ### Two more environment facts that have cost time in every phase
 

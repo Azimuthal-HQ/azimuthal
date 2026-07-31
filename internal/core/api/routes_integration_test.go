@@ -241,8 +241,9 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	viewSvc := views.NewService(savedViewAdapter, savedViewAdapter, savedViewAdapter)
 
 	// Customer portal. DiscloseLink is on so tests can follow a sign-in link
-	// without a mailbox; config.validate refuses that combination in
-	// production, which is the only place it would be unsafe.
+	// without a mailbox. In the real server cmd/server/main.go withholds it
+	// whenever APP_ENV=production, which is the only place it would be
+	// unsafe — config.validate does not refuse the mode itself.
 	portalSvc := portal.NewService(
 		adapters.NewPortalAdapter(pool),
 		portal.NewTokenService(portal.TokenConfig{

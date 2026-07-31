@@ -218,32 +218,40 @@ sudo mv gitleaks /usr/local/bin/gitleaks
 
 **Local usage:**
 
-Scan the directories that actually hold this project's code:
-
 ```bash
-gitleaks detect --no-git --redact --verbose --source=. ./internal ./migrations ./cmd
+make scan-secrets
 ```
 
-**Why the explicit paths.** `--no-git` walks the filesystem rather than the git
-index, so what it scans is "files on disk" rather than "files git tracks" — and
-after `npm ci` that includes `web/node_modules`, tens of thousands of vendored
-files full of test fixtures and sample keys. `node_modules` being gitignored is
-not obviously enough to keep it out of a filesystem walk, and a run from the
-repository root is slow enough to suggest it is not. Naming the directories
-sidesteps the question.
+The target scans the directories that actually hold this project's code, one at
+a time:
+
+```bash
+for p in ./internal ./migrations ./cmd; do
+  gitleaks detect --source=$p --no-git --redact --verbose --no-banner --exit-code=1 || exit 1
+done
+```
+
+**Why one path at a time, and not a list.** `gitleaks detect` takes a single
+`-s/--source` and accepts **no positional arguments**. A path *list* —
+`--source=. ./internal ./migrations ./cmd`, which is what this section
+recommended until the target was repaired — is therefore not rejected but
+silently ignored: gitleaks scans `--source=.` and the three named paths do
+nothing at all. Measured on this repository after `npm ci`, that is 29.4s
+against 0.6s for the loop. Scoping only becomes real when each path gets its own
+invocation.
+
+**Why scope at all.** `--no-git` walks the filesystem rather than the git index,
+so what it scans is "files on disk" rather than "files git tracks" — and after
+`npm ci` that includes `web/node_modules`, tens of thousands of vendored files
+full of test fixtures and sample keys. `node_modules` being gitignored is not
+enough to keep it out of a filesystem walk.
 
 CI never encounters this: the `secret-scan` job checks out the repository and
 installs no Node dependencies, so `node_modules` does not exist there. Locally it
-usually does.
+usually does — which is why CI can afford the unscoped `--source=.` that this
+section cannot.
 
 Add `./web/src` when you have touched the frontend; skip `./web` as a whole.
-
-> **`make scan-secrets` is currently broken.** The target runs
-> `gitleaks detect --config=.gitleaks.toml --verbose`, and that file does not
-> exist, so the command fails on a missing config rather than on a finding. Use
-> the invocation above until the target is corrected. (Tracked as a note here
-> rather than fixed, because the Makefile is code and this document is not the
-> place to change it.)
 
 **A finding that is not a secret:** See [Handling a False Positive](#handling-a-false-positive).
 
@@ -335,31 +343,53 @@ clearer than it was. Reach for that shape first.
 
 ### When a suppression is genuinely unavoidable
 
-It requires all three of a **documented justification**, a **tracking issue**, and
-an **expiry date** (maximum 90 days). Undocumented suppressions are rejected in
-review. Never suppress a whole file or package — suppress the narrowest thing
-that works.
+There are **two kinds**, and they carry different ceremony. The distinction was
+left unrecorded when this section was first written, which made the tree read as
+though it violated its own policy 36 times over; it is now settled.
 
-> **What is actually in the tree, and an unresolved question about it.** There are
-> **36** gosec-facing annotations today — 8 `#nosec` and 27 `//nolint:gosec`, plus
-> one prose reference. **None carries a tracking issue or an expiry date.** Every
-> one carries a reason.
+**Rule-inapplicable annotations** — *"the finding does not apply here"*. `G304`
+on a `t.TempDir()` path, `G115` on a conversion the caller has already bounded,
+`G402` on a local SMTP relay that is meant to be plaintext. There is no accepted
+risk, so there is nothing to track and nothing to expire. These require **an
+inline justification naming the rule and the reason, and nothing else**:
+
+```go
+//nolint:gosec // G115: bounded to <=100 by the reader
+#nosec G304 -- user-provided CLI flag
+```
+
+**Accepted-risk suppressions** — *"the finding is real and we are living with it
+for now"*. An unpatched CVE in a dependency with no upgrade path is the usual
+case. These require all three of a **documented justification**, a **tracking
+issue**, and an **expiry date** (maximum 90 days).
+
+Never suppress a whole file or package, in either class — suppress the narrowest
+thing that works. An annotation with no justification at all is rejected in
+review regardless of class.
+
+> **What is in the tree: 36 gosec-facing annotations, all of them
+> rule-inapplicable, and zero accepted-risk suppressions.** 8 `#nosec` and 28
+> `//nolint:gosec`, plus one prose reference to `#nosec` that is not an
+> annotation. None carries a tracking issue or an expiry date, and under the
+> policy above none needs one.
 >
-> Whether that is 36 policy violations depends on a distinction this document has
-> never drawn: between *"the rule does not apply here"* (`G304` on a
-> `t.TempDir()` path — there is no risk to track and nothing to expire) and
-> *"the finding is real and we are accepting it for now"* (an unpatched CVE),
-> which is the case the issue-and-expiry requirement plainly exists for. Every
-> annotation in the tree is the first kind.
+> This corrects two counts previously recorded here: it is 28 `//nolint:gosec`,
+> not 27, and the claim that *every* one carried a reason was wrong — two were
+> bare (`internal/db/db_test.go`, a fake connection string and a placeholder
+> hash). Both now name their rule, so the tree satisfies the policy as adopted
+> rather than approximately.
 >
-> Reading the requirement as covering only the second kind would make the
-> repository compliant and the rule meaningful. That reading is **not recorded
-> anywhere**, so it is flagged for a maintainer rather than adopted here. Until it
-> is settled, write the reason, keep it narrow, and do not treat the existing 36
-> as precedent for skipping the ceremony on an accepted risk.
+> The zero on the accepted-risk side is the number worth watching: there is no
+> `.trivyignore`, `trivy-ignore.yaml` holds no active rules, and govulncheck
+> supports no suppression at all. Nothing in this repository is currently a
+> known-and-tolerated finding. The first one to be added is the first that needs
+> an issue and an expiry.
 >
-> There is no `.trivyignore`, and `trivy-ignore.yaml` holds no active rules — so
-> no accepted-risk suppression exists in the repository at all right now.
+> Note that the inline justification is a **review** requirement, not a
+> mechanical one: `.golangci.yml` sets no `nolintlint` settings, so
+> `require-explanation` is off and a bare directive passes lint. That is why the
+> two above survived. Turning it on would enforce this paragraph, and is a
+> maintainer's call rather than a decision to slip into a documentation change.
 
 **Do not create a new exemption file to hold a suppression.** In particular, do
 not add a `.gitleaks.toml` allowlist: gitleaks has no allowlist in this
@@ -497,18 +527,12 @@ make scan
 # Or individually:
 make scan-sast        # gosec SAST
 make scan-vuln        # govulncheck dependencies
-make scan-secrets     # gitleaks secret detection — BROKEN, see the gitleaks section
+make scan-secrets     # gitleaks secret detection
 make scan-container   # trivy container image
 
 # Run everything (format + lint + test + scan)
 make pre-push
 ```
-
-> `make scan-secrets` passes `--config=.gitleaks.toml`, a file that does not
-> exist, so it fails on the missing config rather than on a finding — which also
-> means `make scan` and `make pre-push` cannot currently complete. Run gitleaks
-> directly, as shown in the [gitleaks section](#gitleaks--secret-detection),
-> until the target is corrected.
 
 ### Two ways a local run differs from the CI gate
 
