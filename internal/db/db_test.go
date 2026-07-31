@@ -64,7 +64,7 @@ func TestConnect_InvalidURL(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	invalidURL := "postgres://invalid:badpass@localhost:5499/notexist" //nolint:gosec
+	invalidURL := "postgres://invalid:badpass@localhost:5499/notexist" //nolint:gosec // G101: a deliberately unreachable host, asserting Connect fails
 	_, err := db.Connect(ctx, db.Config{
 		URL:           invalidURL,
 		HealthTimeout: 1 * time.Second,
@@ -215,7 +215,7 @@ func TestUserAndSessionLifecycle(t *testing.T) {
 	q := generated.New(pool)
 
 	org := setupOrg(t, q, uuid.New().String()[:8])
-	pwHash := "bcrypt-hash-placeholder" //nolint:gosec
+	pwHash := "bcrypt-hash-placeholder" //nolint:gosec // G101: a literal placeholder, not a hash — nothing authenticates against it
 	user, err := q.CreateUser(ctx, generated.CreateUserParams{
 		ID:           uuid.New(),
 		OrgID:        org.ID,

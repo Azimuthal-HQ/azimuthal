@@ -343,31 +343,53 @@ clearer than it was. Reach for that shape first.
 
 ### When a suppression is genuinely unavoidable
 
-It requires all three of a **documented justification**, a **tracking issue**, and
-an **expiry date** (maximum 90 days). Undocumented suppressions are rejected in
-review. Never suppress a whole file or package — suppress the narrowest thing
-that works.
+There are **two kinds**, and they carry different ceremony. The distinction was
+left unrecorded when this section was first written, which made the tree read as
+though it violated its own policy 36 times over; it is now settled.
 
-> **What is actually in the tree, and an unresolved question about it.** There are
-> **36** gosec-facing annotations today — 8 `#nosec` and 27 `//nolint:gosec`, plus
-> one prose reference. **None carries a tracking issue or an expiry date.** Every
-> one carries a reason.
+**Rule-inapplicable annotations** — *"the finding does not apply here"*. `G304`
+on a `t.TempDir()` path, `G115` on a conversion the caller has already bounded,
+`G402` on a local SMTP relay that is meant to be plaintext. There is no accepted
+risk, so there is nothing to track and nothing to expire. These require **an
+inline justification naming the rule and the reason, and nothing else**:
+
+```go
+//nolint:gosec // G115: bounded to <=100 by the reader
+#nosec G304 -- user-provided CLI flag
+```
+
+**Accepted-risk suppressions** — *"the finding is real and we are living with it
+for now"*. An unpatched CVE in a dependency with no upgrade path is the usual
+case. These require all three of a **documented justification**, a **tracking
+issue**, and an **expiry date** (maximum 90 days).
+
+Never suppress a whole file or package, in either class — suppress the narrowest
+thing that works. An annotation with no justification at all is rejected in
+review regardless of class.
+
+> **What is in the tree: 36 gosec-facing annotations, all of them
+> rule-inapplicable, and zero accepted-risk suppressions.** 8 `#nosec` and 28
+> `//nolint:gosec`, plus one prose reference to `#nosec` that is not an
+> annotation. None carries a tracking issue or an expiry date, and under the
+> policy above none needs one.
 >
-> Whether that is 36 policy violations depends on a distinction this document has
-> never drawn: between *"the rule does not apply here"* (`G304` on a
-> `t.TempDir()` path — there is no risk to track and nothing to expire) and
-> *"the finding is real and we are accepting it for now"* (an unpatched CVE),
-> which is the case the issue-and-expiry requirement plainly exists for. Every
-> annotation in the tree is the first kind.
+> This corrects two counts previously recorded here: it is 28 `//nolint:gosec`,
+> not 27, and the claim that *every* one carried a reason was wrong — two were
+> bare (`internal/db/db_test.go`, a fake connection string and a placeholder
+> hash). Both now name their rule, so the tree satisfies the policy as adopted
+> rather than approximately.
 >
-> Reading the requirement as covering only the second kind would make the
-> repository compliant and the rule meaningful. That reading is **not recorded
-> anywhere**, so it is flagged for a maintainer rather than adopted here. Until it
-> is settled, write the reason, keep it narrow, and do not treat the existing 36
-> as precedent for skipping the ceremony on an accepted risk.
+> The zero on the accepted-risk side is the number worth watching: there is no
+> `.trivyignore`, `trivy-ignore.yaml` holds no active rules, and govulncheck
+> supports no suppression at all. Nothing in this repository is currently a
+> known-and-tolerated finding. The first one to be added is the first that needs
+> an issue and an expiry.
 >
-> There is no `.trivyignore`, and `trivy-ignore.yaml` holds no active rules — so
-> no accepted-risk suppression exists in the repository at all right now.
+> Note that the inline justification is a **review** requirement, not a
+> mechanical one: `.golangci.yml` sets no `nolintlint` settings, so
+> `require-explanation` is off and a bare directive passes lint. That is why the
+> two above survived. Turning it on would enforce this paragraph, and is a
+> maintainer's call rather than a decision to slip into a documentation change.
 
 **Do not create a new exemption file to hold a suppression.** In particular, do
 not add a `.gitleaks.toml` allowlist: gitleaks has no allowlist in this
