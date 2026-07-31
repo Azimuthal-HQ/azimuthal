@@ -218,32 +218,40 @@ sudo mv gitleaks /usr/local/bin/gitleaks
 
 **Local usage:**
 
-Scan the directories that actually hold this project's code:
-
 ```bash
-gitleaks detect --no-git --redact --verbose --source=. ./internal ./migrations ./cmd
+make scan-secrets
 ```
 
-**Why the explicit paths.** `--no-git` walks the filesystem rather than the git
-index, so what it scans is "files on disk" rather than "files git tracks" — and
-after `npm ci` that includes `web/node_modules`, tens of thousands of vendored
-files full of test fixtures and sample keys. `node_modules` being gitignored is
-not obviously enough to keep it out of a filesystem walk, and a run from the
-repository root is slow enough to suggest it is not. Naming the directories
-sidesteps the question.
+The target scans the directories that actually hold this project's code, one at
+a time:
+
+```bash
+for p in ./internal ./migrations ./cmd; do
+  gitleaks detect --source=$p --no-git --redact --verbose --no-banner --exit-code=1 || exit 1
+done
+```
+
+**Why one path at a time, and not a list.** `gitleaks detect` takes a single
+`-s/--source` and accepts **no positional arguments**. A path *list* —
+`--source=. ./internal ./migrations ./cmd`, which is what this section
+recommended until the target was repaired — is therefore not rejected but
+silently ignored: gitleaks scans `--source=.` and the three named paths do
+nothing at all. Measured on this repository after `npm ci`, that is 29.4s
+against 0.6s for the loop. Scoping only becomes real when each path gets its own
+invocation.
+
+**Why scope at all.** `--no-git` walks the filesystem rather than the git index,
+so what it scans is "files on disk" rather than "files git tracks" — and after
+`npm ci` that includes `web/node_modules`, tens of thousands of vendored files
+full of test fixtures and sample keys. `node_modules` being gitignored is not
+enough to keep it out of a filesystem walk.
 
 CI never encounters this: the `secret-scan` job checks out the repository and
 installs no Node dependencies, so `node_modules` does not exist there. Locally it
-usually does.
+usually does — which is why CI can afford the unscoped `--source=.` that this
+section cannot.
 
 Add `./web/src` when you have touched the frontend; skip `./web` as a whole.
-
-> **`make scan-secrets` is currently broken.** The target runs
-> `gitleaks detect --config=.gitleaks.toml --verbose`, and that file does not
-> exist, so the command fails on a missing config rather than on a finding. Use
-> the invocation above until the target is corrected. (Tracked as a note here
-> rather than fixed, because the Makefile is code and this document is not the
-> place to change it.)
 
 **A finding that is not a secret:** See [Handling a False Positive](#handling-a-false-positive).
 
@@ -497,18 +505,12 @@ make scan
 # Or individually:
 make scan-sast        # gosec SAST
 make scan-vuln        # govulncheck dependencies
-make scan-secrets     # gitleaks secret detection — BROKEN, see the gitleaks section
+make scan-secrets     # gitleaks secret detection
 make scan-container   # trivy container image
 
 # Run everything (format + lint + test + scan)
 make pre-push
 ```
-
-> `make scan-secrets` passes `--config=.gitleaks.toml`, a file that does not
-> exist, so it fails on the missing config rather than on a finding — which also
-> means `make scan` and `make pre-push` cannot currently complete. Run gitleaks
-> directly, as shown in the [gitleaks section](#gitleaks--secret-detection),
-> until the target is corrected.
 
 ### Two ways a local run differs from the CI gate
 
