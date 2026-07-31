@@ -201,22 +201,44 @@ type SwaggerAssignRequest struct {
 	AssigneeID uuid.UUID `json:"assignee_id" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
 }
 
+// SwaggerRequesterIdentity is the external requester behind a portal-raised
+// ticket, as the agent surface sees them. Null on a ticket raised inside the
+// product — see SwaggerTicketResponse.Requester.
+type SwaggerRequesterIdentity struct {
+	ID          uuid.UUID `json:"id" example:"c3d4e5f6-a7b8-9012-cdef-123456789012"`
+	DisplayName string    `json:"display_name" example:"Dana Okoro"`
+	Email       string    `json:"email" example:"dana@example.com"`
+}
+
 // SwaggerTicketResponse represents the Ticket domain object returned by handlers.
+//
+// Corrected in the portal requester-surface PR against internal/core/tickets.Ticket,
+// which it had drifted from: Priority is a string enum on the wire and was
+// declared int; ReporterID became nullable under migration 044 and was declared
+// non-nullable; Number and RequesterID were absent entirely. Per CLAUDE.md §5 the
+// repository wins and the drift is corrected in the PR that found it.
 type SwaggerTicketResponse struct {
-	ID          uuid.UUID  `json:"id" example:"a1b2c3d4-e5f6-7890-abcd-ef1234567890"`
-	SpaceID     uuid.UUID  `json:"space_id" example:"b2c3d4e5-f6a7-8901-bcde-f12345678901"`
-	Title       string     `json:"title" example:"Fix login button"`
-	Description string     `json:"description" example:"The login button does not work"`
-	Status      string     `json:"status" example:"open"`
-	Priority    int        `json:"priority" example:"1"`
-	ReporterID  uuid.UUID  `json:"reporter_id" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
-	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
-	Labels      []string   `json:"labels"`
-	DueAt       *time.Time `json:"due_at,omitempty"`
-	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
-	Rank        string     `json:"rank" example:"0|aaaaaa:"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID          uuid.UUID `json:"id" example:"a1b2c3d4-e5f6-7890-abcd-ef1234567890"`
+	SpaceID     uuid.UUID `json:"space_id" example:"b2c3d4e5-f6a7-8901-bcde-f12345678901"`
+	Number      int32     `json:"number" example:"42"`
+	Title       string    `json:"title" example:"Fix login button"`
+	Description string    `json:"description" example:"The login button does not work"`
+	Status      string    `json:"status" example:"open"`
+	Priority    string    `json:"priority" example:"medium" enums:"urgent,high,medium,low"`
+	// ReporterID is null exactly when RequesterID is set: migration 044's
+	// tickets_origin_identity makes the two mutually exclusive.
+	ReporterID *uuid.UUID `json:"reporter_id" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
+	// RequesterID identifies a portal-raised ticket. Non-null is the whole
+	// provenance predicate; Requester carries the resolved identity.
+	RequesterID *uuid.UUID                `json:"requester_id"`
+	Requester   *SwaggerRequesterIdentity `json:"requester"`
+	AssigneeID  *uuid.UUID                `json:"assignee_id,omitempty"`
+	Labels      []string                  `json:"labels"`
+	DueAt       *time.Time                `json:"due_at,omitempty"`
+	ResolvedAt  *time.Time                `json:"resolved_at,omitempty"`
+	Rank        string                    `json:"rank" example:"0|aaaaaa:"`
+	CreatedAt   time.Time                 `json:"created_at"`
+	UpdatedAt   time.Time                 `json:"updated_at"`
 }
 
 // SwaggerKanbanColumn represents one column in a kanban board.

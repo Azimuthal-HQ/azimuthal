@@ -694,6 +694,18 @@ components:
           example: securepassword123
           type: string
       type: object
+    api.SwaggerRequesterIdentity:
+      properties:
+        display_name:
+          example: Dana Okoro
+          type: string
+        email:
+          example: dana@example.com
+          type: string
+        id:
+          example: c3d4e5f6-a7b8-9012-cdef-123456789012
+          type: string
+      type: object
     api.SwaggerSprintAssignRequest:
       properties:
         sprint_id:
@@ -724,14 +736,32 @@ components:
             type: string
           type: array
           uniqueItems: false
-        priority:
-          example: 1
+        number:
+          example: 42
           type: integer
+        priority:
+          enum:
+          - urgent
+          - high
+          - medium
+          - low
+          example: medium
+          type: string
         rank:
           example: '0|aaaaaa:'
           type: string
         reporter_id:
+          description: |-
+            ReporterID is null exactly when RequesterID is set: migration 044's
+            tickets_origin_identity makes the two mutually exclusive.
           example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+        requester:
+          $ref: '#/components/schemas/api.SwaggerRequesterIdentity'
+        requester_id:
+          description: |-
+            RequesterID identifies a portal-raised ticket. Non-null is the whole
+            provenance predicate; Requester carries the resolved identity.
           type: string
         resolved_at:
           type: string

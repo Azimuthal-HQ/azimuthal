@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ChevronRight, Clock, AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
+import { SegmentedControl, type SegmentedOption } from '../../components/ui/segmented';
 import {
   DetailLayout,
   DetailMain,
@@ -25,6 +26,7 @@ import {
   useSpace,
   friendlyErrorMessage,
   type TicketStatus,
+  type CommentVisibility,
 } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
@@ -68,6 +70,84 @@ function InitialAvatar({ name, className }: { name?: string | null; className?: 
 }
 
 // ---------------------------------------------------------------------------
+// Comment visibility vocabulary (customer portal, migrations 044/045)
+// ---------------------------------------------------------------------------
+
+/**
+ * Visibility is STATE, so its markers are a tinted ground with a MATCHING
+ * foreground — tokens.css: "Hue with matching text means state. Hue with
+ * neutral text means provenance." The tint formula is the priority selector's
+ * (`PRIORITY_SEGMENT_CLASS` / `PRIORITY_PILL_CLASS` in components/priority.tsx),
+ * reused verbatim so the two selectors read as one control family.
+ *
+ * Internal borrows warning-yellow (caution: this stays inside), public borrows
+ * info-blue (this leaves the building).
+ */
+const VISIBILITY_SEGMENT_CLASS: Record<CommentVisibility, string> = {
+  internal:
+    'bg-[color-mix(in_srgb,var(--color-warning)_22%,transparent)] text-[var(--color-warning)]',
+  public: 'bg-[color-mix(in_srgb,var(--color-info)_26%,transparent)] text-[var(--color-info)]',
+};
+
+const VISIBILITY_CHIP_CLASS: Record<CommentVisibility, string> = {
+  internal:
+    'bg-[color-mix(in_srgb,var(--color-warning)_16%,transparent)] text-[var(--color-warning)]',
+  public: 'bg-[color-mix(in_srgb,var(--color-info)_18%,transparent)] text-[var(--color-info)]',
+};
+
+/**
+ * A full sentence, not a word. The two mistakes are not symmetric: a public
+ * note that should have been internal is a disclosure to an external customer
+ * that cannot be recalled, while the reverse is a delay. So the composer says
+ * who reads this in plain language, next to where the typing happens, rather
+ * than relying on the operator decoding a selected segment.
+ */
+const VISIBILITY_SENTENCE: Record<CommentVisibility, string> = {
+  internal: 'Only your team can see this.',
+  public: 'The customer will see this.',
+};
+
+const VISIBILITY_OPTIONS: SegmentedOption<CommentVisibility>[] = [
+  {
+    value: 'internal',
+    label: 'Internal note',
+    dotColor: 'var(--color-warning)',
+    selectedClassName: VISIBILITY_SEGMENT_CLASS.internal,
+  },
+  {
+    value: 'public',
+    label: 'Reply to customer',
+    dotColor: 'var(--color-info)',
+    selectedClassName: VISIBILITY_SEGMENT_CLASS.public,
+  },
+];
+
+const markerChipClass = 'inline-flex shrink-0 items-center rounded-[5px] px-2 py-[3px] text-[11px] font-medium';
+
+/**
+ * Where a ticket or a message came from is PROVENANCE, so it is the module hue
+ * as background at --module-chip-alpha (the `.module-chip` rule in
+ * globals.css) with neutral --module-chip-fg text — never the hue as text,
+ * which would read as state. Same shape as `shell/ModuleChip` and
+ * `components/ItemKeyChip`; it is a distinct label rather than a reuse of
+ * either because neither is keyed on origin.
+ */
+function ProvenanceChip({ label, testId }: { label: string; testId: string }) {
+  return (
+    <span
+      data-testid={testId}
+      className={cn(
+        'module-chip inline-flex shrink-0 items-center rounded-[5px] px-[7px] py-[2px]',
+        'text-[10px] font-medium leading-4',
+      )}
+      style={{ '--chip-hue': 'var(--module-beacon)', color: 'var(--module-chip-fg)' } as CSSProperties}
+    >
+      {label}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -85,6 +165,9 @@ export function TicketDetailPage() {
   const createCommentMutation = useCreateComment(orgId, spaceId, 'ticket', ticketId ?? '');
 
   const [newComment, setNewComment] = useState('');
+  // Internal is the default and the safe direction: a note that stays inside
+  // when it should have gone out costs a delay; the reverse cannot be undone.
+  const [commentVisibility, setCommentVisibility] = useState<CommentVisibility>('internal');
 
   async function handleStatusChange(newStatus: TicketStatus) {
     await transitionMutation.mutateAsync(newStatus);
@@ -98,8 +181,21 @@ export function TicketDetailPage() {
 
   async function handleAddComment() {
     if (!newComment.trim()) return;
-    await createCommentMutation.mutateAsync({ content: newComment.trim() });
+    // `visibility` goes on EVERY create, never left to the server default.
+    // Absent and '' both mean internal server-side, so an omission and a
+    // deliberate internal note would be indistinguishable on the wire; sending
+    // it explicitly keeps the request self-describing.
+    await createCommentMutation.mutateAsync({
+      content: newComment.trim(),
+      visibility: commentVisibility,
+    });
     setNewComment('');
+    // Public does not stick. Leaving the toggle where it was would turn one
+    // deliberate customer reply into a default for the next note.
+    setCommentVisibility('internal');
+    // The create response literal always reports from_requester:false — only
+    // the list path populates it — so the thread is refetched rather than
+    // rendered optimistically from the POST echo.
     refetchComments();
   }
 
@@ -136,7 +232,17 @@ export function TicketDetailPage() {
   const ticketKey = ticket.number
     ? `${space?.key ?? 'SD'}-${ticket.number}`
     : ticket.id.slice(0, 8);
-  const reporter = (members ?? []).find((m) => m.user_id === ticket.reporter_id);
+  // Migration 044's `tickets_origin_identity` XOR: a ticket carries EITHER a
+  // reporter or a requester, never both and never neither. So this predicate is
+  // the origin — there is no `origin` field to add, and nothing for one to
+  // disagree with.
+  const fromPortal = ticket.requester_id !== null;
+  // A requester has no `users` row by design, so it must never be looked up in
+  // the org member list; that lookup is what rendered portal tickets as
+  // "Unknown".
+  const reporter = fromPortal
+    ? undefined
+    : (members ?? []).find((m) => m.user_id === ticket.reporter_id);
   const assignee = (members ?? []).find((m) => m.user_id === ticket.assignee_id);
 
   return (
@@ -180,6 +286,7 @@ export function TicketDetailPage() {
             </Badge>
             <PriorityPill priority={normalizePriority(ticket.priority)} />
             <ModuleChip module="beacon" />
+            {fromPortal && <ProvenanceChip label="Portal" testId="portal-origin-chip" />}
           </div>
 
           {/* The shared renderer (P5). It was four copies of the same prose
@@ -203,13 +310,35 @@ export function TicketDetailPage() {
                 <p className="text-[var(--text-sm)] italic text-[var(--color-text-muted)]">No comments yet.</p>
               )}
               {(comments ?? []).map((comment) => (
-                <div key={comment.id} className="flex gap-3">
+                <div
+                  key={comment.id}
+                  data-testid="comment-row"
+                  data-visibility={comment.visibility}
+                  className={cn(
+                    'flex gap-3',
+                    // Provenance again: a customer's own message sits on the
+                    // module hue with ordinary text, never hue-coloured text.
+                    comment.from_requester &&
+                      'rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--module-beacon)_8%,transparent)] p-2',
+                  )}
+                >
                   <InitialAvatar name={comment.author_name} className="h-8 w-8 text-[var(--text-sm)]" />
                   <div className="min-w-0 flex-1">
-                    <div className="mb-1 flex items-center gap-2">
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
                       <span className="text-[var(--text-sm)] font-medium text-[var(--color-text)]">
                         {comment.author_name ?? 'Unknown'}
                       </span>
+                      {comment.from_requester && (
+                        <ProvenanceChip label="Customer" testId="comment-requester-chip" />
+                      )}
+                      {comment.visibility === 'public' && (
+                        <span
+                          data-testid="comment-public-marker"
+                          className={cn(markerChipClass, VISIBILITY_CHIP_CLASS.public)}
+                        >
+                          Visible to customer
+                        </span>
+                      )}
                       <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
                         {new Date(comment.created_at).toLocaleDateString()}
                       </span>
@@ -225,14 +354,42 @@ export function TicketDetailPage() {
             <div className="flex gap-3">
               <InitialAvatar name={me?.display_name} className="h-8 w-8 text-[var(--text-sm)]" />
               <div className="flex-1">
+                {/* The audience, stated twice: as the selected segment, and as
+                    a full sentence beside it. The composer's own border picks
+                    up the public hue so the state is unmistakable while typing
+                    and not only at the toggle. */}
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <SegmentedControl
+                    options={VISIBILITY_OPTIONS}
+                    value={commentVisibility}
+                    onChange={setCommentVisibility}
+                    aria-label="Comment visibility"
+                    fullWidth={false}
+                    testId="comment-visibility"
+                  />
+                  <span
+                    data-testid="comment-visibility-state"
+                    className={cn(markerChipClass, VISIBILITY_CHIP_CLASS[commentVisibility])}
+                  >
+                    {VISIBILITY_SENTENCE[commentVisibility]}
+                  </span>
+                </div>
                 <textarea
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
-                  placeholder="Add a comment..."
+                  placeholder={
+                    commentVisibility === 'public'
+                      ? 'Reply to the customer...'
+                      : 'Add an internal note...'
+                  }
+                  data-testid="comment-composer"
                   className={cn(
-                    'w-full resize-none rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
+                    'w-full resize-none rounded-[var(--radius-lg)] border bg-[var(--color-input)] px-3 py-2 text-[var(--text-sm)] text-[var(--color-text)]',
                     'placeholder:text-[var(--color-text-muted)]',
-                    'focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]',
+                    'focus:outline-none focus:ring-1',
+                    commentVisibility === 'public'
+                      ? 'border-[var(--color-info)] focus:border-[var(--color-info)] focus:ring-[var(--color-info)]'
+                      : 'border-[var(--color-border)] focus:border-[var(--color-primary)] focus:ring-[var(--color-primary)]',
                   )}
                   rows={3}
                 />
@@ -295,14 +452,35 @@ export function TicketDetailPage() {
             </div>
           </DetailField>
 
-          <DetailField label="Reporter">
-            <div className="flex items-center gap-2" data-testid="ticket-reporter">
-              <InitialAvatar name={reporter?.display_name} />
-              <span className="text-[var(--text-sm)] text-[var(--color-text)]">
-                {reporter?.display_name ?? 'Unknown'}
-              </span>
-            </div>
-          </DetailField>
+          {/* Requester or Reporter — never both, per the 044 XOR. The field is
+              relabelled rather than reused: an external requester is not a
+              member of this org and must not be presented as one. */}
+          {fromPortal ? (
+            <DetailField label="Requester">
+              <div className="flex items-center gap-2" data-testid="ticket-requester">
+                <InitialAvatar name={ticket.requester?.display_name} />
+                <div className="min-w-0">
+                  <div className="truncate text-[var(--text-sm)] text-[var(--color-text)]">
+                    {ticket.requester?.display_name ?? 'Portal requester'}
+                  </div>
+                  {ticket.requester?.email && (
+                    <div className="truncate text-[var(--text-xs)] text-[var(--color-text-muted)]">
+                      {ticket.requester.email}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </DetailField>
+          ) : (
+            <DetailField label="Reporter">
+              <div className="flex items-center gap-2" data-testid="ticket-reporter">
+                <InitialAvatar name={reporter?.display_name} />
+                <span className="text-[var(--text-sm)] text-[var(--color-text)]">
+                  {reporter?.display_name ?? 'Unknown'}
+                </span>
+              </div>
+            </DetailField>
+          )}
 
           <DetailDivider />
 

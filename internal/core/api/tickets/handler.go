@@ -45,6 +45,14 @@ type Handler struct {
 	// tiers — see TransitionStatus.
 	tiers   *tiergate.Gate
 	applier workflow.TransitionApplier
+	// requesters resolves the external identity behind a portal-raised ticket
+	// (migration 044's requester_id). Without it the agent surface has only a
+	// null reporter_id to go on, and renders "Unknown".
+	//
+	// Interface kind, so TestHarness_NoDarkDependencies fails by field name the
+	// moment the harness stops mirroring cmd/server/main.go. A nil lookup does
+	// NOT quietly serialise "no requester" — see resolveRequesters.
+	requesters RequesterLookup
 }
 
 // NewHandler creates a ticket Handler.
@@ -70,6 +78,14 @@ func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 // WithNotificationEnqueuer attaches a notification enqueuer to the handler.
 func (h *Handler) WithNotificationEnqueuer(n NotificationEnqueuer) *Handler {
 	h.notifs = n
+	return h
+}
+
+// WithRequesterLookup attaches the external-requester resolver. Required in
+// any wiring that mounts the ticket read paths in an org that runs a customer
+// portal; see the field comment.
+func (h *Handler) WithRequesterLookup(l RequesterLookup) *Handler {
+	h.requesters = l
 	return h
 }
 
@@ -149,7 +165,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list tickets")
 		return
 	}
-	respond.JSON(w, http.StatusOK, result)
+	h.respondTickets(w, r, http.StatusOK, result)
 }
 
 // Create creates a new ticket.
@@ -204,7 +220,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Type: audit.EventTypeTicketCreated, ActorID: claims.UserID.String(),
 		OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: ticket.ID.String(),
 	})
-	respond.JSON(w, http.StatusCreated, ticket)
+	h.respondTicket(w, r, http.StatusCreated, ticket)
 }
 
 // Get returns a single ticket by ID.
@@ -235,7 +251,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, ticket)
+	h.respondTicket(w, r, http.StatusOK, ticket)
 }
 
 // Update modifies an existing ticket.
@@ -300,7 +316,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 			OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
 		})
 	}
-	respond.JSON(w, http.StatusOK, existing)
+	h.respondTicket(w, r, http.StatusOK, existing)
 }
 
 // Delete soft-deletes a ticket.
@@ -467,7 +483,7 @@ func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, 
 			OrgID: t.actorOrgID, ResourceType: "ticket", ResourceID: t.ticketID.String(),
 			Metadata: map[string]string{"to": string(t.status)},
 		})
-		respond.JSON(w, http.StatusOK, ticket)
+		h.respondTicket(w, r, http.StatusOK, ticket)
 		return
 	}
 
@@ -495,7 +511,7 @@ func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, 
 		handleTicketError(w, r, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, ticket)
+	h.respondTicket(w, r, http.StatusOK, ticket)
 }
 
 // gateTicketTransition runs the ADR-0011 tiers and reports whether the
@@ -631,7 +647,7 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 				OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
 			})
 		}
-		respond.JSON(w, http.StatusOK, ticket)
+		h.respondTicket(w, r, http.StatusOK, ticket)
 		return
 	}
 
@@ -652,7 +668,7 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 			Metadata: map[string]string{"assignee_id": req.AssigneeID.String()},
 		})
 	}
-	respond.JSON(w, http.StatusOK, ticket)
+	h.respondTicket(w, r, http.StatusOK, ticket)
 }
 
 // Unassign removes the assignee from a ticket.
@@ -699,7 +715,7 @@ func (h *Handler) Unassign(w http.ResponseWriter, r *http.Request) {
 			OrgID: claims.OrgID, ResourceType: "ticket", ResourceID: id.String(),
 		})
 	}
-	respond.JSON(w, http.StatusOK, ticket)
+	h.respondTicket(w, r, http.StatusOK, ticket)
 }
 
 // Search performs full-text search on tickets.
@@ -744,7 +760,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 		handleTicketError(w, r, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, result)
+	h.respondTickets(w, r, http.StatusOK, result)
 }
 
 // Kanban returns the kanban board view grouped by status.
@@ -773,7 +789,7 @@ func (h *Handler) Kanban(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to load kanban board")
 		return
 	}
-	respond.JSON(w, http.StatusOK, board)
+	h.respondKanban(w, r, board)
 }
 
 func ticketIDFromURL(r *http.Request) (uuid.UUID, error) {

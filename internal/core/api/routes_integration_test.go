@@ -244,8 +244,9 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// without a mailbox. In the real server cmd/server/main.go withholds it
 	// whenever APP_ENV=production, which is the only place it would be
 	// unsafe — config.validate does not refuse the mode itself.
+	portalAdapter := adapters.NewPortalAdapter(pool)
 	portalSvc := portal.NewService(
-		adapters.NewPortalAdapter(pool),
+		portalAdapter,
 		portal.NewTokenService(portal.TokenConfig{
 			PrivateKey: privateKey,
 			PublicKey:  &privateKey.PublicKey,
@@ -276,7 +277,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithAuditLogger(auditLog).
 			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
 			WithSuggestions(tickets.NewSuggestionService(ticketAdapter)).
-			WithWorkflowTiers(tierGate, transitionTx),
+			WithWorkflowTiers(tierGate, transitionTx).
+			WithRequesterLookup(portalAdapter),
 		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
 			WithAuditLogger(auditLog).

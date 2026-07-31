@@ -138,6 +138,33 @@ func (a *PortalAdapter) RequesterByID(ctx context.Context, id uuid.UUID) (portal
 	return requesterFromRow(row), nil
 }
 
+// RequestersByIDs resolves external requester identities in bulk for the agent
+// surface. Missing ids are simply absent from the map rather than an error: a
+// ticket can outlive the requester row it names, and a ticket read is not the
+// place to discover that.
+//
+// The returned identity carries only id, email and display name — never
+// is_active or session_generation, which are the portal guard's revocation
+// state and have no business on an agent response.
+func (a *PortalAdapter) RequestersByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]portal.RequesterIdentity, error) {
+	out := make(map[uuid.UUID]portal.RequesterIdentity, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := a.q.GetRequestersByIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("portal adapter get requesters by ids: %w", err)
+	}
+	for _, row := range rows {
+		out[row.ID] = portal.RequesterIdentity{
+			ID:          row.ID,
+			Email:       row.Email,
+			DisplayName: row.DisplayName,
+		}
+	}
+	return out, nil
+}
+
 // RequesterState is the guard's per-request revocation read. It is exactly one
 // primary-key lookup, and must stay that way: spec §2.5 case 23 forbids a
 // per-request authorisation cost that grows, and TestMatrixAPI23 counts these.

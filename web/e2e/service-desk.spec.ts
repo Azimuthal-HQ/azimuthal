@@ -242,7 +242,7 @@ test.describe('Service Desk', () => {
     await expect(page).not.toHaveURL(/\/login/, { timeout: 5000 })
 
     // Add a comment
-    await page.fill('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]', 'This is a test comment')
+    await page.fill('[data-testid="comment-composer"]', 'This is a test comment')
     await page.getByRole('button', { name: 'Comment', exact: true }).click()
 
     // Comment must appear in the thread
@@ -297,7 +297,7 @@ test.describe('Service Desk', () => {
     ).toBeVisible({ timeout: 5000 })
 
     // Post a comment
-    const commentBox = page.locator('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]')
+    const commentBox = page.locator('[data-testid="comment-composer"]')
     await expect(commentBox).toBeVisible({ timeout: 5000 })
     await commentBox.fill('This is a regression test comment')
     await page.getByRole('button', { name: 'Comment', exact: true }).click()
@@ -407,7 +407,7 @@ test.describe('Service Desk', () => {
     await expect(page).not.toHaveURL(/\/login/)
 
     // Add a comment
-    const commentBox = page.locator('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]')
+    const commentBox = page.locator('[data-testid="comment-composer"]')
     await expect(commentBox).toBeVisible({ timeout: 5000 })
     await commentBox.fill('Persisted comment regression test')
     await page.getByRole('button', { name: 'Comment', exact: true }).click()

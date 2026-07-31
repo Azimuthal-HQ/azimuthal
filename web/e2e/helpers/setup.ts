@@ -185,6 +185,40 @@ export async function getAuthToken(page: Page): Promise<string> {
 }
 
 /**
+ * Gets the PORTAL session token this browser actually stored, for one portal.
+ *
+ * The mirror of getAuthToken, and deliberately a separate function rather than
+ * a parameter on it: the two are different credential families signed with the
+ * same key, and the whole boundary is the `aud` claim
+ * (internal/core/portal/token.go). A helper that could return either would be
+ * one argument away from handing a portal token to an internal assertion,
+ * which is precisely the confusion the split storage keys exist to prevent.
+ *
+ * It reads localStorage rather than re-issuing a link through the API, because
+ * the value under test is the token the REDEEM PAGE STORED. A Go test can mint
+ * a token and prove the internal parser refuses it; it cannot prove that what
+ * the browser is holding — after the redeem round trip, the session record and
+ * the JSON envelope — is that same refused thing. That half only exists here.
+ *
+ * The key shape (`azimuthal_portal_session:{portalKey}`) is per-portal because
+ * a session is bound to one `pid`: presenting portal A's session to portal B
+ * answers 404, not 401. See web/src/lib/portalSession.ts.
+ */
+export async function getPortalToken(page: Page, portalKey: string): Promise<string> {
+  const token = await page.evaluate((key: string): string | null => {
+    const raw = localStorage.getItem(`azimuthal_portal_session:${key}`)
+    if (!raw) return null
+    try {
+      return (JSON.parse(raw) as { session_token?: string }).session_token ?? null
+    } catch {
+      return null
+    }
+  }, portalKey)
+  if (!token) throw new Error(`No portal session token in localStorage for portal ${portalKey}`)
+  return token
+}
+
+/**
  * Asserts no error states are visible on the current page.
  * Call this after any navigation to verify the page loaded correctly.
  *

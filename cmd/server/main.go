@@ -395,7 +395,11 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	if cfg.PortalLinkDelivery == config.PortalLinkDeliveryEmail {
 		portalSender = adapters.NewPortalLinkSender(sender)
 	}
-	portalSvc := portal.NewService(adapters.NewPortalAdapter(pool), portalTokens, portalSender, portal.Config{
+	// Named rather than inline because the ticket handler also needs it: the
+	// agent surface resolves the external requester behind a portal-raised
+	// ticket through the same adapter.
+	portalAdapter := adapters.NewPortalAdapter(pool)
+	portalSvc := portal.NewService(portalAdapter, portalTokens, portalSender, portal.Config{
 		LinkTTL:        cfg.PortalLinkTTL,
 		DeliverByEmail: cfg.PortalLinkDelivery == config.PortalLinkDeliveryEmail,
 		// Disclosing the sign-in URL to an unauthenticated caller is an
@@ -431,7 +435,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner, userAdapter).
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
-		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc).WithWorkflowTiers(tierGate, transitionTx),
+		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc).WithWorkflowTiers(tierGate, transitionTx).WithRequesterLookup(portalAdapter),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),

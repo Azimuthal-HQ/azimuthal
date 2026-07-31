@@ -34,6 +34,24 @@ export default defineConfig({
       STORAGE_BUCKET: process.env.STORAGE_BUCKET || '',
       APP_PORT: process.env.E2E_PORT || '8082',
       APP_ENV: 'test',
+      // APP_BASE_URL is what the server interpolates into every emailed link
+      // it builds — the portal sign-in link and the invite link both. It
+      // defaults to http://localhost:8080 (internal/config), while this server
+      // binds E2E_PORT, so without this a captured magic link points at the
+      // wrong port. The dangerous failure is not a connection refused: it is a
+      // real dev server answering on 8080, where the test would navigate
+      // somewhere else entirely and pass for the wrong reason.
+      //
+      // Specs should STILL navigate by pathname rather than by the absolute
+      // URL (see web/e2e/admin.spec.ts's invite flow) — that resolves against
+      // use.baseURL and is port-correct by construction. Both, deliberately.
+      APP_BASE_URL: `http://localhost:${process.env.E2E_PORT || '8082'}`,
+      // Link delivery discloses the sign-in URL in the response instead of
+      // sending mail, which is how a browser test signs a requester in without
+      // a mailbox. It is already the default and APP_ENV=test keeps disclosure
+      // on; declaring it makes the dependency visible and survives a change of
+      // default.
+      AZIMUTHAL_PORTAL_LINK_DELIVERY: 'link',
     },
   },
 })

@@ -255,6 +255,68 @@ func TestHarness_NoUnmountedSurfaces(t *testing.T) {
 	}
 }
 
+// TestHarness_PortalGuardIsMounted closes a hole that internal/core/api/router.go
+// already claimed was closed.
+//
+// That file says, of RouterConfig.PortalService: "TestHarness_PortalGuardIsMounted
+// fails if the two ever disagree." No such test existed — the name appeared
+// exactly once in the repository, in that comment. This is it.
+//
+// The hole is the dark harness in the portal's own shape. PortalHandler mounts
+// the requester routes; PortalService backs the RequirePortalSession middleware
+// the ROUTER applies to them. With the handler non-nil and the service nil,
+// every structural guard we have still passes:
+//
+//   - RequirePortalSession(nil) is still present in the middleware chain, so
+//     the accounting sweep's carries() check is satisfied — the guard is
+//     mounted, it simply cannot authenticate anyone.
+//   - TestHarness_NoDarkDependencies skips nil RouterConfig fields; it polices
+//     a handler's collaborators, not the config's own.
+//   - TestHarness_NoUnmountedSurfaces only inspects fields whose name ends in
+//     "Handler", which PortalService does not.
+//
+// Meanwhile every /my/ route answers 404 at the guard's nil-service branch, so
+// a requester-authenticated test would get a tidy 404 and pass any assertion
+// that expected one. The whole authenticated half of the portal would read as
+// covered while never having been reached.
+//
+// What this test adds, precisely — because it is easy to overclaim here. The
+// portal's functional coverage already exists: the TestPortal_* integration
+// tests drive real sessions through this harness, so nilling PortalService
+// today breaks a good number of them. This test is not the only thing standing
+// between that hole and production, and saying so would be false.
+//
+// What it adds is a NAMED invariant. Without it the symptom of a nil service is
+// a scattering of unexplained 404s across a dozen tests whose subject is
+// comment visibility or link expiry, none of which mentions wiring. With it,
+// the harness fails once, in the file about harness wiring, saying what is
+// actually wrong. It also makes router.go's comment true, which matters
+// independently: a guard that names its guarantee after a test nobody wrote is
+// worse than one that names nothing, because the next reader believes it.
+//
+// The invariant is deliberately one-directional. PortalHandler nil is a valid
+// deployment — a build that has opted no space into a portal — so the check is
+// "handler implies service", not "both set".
+func TestHarness_PortalGuardIsMounted(t *testing.T) {
+	ts := newTestServer(t)
+
+	cfg := reflect.ValueOf(ts.RouterCfg)
+	handler := cfg.FieldByName("PortalHandler")
+	service := cfg.FieldByName("PortalService")
+
+	require.True(t, handler.IsValid() && service.IsValid(),
+		"RouterConfig must carry both PortalHandler and PortalService")
+
+	if handler.IsNil() {
+		t.Skip("portal surface is not mounted in this harness")
+	}
+
+	require.False(t, service.IsNil(),
+		"PortalHandler is mounted but PortalService is nil, so RequirePortalSession "+
+			"cannot authenticate: every requester route answers 404 and reads as covered. "+
+			"Wire PortalService in newTestServerOn, mirroring cmd/server/main.go.")
+}
+
 // TestHarness_EveryTicketRefHandlerIsUnderTheRequiredPolicy is the structural
 // guard for the omission that produced B3.
 //

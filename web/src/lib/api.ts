@@ -5,6 +5,7 @@ import {
 } from '@tanstack/react-query';
 import type { UseQueryOptions } from '@tanstack/react-query';
 import { getToken, setToken, setRefreshToken, getRefreshToken, removeToken, removeRefreshToken, getCurrentOrgId } from './auth';
+import { getPortalToken } from './portalSession';
 import type { CodexDoc } from './codex/schema';
 import type { QueryDoc, ViewModule } from './views/query';
 
@@ -114,10 +115,33 @@ function splitIdRef(v: IdWithTicketRef): { id: string; ticketRef?: string } {
  */
 type ClaimErrorBody = (status: number, body: unknown) => Error | undefined;
 
+/**
+ * Which credential family a request carries.
+ *
+ * The customer portal (migration 044) authenticates an EXTERNAL requester who
+ * holds no `users` row at all. Its session token is RS256-signed with the same
+ * key as an internal token, so the `aud` claim is the entire boundary between
+ * the two — see `internal/core/portal/token.go`. Presenting the wrong one is
+ * not a soft failure: the internal parser refuses a portal audience and vice
+ * versa, so a mixed-up credential 401s.
+ *
+ * `'none'` is for the portal's three unauthenticated routes (describe, request
+ * a sign-in link, redeem one). Sending a stale internal token to those would
+ * attach an org member's identity to a request made by a stranger.
+ */
+type Credential = 'internal' | 'portal' | 'none';
+
+interface FetchOptions {
+  credential?: Credential;
+  /** Required when `credential` is `'portal'` — sessions are per portal. */
+  portalKey?: string;
+}
+
 async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
   claimErrorBody?: ClaimErrorBody,
+  fetchOpts: FetchOptions = {},
 ): Promise<T> {
   const headers = new Headers(options.headers);
 
@@ -127,7 +151,13 @@ async function apiFetch<T>(
     headers.set('Content-Type', 'application/json');
   }
 
-  const token = getToken();
+  const credential = fetchOpts.credential ?? 'internal';
+  const token =
+    credential === 'internal'
+      ? getToken()
+      : credential === 'portal'
+        ? getPortalToken(fetchOpts.portalKey ?? '')
+        : null;
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
@@ -143,9 +173,21 @@ async function apiFetch<T>(
     // throw an error without logging the user out.
     if (response.status === 401) {
       const url = response.url || '';
-      const isCriticalAuthEndpoint = url.includes('/auth/login') ||
+      // Only the INTERNAL credential owns the internal session, so only it may
+      // clear it. A requester whose portal session expired must never be sent
+      // to /login: that is the internal product leaking into a surface whose
+      // whole purpose is that an external customer learns nothing about it.
+      //
+      // Note this check keys on substrings of the response URL. No portal path
+      // contains '/auth/login', '/auth/me' or '/auth/refresh' today
+      // ('/portal/auth/redeem' is not 'refresh', and a portalKey is
+      // [a-z0-9]{16,32} so it cannot introduce a segment) — but that is one
+      // rename away from breaking, which is why the credential gate is here
+      // and not left implicit. Pinned by api.portal-credential.test.ts.
+      const isCriticalAuthEndpoint = credential === 'internal' && (
+        url.includes('/auth/login') ||
         url.includes('/auth/me') ||
-        url.includes('/auth/refresh');
+        url.includes('/auth/refresh'));
       if (isCriticalAuthEndpoint) {
         removeToken();
         removeRefreshToken();
@@ -353,6 +395,21 @@ export interface User {
   updated_at: string;
 }
 
+/**
+ * The external customer who raised a ticket through a portal, resolved
+ * server-side (`internal/core/api/tickets/requester_view.go`).
+ *
+ * A requester holds NO `users` row (migration 044), so none of the member
+ * lookups a client runs against `reporter_id` or `assignee_id` will ever find
+ * them. That is why the identity travels resolved on the ticket rather than as
+ * an id to look up: there is nowhere to look it up.
+ */
+export interface TicketRequester {
+  id: string;
+  display_name: string;
+  email: string;
+}
+
 export interface Ticket {
   id: string;
   space_id: string;
@@ -362,7 +419,28 @@ export interface Ticket {
   status: TicketStatus;
   priority: string;
   assignee_id: string | null;
-  reporter_id: string;
+  /**
+   * The internal user who raised the ticket, or null for one raised through a
+   * customer portal — a requester has no `users` row to point at. Nullable
+   * since migration 044; the Go field is a `*uuid.UUID` with no omitempty, so
+   * the key is always present and `null` is the wire form of "nobody".
+   */
+  reporter_id: string | null;
+  /**
+   * The external requester's id, or null for a ticket raised inside the
+   * product. THIS IS THE PROVENANCE PREDICATE: `requester_id !== null` is what
+   * makes a ticket a customer request, and it is the only field that says so —
+   * status, priority and space tell you nothing about where it came from.
+   */
+  requester_id: string | null;
+  /**
+   * The resolved requester, or null. Present on every agent-side ticket
+   * response — single, list, search and kanban all serialise through
+   * `respondTicket`/`respondTickets` — so its absence is never "this endpoint
+   * forgot", and null always means "no external requester" or "their record is
+   * gone", not "not looked up".
+   */
+  requester: TicketRequester | null;
   label_ids: string[];
   created_at: string;
   updated_at: string;
@@ -472,12 +550,40 @@ export interface Label {
   updated_at: string;
 }
 
+/**
+ * Who a comment is for. Mirrors migration 045's `comments_visibility_valid`.
+ *
+ * `'internal'` is the DEFAULT and the safe direction: an agent's note is
+ * private unless they explicitly publish it, because an internal note the
+ * customer never sees is a delay while a public note the agent thought was
+ * private is a disclosure that cannot be recalled.
+ */
+export type CommentVisibility = 'internal' | 'public';
+
 export interface Comment {
   id: string;
   entity_type: string;
   entity_id: string;
-  author_id: string;
+  /**
+   * Null for a comment written by an external requester, who has no `users`
+   * row (migration 044). `author_name` carries the name in both cases, so
+   * render that rather than resolving this id — a null here is a customer,
+   * not a deleted account.
+   */
+  author_id: string | null;
   author_name?: string;
+  /**
+   * Whether this is the customer's own message. Agent surface only: it exists
+   * so the thread can mark a customer's turn without the client reasoning
+   * about which of two author columns is populated.
+   */
+  from_requester: boolean;
+  /**
+   * Agent surface only. The portal's serialiser has no such field because the
+   * portal query returns public rows exclusively and there is nothing to
+   * disambiguate — see `PortalMessage`.
+   */
+  visibility: CommentVisibility;
   body: string;
   content?: string;
   created_at: string;
@@ -1994,6 +2100,15 @@ async function fetchComments(orgId: string, spaceId: string, entityType: string,
 
 interface CreateCommentRequest {
   content: string;
+  /**
+   * Optional on the wire — the server treats absent and `''` alike and stores
+   * `internal`, so a client written before the portal existed keeps posting
+   * private notes. Optional here for the same reason and no other: call sites
+   * that offer the choice should send it explicitly rather than leaning on the
+   * default, because "I meant internal" and "I forgot" then look identical in
+   * the request.
+   */
+  visibility?: CommentVisibility;
 }
 
 async function createComment(orgId: string, spaceId: string, entityType: string, entityId: string, req: CreateCommentRequest): Promise<Comment> {
@@ -2381,6 +2496,30 @@ export const queryKeys = {
     ['gadget', orgId, 'results', queryJSON, limit] as const,
   gadgetAggregate: (orgId: string, queryJSON: string, groupBy: string) =>
     ['gadget', orgId, 'aggregate', queryJSON, groupBy] as const,
+  // Customer portal (migration 044). Everything nests under
+  // ['portal', portalKey] so one prefix invalidation clears a portal on sign
+  // out, and the describe key sits beside the requester-scoped ones rather
+  // than in its own family — it is the same portal.
+  //
+  // THE REQUESTER'S EMAIL IS IN EVERY AUTHENTICATED KEY, and it is not
+  // decoration. One QueryClient serves the whole app and survives a portal
+  // sign-out, so without the email requester A's cached list is handed
+  // straight to requester B after a sign-out and sign-in on the same machine —
+  // a shared terminal, or simply two people on one household laptop. It fails
+  // closed nowhere: the data is already in memory, so no request is made and
+  // no 401 corrects it. `describe` carries no email because it is the
+  // portal's public face and identical for everyone.
+  /**
+   * The invalidation prefix the other three nest under. Not a query of its
+   * own — it exists so sign-out and redeem can drop a whole portal's cache
+   * without a literal `['portal', portalKey]` at the call site.
+   */
+  portal: (portalKey: string) => ['portal', portalKey] as const,
+  portalDescribe: (portalKey: string) => ['portal', portalKey, 'describe'] as const,
+  portalRequests: (portalKey: string, requesterEmail: string) =>
+    ['portal', portalKey, requesterEmail, 'requests', 'list'] as const,
+  portalRequest: (portalKey: string, requesterEmail: string, reference: string) =>
+    ['portal', portalKey, requesterEmail, 'requests', 'one', reference] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -5201,4 +5340,389 @@ export function splitSnippet(snippet: string): Array<{ text: string; match: bool
     rest = rest.slice(end + 1);
   }
   return out.filter((p) => p.text.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Customer portal — the requester surface (migration 044)
+// ---------------------------------------------------------------------------
+//
+// Every type below is a SEPARATE shape, never a reuse of Ticket or Comment,
+// and that is the point rather than an accident of ordering. The server's wire
+// types (internal/core/api/portal/handler.go) carry no space id, space key,
+// space name, ticket number, assignee, reporter, priority, label or workflow
+// state, because a field that does not exist cannot be leaked by a serialiser
+// change. Mirroring them exactly here means a client that reaches for
+// `ticket.space_id` on a portal response does not compile, instead of reading
+// undefined and rendering nothing while somebody assumes the field is coming.
+//
+// Two rules govern this whole section:
+//
+//  1. `status` is DISPLAY TEXT, already translated server-side into requester
+//     language ('Received' | 'In progress' | 'Resolved' | 'Closed', with
+//     anything unrecognised falling through to 'In progress'). Do not map it,
+//     re-label it, switch on it, or type it as a union — tickets.status has no
+//     database CHECK and the workflow route writes arbitrary state names into
+//     it, so a client-side mapping would eventually print an internal workflow
+//     state to a customer, which is exactly the leak the server-side
+//     translation exists to prevent.
+//  2. `reference` is a bare ticket UUID BY DESIGN. It is not the 'BEA-42' form
+//     the internal product shows, because that is composed from the space key
+//     and would tell an external customer what the internal space is called.
+//     Never prettify it, never derive a key from it.
+//
+// Credentials: the three sign-in routes take `'none'` (a stale internal token
+// must never attach an org member's identity to a stranger's request) and
+// everything under /my takes `'portal'`. See the `Credential` type above.
+
+/** A portal's public face: all an anonymous visitor learns before signing in. */
+export interface PortalDescribe {
+  name: string;
+  intro: string;
+}
+
+/** A request as it appears in the requester's own list. */
+export interface PortalRequestSummary {
+  /** Opaque handle — a ticket UUID. Never rendered as a key. */
+  reference: string;
+  summary: string;
+  /** Requester-facing display text, already translated. Never re-map it. */
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * One request in full. `description` is omitempty server-side and only the
+ * detail route sets it, so it is optional here and absent on every list row —
+ * a list that appears to have lost the body has not lost anything.
+ */
+export interface PortalRequestDetail extends PortalRequestSummary {
+  description?: string;
+}
+
+/**
+ * One message in a request's thread.
+ *
+ * There is no `visibility` field, unlike {@link Comment}: the portal query
+ * returns public rows exclusively, so every message here is public by
+ * construction and there is nothing to disambiguate. `author` is a display
+ * label, not an id — an agent's identity reaches a customer as a name and
+ * nothing else.
+ */
+export interface PortalMessage {
+  id: string;
+  author: string;
+  from_requester: boolean;
+  body: string;
+  created_at: string;
+}
+
+export interface PortalRequestDetailResponse {
+  request: PortalRequestDetail;
+  messages: PortalMessage[];
+}
+
+/**
+ * What redeeming a sign-in link yields.
+ *
+ * `expires_in` is in SECONDS. Store it through `sessionFromRedeem` in
+ * `lib/portalSession.ts`, which converts to an absolute ms epoch — nothing
+ * re-serves this response, because there is no `GET /my/me` and no refresh
+ * endpoint, so a session that is mis-stored is a session lost.
+ */
+export interface PortalRedeemResponse {
+  session_token: string;
+  expires_in: number;
+  requester: { email: string; name: string };
+  portal: { name: string; intro: string };
+}
+
+/**
+ * The answer to asking for a sign-in link — deliberately uninformative.
+ *
+ * It says the same thing for a known address, an unknown one and a deactivated
+ * requester, because any difference would be a free oracle for testing whether
+ * an address has ever contacted this service desk. `delivered` reports whether
+ * mail was dispatched, not whether the address exists, and `magic_link_url` is
+ * populated only where configuration permits disclosure (development and
+ * test). Do not build a "we don't know that address" state out of either.
+ */
+export interface PortalLinkResponse {
+  status: string;
+  delivered: boolean;
+  magic_link_url?: string;
+}
+
+// portalBase builds the unauthenticated prefix; portalMyBase the session one.
+// A portalKey is server-generated [a-z0-9]{16,32}, but it arrives here off a
+// URL segment the user can type, so both encode it.
+function portalBase(portalKey: string): string {
+  return `/portal/${encodeURIComponent(portalKey)}`;
+}
+
+function portalMyBase(portalKey: string): string {
+  return `${portalBase(portalKey)}/my`;
+}
+
+async function fetchPortalDescribe(portalKey: string): Promise<PortalDescribe> {
+  return apiFetch<PortalDescribe>(portalBase(portalKey), {}, undefined, { credential: 'none' });
+}
+
+async function requestPortalLink(
+  portalKey: string,
+  email: string,
+  name?: string,
+): Promise<PortalLinkResponse> {
+  // The body is assembled key by key rather than spread from the caller's
+  // object: respond.DecodeJSON sets DisallowUnknownFields, so one stray key —
+  // a form's `remember`, a page's `portalKey` — is a 400 with a message that
+  // says nothing about which field caused it.
+  const body: { email: string; name?: string } = { email };
+  if (name !== undefined && name !== '') body.name = name;
+  return apiFetch<PortalLinkResponse>(
+    `${portalBase(portalKey)}/auth/request-link`,
+    { method: 'POST', body: JSON.stringify(body) },
+    undefined,
+    { credential: 'none' },
+  );
+}
+
+async function redeemPortalLink(token: string): Promise<PortalRedeemResponse> {
+  // Redeem is NOT under {portalKey} — the single-use token identifies the
+  // portal by itself, which is why this path takes no key. The hook still
+  // takes one, because the caller needs it to store the session under.
+  return apiFetch<PortalRedeemResponse>(
+    '/portal/auth/redeem',
+    { method: 'POST', body: JSON.stringify({ token }) },
+    undefined,
+    { credential: 'none' },
+  );
+}
+
+async function submitPortalRequest(
+  portalKey: string,
+  summary: string,
+  description: string,
+): Promise<PortalRequestSummary> {
+  return apiFetch<PortalRequestSummary>(
+    `${portalMyBase(portalKey)}/requests`,
+    { method: 'POST', body: JSON.stringify({ summary, description }) },
+    undefined,
+    { credential: 'portal', portalKey },
+  );
+}
+
+async function fetchPortalRequests(portalKey: string): Promise<PortalRequestSummary[]> {
+  // A bare array, no envelope. The server sends `[]` rather than null, but the
+  // `?? []` matches every other list fetcher here and costs nothing.
+  const data = await apiFetch<PortalRequestSummary[] | null>(
+    `${portalMyBase(portalKey)}/requests`,
+    {},
+    undefined,
+    { credential: 'portal', portalKey },
+  );
+  return data ?? [];
+}
+
+async function fetchPortalRequest(
+  portalKey: string,
+  reference: string,
+): Promise<PortalRequestDetailResponse> {
+  return apiFetch<PortalRequestDetailResponse>(
+    `${portalMyBase(portalKey)}/requests/${encodeURIComponent(reference)}`,
+    {},
+    undefined,
+    { credential: 'portal', portalKey },
+  );
+}
+
+async function replyToPortalRequest(
+  portalKey: string,
+  reference: string,
+  body: string,
+): Promise<PortalMessage> {
+  return apiFetch<PortalMessage>(
+    `${portalMyBase(portalKey)}/requests/${encodeURIComponent(reference)}/replies`,
+    { method: 'POST', body: JSON.stringify({ body }) },
+    undefined,
+    { credential: 'portal', portalKey },
+  );
+}
+
+async function signOutOfPortal(portalKey: string): Promise<void> {
+  // NO BODY AT ALL, not even '{}'. respond.DecodeJSON rejects an empty body,
+  // and it would reject '{}' too on the unknown-fields rule the moment the
+  // route grew a struct — but the operative reason is simpler: this route
+  // decodes nothing, so anything sent is a 400 waiting to happen. Passing no
+  // `body` also keeps apiFetch from setting a Content-Type for content that
+  // does not exist.
+  return apiFetch<void>(
+    `${portalMyBase(portalKey)}/auth/sign-out`,
+    { method: 'POST' },
+    undefined,
+    { credential: 'portal', portalKey },
+  );
+}
+
+/**
+ * The portal's public name and blurb.
+ *
+ * Unauthenticated, so this is the one portal read that works before sign-in —
+ * it is what the sign-in page has to render, and a 404 from it is the honest
+ * answer to "no such portal".
+ */
+export function usePortalDescribe(portalKey: string, opts?: QueryOpts<PortalDescribe>) {
+  return useQuery<PortalDescribe, APIError>({
+    queryKey: queryKeys.portalDescribe(portalKey),
+    queryFn: () => fetchPortalDescribe(portalKey),
+    enabled: !!portalKey,
+    ...opts,
+  });
+}
+
+/**
+ * The requester's own requests, newest first as the server orders them.
+ *
+ * `requesterEmail` comes from the stored session and is part of the CACHE KEY,
+ * not the request — the server scopes to the session's requester and would
+ * ignore it. Gating on it therefore does double duty: it keeps the query from
+ * firing before a session exists, and it keeps two requesters who used the
+ * same browser from sharing one cache entry.
+ */
+export function usePortalRequests(
+  portalKey: string,
+  requesterEmail: string,
+  opts?: QueryOpts<PortalRequestSummary[]>,
+) {
+  return useQuery<PortalRequestSummary[], APIError>({
+    queryKey: queryKeys.portalRequests(portalKey, requesterEmail),
+    queryFn: () => fetchPortalRequests(portalKey),
+    enabled: !!portalKey && !!requesterEmail,
+    ...opts,
+  });
+}
+
+/**
+ * One request and its public thread.
+ *
+ * A request belonging to somebody else answers 404, never 403 — so does a
+ * malformed reference. Render both the same way; distinguishing them in the UI
+ * would rebuild the oracle the server declined to give.
+ */
+export function usePortalRequest(
+  portalKey: string,
+  requesterEmail: string,
+  reference: string,
+  opts?: QueryOpts<PortalRequestDetailResponse>,
+) {
+  return useQuery<PortalRequestDetailResponse, APIError>({
+    queryKey: queryKeys.portalRequest(portalKey, requesterEmail, reference),
+    queryFn: () => fetchPortalRequest(portalKey, reference),
+    enabled: !!portalKey && !!requesterEmail && !!reference,
+    ...opts,
+  });
+}
+
+/**
+ * Ask for a sign-in link. Always 202 — see {@link PortalLinkResponse}.
+ *
+ * Nothing is invalidated because nothing cached changed: no session exists yet
+ * and the portal's description did not move.
+ */
+export function useRequestPortalLink(portalKey: string) {
+  return useMutation<PortalLinkResponse, APIError, { email: string; name?: string }>({
+    mutationFn: ({ email, name }) => requestPortalLink(portalKey, email, name),
+  });
+}
+
+/**
+ * Exchange a magic-link token for a session.
+ *
+ * The portalKey is a mutation variable rather than a hook parameter because
+ * the redemption page reads it from the same URL as the token, and there is no
+ * earlier point at which the hook could have been given it.
+ *
+ * The caller stores the result — `setPortalSession(portalKey,
+ * sessionFromRedeem(res))` — because storage belongs to `portalSession.ts` and
+ * this module owns exactly one thing, the network. Every cached answer for
+ * this portal is dropped first: the previous requester's list is still in
+ * memory at this moment, and while the email in the query key means it can
+ * never be SERVED to the new one, not keeping a stranger's support history in
+ * a shared browser's memory is the cheaper guarantee.
+ */
+export function useRedeemPortalLink() {
+  const queryClient = useQueryClient();
+  return useMutation<PortalRedeemResponse, APIError, { portalKey: string; token: string }>({
+    mutationFn: ({ token }) => redeemPortalLink(token),
+    onSuccess: (_res, { portalKey }) => {
+      queryClient.removeQueries({ queryKey: queryKeys.portal(portalKey) });
+    },
+  });
+}
+
+/**
+ * Raise a request. 201 with the new row, WITHOUT its description — the create
+ * response is a summary, so a caller that wants the body back must read the
+ * detail route. Invalidates the list, which is the only cached thing it changed.
+ */
+export function useSubmitPortalRequest(portalKey: string, requesterEmail: string) {
+  const queryClient = useQueryClient();
+  return useMutation<
+    PortalRequestSummary,
+    APIError,
+    { summary: string; description: string }
+  >({
+    mutationFn: ({ summary, description }) =>
+      submitPortalRequest(portalKey, summary, description),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.portalRequests(portalKey, requesterEmail),
+      });
+    },
+  });
+}
+
+/**
+ * Append the requester's message to their own request.
+ *
+ * Only the detail is invalidated, and the list deliberately is not: a reply
+ * inserts a comment and touches no column of the request itself, so the list's
+ * `status` and `updated_at` are unchanged and refetching it would be a request
+ * that can only return what is already on screen.
+ */
+export function useReplyToPortalRequest(
+  portalKey: string,
+  requesterEmail: string,
+  reference: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation<PortalMessage, APIError, { body: string }>({
+    mutationFn: ({ body }) => replyToPortalRequest(portalKey, reference, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.portalRequest(portalKey, requesterEmail, reference),
+      });
+    },
+  });
+}
+
+/**
+ * Sign out, revoking EVERY session this requester holds — the server bumps
+ * `session_generation`, so the token stops working on its next use rather than
+ * lingering until it expires.
+ *
+ * Cached answers for the portal are removed rather than invalidated: an
+ * invalidation would refetch them, and there is no longer a session to refetch
+ * with. The caller still owns `clearPortalSession(portalKey)` and the
+ * navigation, because a failed sign-out must not leave the UI claiming a
+ * session was ended that was not.
+ */
+export function usePortalSignOut(portalKey: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, void>({
+    mutationFn: () => signOutOfPortal(portalKey),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: queryKeys.portal(portalKey) });
+    },
+  });
 }
