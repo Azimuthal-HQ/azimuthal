@@ -22,6 +22,13 @@ dist/*
 /dist-ssr
 *.local
 
+# TypeScript incremental-build state. tsconfig.app.json and tsconfig.node.json
+# currently redirect it into node_modules/.tmp/, so it never lands here — but
+# that redirect is one edit away from disappearing, and when it does the file
+# appears at web/ and dirties the porcelain gate (H1). Bare and global: tsc
+# writes it beside whichever tsconfig produced it.
+*.tsbuildinfo
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

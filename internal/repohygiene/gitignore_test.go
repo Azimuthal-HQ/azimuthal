@@ -132,8 +132,9 @@ var reviewedBarePatterns = map[string]map[string]string{
 		"pnpm-debug.log*":  "as above, pnpm",
 		"lerna-debug.log*": "as above, lerna",
 
-		"node_modules": "nested node_modules are real and all of them are disposable",
-		"*.local":      "Vite's convention for local-only env files, at any depth",
+		"node_modules":  "nested node_modules are real and all of them are disposable",
+		"*.local":       "Vite's convention for local-only env files, at any depth",
+		"*.tsbuildinfo": "tsc writes it beside whichever tsconfig produced it",
 
 		".idea":     "JetBrains project dir; can appear beside any sub-project",
 		".DS_Store": "macOS writes one into every directory it browses",
@@ -235,6 +236,13 @@ func TestGitignore_RootIntentPatternsDoNotMatchAtDepth(t *testing.T) {
 		"cmd/server/handlers.go",     // the original defect: bare `server`
 		"web/src/logs/index.ts",      // was matched by bare `logs` in web/.gitignore
 		"web/src/dist-ssr/entry.ts",  // was matched by bare `dist-ssr`
+
+		// These two survive only because `!.env.test` and `!.env.example` come
+		// AFTER `.env` in the file — git takes the last matching pattern. The
+		// ordering is load-bearing and nothing else asserts it, so reordering
+		// the block would otherwise silently untrack both committed samples.
+		".env.test",
+		".env.example",
 	}
 	for _, path := range mustBeVisible {
 		ignored, by := gitIgnores(t, root, path)
@@ -281,23 +289,53 @@ func requireGitRepo(t *testing.T, root string) {
 // gitIgnores asks git whether path would be ignored, and by which rule.
 //
 // --no-index is the point: none of these paths exist, and the question is what
-// git would do if a change introduced them. check-ignore exits 0 when a pattern
-// matches and 1 when none does; anything else is a real error.
+// git would do if a change introduced them.
+//
+// The boolean comes from PLAIN check-ignore, never from the -v form, and that
+// distinction is not cosmetic. With -v, git exits 0 for any pattern that
+// matches — including a NEGATION. `.env.test` reports
+// `.gitignore:74:!.env.test` and exit 0, meaning "matched, and therefore NOT
+// ignored". Reading that exit code as "ignored" inverts the answer for every
+// negated path, which would have made the mustStayIgnored half of the caller
+// pass on files that are not ignored at all. Plain check-ignore exits 1 for
+// `.env.test`, which is the question actually being asked.
 func gitIgnores(t *testing.T, root, path string) (ignored bool, rule string) {
+	t.Helper()
+	if !gitCheckIgnore(t, root, path) {
+		return false, ""
+	}
+	// Only now is -v safe and useful: the path IS ignored, so the rule it
+	// reports is the one doing it, and that is what the failure message needs.
+	return true, gitCheckIgnoreRule(t, root, path)
+}
+
+func gitCheckIgnore(t *testing.T, root, path string) bool {
 	t.Helper()
 	// #nosec G204 -- "git" is constant and path is a string literal from the
 	// tables in this file; nothing here reaches outside the test. Same idiom and
 	// same rule as cmd/server/backup.go.
-	cmd := exec.Command("git", "check-ignore", "-v", "--no-index", path)
+	cmd := exec.Command("git", "check-ignore", "--no-index", path)
 	cmd.Dir = root
-	out, err := cmd.Output()
+	err := cmd.Run()
 	if err == nil {
-		return true, strings.TrimSpace(string(out))
+		return true
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return false, ""
+		return false
 	}
 	t.Fatalf("git check-ignore %s failed: %v", path, err)
-	return false, ""
+	return false
+}
+
+func gitCheckIgnoreRule(t *testing.T, root, path string) string {
+	t.Helper()
+	// #nosec G204 -- as above: constant command, literal path.
+	cmd := exec.Command("git", "check-ignore", "-v", "--no-index", path)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return "(rule unavailable)"
+	}
+	return strings.TrimSpace(string(out))
 }
