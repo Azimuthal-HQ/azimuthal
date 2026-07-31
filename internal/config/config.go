@@ -154,13 +154,15 @@ const (
 	PortalLinkDeliveryEmail = "email"
 )
 
-// Load reads configuration from environment variables and returns a validated Config.
-// It fails fast with clear error messages if required variables are missing.
-func Load() (*Config, error) {
-	v := viper.New()
-	v.AutomaticEnv()
-
-	// Sensible defaults
+// setDefaults registers every setting that has one.
+//
+// Split out of Load so that adding a setting does not push Load past the
+// function-length gate, and so the defaults sit in one readable block. These
+// values are the contract build/docker-compose.yml relies on: it forwards
+// operator settings as bare ${KEY}, letting an unset variable fall through to
+// exactly this table rather than repeating it. TestComposeForwardsOperator
+// SettingsWithoutADefault keeps the two from diverging.
+func setDefaults(v *viper.Viper) {
 	v.SetDefault("JWT_EXPIRY", "24h")
 	v.SetDefault("JWT_PRIVATE_KEY_PATH", "./data/jwt-private.pem")
 	v.SetDefault("SMTP_HOST", "localhost")
@@ -181,6 +183,14 @@ func Load() (*Config, error) {
 	v.SetDefault("AZIMUTHAL_PORTAL_LINK_DELIVERY", PortalLinkDeliveryLink)
 	v.SetDefault("AZIMUTHAL_PORTAL_LINK_TTL", "1h")
 	v.SetDefault("AZIMUTHAL_PORTAL_SESSION_TTL", "72h")
+}
+
+// Load reads configuration from environment variables and returns a validated Config.
+// It fails fast with clear error messages if required variables are missing.
+func Load() (*Config, error) {
+	v := viper.New()
+	v.AutomaticEnv()
+	setDefaults(v)
 
 	cfg := &Config{
 		DatabaseURL:        v.GetString("DATABASE_URL"),
@@ -351,6 +361,47 @@ func parseAllowedOrigins(raw string) []string {
 	return origins
 }
 
+// validateDeliveryMode checks one of the two delivery settings — invites and
+// customer-portal sign-in links — which carry the identical rule: "link" needs
+// nothing, "email" needs an explicitly configured relay, anything else is a
+// typo and refuses boot.
+//
+// ONE IMPLEMENTATION, NOT TWO. The portal setting was added by copying the
+// invite one, and the copy is exactly where a rule like this drifts — the
+// direction being "one of them stops checking". envVar is a parameter so each
+// message still names the setting the operator actually set.
+//
+// The valid values are the invite constants; the portal pair holds the same two
+// strings, and TestDeliveryModeConstantsAgree fails the moment that stops being
+// true. That is the same arrangement MinBcryptCost uses against the auth
+// package, for the same reason.
+func validateDeliveryMode(envVar, mode, smtpFrom string) []string {
+	var errs []string
+	switch mode {
+	case InviteDeliveryLink:
+		// Nothing is sent, so no relay is needed.
+	case InviteDeliveryEmail:
+		// Fail loudly at startup rather than dropping mail at send time.
+		//
+		// Deliberately a raw os.Getenv rather than c.SMTPHost: SMTP_HOST carries
+		// a "localhost" default for a dev relay, so the config field is never
+		// empty and could not distinguish "an operator configured a relay" from
+		// "nobody set anything". This is also why build/docker-compose.yml must
+		// forward SMTP_HOST bare — a `${SMTP_HOST:-localhost}` there satisfies
+		// this check unconditionally and silently disables it.
+		if os.Getenv("SMTP_HOST") == "" {
+			errs = append(errs, envVar+"=email requires SMTP_HOST to be set explicitly")
+		}
+		if smtpFrom == "" {
+			errs = append(errs, envVar+"=email requires SMTP_FROM")
+		}
+	default:
+		errs = append(errs, fmt.Sprintf("invalid %s %q: must be %q or %q",
+			envVar, mode, InviteDeliveryLink, InviteDeliveryEmail))
+	}
+	return errs
+}
+
 // validate checks that all required configuration is present.
 // In test mode (APP_ENV=test) some validations are relaxed.
 func (c *Config) validate() error {
@@ -360,50 +411,20 @@ func (c *Config) validate() error {
 		errs = append(errs, "DATABASE_URL is required")
 	}
 
-	switch c.InviteDelivery {
-	case InviteDeliveryLink:
-		// No SMTP required — the admin copies the link.
-	case InviteDeliveryEmail:
-		// Fail loudly at startup rather than silently dropping invites at
-		// send time. SMTP_HOST carries a localhost default for dev relay,
-		// so "configured" means the operator set it explicitly.
-		if os.Getenv("SMTP_HOST") == "" {
-			errs = append(errs, "AZIMUTHAL_INVITE_DELIVERY=email requires SMTP_HOST to be set explicitly")
-		}
-		if c.SMTPFrom == "" {
-			errs = append(errs, "AZIMUTHAL_INVITE_DELIVERY=email requires SMTP_FROM")
-		}
-	default:
-		errs = append(errs, fmt.Sprintf("invalid AZIMUTHAL_INVITE_DELIVERY %q: must be %q or %q",
-			c.InviteDelivery, InviteDeliveryLink, InviteDeliveryEmail))
-	}
+	errs = append(errs, validateDeliveryMode(
+		"AZIMUTHAL_INVITE_DELIVERY", c.InviteDelivery, c.SMTPFrom)...)
 
-	// The portal's delivery mode, mirroring InviteDelivery above. Without this
-	// an unrecognised value passed validation and then matched neither branch
-	// in cmd/server/main.go, which sets portalSender only for "email" and
+	// The portal's sign-in links run the identical rule. Before this existed an
+	// unrecognised value passed validation and then matched neither branch in
+	// cmd/server/main.go, which sets portalSender only for "email" and
 	// DiscloseLink only for "link" — so a typo left the portal minting sign-in
 	// links and delivering them nowhere, with nothing said at startup and
 	// nothing wrong in the logs. A customer simply never receives a link.
 	//
 	// Note what this deliberately does NOT do: refuse PortalLinkDeliveryLink
 	// in production. See that constant's own comment for why.
-	switch c.PortalLinkDelivery {
-	case PortalLinkDeliveryLink:
-		// No SMTP required, and no disclosure in production either.
-	case PortalLinkDeliveryEmail:
-		// Same reasoning as invite email delivery: fail at startup rather than
-		// drop sign-in links at send time. SMTP_HOST carries a localhost
-		// default for dev relay, so "configured" means explicitly set.
-		if os.Getenv("SMTP_HOST") == "" {
-			errs = append(errs, "AZIMUTHAL_PORTAL_LINK_DELIVERY=email requires SMTP_HOST to be set explicitly")
-		}
-		if c.SMTPFrom == "" {
-			errs = append(errs, "AZIMUTHAL_PORTAL_LINK_DELIVERY=email requires SMTP_FROM")
-		}
-	default:
-		errs = append(errs, fmt.Sprintf("invalid AZIMUTHAL_PORTAL_LINK_DELIVERY %q: must be %q or %q",
-			c.PortalLinkDelivery, PortalLinkDeliveryLink, PortalLinkDeliveryEmail))
-	}
+	errs = append(errs, validateDeliveryMode(
+		"AZIMUTHAL_PORTAL_LINK_DELIVERY", c.PortalLinkDelivery, c.SMTPFrom)...)
 
 	// No APP_ENV exemption, by design — see the BcryptCost field comment.
 	if c.BcryptCost < MinBcryptCost || c.BcryptCost > MaxBcryptCost {

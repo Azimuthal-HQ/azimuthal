@@ -295,6 +295,26 @@ func TestConfig_InvalidInviteDeliveryRejected(t *testing.T) {
 	}
 }
 
+// The invite and portal delivery settings share one validator, which reads the
+// valid values off the INVITE constants. That is safe only while the two pairs
+// hold the same strings, so this fails the moment they diverge — the same
+// arrangement MinBcryptCost has with the auth package, for the same reason.
+//
+// Without it, renaming one pair would silently make the other accept a value it
+// then could not act on: exactly the "matches neither branch in main.go" defect
+// the portal validator was added to close.
+func TestDeliveryModeConstantsAgree(t *testing.T) {
+	if config.PortalLinkDeliveryLink != config.InviteDeliveryLink {
+		t.Errorf("portal link mode %q must equal the invite one %q — validateDeliveryMode "+
+			"validates both against the invite constants",
+			config.PortalLinkDeliveryLink, config.InviteDeliveryLink)
+	}
+	if config.PortalLinkDeliveryEmail != config.InviteDeliveryEmail {
+		t.Errorf("portal email mode %q must equal the invite one %q",
+			config.PortalLinkDeliveryEmail, config.InviteDeliveryEmail)
+	}
+}
+
 // --- LOG_LEVEL ---
 //
 // LOG_LEVEL was parsed into Config.LogLevel and read by nothing, while
