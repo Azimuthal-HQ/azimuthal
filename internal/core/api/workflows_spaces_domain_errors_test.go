@@ -156,11 +156,21 @@ func TestWfSpaceDomain_WorkflowUpdate_UnknownIDAndNameCollisionAreRefused(t *tes
 	first := wfsdCreateWorkflow(t, ts, "Original WF", "tickets")
 	wfsdCreateWorkflow(t, ts, "Occupied Name", "project_items")
 
-	// A well-formed ID naming no workflow: the UPDATE matches no row.
+	// A well-formed ID naming no workflow.
+	//
+	// This answered 500 INTERNAL_ERROR until P-W PR-B, because the handler ran
+	// the UPDATE and reported pgx.ErrNoRows as an internal failure. Closing D74
+	// put an org-scope check in front of it, so an id that names no workflow OF
+	// THIS ORG — which includes one that names no workflow at all — is now a
+	// 404, and one instance of the known-issues #24 class (a handler answering
+	// 500 where its own annotation promises a 4xx) is closed with it.
+	//
+	// The property this test exists to pin is unchanged and unweakened: an
+	// update naming no workflow must be REFUSED, never echoed back as saved.
 	ghost := uuid.New().String()
 	wsnegRequireError(t, ts.requestAs(t, ts.Token, http.MethodPut, base+"/"+ghost,
 		map[string]any{"name": "Resurrected", "applies_to": "tickets"}),
-		http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update workflow")
+		http.StatusNotFound, "NOT_FOUND", "workflow not found")
 
 	// The refused PUT did not conjure the workflow into existence.
 	wsnegRequireError(t, ts.get(t, base+"/"+ghost, true),

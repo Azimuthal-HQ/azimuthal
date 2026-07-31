@@ -58,7 +58,10 @@ func TestTierAPI_ApprovalCycle_Approve(t *testing.T) {
 	require.Equal(t, "in_progress", f.statusNow(t), "approval applies the captured transition")
 
 	// A second decision on the same request is refused, in either direction.
-	r = f.ts.post(t, f.approvalPath(approvalID), map[string]any{"decision": "declined"}, true)
+	// The reason is supplied so the already-decided check is what refuses this,
+	// not the decline-needs-a-reason check that runs before it (migration 050).
+	r = f.ts.post(t, f.approvalPath(approvalID),
+		map[string]any{"decision": "declined", "reason": "changed my mind"}, true)
 	require.Equal(t, http.StatusConflict, r.StatusCode)
 	require.Equal(t, "in_progress", f.statusNow(t))
 }
@@ -71,12 +74,22 @@ func TestTierAPI_ApprovalCycle_Decline(t *testing.T) {
 
 	approvalID := f.requestApproval(t, f.ts.UserID)
 
+	// A bare decline is refused before anything is written (migration 050): a
+	// decline the requester cannot read is the silent no-op this tier exists to
+	// prevent, arriving one layer later than the guards.
 	r := f.ts.post(t, f.approvalPath(approvalID), map[string]any{"decision": "declined"}, true)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "%s", r.Body)
+	require.Equal(t, "open", f.statusNow(t))
+
+	r = f.ts.post(t, f.approvalPath(approvalID),
+		map[string]any{"decision": "declined", "reason": "the release is frozen until Monday"}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
 
 	var decided map[string]any
 	require.NoError(t, json.Unmarshal(r.Body, &decided))
 	require.Equal(t, "declined", decided["decision"])
+	require.Equal(t, "the release is frozen until Monday", decided["reason"],
+		"the reason must survive the round trip, or the surface has nothing to show")
 	require.Equal(t, "open", f.statusNow(t), "a declined transition leaves the item exactly where it was")
 
 	// The request is decided, so the item is free to ask again — the partial

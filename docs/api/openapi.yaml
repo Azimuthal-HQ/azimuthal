@@ -1395,6 +1395,18 @@ components:
       type: object
     workflow.Approval:
       properties:
+        can_decide:
+          description: |-
+            CanDecide reports whether the CALLER may decide this request. It is
+            resolved at read time against the caller's identity and effective teams,
+            never stored, and it is the only way a client can know: approval
+            authority is DATA — being named on the transition — so there is no
+            capability for the frontend to consult and no way to compute it from the
+            approval row alone.
+
+            Not omitempty. False is the meaningful majority answer, and a client must
+            be able to tell "you may not decide" from "this build did not say".
+          type: boolean
         decided_at:
           type: string
         decided_by:
@@ -1413,6 +1425,15 @@ components:
         from_status:
           type: string
         id:
+          type: string
+        reason:
+          description: |-
+            Reason is what the approver said about the decision (migration 050).
+
+            It is REQUIRED on a decline and optional on an approval — see
+            TierService.Decide. Nil on every pending request, and on rows written
+            before migration 050 shipped, which is why the column is nullable and the
+            "declines carry a reason" rule lives in Go rather than in a CHECK.
           type: string
         requested_at:
           type: string
@@ -1699,6 +1720,11 @@ components:
     workflows.decideApprovalRequest:
       properties:
         decision:
+          type: string
+        reason:
+          description: |-
+            Reason is required when Decision is "declined" and optional otherwise.
+            TierService.Decide owns the rule; see workflow.ErrDeclineReasonRequired.
           type: string
       type: object
     workflows.updateWorkflowRequest:
@@ -10145,6 +10171,67 @@ paths:
       security:
       - BearerAuth: []
       summary: Decide an approval
+      tags:
+      - workflows
+  /orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/approvals:
+    get:
+      description: Returns every workflow approval ever requested for one ticket or
+        project item, newest first.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: ticket or item
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      - description: Entity ID
+        in: path
+        name: entityID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/workflow.Approval'
+                type: array
+          description: Approvals, newest first
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID or entity type
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List an item's approvals
       tags:
       - workflows
   /orgs/{orgID}/spaces/{spaceID}/workflow/states:

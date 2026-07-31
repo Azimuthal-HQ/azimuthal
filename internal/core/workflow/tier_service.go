@@ -382,9 +382,9 @@ type DecideRequest struct {
 // nothing, and storing it would produce a decline that renders blank, which is
 // the failure the column was added to close rather than a lesser version of it.
 func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, []Effect, error) {
-	reason := strings.TrimSpace(req.Reason)
-	if req.Decision == DecisionDeclined && reason == "" {
-		return Approval{}, nil, ErrDeclineReasonRequired
+	storedReason, err := decisionReason(req.Decision, req.Reason)
+	if err != nil {
+		return Approval{}, nil, err
 	}
 
 	approval, err := s.store.GetApproval(ctx, req.ApprovalID)
@@ -403,14 +403,6 @@ func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, 
 
 	if err := s.checkDecideAuthority(ctx, req, *approval.TransitionID); err != nil {
 		return Approval{}, nil, err
-	}
-
-	// An empty reason on an APPROVAL is stored as NULL rather than as "", so
-	// "said nothing" and "said the empty string" are not two representations of
-	// one thing. migration 050's CHECK permits NULL alongside a decision.
-	var storedReason *string
-	if reason != "" {
-		storedReason = &reason
 	}
 
 	decided, err := s.store.DecideApproval(ctx, req.ApprovalID, req.ActorID, req.Decision, storedReason)
@@ -532,6 +524,26 @@ func (s *TierService) MarkDecidable(
 		approvals[i].CanDecide = decidable
 	}
 	return approvals, nil
+}
+
+// decisionReason validates and normalises what the approver said.
+//
+// A decline must carry one; an approval need not. Whitespace is not a reason —
+// an approver who submits spaces has said nothing, and storing it would produce
+// a decline that renders blank, which is the failure migration 050 exists to
+// close rather than a lesser version of it.
+//
+// An empty reason on an APPROVAL becomes NULL rather than "", so "said nothing"
+// and "said the empty string" are not two representations of one thing.
+func decisionReason(d Decision, raw string) (*string, error) {
+	reason := strings.TrimSpace(raw)
+	if d == DecisionDeclined && reason == "" {
+		return nil, ErrDeclineReasonRequired
+	}
+	if reason == "" {
+		return nil, nil
+	}
+	return &reason, nil
 }
 
 // checkDecideAuthority reports whether the actor is one of the transition's

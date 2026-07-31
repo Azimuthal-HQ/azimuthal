@@ -322,6 +322,13 @@ var routeAccounting = map[string]string{
 	// directly or through an ADR-0007 effective team (workflow.CanDecide).
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/approvals":                      "space-read",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/approvals/{approvalID}/decide": "space-write: configured approver in-handler",
+	// One item's approval history, pending and decided alike (P-W PR-B).
+	// space-read, the same class as the pending list beside it and for the same
+	// reason. It exists separately because a DECIDED approval leaves the pending
+	// set: the moment an approver declines, the request and its reason vanish
+	// from /approvals, and a detail surface built only on that list would show
+	// the requester a blocked item and then nothing at all.
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/approvals": "space-read",
 
 	// Entity shares — management (P3, ADR-0008). Org-scoped; the handler
 	// resolves the shared entity's space and enforces manage_shares there.
