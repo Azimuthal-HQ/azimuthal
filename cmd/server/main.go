@@ -459,8 +459,20 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 // newObjectStore constructs the attachment object store from config and
 // ensures its bucket exists. STORAGE_ENDPOINT may carry an http(s):// scheme
 // (as .env.test does); minio-go wants a bare host:port with Secure set
-// separately, so the scheme is stripped and used to seed useSSL (an explicit
-// STORAGE_USE_SSL still wins). A blank endpoint means "no object store".
+// separately, so the scheme is stripped and used to seed useSSL. A blank
+// endpoint means "no object store".
+//
+// The scheme and STORAGE_USE_SSL do not compose symmetrically, and the rule
+// is that this function never turns TLS off. An `https://` endpoint sets
+// useSSL unconditionally, so it overrides an explicit STORAGE_USE_SSL=false;
+// an `http://` endpoint leaves useSSL alone, so an explicit
+// STORAGE_USE_SSL=true survives it. Only a scheme-less endpoint takes
+// STORAGE_USE_SSL verbatim in both directions.
+//
+// Both asymmetries fail safe — the disagreement resolves towards TLS either
+// way — so this is written down rather than changed. An operator who asks
+// for plaintext against an `https://` endpoint has asked for something
+// contradictory, and gets the encrypted reading of it.
 func newObjectStore(ctx context.Context, cfg *config.Config) (storage.ObjectStore, error) {
 	if cfg.StorageEndpoint == "" {
 		return nil, fmt.Errorf("STORAGE_ENDPOINT not set")
