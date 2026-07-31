@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Circle, Workflow as WorkflowIcon } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { TransitionList } from '../admin/workflow/TransitionList';
 import { useAuth } from '../../lib/auth';
 import {
   friendlyErrorMessage,
@@ -24,7 +25,7 @@ const CATEGORY_COLOR: Record<string, string> = {
 // WorkflowCard
 // ---------------------------------------------------------------------------
 
-function WorkflowCard({ wf, states }: { wf: Workflow; states: WorkflowState[] }) {
+function WorkflowCard({ wf, states, orgId }: { wf: Workflow; states: WorkflowState[]; orgId: string }) {
   const [expanded, setExpanded] = useState(true);
 
   return (
@@ -86,6 +87,21 @@ function WorkflowCard({ wf, states }: { wf: Workflow; states: WorkflowState[] })
               </p>
             )}
           </div>
+
+          {/* Transitions and their ADR-0011 rules (W4).
+
+              Everything ABOVE this block is unchanged from the read-only page:
+              same header, same pills, same state rows, same "No states defined."
+              A workflow nobody has configured reads exactly as it did, because
+              the tier chrome inside each transition renders only when its
+              collection is non-empty — no counts, no "unrestricted" labels, no
+              empty tables. WorkflowAdminPage.untouched.test.tsx holds that. */}
+          <div className="mt-[var(--space-4)] border-t border-[var(--color-border)] pt-[var(--space-3)] pl-6">
+            <h3 className="mb-[var(--space-2)] text-[var(--text-xs)] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+              Transitions
+            </h3>
+            <TransitionList orgId={orgId} workflowId={wf.id} states={states} />
+          </div>
         </CardContent>
       )}
     </Card>
@@ -95,14 +111,26 @@ function WorkflowCard({ wf, states }: { wf: Workflow; states: WorkflowState[] })
 // Fetches one workflow's states through the shared api client and renders its card.
 function WorkflowWithStates({ wf, orgId }: { wf: Workflow; orgId: string }) {
   const { data: states } = useOrgWorkflowStates(orgId, wf.id);
-  return <WorkflowCard wf={wf} states={states ?? []} />;
+  return <WorkflowCard wf={wf} states={states ?? []} orgId={orgId} />;
 }
 
 // ---------------------------------------------------------------------------
 // WorkflowAdminPage
 // ---------------------------------------------------------------------------
 
-/** Read-only workflow overview for org admins. */
+/**
+ * The workflow administration surface for org admins.
+ *
+ * Read-only until P-W PR-B, which added the ADR-0011 transition editor. The
+ * workflow and state reading above the transitions block is unchanged from that
+ * version on purpose — see the untouched-workflow guarantee in
+ * pages/admin/workflow/untouchedWorkflow.test.tsx.
+ *
+ * It lives under pages/settings/ for historical reasons and is mounted at
+ * /admin/workflows, inside AdminLayout's guard. It was mounted OUTSIDE that
+ * guard until this PR, which is why a page carrying mutations had to move
+ * before they could be added.
+ */
 export function WorkflowAdminPage() {
   const { user } = useAuth();
   const orgId = user?.orgId ?? '';
