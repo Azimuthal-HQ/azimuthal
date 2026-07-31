@@ -68,6 +68,8 @@ type gitignoreLine struct {
 // .gitignore, in file order, paired with its 1-based line number.
 func gitignorePatterns(t *testing.T, root, relPath string) []gitignoreLine {
 	t.Helper()
+	// #nosec G304 -- relPath comes from `git ls-files` inside root, so it names
+	// a tracked file in this repository and nothing else.
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relPath)))
 	require.NoError(t, err, "reading %s", relPath)
 
