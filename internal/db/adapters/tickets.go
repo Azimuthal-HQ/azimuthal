@@ -240,3 +240,17 @@ func coalesceLabels(labels []string) []string {
 	}
 	return labels
 }
+
+// UserIsMemberOfSpaceOrg reports whether a user belongs to the organisation
+// owning spaceID. See the query for why membership is resolved through the
+// space rather than taken from the caller's token.
+func (a *TicketAdapter) UserIsMemberOfSpaceOrg(ctx context.Context, spaceID, userID uuid.UUID) (bool, error) {
+	ok, err := a.q.UserIsMemberOfSpaceOrg(ctx, generated.UserIsMemberOfSpaceOrgParams{
+		SpaceID: spaceID,
+		UserID:  userID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("ticket adapter check assignee org membership: %w", err)
+	}
+	return ok, nil
+}

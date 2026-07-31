@@ -33,10 +33,26 @@ func (d repoShareDeleter) DeleteTicketAndRevokeShares(ctx context.Context, id, _
 
 type mockRepo struct {
 	tickets map[uuid.UUID]*Ticket
+	// outsiders are user ids UserIsMemberOfSpaceOrg answers false for.
+	//
+	// The default is membership, so every test written before the assignee check
+	// existed still exercises the path it was written for. A test that wants the
+	// refusal names its outsider explicitly, which is the only way this double
+	// can report one — it cannot decide membership for itself, so the predicate
+	// proper is proven in the integration suite and this only keeps the unit
+	// tests from contradicting it.
+	outsiders map[uuid.UUID]bool
 }
 
 func newMockRepo() *mockRepo {
-	return &mockRepo{tickets: make(map[uuid.UUID]*Ticket)}
+	return &mockRepo{
+		tickets:   make(map[uuid.UUID]*Ticket),
+		outsiders: make(map[uuid.UUID]bool),
+	}
+}
+
+func (m *mockRepo) UserIsMemberOfSpaceOrg(_ context.Context, _, userID uuid.UUID) (bool, error) {
+	return !m.outsiders[userID], nil
 }
 
 func (m *mockRepo) Create(_ context.Context, t *Ticket) error {

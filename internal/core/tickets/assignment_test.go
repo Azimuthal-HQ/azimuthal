@@ -9,7 +9,8 @@ import (
 )
 
 func TestAssign(t *testing.T) {
-	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
+	repo := newMockRepo()
+	svc := NewTicketService(repo, noopShareDeleter{})
 	spaceID := uuid.New()
 	reporterID := uuid.New()
 	assigneeID := uuid.New()
@@ -62,6 +63,38 @@ func TestAssign(t *testing.T) {
 		_, err := svc.Assign(context.Background(), uuid.New(), spaceID, assigneeID, &mockNotifier{})
 		if err == nil {
 			t.Error("expected error for missing ticket")
+		}
+	})
+
+	// An assignee outside the ticket's organisation is refused, and nothing is
+	// written or notified.
+	//
+	// assignee_id references the GLOBAL users table, so the foreign key is
+	// satisfied by any user in the installation and the write used to land 200 —
+	// naming somebody with no membership in the org and no access to the space,
+	// and sending them the ticket's title. Delete the membership check in Assign
+	// and this case assigns successfully. (known-issues #23c.)
+	t.Run("an assignee outside the organisation is refused", func(t *testing.T) {
+		outsider := uuid.New()
+		repo.outsiders[outsider] = true
+		fresh := createTestTicket(t, svc, spaceID, reporterID)
+		notifier := &mockNotifier{}
+
+		_, err := svc.Assign(context.Background(), fresh.ID, spaceID, outsider, notifier)
+		if !errors.Is(err, ErrAssigneeNotOrgMember) {
+			t.Fatalf("expected ErrAssigneeNotOrgMember, got %v", err)
+		}
+		if notifier.called {
+			t.Error("a refused assignment must not notify: the message carries the ticket title")
+		}
+		if fresh.AssigneeID != nil {
+			t.Error("a refused assignment must not have been written")
+		}
+
+		// And a member of the same org still assigns, so a check that refused
+		// everybody could not pass this test.
+		if _, err := svc.Assign(context.Background(), fresh.ID, spaceID, uuid.New(), &mockNotifier{}); err != nil {
+			t.Fatalf("an org member must still be assignable: %v", err)
 		}
 	})
 

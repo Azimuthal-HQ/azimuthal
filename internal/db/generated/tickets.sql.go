@@ -606,3 +606,44 @@ func (q *Queries) UpdateTicketWorkflowState(ctx context.Context, arg UpdateTicke
 	)
 	return i, err
 }
+
+const userIsMemberOfSpaceOrg = `-- name: UserIsMemberOfSpaceOrg :one
+SELECT EXISTS (
+    SELECT 1
+      FROM spaces s
+      JOIN memberships m ON m.org_id = s.org_id
+     WHERE s.id = $1
+       AND m.user_id = $2
+) AS is_member
+`
+
+type UserIsMemberOfSpaceOrgParams struct {
+	SpaceID uuid.UUID `json:"space_id"`
+	UserID  uuid.UUID `json:"user_id"`
+}
+
+// Is this user a member of the organisation that owns this space?
+//
+// The assignment write needs it and had nothing like it. tickets.assignee_id
+// references the GLOBAL users table, so a uuid naming any user in the
+// installation satisfies the foreign key and the write lands 200 — the ticket
+// then names somebody with no membership in the org and no access to the space,
+// and the notification enqueuer carries the ticket's TITLE to them
+// (known-issues #23c).
+//
+// Membership is resolved THROUGH the space rather than taken from the caller's
+// token. The org that matters is the one owning the ticket, not the one the
+// actor is logged into, and on this route those are already proven to be the
+// same by RequireSpaceInOrg — but only the URL's ids were ever compared, so
+// deriving it here keeps the check true of the entity rather than of the
+// request.
+//
+// Single bool over an EXISTS, for the same reason EntityRelationTargetIsReadable
+// is: "no such user" and "a user in another org" must not be two answers a
+// caller could tell apart.
+func (q *Queries) UserIsMemberOfSpaceOrg(ctx context.Context, arg UserIsMemberOfSpaceOrgParams) (bool, error) {
+	row := q.db.QueryRow(ctx, userIsMemberOfSpaceOrg, arg.SpaceID, arg.UserID)
+	var is_member bool
+	err := row.Scan(&is_member)
+	return is_member, err
+}

@@ -73,6 +73,14 @@ type TicketRepository interface {
 	ListByAssignee(ctx context.Context, spaceID uuid.UUID, assigneeID uuid.UUID) ([]*Ticket, error)
 	// Search performs full-text search within a space.
 	Search(ctx context.Context, spaceID uuid.UUID, query string, limit int32) ([]*Ticket, error)
+	// UserIsMemberOfSpaceOrg reports whether a user belongs to the organisation
+	// that owns spaceID.
+	//
+	// One bool, so "no such user" and "a user in another organisation" cannot
+	// become two answers a caller could tell apart. Membership is resolved
+	// through the SPACE rather than read from the actor's token, so the check is
+	// about the entity being written rather than about who is asking.
+	UserIsMemberOfSpaceOrg(ctx context.Context, spaceID, userID uuid.UUID) (bool, error)
 }
 
 // CreateTicketParams holds the parameters for creating a new ticket.

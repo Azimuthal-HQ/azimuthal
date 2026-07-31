@@ -211,6 +211,13 @@ func (m *mockTicketRepo) ListByAssignee(_ context.Context, _ uuid.UUID, _ uuid.U
 	return nil, nil
 }
 
+// Every user is an org member here: these doubles predate the assignee check
+// and none of their tests is about it. The refusal is exercised in
+// internal/core/tickets and against real PostgreSQL.
+func (m *mockTicketRepo) UserIsMemberOfSpaceOrg(_ context.Context, _, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 func (m *mockTicketRepo) Search(_ context.Context, _ uuid.UUID, _ string, _ int32) ([]*tickets.Ticket, error) {
 	return nil, nil
 }
