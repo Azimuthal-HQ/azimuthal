@@ -1,17 +1,23 @@
 # trivy.yaml
 # Container and filesystem scanning config
-# Docs: https://aquasecurity.github.io/trivy/latest/docs/references/configuration/
+# Docs: https://trivy.dev/latest/docs/references/configuration/config-file/
+#
+# Read by `make scan-container` (explicitly, via --config) and by CI's
+# container-scan job (implicitly — trivy defaults --config to ./trivy.yaml,
+# and the CI log line `Loaded file_path="trivy.yaml"` is the proof it took).
 
 scan:
-  security-checks:
-    - vuln        # CVE scanning
-    - config      # Dockerfile misconfiguration
-    - secret      # Secrets in container layers
+  scanners:
+    - vuln      # CVE scanning
+    - misconfig # Misconfiguration checks
+    - secret    # Secrets in container layers
+
+pkg:
+  types:
+    - os        # OS package vulnerabilities
+    - library   # Language-level dependencies (Go modules)
 
 vulnerability:
-  type:
-    - os          # OS package vulnerabilities
-    - library     # Language-level dependencies (Go modules)
   ignore-unfixed: true  # Skip CVEs with no available patch
 
 severity:
