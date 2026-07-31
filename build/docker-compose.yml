@@ -11,19 +11,70 @@ services:
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8080}:8080"
+    # There is deliberately no `env_file:` here. This block is the ONLY channel
+    # from .env into the container, and it names every setting the binary reads
+    # so that the channel stays visible: a variable that is not listed here does
+    # not reach the application, however plainly it is written in .env.
+    #
+    # WHY BARE ${KEY} AND NOT ${KEY:-default}. viper is configured without
+    # AllowEmptyEnv, so a variable that is present but empty — which is exactly
+    # what `KEY: ${KEY}` produces when KEY is absent from .env — is treated as
+    # unset and falls through to the default in internal/config. Repeating the
+    # default here would therefore add nothing except a second place for it to
+    # be wrong, which is not hypothetical: this file used to send
+    # `SMTP_PORT: ${SMTP_PORT:-25}` while the binary's own default was 1025.
+    # Bare forwarding makes that class of divergence unrepresentable.
+    #
+    # TestComposeForwardsEverySetting (internal/config) fails if a setting is
+    # added to internal/config and not to this list, or forwarded here with a
+    # default that could drift.
     environment:
+      # Managed by Compose — these address the sibling services and must not be
+      # overridable, or the app would be pointed away from the stack it ships with.
       DATABASE_URL: postgres://azimuthal:${POSTGRES_PASSWORD}@db:5432/azimuthal?sslmode=disable
       STORAGE_ENDPOINT: http://storage:9000
       STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER}
       STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      STORAGE_BUCKET: ${STORAGE_BUCKET:-azimuthal}
-      JWT_EXPIRY: ${JWT_EXPIRY:-24h}
-      SMTP_HOST: ${SMTP_HOST:-localhost}
-      SMTP_PORT: ${SMTP_PORT:-25}
       APP_ENV: production
       APP_PORT: "8080"
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # Core
+      APP_BASE_URL: ${APP_BASE_URL}
+      LOG_LEVEL: ${LOG_LEVEL}
+
+      # Object storage
+      STORAGE_BUCKET: ${STORAGE_BUCKET}
+      STORAGE_USE_SSL: ${STORAGE_USE_SSL}
+
+      # Authentication and access
+      AZIMUTHAL_BCRYPT_COST: ${AZIMUTHAL_BCRYPT_COST}
+      AZIMUTHAL_ALLOWED_ORIGINS: ${AZIMUTHAL_ALLOWED_ORIGINS}
+      AZIMUTHAL_ALLOW_REGISTRATION: ${AZIMUTHAL_ALLOW_REGISTRATION}
+      JWT_EXPIRY: ${JWT_EXPIRY}
+      JWT_PRIVATE_KEY_PATH: ${JWT_PRIVATE_KEY_PATH}
+
+      # Invitations and the customer portal
+      AZIMUTHAL_INVITE_DELIVERY: ${AZIMUTHAL_INVITE_DELIVERY}
+      AZIMUTHAL_INVITE_TTL: ${AZIMUTHAL_INVITE_TTL}
+      AZIMUTHAL_PORTAL_LINK_DELIVERY: ${AZIMUTHAL_PORTAL_LINK_DELIVERY}
+      AZIMUTHAL_PORTAL_LINK_TTL: ${AZIMUTHAL_PORTAL_LINK_TTL}
+      AZIMUTHAL_PORTAL_SESSION_TTL: ${AZIMUTHAL_PORTAL_SESSION_TTL}
+
+      # Email. SMTP_HOST is bare for a second reason beyond the one above:
+      # config.validate tests it with a RAW os.Getenv, to tell "the operator
+      # configured a relay" from "the localhost default". A `:-localhost` here
+      # satisfied that check unconditionally and silently disabled the guard
+      # that refuses AZIMUTHAL_INVITE_DELIVERY=email without a relay.
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_FROM: ${SMTP_FROM}
+
+      # Operations
+      AZIMUTHAL_TICKET_REF_REQUIRED: ${AZIMUTHAL_TICKET_REF_REQUIRED}
+      AZIMUTHAL_QUEUE_ENABLED: ${AZIMUTHAL_QUEUE_ENABLED}
+      # MIGRATIONS_DIR is deliberately absent: it is read only by the separate
+      # `migrate` command (cmd/migrate), never by `serve`, which uses the
+      # migrations embedded in the binary. Forwarding it would imply otherwise.
     depends_on:
       db:
         condition: service_healthy

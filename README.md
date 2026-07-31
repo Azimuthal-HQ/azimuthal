@@ -37,8 +37,9 @@ curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/build/dock
 curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/.env.example
 cp .env.example .env
 
-# 2. Edit .env — set passwords and generate a JWT secret
-#    openssl rand -hex 32
+# 2. Edit .env — set POSTGRES_PASSWORD and the two MINIO_ROOT_* values
+#    (there is no JWT secret to generate: the RS256 signing key is created
+#     and stored in the database on first start — see ADR-0004)
 
 # 3. Start everything
 docker compose up -d

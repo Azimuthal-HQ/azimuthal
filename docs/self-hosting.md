@@ -103,38 +103,32 @@ access. You can then log in at `http://localhost:8080/login` with these credenti
 | `AZIMUTHAL_VERSION` | `latest` | Docker image tag to run |
 | `STORAGE_BUCKET` | `azimuthal` | MinIO/S3 bucket name for file storage |
 | `JWT_EXPIRY` | `24h` | Access token lifetime (Go duration format) |
-| `SMTP_HOST` | `localhost` | SMTP relay host for outbound email |
-| `SMTP_PORT` | `25` | SMTP relay port. Note this is the Compose default; the binary's own default is `1025`. |
+| `SMTP_HOST` | `localhost` | SMTP relay host for outbound email. Leave it unset unless you have a relay: the server distinguishes "explicitly configured" from "defaulted" to decide whether an `email` delivery mode may start. |
+| `SMTP_PORT` | `1025` | SMTP relay port. |
 | `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` (any case). An unrecognised value is refused at startup. The logger starts at `info` and is re-levelled once config loads, so the first startup line is always emitted. |
 | `DATABASE_URL` | (auto) | PostgreSQL connection string. Auto-constructed in Docker Compose from `POSTGRES_PASSWORD` |
 
 `APP_ENV` is **not** settable through `.env` in this deployment: `build/docker-compose.yml`
 hardcodes `APP_ENV: production`.
 
-### ⚠ Settings the binary reads that the bundled Compose file does not pass through
+### Administration, invitations, the portal, and email
 
-`build/docker-compose.yml` declares no `env_file:`, so its `environment:` block is the **only**
-channel into the container. A variable placed in `.env` is available for `${...}` interpolation
-inside the Compose file, but it does **not** reach the application unless the Compose file forwards
-it explicitly — and the settings below are not forwarded.
+All of these are forwarded by `build/docker-compose.yml` — set any of them in `.env` and restart.
 
-**This matters most for the security-policy settings.** An operator who sets
-`AZIMUTHAL_TICKET_REF_REQUIRED=true` or `AZIMUTHAL_BCRYPT_COST=14` in `.env`, restarts, and sees a
-clean startup will reasonably conclude the policy is in force. It is not: the container never saw
-the variable, and the application is running on the default. There is no warning, because from the
-application's point of view nothing was ever set. (`.env.example` also lists
-`AZIMUTHAL_BCRYPT_COST` and `AZIMUTHAL_TICKET_REF_REQUIRED` as though setting them there were
-enough. It is not.)
-
-To use any of these with the bundled Compose file, add the variable to the `app` service's
-`environment:` block yourself:
-
-```yaml
-    environment:
-      # ... the existing entries ...
-      AZIMUTHAL_TICKET_REF_REQUIRED: ${AZIMUTHAL_TICKET_REF_REQUIRED:-false}
-      AZIMUTHAL_BCRYPT_COST: ${AZIMUTHAL_BCRYPT_COST:-12}
-```
+> **A note on how the forwarding works, because this file used to get it wrong.**
+> `build/docker-compose.yml` declares no `env_file:`, so its `environment:` block is the **only**
+> channel into the container: a variable in `.env` is available for `${...}` interpolation inside
+> the Compose file, and reaches the application only because the block names it explicitly. Every
+> setting the binary reads is now named there. Until this was fixed, none of the ten `AZIMUTHAL_*`
+> settings was — so an operator who set `AZIMUTHAL_TICKET_REF_REQUIRED=true` or
+> `AZIMUTHAL_BCRYPT_COST=14`, restarted, and saw a clean startup would reasonably have concluded
+> the policy was in force when the container had never seen the variable.
+>
+> The block forwards operator settings as bare `${KEY}` rather than `${KEY:-default}`, so an unset
+> variable arrives empty and the binary applies its own default. Two Go tests in
+> `internal/config` read this document's subject matter directly — the real Compose file against
+> the real config source — and fail if a setting is added to one and not the other, or if a
+> default creeps back into the Compose file where it could drift.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -145,7 +139,7 @@ To use any of these with the bundled Compose file, add the variable to the `app`
 | `AZIMUTHAL_BCRYPT_COST` | `12` | Password hashing work factor. Twelve is a floor, not just a default: a configuration asking for less is refused at startup in every environment, `APP_ENV` included. The knob exists so you can raise it as hardware gets faster — expect roughly a doubling of login CPU cost per step. Existing passwords keep verifying at the cost they were stored with, so raising it is safe and takes effect as people next change their password. |
 | `AZIMUTHAL_ALLOWED_ORIGINS` | (empty) | Comma-separated CORS allow-list. Empty means no CORS headers are emitted and the browser enforces same-origin, which is correct for this deployment — the frontend is served by the same binary on the same origin. Set it only if you serve the frontend from somewhere else. |
 | `AZIMUTHAL_QUEUE_ENABLED` | `true` | Runs the background job queue in-process. |
-| `AZIMUTHAL_PORTAL_LINK_DELIVERY` | `link` | How a customer-portal sign-in link reaches a requester. Set this to `email` for any instance with the portal exposed to real customers: `link` returns the sign-in URL in the API response, and the endpoint that issues it is necessarily unauthenticated. Production refuses to disclose the link regardless, so the practical effect of leaving it at `link` in production is that portal sign-in links go nowhere. |
+| `AZIMUTHAL_PORTAL_LINK_DELIVERY` | `link` | How a customer-portal sign-in link reaches a requester. Set this to `email` for any instance with the portal exposed to real customers, and set `SMTP_HOST` and `SMTP_FROM` with it — `email` without a relay is refused at startup. `link` returns the sign-in URL in the API response, and the endpoint that issues it is necessarily unauthenticated, so a production server withholds the URL regardless; the practical effect of leaving this at `link` in production is that portal sign-in links go nowhere. An unrecognised value is refused at startup. |
 | `AZIMUTHAL_PORTAL_LINK_TTL` | `1h` | How long a portal sign-in link stays redeemable. Must be positive. |
 | `AZIMUTHAL_PORTAL_SESSION_TTL` | `72h` | Lifetime of the session a redeemed portal link produces. Must be positive. |
 | `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. Required when `AZIMUTHAL_INVITE_DELIVERY=email`. |
@@ -252,9 +246,10 @@ See [upgrade.md](upgrade.md) for step-by-step upgrade instructions.
 **Symptom**: you set an `AZIMUTHAL_*` variable in `.env`, restarted, and the behaviour did not
 change — with no error and nothing in the log.
 
-The bundled Compose file forwards only the variables in its `app` service `environment:` block, and
-most `AZIMUTHAL_*` settings are not among them. See
-[the warning in the Environment Variable Reference](#-settings-the-binary-reads-that-the-bundled-compose-file-does-not-pass-through).
+The bundled Compose file forwards only the variables named in its `app` service `environment:`
+block. Every setting the binary reads is now named there, so this should not happen with the
+bundled file — but it happens immediately in a Compose file you have edited or replaced, and the
+symptom is indistinguishable from the setting itself not working.
 
 To confirm what the container actually received:
 
@@ -262,7 +257,9 @@ To confirm what the container actually received:
 docker compose -f build/docker-compose.yml exec app env | grep AZIMUTHAL
 ```
 
-If the variable is absent from that output, the application never saw it.
+Every `AZIMUTHAL_*` setting should appear, with an empty value for the ones you have not set — an
+empty value is treated as unset and the binary applies its own default. A variable **absent** from
+that output is one the application never saw.
 
 ### Port already in use
 
