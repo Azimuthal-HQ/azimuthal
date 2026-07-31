@@ -74,6 +74,10 @@ forks `pg_dump`. I ran it; it exits 1. An operator following the documentation b
 nightly backups and has none. This is the most operationally dangerous finding in the review and
 it is a one-line fix.
 
+**And one finding outranks the parity question entirely:** a cross-space read-authorization gap in
+the item-relations read path. It is tracked privately rather than described here (§1a), and it
+should be closed before this document is circulated.
+
 The honest summary: **Azimuthal today is a credible internal tool for a small team that already
 communicates in Slack, and is not yet a replacement for the Atlassian suite for anyone.** The
 distance to the first claim is short. The distance to the second is a phase or two, and most of it
@@ -85,6 +89,16 @@ carriers and the workflow engine are real, and several are genuinely ahead of wh
 ships. The gap is overwhelmingly at the last mile — routes without components, engines without
 editors, functions without callers. That is a much better problem to have than the reverse, and
 it is why the recommended list in §7 is mostly small.
+
+---
+
+## 1a. One security finding
+
+A cross-space read-authorization gap exists in the item-relations read path; tracked privately and
+fixed ahead of the backup repair — see item 0 in the recommendations.
+
+Details are deliberately omitted from this document: the repository is public and the gap is
+unpatched at the time of writing. They have been passed to the maintainer separately.
 
 ---
 
@@ -147,7 +161,7 @@ that does nothing, or a capability whose only caller is a test.
 
 | Tier | Capability | Grade | Evidence |
 |---|---|---|---|
-| T1 | Issue links | **Partial** | API + UI, 4 kinds, fixed. No reciprocal creation, no dedup, no contradiction check — I hold `blocks` *and* `is_blocked_by` *and* `duplicates` on one pair, all displayed. `relations.go:126-134` validates only kind-is-known and from≠to; it does not check that the target exists in the same org. Jira ships configurable link types and auto-creates the inverse ([Atlassian](https://support.atlassian.com/jira-cloud-administration/docs/configure-issue-linking/)). Beacon excluded. |
+| T1 | Issue links | **Partial** | API + UI, 4 kinds, fixed — and shallow in ways that compound. **No dedup or contradiction check:** I hold `blocks` *and* `is_blocked_by` *and* `duplicates` on one pair, all rendered side by side. Two further depth defects in this path are covered by the §1a private item and are not described here. `GetBlockers` (`relations.go:93`) exists with no route and no non-test caller. Jira ships configurable link types and auto-creates the inverse ([Atlassian](https://support.atlassian.com/jira-cloud-administration/docs/configure-issue-linking/)). Beacon excluded entirely. |
 | T1 | Issue hierarchy | **Absent** | §2 #5. |
 | T1 | Attachments on items/tickets | **Dead-control** | §2 #1. The E2E suite that appears to cover it drives the API directly (`web/e2e/attachments.spec.ts:45` uses `page.request.post`), so it reads as covered while no UI exists. |
 | T1 | @mentions | **Absent** | §2 #2. |
@@ -548,6 +562,7 @@ the product *says* and what it *does*.
 
 | # | Work | Size | Why first |
 |---|---|---|---|
+| 0 | **Close the cross-space read-authorization gap in the item-relations read path,** with a permission-matrix case so it cannot regress. Two related depth defects in the same path fix in the same change. Tracked privately; see §1a. | **S** | A read-authorization gap around the guard the whole access model rests on. Ahead of everything else, including backup. |
 | 1 | **Make backup work, and make restore fail loudly.** Add the Postgres client to the image (or replace the fork with an in-process dump); add `-v ON_ERROR_STOP=1` and stop discarding psql's output; fix `docs/upgrade.md`'s rollback to name the file the backup actually produces. | **S** | §2 #0, §5.6. Operators believe they have nightly backups and have none, and the restore path would report success on a partial recovery. Nothing else on this list can lose a customer's data. |
 | 2 | **Correct `README.md` and the assessor.** Remove or qualify "SSO — SAML/OIDC", "email ingestion", and "Backup and restore"; fix `jira_assess.go:378` so it stops telling migrators their links are unmappable and starts telling them their *hierarchy* is. | **S** | Costs a day. Until then the front page and the migration tool both misstate the product. |
 | 3 | **Fix condition-class guards** — route `AvailableTransitions`, and have `Gate` evaluate conditions too. | **S** | §5.1. A compliance control that returns 201 and does nothing is worse than one that is absent. |
@@ -571,7 +586,7 @@ the product *says* and what it *does*.
 | 16 | **SLAs for Beacon.** | **L** | §3.3. The largest single JSM gap, and the one ADR-0003 already assumed. |
 | 17 | **Email channel — wire the parser that already exists.** | **M** | §5.2. Most of the work is done and unreachable. |
 | 18 | **Search: paginate (the plumbing exists), and name the ignored operator.** | **S** | §5.5, §4.2. Both are small and remove silent-wrong-answer traps. |
-| 19 | **Ticket relations**, plus reciprocal-pair creation and contradiction refusal. | **S** | §2 #19, §3.1. Schema shipped in migration 015; handler work only. |
+| 19 | **Ticket relations**, plus contradiction refusal, layered on top of the item-0 change. | **S** | §2 #19, §3.1. Schema shipped in migration 015; handler work only. |
 | 20 | **Issue history / activity feed.** Needs `audit_log.space_id` first (`known-issues.md` §22). | **M** | §2 #13. |
 | 21 | **Parse wikilinks and tags on the API content path,** not only in the editor; surface backlinks. | **S** | §3.2. Otherwise every importer and script silently produces unlinked pages. |
 | 22 | **Comment visibility in the UI; threaded replies visible.** | **S** | §3.3, §3.2. Two good backends with no surface; replies are currently written and lost. |
@@ -585,6 +600,7 @@ the product *says* and what it *does*.
 
 ## Appendix — reproduction
 
+```bash
 ```bash
 # Isolated throwaway stack from this commit (never the shared :5433 test stack)
 docker compose -p azimreview \
