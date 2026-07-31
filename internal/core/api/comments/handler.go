@@ -334,6 +334,29 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idP
 
 	parentID := pgtype.UUID{}
 	if req.ParentID != nil {
+		// The entity above was reconciled against the space; the parent had
+		// nothing checking it at all. Its only constraint is a bare foreign key
+		// to the whole comments table, so a reply could be grafted onto a thread
+		// on another entity in another organisation — and, worse, the difference
+		// between a real parent id and an invented one was 201 versus a
+		// foreign-key 500, which made the route an existence oracle over every
+		// comment in the installation.
+		belongs, berr := h.queries.CommentBelongsToEntity(r.Context(), generated.CommentBelongsToEntityParams{
+			CommentID:  *req.ParentID,
+			EntityType: entityType,
+			EntityID:   entityID,
+		})
+		if berr != nil {
+			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create comment")
+			return
+		}
+		if !belongs {
+			// One answer for "no such comment" and "a comment somewhere you
+			// cannot see", which is the whole point of checking it here rather
+			// than letting the foreign key decide.
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "parent comment not found")
+			return
+		}
 		parentID = pgtype.UUID{Bytes: *req.ParentID, Valid: true}
 	}
 

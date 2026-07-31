@@ -441,8 +441,10 @@ func TestItemStatusUpdateAndSoftDelete(t *testing.T) {
 		t.Errorf("status not updated: %s", updated.Status)
 	}
 
-	if err := q.SoftDeleteProjectItem(ctx, item.ID); err != nil {
-		t.Fatalf("SoftDeleteProjectItem: %v", err)
+	if err := q.SoftDeleteProjectItemInSpace(ctx, generated.SoftDeleteProjectItemInSpaceParams{
+		ItemID: item.ID, SpaceID: space.ID,
+	}); err != nil {
+		t.Fatalf("SoftDeleteProjectItemInSpace: %v", err)
 	}
 	_, err = q.GetProjectItemByID(ctx, item.ID)
 	if err == nil {

@@ -182,7 +182,7 @@ func (m *mockTicketRepo) UpdateStatus(_ context.Context, id uuid.UUID, status ti
 	return t, nil
 }
 
-func (m *mockTicketRepo) Delete(_ context.Context, id uuid.UUID) error {
+func (m *mockTicketRepo) DeleteInSpace(_ context.Context, id, _ uuid.UUID) error {
 	delete(m.tickets, id)
 	return nil
 }
@@ -423,7 +423,7 @@ func (m *mockContentTx) MovePageTx(_ context.Context, in wiki.MovePageInput) (wi
 	return wiki.MovePageTxResult{CrossSpace: crossSpace}, nil
 }
 
-func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, pageID, _ uuid.UUID) (int64, error) {
+func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, pageID, _, _ uuid.UUID) (int64, error) {
 	delete(m.pages.pages, pageID)
 	return 0, nil
 }
@@ -461,10 +461,10 @@ func (m *mockContentTx) UpdatePageContentTx(_ context.Context, in wiki.UpdatePag
 // projects.ShareRevokingDeleter with no-ops for the router wiring tests.
 type mockShareDeleter struct{}
 
-func (m *mockShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (m *mockShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
-func (m *mockShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (m *mockShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
 
@@ -614,7 +614,7 @@ func (m *mockItemRepo) UpdateSprintInSpace(
 	return nil
 }
 
-func (m *mockItemRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
+func (m *mockItemRepo) SoftDeleteInSpace(_ context.Context, id, _ uuid.UUID) error {
 	delete(m.items, id)
 	return nil
 }

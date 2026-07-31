@@ -378,7 +378,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	// Delete revokes the ticket's shares in the same transaction (ADR-0008
 	// rule 10); actorID attributes the share.revoked audit rows.
-	if err := h.svc.Delete(r.Context(), id, actorID); err != nil {
+	if err := h.svc.Delete(r.Context(), id, spaceID, actorID); err != nil {
 		handleTicketError(w, r, err)
 		return
 	}

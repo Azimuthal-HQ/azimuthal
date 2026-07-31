@@ -36,7 +36,7 @@ func (m *mockItemRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ string) (*
 func (m *mockItemRepo) UpdateSprintInSpace(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID) error {
 	return projects.ErrNotFound
 }
-func (m *mockItemRepo) SoftDelete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockItemRepo) SoftDeleteInSpace(_ context.Context, _, _ uuid.UUID) error { return nil }
 func (m *mockItemRepo) ListBySpace(_ context.Context, _ uuid.UUID) ([]*projects.Item, error) {
 	return nil, nil
 }
@@ -100,7 +100,7 @@ func (m *mockLabelRepo) DeleteInOrg(_ context.Context, _, _ uuid.UUID) error { r
 // noopShareDeleter satisfies projects.ShareRevokingDeleter for handler tests.
 type noopShareDeleter struct{}
 
-func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
 

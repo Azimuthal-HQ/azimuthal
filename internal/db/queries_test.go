@@ -248,7 +248,11 @@ func TestItemListAndUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProjectItem: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteProjectItem(ctx, item.ID) }()
+	defer func() {
+		_ = q.SoftDeleteProjectItemInSpace(ctx, generated.SoftDeleteProjectItemInSpaceParams{
+			ItemID: item.ID, SpaceID: space.ID,
+		})
+	}()
 	fetched, err := q.GetProjectItemByID(ctx, item.ID)
 	if err != nil {
 		t.Fatalf("GetProjectItemByID: %v", err)
@@ -314,7 +318,11 @@ func TestItemRelations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProjectItem from: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteProjectItem(ctx, from.ID) }()
+	defer func() {
+		_ = q.SoftDeleteProjectItemInSpace(ctx, generated.SoftDeleteProjectItemInSpaceParams{
+			ItemID: from.ID, SpaceID: space.ID,
+		})
+	}()
 	to, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "To",
 		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "b",
@@ -322,7 +330,11 @@ func TestItemRelations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProjectItem to: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteProjectItem(ctx, to.ID) }()
+	defer func() {
+		_ = q.SoftDeleteProjectItemInSpace(ctx, generated.SoftDeleteProjectItemInSpaceParams{
+			ItemID: to.ID, SpaceID: space.ID,
+		})
+	}()
 	rel, err := q.CreateEntityRelation(ctx, generated.CreateEntityRelationParams{
 		ID: uuid.New(), FromID: from.ID, FromType: "project_item",
 		ToID: to.ID, ToType: "project_item", Kind: "blocks", CreatedBy: user.ID,
@@ -439,7 +451,11 @@ func TestSprints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProjectItem for sprint: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteProjectItem(ctx, item.ID) }()
+	defer func() {
+		_ = q.SoftDeleteProjectItemInSpace(ctx, generated.SoftDeleteProjectItemInSpaceParams{
+			ItemID: item.ID, SpaceID: space.ID,
+		})
+	}()
 	sprintUID := pgtype.UUID{Bytes: sprint.ID, Valid: true}
 	if err := q.AssignProjectItemToSprintInSpace(ctx, generated.AssignProjectItemToSprintInSpaceParams{
 		ItemID: item.ID, SpaceID: space.ID, SprintID: sprintUID,
@@ -536,11 +552,11 @@ func TestPageExtras(t *testing.T) {
 		t.Fatalf("SearchPages: %v", err)
 	}
 	_ = searched
-	if err := q.SoftDeletePage(ctx, child.ID); err != nil {
-		t.Fatalf("SoftDeletePage child: %v", err)
+	if err := q.SoftDeletePageInSpace(ctx, generated.SoftDeletePageInSpaceParams{PageID: child.ID, SpaceID: space.ID}); err != nil {
+		t.Fatalf("SoftDeletePageInSpace child: %v", err)
 	}
-	if err := q.SoftDeletePage(ctx, root.ID); err != nil {
-		t.Fatalf("SoftDeletePage root: %v", err)
+	if err := q.SoftDeletePageInSpace(ctx, generated.SoftDeletePageInSpaceParams{PageID: root.ID, SpaceID: space.ID}); err != nil {
+		t.Fatalf("SoftDeletePageInSpace root: %v", err)
 	}
 }
 
@@ -559,7 +575,11 @@ func TestComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProjectItem: %v", err)
 	}
-	defer func() { _ = q.SoftDeleteProjectItem(ctx, item.ID) }()
+	defer func() {
+		_ = q.SoftDeleteProjectItemInSpace(ctx, generated.SoftDeleteProjectItemInSpaceParams{
+			ItemID: item.ID, SpaceID: space.ID,
+		})
+	}()
 	comment, err := q.CreateComment(ctx, generated.CreateCommentParams{
 		ID: uuid.New(), EntityType: "project_item", EntityID: item.ID,
 		AuthorID: pgtype.UUID{Bytes: user.ID, Valid: true}, Body: "This is a comment",
@@ -640,7 +660,7 @@ func TestComments(t *testing.T) {
 	if err := q.SoftDeleteComment(ctx, pageComment.ID); err != nil {
 		t.Fatalf("SoftDeleteComment page: %v", err)
 	}
-	if err := q.SoftDeletePage(ctx, page.ID); err != nil {
+	if err := q.SoftDeletePageInSpace(ctx, generated.SoftDeletePageInSpaceParams{PageID: page.ID, SpaceID: space.ID}); err != nil {
 		t.Fatalf("SoftDeletePage: %v", err)
 	}
 }

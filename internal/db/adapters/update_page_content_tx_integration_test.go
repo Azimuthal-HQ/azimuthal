@@ -206,7 +206,7 @@ func TestUpdatePageContentTx_DistinguishesMissingFromStale(t *testing.T) {
 	// A soft-deleted page is not found, not a conflict: GetPageForUpdate
 	// filters deleted_at, so the delete case lands on the same arm as a page
 	// that never existed.
-	_, err = f.adapter.DeletePageAndRevokeShares(f.ctx, f.pageID, f.author)
+	_, err = f.adapter.DeletePageAndRevokeShares(f.ctx, f.pageID, f.spaceID, f.author)
 	require.NoError(t, err)
 	_, err = f.adapter.UpdatePageContentTx(f.ctx, wiki.UpdatePageInput{
 		PageID: f.pageID, ExpectedVersion: 1, Title: "Deleted", Content: "x", AuthorID: f.author,

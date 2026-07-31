@@ -13,7 +13,7 @@ import (
 // (covered by integration tests against a real database).
 type noopShareDeleter struct{}
 
-func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
 
@@ -22,8 +22,8 @@ func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.U
 // real same-transaction share revocation is covered by integration tests.
 type repoShareDeleter struct{ repo *stubItemRepo }
 
-func (d repoShareDeleter) DeleteItemAndRevokeShares(ctx context.Context, id, _ uuid.UUID) error {
-	return d.repo.SoftDelete(ctx, id)
+func (d repoShareDeleter) DeleteItemAndRevokeShares(ctx context.Context, id, spaceID, _ uuid.UUID) error {
+	return d.repo.SoftDeleteInSpace(ctx, id, spaceID)
 }
 
 // stubItemRepo is an in-memory ItemRepository for testing.
@@ -104,9 +104,9 @@ func (r *stubItemRepo) UpdateSprintInSpace(
 	return nil
 }
 
-func (r *stubItemRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
+func (r *stubItemRepo) SoftDeleteInSpace(_ context.Context, id, spaceID uuid.UUID) error {
 	item, ok := r.items[id]
-	if !ok {
+	if !ok || item.SpaceID != spaceID {
 		return ErrNotFound
 	}
 	now := timeNowUTC()
@@ -343,9 +343,10 @@ func TestItemService_UpdateItemStatus(t *testing.T) {
 func TestItemService_DeleteItem(t *testing.T) {
 	repo := newStubItemRepo()
 	svc := NewItemService(repo, repoShareDeleter{repo})
-	created, _ := svc.CreateItem(context.Background(), makeItem(uuid.New()))
+	space := uuid.New()
+	created, _ := svc.CreateItem(context.Background(), makeItem(space))
 
-	if err := svc.DeleteItem(context.Background(), created.ID, uuid.New()); err != nil {
+	if err := svc.DeleteItem(context.Background(), created.ID, space, uuid.New()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	_, err := svc.GetItem(context.Background(), created.ID)

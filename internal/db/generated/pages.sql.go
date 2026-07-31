@@ -834,12 +834,29 @@ func (q *Queries) SearchPages(ctx context.Context, arg SearchPagesParams) ([]Sea
 	return items, nil
 }
 
-const softDeletePage = `-- name: SoftDeletePage :exec
-UPDATE pages SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL
+const softDeletePageInSpace = `-- name: SoftDeletePageInSpace :exec
+UPDATE pages SET deleted_at = now()
+WHERE id = $1 AND space_id = $2 AND deleted_at IS NULL
 `
 
-func (q *Queries) SoftDeletePage(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, softDeletePage, id)
+type SoftDeletePageInSpaceParams struct {
+	PageID  uuid.UUID `json:"page_id"`
+	SpaceID uuid.UUID `json:"space_id"`
+}
+
+// Scoped to the space, not just the id.
+//
+// The route above this is reconciled, but it is the only thing that was: the
+// transactional deleter took an entity id alone, so the refusal lived in a
+// handler rather than in the write. That is the shape this whole class is made
+// of — a convention the next caller (a bulk operation, a job, a new route)
+// inherits nothing of. The delete handler's own comment said as much: "a
+// {entity} outside {spaceID} has to be refused here or nowhere."
+//
+// :exec, so a mismatch deletes nothing and says nothing, exactly as an id that
+// named nothing already did.
+func (q *Queries) SoftDeletePageInSpace(ctx context.Context, arg SoftDeletePageInSpaceParams) error {
+	_, err := q.db.Exec(ctx, softDeletePageInSpace, arg.PageID, arg.SpaceID)
 	return err
 }
 

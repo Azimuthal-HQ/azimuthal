@@ -265,29 +265,35 @@ func (a *ContentTxAdapter) UpdatePageContentTx(ctx context.Context, in wiki.Upda
 
 // DeletePageAndRevokeShares soft-deletes the page and revokes its shares in
 // one transaction (ADR-0008 rule 10).
-func (a *ContentTxAdapter) DeletePageAndRevokeShares(ctx context.Context, pageID, actorID uuid.UUID) (int64, error) {
+func (a *ContentTxAdapter) DeletePageAndRevokeShares(ctx context.Context, pageID, spaceID, actorID uuid.UUID) (int64, error) {
 	return a.deleteEntityAndRevokeShares(ctx, access.ShareEntityPage, pageID, actorID,
 		func(ctx context.Context, qtx *generated.Queries) error {
-			return qtx.SoftDeletePage(ctx, pageID)
+			return qtx.SoftDeletePageInSpace(ctx, generated.SoftDeletePageInSpaceParams{
+				PageID: pageID, SpaceID: spaceID,
+			})
 		})
 }
 
 // DeleteTicketAndRevokeShares soft-deletes the ticket and revokes its
 // shares in one transaction.
-func (a *ContentTxAdapter) DeleteTicketAndRevokeShares(ctx context.Context, ticketID, actorID uuid.UUID) error {
+func (a *ContentTxAdapter) DeleteTicketAndRevokeShares(ctx context.Context, ticketID, spaceID, actorID uuid.UUID) error {
 	_, err := a.deleteEntityAndRevokeShares(ctx, access.ShareEntityTicket, ticketID, actorID,
 		func(ctx context.Context, qtx *generated.Queries) error {
-			return qtx.SoftDeleteTicket(ctx, ticketID)
+			return qtx.SoftDeleteTicketInSpace(ctx, generated.SoftDeleteTicketInSpaceParams{
+				TicketID: ticketID, SpaceID: spaceID,
+			})
 		})
 	return err
 }
 
 // DeleteItemAndRevokeShares soft-deletes the project item and revokes its
 // shares in one transaction.
-func (a *ContentTxAdapter) DeleteItemAndRevokeShares(ctx context.Context, itemID, actorID uuid.UUID) error {
+func (a *ContentTxAdapter) DeleteItemAndRevokeShares(ctx context.Context, itemID, spaceID, actorID uuid.UUID) error {
 	_, err := a.deleteEntityAndRevokeShares(ctx, access.ShareEntityProjectItem, itemID, actorID,
 		func(ctx context.Context, qtx *generated.Queries) error {
-			return qtx.SoftDeleteProjectItem(ctx, itemID)
+			return qtx.SoftDeleteProjectItemInSpace(ctx, generated.SoftDeleteProjectItemInSpaceParams{
+				ItemID: itemID, SpaceID: spaceID,
+			})
 		})
 	return err
 }

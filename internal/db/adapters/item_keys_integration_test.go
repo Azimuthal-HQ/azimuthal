@@ -196,7 +196,7 @@ func TestItemKey_ResolveByKey(t *testing.T) {
 	require.ErrorIs(t, err, projects.ErrNotFound)
 
 	// Soft-deleted items do not resolve.
-	require.NoError(t, adapter.SoftDelete(context.Background(), item.ID))
+	require.NoError(t, adapter.SoftDeleteInSpace(context.Background(), item.ID, space.ID))
 	_, err = adapter.GetByOrgKey(context.Background(), org.ID, item.ItemKey)
 	require.ErrorIs(t, err, projects.ErrNotFound)
 }
@@ -213,7 +213,7 @@ func TestItemKey_NumberNotReusedAfterDelete(t *testing.T) {
 	first := newItem(space.ID, user.ID, "First")
 	require.NoError(t, adapter.Create(context.Background(), first))
 	require.Equal(t, 1, first.Number)
-	require.NoError(t, adapter.SoftDelete(context.Background(), first.ID))
+	require.NoError(t, adapter.SoftDeleteInSpace(context.Background(), first.ID, space.ID))
 
 	second := newItem(space.ID, user.ID, "Second")
 	require.NoError(t, adapter.Create(context.Background(), second))

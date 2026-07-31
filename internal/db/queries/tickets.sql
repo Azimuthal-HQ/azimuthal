@@ -61,8 +61,20 @@ SET status = @status, workflow_state_id = @workflow_state_id, updated_at = now()
 WHERE id = @ticket_id AND space_id = @space_id AND deleted_at IS NULL
 RETURNING *;
 
--- name: SoftDeleteTicket :exec
-UPDATE tickets SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL;
+-- name: SoftDeleteTicketInSpace :exec
+-- Scoped to the space, not just the id.
+--
+-- The route above this is reconciled, but it is the only thing that was: the
+-- transactional deleter took an entity id alone, so the refusal lived in a
+-- handler rather than in the write. That is the shape this whole class is made
+-- of — a convention the next caller (a bulk operation, a job, a new route)
+-- inherits nothing of. The delete handler's own comment said as much: "a
+-- {entity} outside {spaceID} has to be refused here or nowhere."
+--
+-- :exec, so a mismatch deletes nothing and says nothing, exactly as an id that
+-- named nothing already did.
+UPDATE tickets SET deleted_at = now()
+WHERE id = @ticket_id AND space_id = @space_id AND deleted_at IS NULL;
 
 -- name: SearchTickets :many
 SELECT * FROM tickets

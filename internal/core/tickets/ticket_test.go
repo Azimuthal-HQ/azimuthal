@@ -15,7 +15,7 @@ import (
 // transaction (covered by integration tests against a real database).
 type noopShareDeleter struct{}
 
-func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
 
@@ -25,8 +25,8 @@ func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid
 // same-transaction revocation is covered by integration tests.
 type repoShareDeleter struct{ repo *mockRepo }
 
-func (d repoShareDeleter) DeleteTicketAndRevokeShares(ctx context.Context, id, _ uuid.UUID) error {
-	return d.repo.Delete(ctx, id)
+func (d repoShareDeleter) DeleteTicketAndRevokeShares(ctx context.Context, id, spaceID, _ uuid.UUID) error {
+	return d.repo.DeleteInSpace(ctx, id, spaceID)
 }
 
 // --- Mock repository ---
@@ -102,8 +102,9 @@ func (m *mockRepo) UpdateStatus(_ context.Context, id uuid.UUID, status Status) 
 	return t, nil
 }
 
-func (m *mockRepo) Delete(_ context.Context, id uuid.UUID) error {
-	if _, ok := m.tickets[id]; !ok {
+func (m *mockRepo) DeleteInSpace(_ context.Context, id, spaceID uuid.UUID) error {
+	t, ok := m.tickets[id]
+	if !ok || t.SpaceID != spaceID {
 		return ErrNotFound
 	}
 	delete(m.tickets, id)
@@ -389,7 +390,7 @@ func TestDeleteTicket(t *testing.T) {
 	reporterID := uuid.New()
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
 
-	err := svc.Delete(context.Background(), ticket.ID, reporterID)
+	err := svc.Delete(context.Background(), ticket.ID, spaceID, reporterID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

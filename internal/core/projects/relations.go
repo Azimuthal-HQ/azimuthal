@@ -146,9 +146,30 @@ func NewRelationService(repo RelationRepository) *RelationService {
 // which the API maps to 404. They are the same error value because the
 // repository gives this function a single bool: there is no branch here that
 // could drift into reporting them differently.
-func (s *RelationService) CreateRelation(ctx context.Context, rel *NewRelation, readableSpaceIDs []uuid.UUID) (*Relation, error) {
+func (s *RelationService) CreateRelation(
+	ctx context.Context, rel *NewRelation, spaceID uuid.UUID, readableSpaceIDs []uuid.UUID,
+) (*Relation, error) {
 	if err := validateNewRelation(rel); err != nil {
 		return nil, fmt.Errorf("creating relation: %w", err)
+	}
+
+	// The NEAR side first. It is the {itemID} in the URL, and the middleware
+	// authorised {spaceID} beside it without ever reconciling the two — so the
+	// far side was resolved carefully while the entity the relation hangs off
+	// was taken on trust. A contributor in one space could attach a relation to
+	// an item in another, and it renders in that item's own panel through the
+	// reciprocal-direction union.
+	//
+	// It is checked against the URL's space alone, not the caller's whole
+	// readable set: this is the space they claimed to be acting in, and a wider
+	// set would let read access somewhere else authorise a write here. The far
+	// side keeps the readable set, because linking ACROSS spaces is the feature.
+	near, err := s.repo.TargetIsReadable(ctx, rel.FromID, rel.FromType, []uuid.UUID{spaceID})
+	if err != nil {
+		return nil, fmt.Errorf("creating relation: %w", err)
+	}
+	if !near {
+		return nil, fmt.Errorf("creating relation: %w", ErrNotFound)
 	}
 
 	readable, err := s.repo.TargetIsReadable(ctx, rel.ToID, rel.ToType, readableSpaceIDs)

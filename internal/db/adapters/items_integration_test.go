@@ -287,7 +287,7 @@ func TestCreateProjectItem_SoftDelete(t *testing.T) {
 	err := adapter.Create(context.Background(), item)
 	require.NoError(t, err)
 
-	err = adapter.SoftDelete(context.Background(), item.ID)
+	err = adapter.SoftDeleteInSpace(context.Background(), item.ID, space.ID)
 	require.NoError(t, err)
 
 	// Verify deleted_at is set in the database.

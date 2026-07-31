@@ -180,8 +180,20 @@ UPDATE project_items
 SET rank = $2, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL;
 
--- name: SoftDeleteProjectItem :exec
-UPDATE project_items SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL;
+-- name: SoftDeleteProjectItemInSpace :exec
+-- Scoped to the space, not just the id.
+--
+-- The route above this is reconciled, but it is the only thing that was: the
+-- transactional deleter took an entity id alone, so the refusal lived in a
+-- handler rather than in the write. That is the shape this whole class is made
+-- of — a convention the next caller (a bulk operation, a job, a new route)
+-- inherits nothing of. The delete handler's own comment said as much: "a
+-- {entity} outside {spaceID} has to be refused here or nowhere."
+--
+-- :exec, so a mismatch deletes nothing and says nothing, exactly as an id that
+-- named nothing already did.
+UPDATE project_items SET deleted_at = now()
+WHERE id = @item_id AND space_id = @space_id AND deleted_at IS NULL;
 
 -- name: SearchProjectItems :many
 SELECT * FROM project_items

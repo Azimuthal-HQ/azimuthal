@@ -612,7 +612,7 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 	}
 	// Delete revokes the item's shares in the same transaction (ADR-0008
 	// rule 10); actorID attributes the share.revoked audit rows.
-	if err := h.items.DeleteItem(r.Context(), id, actorID); err != nil {
+	if err := h.items.DeleteItem(r.Context(), id, spaceID, actorID); err != nil {
 		handleProjectError(w, r, err)
 		return
 	}
@@ -1098,7 +1098,13 @@ func (h *Handler) CreateRelation(w http.ResponseWriter, r *http.Request) {
 		CreatedBy: claims.UserID,
 	}
 
-	created, err := h.relations.CreateRelation(r.Context(), rel, readable)
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+
+	created, err := h.relations.CreateRelation(r.Context(), rel, spaceID, readable)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return

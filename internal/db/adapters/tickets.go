@@ -121,9 +121,11 @@ func (a *TicketAdapter) UpdateStatus(ctx context.Context, id uuid.UUID, status t
 	return dbTicketToTicket(row), nil
 }
 
-// Delete soft-deletes a ticket.
-func (a *TicketAdapter) Delete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.SoftDeleteTicket(ctx, id); err != nil {
+// DeleteInSpace soft-deletes a ticket in spaceID.
+func (a *TicketAdapter) DeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error {
+	if err := a.q.SoftDeleteTicketInSpace(ctx, generated.SoftDeleteTicketInSpaceParams{
+		TicketID: id, SpaceID: spaceID,
+	}); err != nil {
 		return fmt.Errorf("ticket adapter delete: %w", err)
 	}
 	return nil

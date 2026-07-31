@@ -178,9 +178,11 @@ func (a *ItemAdapter) UpdateSprintInSpace(
 	return nil
 }
 
-// SoftDelete sets deleted_at on an item.
-func (a *ItemAdapter) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.SoftDeleteProjectItem(ctx, id); err != nil {
+// SoftDeleteInSpace sets deleted_at on an item in spaceID.
+func (a *ItemAdapter) SoftDeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error {
+	if err := a.q.SoftDeleteProjectItemInSpace(ctx, generated.SoftDeleteProjectItemInSpaceParams{
+		ItemID: id, SpaceID: spaceID,
+	}); err != nil {
 		return fmt.Errorf("item adapter soft delete: %w", err)
 	}
 	return nil

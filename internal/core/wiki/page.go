@@ -104,7 +104,7 @@ type MovePageTxResult struct {
 // guarding.
 type ContentTxStore interface {
 	MovePageTx(ctx context.Context, in MovePageInput) (MovePageTxResult, error)
-	DeletePageAndRevokeShares(ctx context.Context, pageID, actorID uuid.UUID) (int64, error)
+	DeletePageAndRevokeShares(ctx context.Context, pageID, spaceID, actorID uuid.UUID) (int64, error)
 	UpdatePageContentTx(ctx context.Context, in UpdatePageInput) (generated.Page, error)
 }
 
@@ -313,8 +313,13 @@ func (s *Service) MovePage(ctx context.Context, input MovePageInput) (MovePageTx
 // DeletePage soft-deletes a page and revokes its shares in the same
 // transaction (ADR-0008 rule 10). actorID attributes the share.revoked
 // audit rows.
-func (s *Service) DeletePage(ctx context.Context, id, actorID uuid.UUID) error {
-	if _, err := s.tx.DeletePageAndRevokeShares(ctx, id, actorID); err != nil {
+//
+// spaceID reaches the transaction rather than stopping at the route. The
+// handler above reconciles the entity before calling this, but that refusal
+// lived in a handler and the deleter took an id alone — so the guarantee was a
+// convention the next caller inherits nothing of. It is now in the statement.
+func (s *Service) DeletePage(ctx context.Context, id, spaceID, actorID uuid.UUID) error {
+	if _, err := s.tx.DeletePageAndRevokeShares(ctx, id, spaceID, actorID); err != nil {
 		return fmt.Errorf("deleting page: %w", err)
 	}
 	return nil

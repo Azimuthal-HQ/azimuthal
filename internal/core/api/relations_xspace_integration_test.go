@@ -236,7 +236,7 @@ func TestRelations_ReadableFarSideStillResolves(t *testing.T) {
 func TestRelations_SoftDeletedFarSideIsRedacted(t *testing.T) {
 	f := newRelFixture(t)
 	f.link(t, f.itemA1, f.itemA2, "relates_to")
-	require.NoError(t, f.q.SoftDeleteProjectItem(context.Background(), f.itemA2))
+	require.NoError(t, f.q.SoftDeleteProjectItemInSpace(context.Background(), generated.SoftDeleteProjectItemInSpaceParams{ItemID: f.itemA2, SpaceID: f.spaceA.ID}))
 
 	res := f.ts.getAs(t, f.memberTok, f.relationsPath(f.itemA1))
 	require.Equal(t, http.StatusOK, res.StatusCode)

@@ -86,8 +86,9 @@ type ItemRepository interface {
 	// variant: this write is reached from three routes, two of which take the
 	// item id from the request body.
 	UpdateSprintInSpace(ctx context.Context, id, spaceID uuid.UUID, sprintID *uuid.UUID) error
-	// SoftDelete sets deleted_at on an item.
-	SoftDelete(ctx context.Context, id uuid.UUID) error
+	// SoftDeleteInSpace sets deleted_at on an item in spaceID. There is no
+	// unscoped variant: an id alone reaches every item in the installation.
+	SoftDeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error
 	// ListBySpace returns all non-deleted items in a space, ordered by rank.
 	ListBySpace(ctx context.Context, spaceID uuid.UUID) ([]*Item, error)
 	// ListByStatus returns items filtered by status within a space.
@@ -108,7 +109,7 @@ type ItemRepository interface {
 // roll back together (ADR-0008 rule 10), with the share.revoked audit rows
 // in the same transaction.
 type ShareRevokingDeleter interface {
-	DeleteItemAndRevokeShares(ctx context.Context, itemID, actorID uuid.UUID) error
+	DeleteItemAndRevokeShares(ctx context.Context, itemID, spaceID, actorID uuid.UUID) error
 }
 
 // ItemService handles project item management.
@@ -226,8 +227,13 @@ func (s *ItemService) AssignToSprint(
 
 // DeleteItem soft-deletes a project item and revokes its entity shares in
 // the same transaction. actorID attributes the share.revoked audit rows.
-func (s *ItemService) DeleteItem(ctx context.Context, id, actorID uuid.UUID) error {
-	if err := s.tx.DeleteItemAndRevokeShares(ctx, id, actorID); err != nil {
+//
+// spaceID reaches the transaction rather than stopping at the route. The
+// handler above reconciles the entity before calling this, but that refusal
+// lived in a handler and the deleter took an id alone — so the guarantee was a
+// convention the next caller inherits nothing of. It is now in the statement.
+func (s *ItemService) DeleteItem(ctx context.Context, id, spaceID, actorID uuid.UUID) error {
+	if err := s.tx.DeleteItemAndRevokeShares(ctx, id, spaceID, actorID); err != nil {
 		return fmt.Errorf("deleting item: %w", err)
 	}
 	return nil
