@@ -17,6 +17,12 @@ import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
 import { CustomFieldsSection } from '../../components/CustomFieldsSection';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
+import { ApprovalBlock } from '../../components/workflow/ApprovalBlock';
+import {
+  runStatusChange,
+  statusOutcomeMessage,
+  type StatusOutcome,
+} from '../../components/workflow/statusOutcome';
 import { Markdown } from '../../components/Markdown';
 import {
   useProjectItem,
@@ -98,6 +104,7 @@ export function ItemDetailPage() {
   const { data: sprints = [] } = useSprints(spaceId);
   const assignSprintMutation = useAssignItemSprint(spaceId);
   const [sprintError, setSprintError] = useState<string | null>(null);
+  const [statusOutcome, setStatusOutcome] = useState<StatusOutcome>({ kind: 'idle' });
 
   const [newComment, setNewComment] = useState('');
 
@@ -133,8 +140,15 @@ export function ItemDetailPage() {
 
   const backlogPath = `/vector/${spaceId}/backlog`;
 
+  // See TicketDetailPage: three outcomes, one of which (202 pending approval)
+  // is not an error and so resolved as a false success.
   async function handleStatusChange(newStatus: string) {
-    await statusMutation.mutateAsync(newStatus);
+    setStatusOutcome({ kind: 'idle' });
+    const outcome = await runStatusChange(
+      () => statusMutation.mutateAsync(newStatus),
+      'The status could not be changed.',
+    );
+    setStatusOutcome(outcome);
     refetchItem();
   }
 
@@ -311,6 +325,18 @@ export function ItemDetailPage() {
             </>
           )}
 
+          {/* Approvals (ADR-0011 tier 2). Placed after the isEditing ternary
+              closes, so it renders in both the read and edit branches rather
+              than vanishing while the item is being edited. */}
+          <div className="mt-6">
+            <ApprovalBlock
+              spaceId={spaceId}
+              entityType="item"
+              entityId={itemId}
+              onDecided={() => refetchItem()}
+            />
+          </div>
+
           {/* Relations section */}
           <div className="mt-6 border-t border-[var(--color-border)] pt-5">
             <h3 className="mb-3 flex items-center gap-2 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
@@ -447,6 +473,18 @@ export function ItemDetailPage() {
                   <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
                 ))}
               </select>
+              {statusOutcomeMessage(statusOutcome) && (
+                <p
+                  data-testid="status-outcome"
+                  className={
+                    statusOutcome.kind === 'pending'
+                      ? 'mt-1 text-[var(--text-xs)] text-[var(--color-warning)]'
+                      : 'mt-1 text-[var(--text-xs)] text-[var(--color-danger)]'
+                  }
+                >
+                  {statusOutcomeMessage(statusOutcome)}
+                </p>
+              )}
             </div>
           </DetailField>
 

@@ -15,6 +15,13 @@ import { ModuleChip } from '../../shell/ModuleChip';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import { Markdown } from '../../components/Markdown';
+import { useQueryClient } from '@tanstack/react-query';
+import { ApprovalBlock } from '../../components/workflow/ApprovalBlock';
+import {
+  runStatusChange,
+  statusOutcomeMessage,
+  type StatusOutcome,
+} from '../../components/workflow/statusOutcome';
 import {
   useTicket,
   useTransitionTicketStatus,
@@ -25,6 +32,7 @@ import {
   useMe,
   useSpace,
   friendlyErrorMessage,
+  queryKeys,
   type TicketStatus,
   type CommentVisibility,
 } from '../../lib/api';
@@ -168,9 +176,33 @@ export function TicketDetailPage() {
   // Internal is the default and the safe direction: a note that stays inside
   // when it should have gone out costs a delay; the reverse cannot be undone.
   const [commentVisibility, setCommentVisibility] = useState<CommentVisibility>('internal');
+  const [statusOutcome, setStatusOutcome] = useState<StatusOutcome>({ kind: 'idle' });
+  const queryClient = useQueryClient();
 
+  // A status change has THREE outcomes and this page used to handle one. The
+  // await had no try/catch and never read `.error`, so a guard refusal was an
+  // unhandled rejection: the <select> kept its new value and the refetch never
+  // ran. Worse, a 202 pending-approval body is not an error at all, so it
+  // resolved as success wearing a Ticket's type — the page reported a move that
+  // had not happened. runStatusChange tells the three apart.
   async function handleStatusChange(newStatus: TicketStatus) {
-    await transitionMutation.mutateAsync(newStatus);
+    setStatusOutcome({ kind: 'idle' });
+    const outcome = await runStatusChange(
+      () => transitionMutation.mutateAsync(newStatus),
+      'The status could not be changed.',
+    );
+    setStatusOutcome(outcome);
+    // A gated transition CREATES an approval request, so the block that renders
+    // it has to re-read. Nothing else invalidates that query: the status
+    // mutation knows nothing about approvals, and without this the 202 came
+    // back, the notice appeared, and the pending block did not — which reads as
+    // the approval never having been requested.
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.entityApprovals(spaceId, 'ticket', ticketId ?? ''),
+    });
+    // Refetch on every outcome, not just success: the select is bound to
+    // ticket.status, so re-reading the server's truth is what snaps it back
+    // when the transition was refused or is merely pending.
     refetchTicket();
   }
 
@@ -300,6 +332,18 @@ export function TicketDetailPage() {
           >
             {ticket.description ?? ''}
           </Markdown>
+
+          {/* Approvals (ADR-0011 tier 2). Above the Activity block and outside
+              it: the comment area and its visibility toggle belong to the
+              customer-portal track (#98) and are deliberately untouched here. */}
+          <div className="mt-6">
+            <ApprovalBlock
+              spaceId={spaceId}
+              entityType="ticket"
+              entityId={ticketId ?? ''}
+              onDecided={() => refetchTicket()}
+            />
+          </div>
 
           {/* Comments section */}
           <div className="mt-6 border-t border-[var(--color-border)] pt-5">
@@ -503,6 +547,25 @@ export function TicketDetailPage() {
                   <option key={s} value={s}>{STATUS_LABEL[s]}</option>
                 ))}
               </select>
+              {/* The reason, beside the control that produced it. A refusal
+                  carries the guard's own sentence (422 VALIDATION_ERROR passes
+                  through friendlyErrorMessage unchanged); a pending approval
+                  carries the server's wording, which already says the item has
+                  not moved. Neither is a toast: this page mounts no toast
+                  provider, and a message that disappears is the wrong shape for
+                  an explanation the user may need to act on. */}
+              {statusOutcomeMessage(statusOutcome) && (
+                <p
+                  data-testid="status-outcome"
+                  className={
+                    statusOutcome.kind === 'pending'
+                      ? 'text-[var(--text-xs)] text-[var(--color-warning)]'
+                      : 'text-[var(--text-xs)] text-[var(--color-danger)]'
+                  }
+                >
+                  {statusOutcomeMessage(statusOutcome)}
+                </p>
+              )}
             </div>
           </DetailField>
 
