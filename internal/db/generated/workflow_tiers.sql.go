@@ -327,11 +327,21 @@ func (q *Queries) DecideApproval(ctx context.Context, arg DecideApprovalParams) 
 }
 
 const deleteTransitionApprover = `-- name: DeleteTransitionApprover :execrows
-DELETE FROM workflow_transition_approvers WHERE id = $1
+DELETE FROM workflow_transition_approvers WHERE id = $1 AND transition_id = $2
 `
 
-func (q *Queries) DeleteTransitionApprover(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTransitionApprover, id)
+type DeleteTransitionApproverParams struct {
+	ID           uuid.UUID `json:"id"`
+	TransitionID uuid.UUID `json:"transition_id"`
+}
+
+// Scoped to the transition, not just the id. {transitionID} and the child id
+// are separate path segments and nothing ties them together, so an unscoped
+// delete lets an admin naming one of their OWN transitions remove a row
+// belonging to any other — including another organisation's. Zero rows is the
+// adapter's ErrNotFound, which the handler answers as 404.
+func (q *Queries) DeleteTransitionApprover(ctx context.Context, arg DeleteTransitionApproverParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTransitionApprover, arg.ID, arg.TransitionID)
 	if err != nil {
 		return 0, err
 	}
@@ -339,11 +349,21 @@ func (q *Queries) DeleteTransitionApprover(ctx context.Context, id uuid.UUID) (i
 }
 
 const deleteTransitionGuard = `-- name: DeleteTransitionGuard :execrows
-DELETE FROM workflow_transition_guards WHERE id = $1
+DELETE FROM workflow_transition_guards WHERE id = $1 AND transition_id = $2
 `
 
-func (q *Queries) DeleteTransitionGuard(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTransitionGuard, id)
+type DeleteTransitionGuardParams struct {
+	ID           uuid.UUID `json:"id"`
+	TransitionID uuid.UUID `json:"transition_id"`
+}
+
+// Scoped to the transition, not just the id. {transitionID} and the child id
+// are separate path segments and nothing ties them together, so an unscoped
+// delete lets an admin naming one of their OWN transitions remove a row
+// belonging to any other — including another organisation's. Zero rows is the
+// adapter's ErrNotFound, which the handler answers as 404.
+func (q *Queries) DeleteTransitionGuard(ctx context.Context, arg DeleteTransitionGuardParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTransitionGuard, arg.ID, arg.TransitionID)
 	if err != nil {
 		return 0, err
 	}
@@ -351,11 +371,21 @@ func (q *Queries) DeleteTransitionGuard(ctx context.Context, id uuid.UUID) (int6
 }
 
 const deleteTransitionPostFunction = `-- name: DeleteTransitionPostFunction :execrows
-DELETE FROM workflow_transition_post_functions WHERE id = $1
+DELETE FROM workflow_transition_post_functions WHERE id = $1 AND transition_id = $2
 `
 
-func (q *Queries) DeleteTransitionPostFunction(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTransitionPostFunction, id)
+type DeleteTransitionPostFunctionParams struct {
+	ID           uuid.UUID `json:"id"`
+	TransitionID uuid.UUID `json:"transition_id"`
+}
+
+// Scoped to the transition, not just the id. {transitionID} and the child id
+// are separate path segments and nothing ties them together, so an unscoped
+// delete lets an admin naming one of their OWN transitions remove a row
+// belonging to any other — including another organisation's. Zero rows is the
+// adapter's ErrNotFound, which the handler answers as 404.
+func (q *Queries) DeleteTransitionPostFunction(ctx context.Context, arg DeleteTransitionPostFunctionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTransitionPostFunction, arg.ID, arg.TransitionID)
 	if err != nil {
 		return 0, err
 	}
@@ -585,6 +615,63 @@ func (q *Queries) ListApprovalsForEntity(ctx context.Context, arg ListApprovalsF
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEffectiveTeamMemberIDs = `-- name: ListEffectiveTeamMemberIDs :many
+
+SELECT DISTINCT tm.user_id
+FROM team_members tm
+JOIN users u ON u.id = tm.user_id AND u.deleted_at IS NULL
+WHERE tm.org_id = $1
+  AND $2::uuid IN (
+      SELECT e.team_id FROM effective_team_ids($1, tm.user_id) AS e(team_id)
+  )
+`
+
+type ListEffectiveTeamMemberIDsParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	TeamID uuid.UUID `json:"team_id"`
+}
+
+// ─── Approval notification recipients ─────────────────────────────────────────
+// Who counts as a member of one team, for the approval-requested notification.
+//
+// This is the INVERSE of effective_team_ids(). That function is subject-side —
+// given a user, which teams do they effectively belong to — and every
+// authorisation read in the product asks it in that direction. Notifying a team
+// approver needs the other direction, and the two must agree: a person the
+// guard would accept as an approver but the notifier never told is an approval
+// that waits on somebody who was never asked.
+//
+// So rather than re-derive the ancestry rule (teams.path overlap, migration
+// 038), this asks the SAME function once per candidate and keeps whoever it
+// answers for. It cannot drift from the authorisation rule because it IS the
+// authorisation rule — the exact reasoning migration 038's header gives for
+// extracting the function rather than letting callers copy the expansion.
+//
+// The candidate set is team_members, not users: somebody in no team cannot be
+// in one team's effective set, so the correlated call runs over the members of
+// the org rather than its whole roster. This runs once per approval REQUEST —
+// a rare write, never a read path — so the correlated shape buys consistency
+// at a cost nothing hot pays.
+func (q *Queries) ListEffectiveTeamMemberIDs(ctx context.Context, arg ListEffectiveTeamMemberIDsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listEffectiveTeamMemberIDs, arg.OrgID, arg.TeamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

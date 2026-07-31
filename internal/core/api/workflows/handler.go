@@ -2,6 +2,7 @@
 package workflows
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 )
 
 // Handler holds dependencies for workflow HTTP handlers.
@@ -36,6 +38,22 @@ type Handler struct {
 	tierStore workflow.TierStore
 	tierSvc   *workflow.TierService
 	auditLog  audit.Logger
+	// notifs tells the requester what an approver decided. The request side is
+	// emitted at the tiergate chokepoint instead, because four routes can
+	// create an approval and only one can decide it.
+	notifs NotificationEnqueuer
+}
+
+// NotificationEnqueuer enqueues in-app notification jobs. Same subset the
+// tickets and comments handlers hold.
+type NotificationEnqueuer interface {
+	EnqueueNotification(ctx context.Context, args jobs.NotificationArgs) error
+}
+
+// WithNotificationEnqueuer attaches a notification enqueuer to the handler.
+func (h *Handler) WithNotificationEnqueuer(n NotificationEnqueuer) *Handler {
+	h.notifs = n
+	return h
 }
 
 // WithWorkflowTiers attaches the ADR-0011 tier gate and the transactional
@@ -165,9 +183,8 @@ func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 // @Failure      404         {object}  api.SwaggerErrorResponse   "Not found"
 // @Router       /orgs/{orgID}/workflows/{workflowID} [get]
 func (h *Handler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
-	id, err := workflowIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid workflow ID")
+	id, ok := h.workflowInOrg(w, r)
+	if !ok {
 		return
 	}
 	wf, err := h.repo.GetWorkflow(r.Context(), id)
@@ -243,9 +260,8 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 // @Failure      500         {object}  api.SwaggerErrorResponse   "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID} [put]
 func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
-	id, err := workflowIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid workflow ID")
+	id, ok := h.workflowInOrg(w, r)
+	if !ok {
 		return
 	}
 	var req updateWorkflowRequest
@@ -281,9 +297,8 @@ func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID} [delete]
 func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
-	id, err := workflowIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid workflow ID")
+	id, ok := h.workflowInOrg(w, r)
+	if !ok {
 		return
 	}
 	if err := h.repo.DeleteWorkflow(r.Context(), id); err != nil {
@@ -308,9 +323,8 @@ func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 // @Failure      500         {object}  api.SwaggerErrorResponse   "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/states [get]
 func (h *Handler) ListStates(w http.ResponseWriter, r *http.Request) {
-	id, err := workflowIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid workflow ID")
+	id, ok := h.workflowInOrg(w, r)
+	if !ok {
 		return
 	}
 	states, err := h.repo.ListStates(r.Context(), id)
@@ -338,9 +352,8 @@ func (h *Handler) ListStates(w http.ResponseWriter, r *http.Request) {
 // @Failure      500         {object}  api.SwaggerErrorResponse   "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/states [post]
 func (h *Handler) CreateState(w http.ResponseWriter, r *http.Request) {
-	wfID, err := workflowIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid workflow ID")
+	wfID, ok := h.workflowInOrg(w, r)
+	if !ok {
 		return
 	}
 	var req createStateRequest
@@ -386,9 +399,22 @@ func (h *Handler) CreateState(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/states/{stateID} [delete]
 func (h *Handler) DeleteState(w http.ResponseWriter, r *http.Request) {
+	workflowID, ok := h.workflowInOrg(w, r)
+	if !ok {
+		return
+	}
 	id, err := stateIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid state ID")
+		return
+	}
+	// Scoping the workflow is not enough on its own: {stateID} is a separate
+	// path segment and nothing ties the two together, so an admin naming one of
+	// their OWN workflows could delete a state belonging to any other. Same
+	// shape as the id-belongs-to-parent check resolveTransition makes.
+	state, err := h.repo.GetState(r.Context(), id)
+	if err != nil || state.WorkflowID != workflowID {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "state not found")
 		return
 	}
 	if err := h.repo.DeleteState(r.Context(), id); err != nil {
@@ -413,9 +439,8 @@ func (h *Handler) DeleteState(w http.ResponseWriter, r *http.Request) {
 // @Failure      500         {object}  api.SwaggerErrorResponse   "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions [get]
 func (h *Handler) ListTransitions(w http.ResponseWriter, r *http.Request) {
-	id, err := workflowIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid workflow ID")
+	id, ok := h.workflowInOrg(w, r)
+	if !ok {
 		return
 	}
 	ts, err := h.repo.ListTransitions(r.Context(), id)
@@ -443,9 +468,8 @@ func (h *Handler) ListTransitions(w http.ResponseWriter, r *http.Request) {
 // @Failure      500         {object}  api.SwaggerErrorResponse   "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions [post]
 func (h *Handler) CreateTransition(w http.ResponseWriter, r *http.Request) {
-	wfID, err := workflowIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid workflow ID")
+	wfID, ok := h.workflowInOrg(w, r)
+	if !ok {
 		return
 	}
 	var req createTransitionRequest
@@ -485,9 +509,18 @@ func (h *Handler) CreateTransition(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID} [delete]
 func (h *Handler) DeleteTransition(w http.ResponseWriter, r *http.Request) {
+	workflowID, ok := h.workflowInOrg(w, r)
+	if !ok {
+		return
+	}
 	id, err := transitionIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid transition ID")
+		return
+	}
+	transition, err := h.q.GetWorkflowTransition(r.Context(), id)
+	if err != nil || transition.WorkflowID != workflowID {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "transition not found")
 		return
 	}
 	if err := h.repo.DeleteTransition(r.Context(), id); err != nil {
@@ -811,6 +844,47 @@ type workflowTransitionRequest struct {
 }
 
 // ─── URL param helpers ────────────────────────────────────────────────────────
+
+// workflowInOrg parses {workflowID} and proves it belongs to {orgID}, answering
+// the request itself on any failure.
+//
+// # This closes D74
+//
+// Every handler below used to resolve {workflowID} and act on it without ever
+// asking whose it was, so a workflow in another organisation was reachable by
+// id: its states and transitions were readable, and its edges deletable, by any
+// org admin who could guess a UUID. PR #86 recorded that as an inherited
+// finding and routed its own nine tier routes around it (resolveTransition in
+// tiers.go), which kept the new surface clean but left the old one open.
+//
+// The admin editor is what makes it unavoidable rather than merely known: an
+// editor cannot show a transition without listing transitions, so the surface
+// this PR builds reads through exactly the routes that never checked. Fixing
+// the read alone would be worse than useless — it would leave DELETE open while
+// implying the family was scoped — so all nine are re-scoped together.
+//
+// 404 rather than 403, matching tiers.go: a workflow in another org must not be
+// distinguishable from one that does not exist, because a 403 confirms the id
+// is real.
+func (h *Handler) workflowInOrg(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org ID")
+		return uuid.Nil, false
+	}
+	workflowID, err := workflowIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid workflow ID")
+		return uuid.Nil, false
+	}
+	if _, err := h.q.GetWorkflowInOrg(r.Context(), generated.GetWorkflowInOrgParams{
+		ID: workflowID, OrgID: orgID,
+	}); err != nil {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "workflow not found")
+		return uuid.Nil, false
+	}
+	return workflowID, true
+}
 
 func orgIDFromURL(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "orgID"))

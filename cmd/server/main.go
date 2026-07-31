@@ -241,7 +241,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	// exists to close.
 	tierStore := adapters.NewWorkflowTierAdapter(queries)
 	tierSvc := workflow.NewTierService(tierStore)
-	tierGate := tiergate.New(tierSvc, tierStore)
+	tierGate := tiergate.New(tierSvc, tierStore, notifEnqueuer)
 	transitionTx := adapters.NewWorkflowTransitionTxAdapter(pool)
 	orgProvisioner := adapters.NewOrgProvisionerAdapterWithWorkflows(queries, workflowAdapter)
 
@@ -441,7 +441,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		NotificationHandler: notificationsapi.NewHandler(queries),
-		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog),
+		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		ShareHandler:        shareHandler,

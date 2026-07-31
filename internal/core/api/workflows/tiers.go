@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -9,10 +10,12 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 )
 
 // This file carries the ADR-0011 tier surface: the org-scoped configuration
@@ -236,7 +239,8 @@ func (h *Handler) CreateGuard(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards/{guardID} [delete]
 func (h *Handler) DeleteGuard(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.resolveTransition(w, r); !ok {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "guardID"))
@@ -244,7 +248,7 @@ func (h *Handler) DeleteGuard(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid guard ID")
 		return
 	}
-	if err := h.tierStore.DeleteGuard(r.Context(), id); err != nil {
+	if err := h.tierStore.DeleteGuard(r.Context(), transitionID, id); err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "guard not found")
 			return
@@ -365,7 +369,8 @@ func (h *Handler) CreatePostFunction(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions/{postFunctionID} [delete]
 func (h *Handler) DeletePostFunction(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.resolveTransition(w, r); !ok {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "postFunctionID"))
@@ -373,7 +378,7 @@ func (h *Handler) DeletePostFunction(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid post-function ID")
 		return
 	}
-	if err := h.tierStore.DeletePostFunction(r.Context(), id); err != nil {
+	if err := h.tierStore.DeletePostFunction(r.Context(), transitionID, id); err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "post-function not found")
 			return
@@ -494,7 +499,8 @@ func (h *Handler) CreateApprover(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers/{approverID} [delete]
 func (h *Handler) DeleteApprover(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.resolveTransition(w, r); !ok {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "approverID"))
@@ -502,7 +508,7 @@ func (h *Handler) DeleteApprover(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid approver ID")
 		return
 	}
-	if err := h.tierStore.DeleteApprover(r.Context(), id); err != nil {
+	if err := h.tierStore.DeleteApprover(r.Context(), transitionID, id); err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "approver not found")
 			return
@@ -737,7 +743,45 @@ func (h *Handler) DecideApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.logApprovalDecision(r, decided)
+	h.notifyDecision(r, decided)
 	respond.JSON(w, http.StatusOK, decided)
+}
+
+// notifyDecision tells the person whose transition was decided what happened.
+//
+// The recipient is the REQUESTER — the actor whose status change was gated —
+// not the approver, who already knows: they just decided. On a decline the
+// reason travels with the notification, because a decline the requester has to
+// go and look up is barely better than one they are never told about.
+//
+// Best-effort, like every other enqueue in this codebase: the decision is
+// already committed and, on an approval, the transition may already have been
+// applied. Failing the request here would report a decision that did happen as
+// one that did not.
+func (h *Handler) notifyDecision(r *http.Request, a workflow.Approval) {
+	if h.notifs == nil || a.Decision == nil {
+		return
+	}
+
+	var message string
+	if *a.Decision == workflow.DecisionApproved {
+		message = fmt.Sprintf("Your move from %q to %q was approved.", a.FromStatus, a.ToStatus)
+	} else {
+		message = fmt.Sprintf("Your move from %q to %q was declined.", a.FromStatus, a.ToStatus)
+		if a.Reason != nil && *a.Reason != "" {
+			message = fmt.Sprintf("Your move from %q to %q was declined: %s",
+				a.FromStatus, a.ToStatus, *a.Reason)
+		}
+	}
+
+	_ = h.notifs.EnqueueNotification(r.Context(), jobs.NotificationArgs{
+		UserID:     a.RequestedBy.String(),
+		EventKind:  tiergate.KindApprovalDecided,
+		Message:    message,
+		ResourceID: a.EntityID.String(),
+		EntityKind: string(a.EntityType),
+		SpaceID:    a.SpaceID.String(),
+	})
 }
 
 // decideInputs resolves and validates everything DecideApproval needs before it

@@ -408,9 +408,21 @@ func TestTierAdapter_GuardRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, all, 4)
 
-	require.NoError(t, f.tier.DeleteGuard(ctx, all[0].ID))
-	require.ErrorIs(t, f.tier.DeleteGuard(ctx, all[0].ID), workflow.ErrNotFound,
+	require.NoError(t, f.tier.DeleteGuard(ctx, f.openToInProgress, all[0].ID))
+	require.ErrorIs(t, f.tier.DeleteGuard(ctx, f.openToInProgress, all[0].ID), workflow.ErrNotFound,
 		"a repeated delete must not read as success")
+
+	// The delete is scoped to the transition, not just the id: naming a
+	// DIFFERENT transition must not remove this guard. Without the
+	// transition_id predicate an admin could delete a guard belonging to any
+	// other transition — including one in another organisation — by pairing a
+	// transition of their own with a foreign guard id.
+	require.ErrorIs(t, f.tier.DeleteGuard(ctx, uuid.New(), all[1].ID), workflow.ErrNotFound,
+		"a guard must not be deletable through a transition it does not belong to")
+
+	survivors, err := f.tier.GuardsForWorkflow(ctx, f.workflowID)
+	require.NoError(t, err)
+	require.Len(t, survivors, 3, "the mis-scoped delete must have removed nothing")
 }
 
 func TestTierAdapter_ApproverSubjectNamesAndMissingFlag(t *testing.T) {

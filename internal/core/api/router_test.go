@@ -31,6 +31,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -771,7 +772,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	// unconfigured space must do.
 	ticketHandler := ticketsapi.NewHandler(ticketSvc).
 		WithWorkflowTiers(
-			tiergate.New(workflow.NewTierService(&mockTierStore{}), &mockWorkflowResolver{}),
+			tiergate.New(workflow.NewTierService(&mockTierStore{}), &mockWorkflowResolver{}, jobs.NoopNotificationEnqueuer{}),
 			&mockTransitionApplier{},
 		)
 	tagSvc := tags.NewService(&mockTagRepo{})
@@ -788,7 +789,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		WithItemTypes(itemTypeSvc).
 		WithCustomFields(customFieldSvc).
 		WithWorkflowTiers(
-			tiergate.New(workflow.NewTierService(&mockTierStore{}), &mockWorkflowResolver{}),
+			tiergate.New(workflow.NewTierService(&mockTierStore{}), &mockWorkflowResolver{}, jobs.NoopNotificationEnqueuer{}),
 			&mockTransitionApplier{},
 		)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
@@ -2568,7 +2569,7 @@ func (m *mockTierStore) GuardsForWorkflow(context.Context, uuid.UUID) ([]workflo
 func (m *mockTierStore) CreateGuard(_ context.Context, g workflow.Guard) (workflow.Guard, error) {
 	return g, nil
 }
-func (m *mockTierStore) DeleteGuard(context.Context, uuid.UUID) error { return nil }
+func (m *mockTierStore) DeleteGuard(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 func (m *mockTierStore) PostFunctionsForTransition(context.Context, uuid.UUID) ([]workflow.PostFunction, error) {
 	return nil, nil
 }
@@ -2578,7 +2579,7 @@ func (m *mockTierStore) PostFunctionsForWorkflow(context.Context, uuid.UUID) ([]
 func (m *mockTierStore) CreatePostFunction(_ context.Context, p workflow.PostFunction) (workflow.PostFunction, error) {
 	return p, nil
 }
-func (m *mockTierStore) DeletePostFunction(context.Context, uuid.UUID) error { return nil }
+func (m *mockTierStore) DeletePostFunction(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 func (m *mockTierStore) ApproversForTransition(context.Context, uuid.UUID) ([]workflow.Approver, error) {
 	return nil, nil
 }
@@ -2588,7 +2589,7 @@ func (m *mockTierStore) ApproversForWorkflow(context.Context, uuid.UUID) ([]work
 func (m *mockTierStore) CreateApprover(_ context.Context, a workflow.Approver) (workflow.Approver, error) {
 	return a, nil
 }
-func (m *mockTierStore) DeleteApprover(context.Context, uuid.UUID) error { return nil }
+func (m *mockTierStore) DeleteApprover(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 func (m *mockTierStore) CreateApproval(_ context.Context, a workflow.Approval) (workflow.Approval, error) {
 	return a, nil
 }
@@ -2619,6 +2620,9 @@ func (m *mockTierStore) TransitionBetween(context.Context, uuid.UUID, uuid.UUID,
 	return nil, workflow.ErrNotFound
 }
 func (m *mockTierStore) EffectiveTeamIDs(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+func (m *mockTierStore) EffectiveTeamMemberIDs(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil
 }
 

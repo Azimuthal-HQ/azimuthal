@@ -121,6 +121,16 @@ type GateResult struct {
 	// approver decides.
 	Pending *Approval
 
+	// PendingIsNew distinguishes "this call created the request" from "a
+	// request was already outstanding and this is it".
+	//
+	// Both answer the caller identically — the item does not move either way —
+	// but they must not notify identically. Two people pressing the same
+	// guarded button is the ordinary case (see requestApproval), and telling
+	// every approver again each time somebody retries turns one decision into
+	// a stream of duplicate alerts that trains people to ignore the real one.
+	PendingIsNew bool
+
 	// Effects are the post-function mutations to apply inside the same
 	// transaction as the status change. Empty when nothing is configured.
 	Effects []Effect
@@ -167,11 +177,14 @@ func (s *TierService) Gate(ctx context.Context, req GateRequest) (GateResult, er
 		return GateResult{}, fmt.Errorf("gate: loading approvers: %w", err)
 	}
 	if RequiresApproval(approvers) {
-		pending, err := s.requestApproval(ctx, req, transition)
+		pending, isNew, err := s.requestApproval(ctx, req, transition)
 		if err != nil {
 			return GateResult{}, err
 		}
-		return GateResult{TransitionID: &transition.ID, ToStateID: &toStateID, Pending: pending}, nil
+		return GateResult{
+			TransitionID: &transition.ID, ToStateID: &toStateID,
+			Pending: pending, PendingIsNew: isNew,
+		}, nil
 	}
 
 	effects, err := s.planEffects(ctx, transition.ID)
@@ -303,7 +316,9 @@ func (s *TierService) resolveActor(ctx context.Context, req GateRequest) (Actor,
 // returned so the caller reports "already awaiting approval" rather than an
 // error. Two people pressing the same guarded button is ordinary, not
 // exceptional.
-func (s *TierService) requestApproval(ctx context.Context, req GateRequest, t *Transition) (*Approval, error) {
+// The bool reports whether this call created the request; see
+// GateResult.PendingIsNew.
+func (s *TierService) requestApproval(ctx context.Context, req GateRequest, t *Transition) (*Approval, bool, error) {
 	fromStateID, toStateID := t.FromStateID, t.ToStateID
 
 	created, err := s.store.CreateApproval(ctx, Approval{
@@ -318,17 +333,17 @@ func (s *TierService) requestApproval(ctx context.Context, req GateRequest, t *T
 		RequestedBy:  req.ActorID,
 	})
 	if err == nil {
-		return &created, nil
+		return &created, true, nil
 	}
 	if !errors.Is(err, ErrApprovalPending) {
-		return nil, fmt.Errorf("gate: requesting approval: %w", err)
+		return nil, false, fmt.Errorf("gate: requesting approval: %w", err)
 	}
 
 	existing, getErr := s.store.PendingApprovalForEntity(ctx, req.EntityType, req.EntityID)
 	if getErr != nil {
-		return nil, fmt.Errorf("gate: reading the pending approval: %w", getErr)
+		return nil, false, fmt.Errorf("gate: reading the pending approval: %w", getErr)
 	}
-	return &existing, nil
+	return &existing, false, nil
 }
 
 // ─── Deciding ─────────────────────────────────────────────────────────────────
@@ -412,6 +427,59 @@ func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, 
 		return Approval{}, nil, err
 	}
 	return decided, effects, nil
+}
+
+// ApproverRecipients returns every user who may decide a transition, expanded.
+//
+// It is the notification fan-out's list, and it is deliberately built from the
+// SAME two facts CanDecide consults — the configured approver rows, and
+// ADR-0007 effective team membership — rather than from a convenient
+// approximation like a team's direct members. If the two disagreed, the
+// disagreement would be silent in the worst direction: an approval sitting
+// pending on somebody the guard would happily accept but nobody ever told.
+//
+// Ids are de-duplicated, because one person can be named directly and also sit
+// in a named team, and being named twice is not a reason to be alerted twice.
+//
+// An unknown subject type contributes nobody. That is the same fail-closed
+// direction CanDecide takes for the same value, and here it is merely quiet
+// rather than unsafe: a subject this build cannot resolve has not been shown to
+// include anybody.
+func (s *TierService) ApproverRecipients(
+	ctx context.Context, orgID, transitionID uuid.UUID,
+) ([]uuid.UUID, error) {
+	approvers, err := s.store.ApproversForTransition(ctx, transitionID)
+	if err != nil {
+		return nil, fmt.Errorf("approver recipients: loading approvers: %w", err)
+	}
+
+	seen := make(map[uuid.UUID]struct{}, len(approvers))
+	out := make([]uuid.UUID, 0, len(approvers))
+	add := func(id uuid.UUID) {
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+
+	for _, ap := range approvers {
+		switch ap.SubjectType {
+		case ApproverUser:
+			add(ap.SubjectID)
+		case ApproverTeam:
+			members, err := s.store.EffectiveTeamMemberIDs(ctx, orgID, ap.SubjectID)
+			if err != nil {
+				return nil, fmt.Errorf("approver recipients: expanding team: %w", err)
+			}
+			for _, m := range members {
+				add(m)
+			}
+		default:
+			continue
+		}
+	}
+	return out, nil
 }
 
 // MarkDecidable fills CanDecide on each approval for the given actor.

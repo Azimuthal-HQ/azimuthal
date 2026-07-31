@@ -179,7 +179,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	// exists to close.
 	tierStore := adapters.NewWorkflowTierAdapter(queries)
 	tierSvc := workflow.NewTierService(tierStore)
-	tierGate := tiergate.New(tierSvc, tierStore)
+	tierGate := tiergate.New(tierSvc, tierStore, jobs.NoopNotificationEnqueuer{})
 	transitionTx := adapters.NewWorkflowTransitionTxAdapter(pool)
 
 	// v0.3 access control, wired exactly as production (cmd/server/main.go),
@@ -292,7 +292,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(adapters.NewSpaceCreateAdapter(db.Pool)).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
 		NotificationHandler: notificationsapi.NewHandler(queries),
-		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog),
+		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
 		ShareHandler:        shareHandler,

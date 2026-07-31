@@ -99,8 +99,8 @@ func (a *WorkflowTierAdapter) CreateGuard(ctx context.Context, g workflow.Guard)
 
 // DeleteGuard removes a guard, reporting ErrNotFound when nothing matched so a
 // repeated delete does not read as success.
-func (a *WorkflowTierAdapter) DeleteGuard(ctx context.Context, id uuid.UUID) error {
-	n, err := a.q.DeleteTransitionGuard(ctx, id)
+func (a *WorkflowTierAdapter) DeleteGuard(ctx context.Context, transitionID, id uuid.UUID) error {
+	n, err := a.q.DeleteTransitionGuard(ctx, generated.DeleteTransitionGuardParams{ID: id, TransitionID: transitionID})
 	if err != nil {
 		return fmt.Errorf("workflow tier adapter delete guard: %w", err)
 	}
@@ -176,8 +176,8 @@ func (a *WorkflowTierAdapter) CreatePostFunction(ctx context.Context, p workflow
 }
 
 // DeletePostFunction removes a post-function.
-func (a *WorkflowTierAdapter) DeletePostFunction(ctx context.Context, id uuid.UUID) error {
-	n, err := a.q.DeleteTransitionPostFunction(ctx, id)
+func (a *WorkflowTierAdapter) DeletePostFunction(ctx context.Context, transitionID, id uuid.UUID) error {
+	n, err := a.q.DeleteTransitionPostFunction(ctx, generated.DeleteTransitionPostFunctionParams{ID: id, TransitionID: transitionID})
 	if err != nil {
 		return fmt.Errorf("workflow tier adapter delete post-function: %w", err)
 	}
@@ -274,8 +274,8 @@ func (a *WorkflowTierAdapter) CreateApprover(ctx context.Context, ap workflow.Ap
 }
 
 // DeleteApprover removes an approver.
-func (a *WorkflowTierAdapter) DeleteApprover(ctx context.Context, id uuid.UUID) error {
-	n, err := a.q.DeleteTransitionApprover(ctx, id)
+func (a *WorkflowTierAdapter) DeleteApprover(ctx context.Context, transitionID, id uuid.UUID) error {
+	n, err := a.q.DeleteTransitionApprover(ctx, generated.DeleteTransitionApproverParams{ID: id, TransitionID: transitionID})
 	if err != nil {
 		return fmt.Errorf("workflow tier adapter delete approver: %w", err)
 	}
@@ -509,6 +509,22 @@ func (a *WorkflowTierAdapter) EffectiveTeamIDs(ctx context.Context, orgID, userI
 	})
 	if err != nil {
 		return nil, fmt.Errorf("workflow tier adapter effective team ids: %w", err)
+	}
+	return ids, nil
+}
+
+// EffectiveTeamMemberIDs is the inverse read: everyone for whom this team is in
+// their effective set. See the query's header for why it asks
+// effective_team_ids() rather than re-deriving the ancestry rule.
+func (a *WorkflowTierAdapter) EffectiveTeamMemberIDs(
+	ctx context.Context, orgID, teamID uuid.UUID,
+) ([]uuid.UUID, error) {
+	ids, err := a.q.ListEffectiveTeamMemberIDs(ctx, generated.ListEffectiveTeamMemberIDsParams{
+		OrgID:  orgID,
+		TeamID: teamID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("workflow tier adapter effective team member ids: %w", err)
 	}
 	return ids, nil
 }
