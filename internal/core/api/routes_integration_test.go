@@ -291,7 +291,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			)),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(adapters.NewSpaceCreateAdapter(db.Pool)).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
-		NotificationHandler: notificationsapi.NewHandler(queries),
+		NotificationHandler: notificationsapi.NewHandler(queries, accessResolver),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
@@ -1409,7 +1409,14 @@ func TestIntegration_Notifications_List(t *testing.T) {
 func TestIntegration_Notifications_CarryEntitySpace(t *testing.T) {
 	ts := newTestServer(t)
 
-	spaceID := uuid.New()
+	// A REAL space the caller can read. It used to be a bare uuid.New(), which
+	// named no space at all — harmless while the serializer rendered every row,
+	// but the read gate added alongside this test now redacts a space the viewer
+	// holds nothing on, and a nonexistent one is not readable by anybody. The
+	// row must be readable for this test to keep asserting what it is about,
+	// which is routing rather than redaction.
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	spaceID := space.ID
 	entityID := uuid.New()
 	_, err := ts.DB.Pool.Exec(context.Background(),
 		`INSERT INTO notifications (id, user_id, kind, title, entity_kind, entity_id, entity_space_id)

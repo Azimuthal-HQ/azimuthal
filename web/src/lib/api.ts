@@ -644,6 +644,12 @@ export interface Notification {
   entity_id?: string;
   entity_space_id?: string;
   created_at: string;
+  /**
+   * True when the caller may no longer read the entity this notification
+   * named. The row survives so the unread count and mark-read still work; the
+   * title, body and entity ids do not come back from the server at all.
+   */
+  redacted?: boolean;
 }
 
 export interface NotificationListResponse {

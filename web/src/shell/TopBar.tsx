@@ -431,7 +431,16 @@ function NotificationRow({
         !n.is_read && 'bg-[var(--color-primary-muted)]',
       )}
     >
-      <p className="text-[var(--text-sm)] text-[var(--color-text)] line-clamp-2">{n.title}</p>
+      <p
+        className={cn(
+          'text-[var(--text-sm)] line-clamp-2',
+          n.redacted
+            ? 'italic text-[var(--color-text-muted)]'
+            : 'text-[var(--color-text)]',
+        )}
+      >
+        {n.title}
+      </p>
       <p className="mt-0.5 text-[var(--text-xs)] text-[var(--color-text-muted)]">
         {new Date(n.created_at).toLocaleString()}
       </p>
