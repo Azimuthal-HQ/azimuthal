@@ -294,6 +294,80 @@ func TestConfig_InvalidInviteDeliveryRejected(t *testing.T) {
 	}
 }
 
+// --- AZIMUTHAL_PORTAL_LINK_DELIVERY ---
+//
+// The portal's delivery mode gets the same treatment as the invite one,
+// because an unrecognised value is worse here than it looks. main.go sets
+// portalSender only for "email" and DiscloseLink only for "link", so a typo
+// matches neither branch: the portal mints sign-in links and delivers them
+// nowhere, with a clean startup and nothing wrong in the logs. The person who
+// finds out is a customer who never receives a link.
+
+func TestConfig_InvalidPortalLinkDeliveryRejected(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("AZIMUTHAL_PORTAL_LINK_DELIVERY", "emial") // the typo that motivated this
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected a configuration error for an unknown portal link delivery mode")
+	}
+	// Named, not merely refused: an operator who typoed a value needs to be
+	// told which variable and what the alternatives are.
+	if !strings.Contains(err.Error(), "AZIMUTHAL_PORTAL_LINK_DELIVERY") {
+		t.Errorf("the error must name the variable, got %q", err)
+	}
+	if !strings.Contains(err.Error(), `"emial"`) {
+		t.Errorf("the error must quote the offending value, got %q", err)
+	}
+}
+
+func TestConfig_PortalLinkDeliveryEmail_RequiresExplicitSMTP(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("AZIMUTHAL_PORTAL_LINK_DELIVERY", "email")
+	t.Setenv("SMTP_HOST", "")
+
+	// Same rule as invite email delivery: a delivery mode that cannot deliver
+	// fails at startup rather than dropping sign-in links at send time.
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected a configuration error for portal_link_delivery=email without SMTP_HOST")
+	}
+
+	t.Setenv("SMTP_HOST", "smtp.example.com")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error with SMTP_HOST set: %v", err)
+	}
+	if cfg.PortalLinkDelivery != config.PortalLinkDeliveryEmail {
+		t.Errorf("expected email delivery, got %q", cfg.PortalLinkDelivery)
+	}
+}
+
+// The default must keep booting in EVERY environment, production included.
+//
+// This is the guard on the decision recorded in PortalLinkDeliveryLink's own
+// comment. Four comments across three packages used to claim production
+// refuses "link" at startup; it does not, and it must not, because "link" is
+// the default and the portal has no enable flag — refusing it would stop
+// every production deployment that runs no customer portal from booting.
+// Production safety comes from main.go withholding DiscloseLink instead.
+//
+// Delete that reasoning and add the refusal, and this test fails.
+func TestConfig_PortalLinkDeliveryLinkIsAcceptedInProduction(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("APP_ENV", "production")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("the default portal delivery mode must not stop production booting: %v", err)
+	}
+	if cfg.PortalLinkDelivery != config.PortalLinkDeliveryLink {
+		t.Errorf("expected the link default, got %q", cfg.PortalLinkDelivery)
+	}
+	if !cfg.IsProduction() {
+		t.Fatal("this test only means something with APP_ENV=production")
+	}
+}
+
 // --- AZIMUTHAL_BCRYPT_COST (B1) ---
 //
 // The floor is the entire security claim of making the work factor

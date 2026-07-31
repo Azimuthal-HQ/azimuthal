@@ -121,12 +121,25 @@ const (
 	// PortalLinkDeliveryLink returns the sign-in URL in the API response so a
 	// developer or an E2E run can follow it without a mailbox.
 	//
-	// PRODUCTION REFUSES THIS MODE AT STARTUP. The request-link endpoint is
-	// unauthenticated by necessity — an external requester has no credential
-	// yet — so returning the URL to its caller would let anybody sign in as
-	// any address they can name. That is not a misconfiguration to warn
-	// about; it is a total authentication bypass, and the only safe place for
-	// it is a deployment that is not serving real customers.
+	// PRODUCTION NEVER DISCLOSES THE URL — but by a runtime degrade, not a
+	// boot refusal. cmd/server/main.go gates DiscloseLink on
+	// `!cfg.IsProduction()`, so a production server left in this mode mints
+	// sign-in links and hands them to nobody: the portal is inert rather than
+	// unsafe. The disclosure has to be stopped because the request-link
+	// endpoint is unauthenticated by necessity — an external requester has no
+	// credential yet — so returning the URL to its caller would let anybody
+	// sign in as any address they can name. That is not a misconfiguration to
+	// warn about; it is a total authentication bypass.
+	//
+	// WHY validate() DOES NOT REFUSE THIS MODE IN PRODUCTION, which four
+	// comments across three packages used to assert that it did: this is the
+	// default, and the portal has no enable flag. Refusing it at startup would
+	// stop every production deployment that never set the variable from
+	// booting — including the majority that run no customer portal at all —
+	// which is a breaking change to unrelated deployments in the name of a
+	// feature they do not use. The runtime gate already makes the unsafe
+	// outcome unreachable, so the boot-time policy convention is satisfied by
+	// something cheaper than a refusal.
 	PortalLinkDeliveryLink = "link"
 	// PortalLinkDeliveryEmail sends the sign-in link to the address that
 	// asked for it, which is the only delivery that authenticates anything.
@@ -331,6 +344,33 @@ func (c *Config) validate() error {
 	default:
 		errs = append(errs, fmt.Sprintf("invalid AZIMUTHAL_INVITE_DELIVERY %q: must be %q or %q",
 			c.InviteDelivery, InviteDeliveryLink, InviteDeliveryEmail))
+	}
+
+	// The portal's delivery mode, mirroring InviteDelivery above. Without this
+	// an unrecognised value passed validation and then matched neither branch
+	// in cmd/server/main.go, which sets portalSender only for "email" and
+	// DiscloseLink only for "link" — so a typo left the portal minting sign-in
+	// links and delivering them nowhere, with nothing said at startup and
+	// nothing wrong in the logs. A customer simply never receives a link.
+	//
+	// Note what this deliberately does NOT do: refuse PortalLinkDeliveryLink
+	// in production. See that constant's own comment for why.
+	switch c.PortalLinkDelivery {
+	case PortalLinkDeliveryLink:
+		// No SMTP required, and no disclosure in production either.
+	case PortalLinkDeliveryEmail:
+		// Same reasoning as invite email delivery: fail at startup rather than
+		// drop sign-in links at send time. SMTP_HOST carries a localhost
+		// default for dev relay, so "configured" means explicitly set.
+		if os.Getenv("SMTP_HOST") == "" {
+			errs = append(errs, "AZIMUTHAL_PORTAL_LINK_DELIVERY=email requires SMTP_HOST to be set explicitly")
+		}
+		if c.SMTPFrom == "" {
+			errs = append(errs, "AZIMUTHAL_PORTAL_LINK_DELIVERY=email requires SMTP_FROM")
+		}
+	default:
+		errs = append(errs, fmt.Sprintf("invalid AZIMUTHAL_PORTAL_LINK_DELIVERY %q: must be %q or %q",
+			c.PortalLinkDelivery, PortalLinkDeliveryLink, PortalLinkDeliveryEmail))
 	}
 
 	// No APP_ENV exemption, by design — see the BcryptCost field comment.
