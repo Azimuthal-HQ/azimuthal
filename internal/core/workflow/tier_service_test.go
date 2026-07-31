@@ -23,6 +23,9 @@ type fakeTierStore struct {
 	states     map[string]*State
 	transition *Transition
 	teams      []uuid.UUID
+	// teamMembers is the inverse of teams: which users a given team contains,
+	// for the approval notification fan-out.
+	teamMembers map[uuid.UUID][]uuid.UUID
 
 	approvals map[uuid.UUID]Approval
 	pending   map[uuid.UUID]uuid.UUID // entityID -> approvalID
@@ -32,12 +35,13 @@ type fakeTierStore struct {
 
 func newFakeStore() *fakeTierStore {
 	return &fakeTierStore{
-		guards:    map[uuid.UUID][]Guard{},
-		approvers: map[uuid.UUID][]Approver{},
-		postFns:   map[uuid.UUID][]PostFunction{},
-		states:    map[string]*State{},
-		approvals: map[uuid.UUID]Approval{},
-		pending:   map[uuid.UUID]uuid.UUID{},
+		guards:      map[uuid.UUID][]Guard{},
+		approvers:   map[uuid.UUID][]Approver{},
+		postFns:     map[uuid.UUID][]PostFunction{},
+		states:      map[string]*State{},
+		approvals:   map[uuid.UUID]Approval{},
+		pending:     map[uuid.UUID]uuid.UUID{},
+		teamMembers: map[uuid.UUID][]uuid.UUID{},
 	}
 }
 
@@ -47,8 +51,8 @@ func (f *fakeTierStore) GuardsForTransition(_ context.Context, id uuid.UUID) ([]
 func (f *fakeTierStore) GuardsForWorkflow(context.Context, uuid.UUID) ([]Guard, error) {
 	return nil, nil
 }
-func (f *fakeTierStore) CreateGuard(_ context.Context, g Guard) (Guard, error) { return g, nil }
-func (f *fakeTierStore) DeleteGuard(context.Context, uuid.UUID) error          { return nil }
+func (f *fakeTierStore) CreateGuard(_ context.Context, g Guard) (Guard, error)   { return g, nil }
+func (f *fakeTierStore) DeleteGuard(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
 func (f *fakeTierStore) PostFunctionsForTransition(_ context.Context, id uuid.UUID) ([]PostFunction, error) {
 	return f.postFns[id], nil
@@ -59,7 +63,7 @@ func (f *fakeTierStore) PostFunctionsForWorkflow(context.Context, uuid.UUID) ([]
 func (f *fakeTierStore) CreatePostFunction(_ context.Context, p PostFunction) (PostFunction, error) {
 	return p, nil
 }
-func (f *fakeTierStore) DeletePostFunction(context.Context, uuid.UUID) error { return nil }
+func (f *fakeTierStore) DeletePostFunction(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
 func (f *fakeTierStore) ApproversForTransition(_ context.Context, id uuid.UUID) ([]Approver, error) {
 	return f.approvers[id], nil
@@ -70,7 +74,7 @@ func (f *fakeTierStore) ApproversForWorkflow(context.Context, uuid.UUID) ([]Appr
 func (f *fakeTierStore) CreateApprover(_ context.Context, a Approver) (Approver, error) {
 	return a, nil
 }
-func (f *fakeTierStore) DeleteApprover(context.Context, uuid.UUID) error { return nil }
+func (f *fakeTierStore) DeleteApprover(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
 func (f *fakeTierStore) CreateApproval(_ context.Context, a Approval) (Approval, error) {
 	f.createApprovalCalls++
@@ -100,7 +104,9 @@ func (f *fakeTierStore) GetApproval(_ context.Context, id uuid.UUID) (Approval, 
 	return a, nil
 }
 
-func (f *fakeTierStore) DecideApproval(_ context.Context, id, by uuid.UUID, d Decision) (Approval, error) {
+func (f *fakeTierStore) DecideApproval(
+	_ context.Context, id, by uuid.UUID, d Decision, reason *string,
+) (Approval, error) {
 	a, ok := f.approvals[id]
 	if !ok {
 		return Approval{}, ErrNotFound
@@ -110,9 +116,15 @@ func (f *fakeTierStore) DecideApproval(_ context.Context, id, by uuid.UUID, d De
 	}
 	now := a.RequestedAt
 	a.DecidedBy, a.DecidedAt, a.Decision = &by, &now, &d
+	// The reason is written into the stored row and read back from it, never
+	// echoed straight from the argument. A double that returned `reason` while
+	// leaving f.approvals[id] untouched would let a test assert a decline
+	// reason survived when nothing had been stored — the lying-double shape
+	// this repository has already shipped once.
+	a.Reason = reason
 	f.approvals[id] = a
 	delete(f.pending, a.EntityID)
-	return a, nil
+	return f.approvals[id], nil
 }
 
 func (f *fakeTierStore) ApprovalsForEntity(context.Context, ApprovalEntityType, uuid.UUID) ([]Approval, error) {
@@ -142,6 +154,16 @@ func (f *fakeTierStore) TransitionBetween(_ context.Context, _, from, to uuid.UU
 
 func (f *fakeTierStore) EffectiveTeamIDs(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
 	return f.teams, nil
+}
+
+// EffectiveTeamMemberIDs is the inverse read, answered from an explicit map so
+// a test can express "this team contains these people" without the fake
+// inventing an expansion rule of its own. An unconfigured team is empty, which
+// is the honest answer for a team nobody has put anybody in.
+func (f *fakeTierStore) EffectiveTeamMemberIDs(
+	_ context.Context, _, teamID uuid.UUID,
+) ([]uuid.UUID, error) {
+	return f.teamMembers[teamID], nil
 }
 
 // configured returns a store with one real edge, open -> in_progress.
@@ -398,9 +420,12 @@ func TestDecide_ApprovalCycle(t *testing.T) {
 	require.Equal(t, DecisionApproved, *decided.Decision)
 	require.Len(t, effects, 1, "an approved transition runs its post-functions")
 
-	// A decided request cannot be decided again, in either direction.
+	// A decided request cannot be decided again, in either direction. The
+	// reason is supplied so the already-decided check is what refuses this,
+	// not the decline-needs-a-reason check that runs before it.
 	_, _, err = svc.Decide(context.Background(), DecideRequest{
-		ApprovalID: gated.Pending.ID, ActorID: approver, Decision: DecisionDeclined,
+		ApprovalID: gated.Pending.ID, ActorID: approver,
+		Decision: DecisionDeclined, Reason: "changed my mind",
 	})
 	require.ErrorIs(t, err, ErrApprovalAlreadyDecided)
 }
@@ -421,12 +446,82 @@ func TestDecide_DeclineAppliesNothing(t *testing.T) {
 	require.NoError(t, err)
 
 	decided, effects, err := svc.Decide(context.Background(), DecideRequest{
-		ApprovalID: gated.Pending.ID, ActorID: approver, Decision: DecisionDeclined,
+		ApprovalID: gated.Pending.ID, ActorID: approver,
+		Decision: DecisionDeclined, Reason: "the release is frozen until Monday",
 	})
 	require.NoError(t, err)
 	require.Equal(t, DecisionDeclined, *decided.Decision)
 	require.Empty(t, effects, "a declined transition must run no post-functions")
 	require.Equal(t, "open", decided.FromStatus, "the source status the item never left")
+	require.NotNil(t, decided.Reason, "a decline must carry the reason it was given")
+	require.Equal(t, "the release is frozen until Monday", *decided.Reason)
+}
+
+// A decline with no reason is refused before anything is written.
+//
+// The rule cannot live in a CHECK — migration 050's column is nullable so a
+// database that ran 047 can still hold its old declined rows — so this is the
+// only thing enforcing it. Deleting the guard clause in Decide makes the first
+// two subtests pass, which is what makes them worth having.
+func TestDecide_ADeclineMustSayWhy(t *testing.T) {
+	t.Parallel()
+
+	setup := func(t *testing.T) (*TierService, *fakeTierStore, uuid.UUID, uuid.UUID) {
+		t.Helper()
+		approver := uuid.New()
+		f, edge := configured()
+		f.approvers[edge] = []Approver{{TransitionID: edge, SubjectType: ApproverUser, SubjectID: approver}}
+		svc := NewTierService(f)
+		gated, err := svc.Gate(context.Background(), gateReq(uuid.New()))
+		require.NoError(t, err)
+		require.NotNil(t, gated.Pending)
+		return svc, f, approver, gated.Pending.ID
+	}
+
+	t.Run("an empty reason is refused", func(t *testing.T) {
+		t.Parallel()
+		svc, f, approver, id := setup(t)
+		_, _, err := svc.Decide(context.Background(), DecideRequest{
+			ApprovalID: id, ActorID: approver, Decision: DecisionDeclined,
+		})
+		require.ErrorIs(t, err, ErrDeclineReasonRequired)
+
+		stored, getErr := f.GetApproval(context.Background(), id)
+		require.NoError(t, getErr)
+		require.True(t, stored.IsPending(),
+			"the refusal must happen before the decision is recorded, or a reasonless decline still lands")
+	})
+
+	t.Run("whitespace is not a reason", func(t *testing.T) {
+		t.Parallel()
+		svc, _, approver, id := setup(t)
+		_, _, err := svc.Decide(context.Background(), DecideRequest{
+			ApprovalID: id, ActorID: approver, Decision: DecisionDeclined, Reason: "   	  ",
+		})
+		require.ErrorIs(t, err, ErrDeclineReasonRequired,
+			"spaces render blank, which is the failure the column exists to close")
+	})
+
+	t.Run("an approval needs no reason, and stores NULL rather than an empty string", func(t *testing.T) {
+		t.Parallel()
+		svc, _, approver, id := setup(t)
+		decided, _, err := svc.Decide(context.Background(), DecideRequest{
+			ApprovalID: id, ActorID: approver, Decision: DecisionApproved,
+		})
+		require.NoError(t, err, "the transition itself is the record; an approval needs no justification")
+		require.Nil(t, decided.Reason,
+			`"said nothing" and "said the empty string" must not be two spellings of one thing`)
+	})
+
+	t.Run("the reason is refused before authority is even considered", func(t *testing.T) {
+		t.Parallel()
+		svc, _, _, id := setup(t)
+		_, _, err := svc.Decide(context.Background(), DecideRequest{
+			ApprovalID: id, ActorID: uuid.New(), Decision: DecisionDeclined,
+		})
+		require.ErrorIs(t, err, ErrDeclineReasonRequired,
+			"a stranger must not be asked for a reason they were never entitled to give")
+	})
 }
 
 // A team approver decides through the ADR-0007 effective set, so the gate and a

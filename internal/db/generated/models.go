@@ -531,6 +531,7 @@ type WorkflowApproval struct {
 	DecidedBy    pgtype.UUID        `json:"decided_by"`
 	DecidedAt    pgtype.Timestamptz `json:"decided_at"`
 	Decision     *string            `json:"decision"`
+	Reason       *string            `json:"reason"`
 }
 
 type WorkflowState struct {

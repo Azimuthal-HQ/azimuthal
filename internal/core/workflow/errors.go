@@ -46,3 +46,19 @@ var ErrNotAnApprover = errors.New("you are not an approver for this transition")
 // approver on one transition. The unique key on
 // (transition_id, subject_type, subject_id) is what enforces it.
 var ErrApproverExists = errors.New("this subject is already an approver for this transition")
+
+// ErrDeclineReasonRequired is returned when an approver declines a transition
+// without saying why.
+//
+// The rule lives here rather than in a CHECK because migration 050's column is
+// nullable on purpose: a database that already ran 047 can hold declined rows
+// written before the column existed, and a constraint refusing them would fail
+// at boot — where D73 has already shown this project has no safety net. See
+// that migration's header.
+//
+// It is required on a DECLINE only. An approval needs no justification, because
+// the transition itself is the record; a decline leaves the requester holding
+// an item that did not move, and without a sentence they have no way to learn
+// what would make it move. That is the silent no-op this tier exists to
+// prevent, arriving one layer later than the guards.
+var ErrDeclineReasonRequired = errors.New("a decline must say why")

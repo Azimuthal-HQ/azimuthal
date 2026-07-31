@@ -317,7 +317,7 @@ func TestApprovals_OnlyOnePendingPerEntity(t *testing.T) {
 
 	// Deciding the first frees the item to request again — the index excludes
 	// decided rows precisely so an item can accumulate history.
-	decided, err := f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined)
+	decided, err := f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined, ptr("not this sprint"))
 	require.NoError(t, err)
 	require.False(t, decided.IsPending())
 
@@ -342,10 +342,10 @@ func TestApprovals_ASecondDecisionIsRefused(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionApproved)
+	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionApproved, nil)
 	require.NoError(t, err)
 
-	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionDeclined)
+	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionDeclined, ptr("too late"))
 	require.ErrorIs(t, err, workflow.ErrApprovalAlreadyDecided,
 		"a decided approval must not be re-decided, in either direction")
 
@@ -408,9 +408,21 @@ func TestTierAdapter_GuardRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, all, 4)
 
-	require.NoError(t, f.tier.DeleteGuard(ctx, all[0].ID))
-	require.ErrorIs(t, f.tier.DeleteGuard(ctx, all[0].ID), workflow.ErrNotFound,
+	require.NoError(t, f.tier.DeleteGuard(ctx, f.openToInProgress, all[0].ID))
+	require.ErrorIs(t, f.tier.DeleteGuard(ctx, f.openToInProgress, all[0].ID), workflow.ErrNotFound,
 		"a repeated delete must not read as success")
+
+	// The delete is scoped to the transition, not just the id: naming a
+	// DIFFERENT transition must not remove this guard. Without the
+	// transition_id predicate an admin could delete a guard belonging to any
+	// other transition — including one in another organisation — by pairing a
+	// transition of their own with a foreign guard id.
+	require.ErrorIs(t, f.tier.DeleteGuard(ctx, uuid.New(), all[1].ID), workflow.ErrNotFound,
+		"a guard must not be deletable through a transition it does not belong to")
+
+	survivors, err := f.tier.GuardsForWorkflow(ctx, f.workflowID)
+	require.NoError(t, err)
+	require.Len(t, survivors, 3, "the mis-scoped delete must have removed nothing")
 }
 
 func TestTierAdapter_ApproverSubjectNamesAndMissingFlag(t *testing.T) {
@@ -576,7 +588,7 @@ func TestTierAdapter_ApprovalsForEntityKeepsHistory(t *testing.T) {
 
 	first, err := f.tier.CreateApproval(ctx, request)
 	require.NoError(t, err)
-	_, err = f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined)
+	_, err = f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined, ptr("blocked on release"))
 	require.NoError(t, err)
 
 	second, err := f.tier.CreateApproval(ctx, request)
@@ -604,7 +616,7 @@ func TestTierAdapter_ApprovalsForEntityKeepsHistory(t *testing.T) {
 // "already decided" — the follow-up read is what tells the two apart.
 func TestTierAdapter_DecidingAMissingApprovalIsNotFound(t *testing.T) {
 	f := setupTiers(t)
-	_, err := f.tier.DecideApproval(context.Background(), uuid.New(), f.userID, workflow.DecisionApproved)
+	_, err := f.tier.DecideApproval(context.Background(), uuid.New(), f.userID, workflow.DecisionApproved, nil)
 	require.ErrorIs(t, err, workflow.ErrNotFound)
 }
 

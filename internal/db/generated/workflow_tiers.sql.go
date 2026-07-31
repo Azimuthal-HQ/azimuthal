@@ -111,7 +111,7 @@ INSERT INTO workflow_approvals (
     transition_id, entity_type, entity_id, space_id,
     from_state_id, to_state_id, from_status, to_status, requested_by
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision
+RETURNING id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision, reason
 `
 
 type CreateApprovalParams struct {
@@ -160,6 +160,7 @@ func (q *Queries) CreateApproval(ctx context.Context, arg CreateApprovalParams) 
 		&i.DecidedBy,
 		&i.DecidedAt,
 		&i.Decision,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -274,23 +275,36 @@ func (q *Queries) CreateTransitionPostFunction(ctx context.Context, arg CreateTr
 
 const decideApproval = `-- name: DecideApproval :one
 UPDATE workflow_approvals
-SET decided_by = $2, decided_at = now(), decision = $3
+SET decided_by = $2, decided_at = now(), decision = $3, reason = $4
 WHERE id = $1 AND decided_at IS NULL
-RETURNING id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision
+RETURNING id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision, reason
 `
 
 type DecideApprovalParams struct {
 	ID        uuid.UUID   `json:"id"`
 	DecidedBy pgtype.UUID `json:"decided_by"`
 	Decision  *string     `json:"decision"`
+	Reason    *string     `json:"reason"`
 }
 
 // The WHERE clause carries `decided_at IS NULL`, so a second approver deciding
 // concurrently updates zero rows rather than overwriting the first decision.
 // The adapter turns zero rows into ErrApprovalAlreadyDecided after a follow-up
 // read, the way RevokeEntityShare distinguishes already-revoked from not-found.
+//
+// reason is written in the SAME statement as the decision, never in a follow-up
+// UPDATE. migration 050's workflow_approvals_reason_requires_decision refuses a
+// reason without a decision, so a two-statement version would have to write the
+// decision first — and a failure between the two would leave a decline standing
+// with no reason, which is exactly the unexplained decline the column exists to
+// prevent.
 func (q *Queries) DecideApproval(ctx context.Context, arg DecideApprovalParams) (WorkflowApproval, error) {
-	row := q.db.QueryRow(ctx, decideApproval, arg.ID, arg.DecidedBy, arg.Decision)
+	row := q.db.QueryRow(ctx, decideApproval,
+		arg.ID,
+		arg.DecidedBy,
+		arg.Decision,
+		arg.Reason,
+	)
 	var i WorkflowApproval
 	err := row.Scan(
 		&i.ID,
@@ -307,16 +321,27 @@ func (q *Queries) DecideApproval(ctx context.Context, arg DecideApprovalParams) 
 		&i.DecidedBy,
 		&i.DecidedAt,
 		&i.Decision,
+		&i.Reason,
 	)
 	return i, err
 }
 
 const deleteTransitionApprover = `-- name: DeleteTransitionApprover :execrows
-DELETE FROM workflow_transition_approvers WHERE id = $1
+DELETE FROM workflow_transition_approvers WHERE id = $1 AND transition_id = $2
 `
 
-func (q *Queries) DeleteTransitionApprover(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTransitionApprover, id)
+type DeleteTransitionApproverParams struct {
+	ID           uuid.UUID `json:"id"`
+	TransitionID uuid.UUID `json:"transition_id"`
+}
+
+// Scoped to the transition, not just the id. {transitionID} and the child id
+// are separate path segments and nothing ties them together, so an unscoped
+// delete lets an admin naming one of their OWN transitions remove a row
+// belonging to any other — including another organisation's. Zero rows is the
+// adapter's ErrNotFound, which the handler answers as 404.
+func (q *Queries) DeleteTransitionApprover(ctx context.Context, arg DeleteTransitionApproverParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTransitionApprover, arg.ID, arg.TransitionID)
 	if err != nil {
 		return 0, err
 	}
@@ -324,11 +349,21 @@ func (q *Queries) DeleteTransitionApprover(ctx context.Context, id uuid.UUID) (i
 }
 
 const deleteTransitionGuard = `-- name: DeleteTransitionGuard :execrows
-DELETE FROM workflow_transition_guards WHERE id = $1
+DELETE FROM workflow_transition_guards WHERE id = $1 AND transition_id = $2
 `
 
-func (q *Queries) DeleteTransitionGuard(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTransitionGuard, id)
+type DeleteTransitionGuardParams struct {
+	ID           uuid.UUID `json:"id"`
+	TransitionID uuid.UUID `json:"transition_id"`
+}
+
+// Scoped to the transition, not just the id. {transitionID} and the child id
+// are separate path segments and nothing ties them together, so an unscoped
+// delete lets an admin naming one of their OWN transitions remove a row
+// belonging to any other — including another organisation's. Zero rows is the
+// adapter's ErrNotFound, which the handler answers as 404.
+func (q *Queries) DeleteTransitionGuard(ctx context.Context, arg DeleteTransitionGuardParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTransitionGuard, arg.ID, arg.TransitionID)
 	if err != nil {
 		return 0, err
 	}
@@ -336,11 +371,21 @@ func (q *Queries) DeleteTransitionGuard(ctx context.Context, id uuid.UUID) (int6
 }
 
 const deleteTransitionPostFunction = `-- name: DeleteTransitionPostFunction :execrows
-DELETE FROM workflow_transition_post_functions WHERE id = $1
+DELETE FROM workflow_transition_post_functions WHERE id = $1 AND transition_id = $2
 `
 
-func (q *Queries) DeleteTransitionPostFunction(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteTransitionPostFunction, id)
+type DeleteTransitionPostFunctionParams struct {
+	ID           uuid.UUID `json:"id"`
+	TransitionID uuid.UUID `json:"transition_id"`
+}
+
+// Scoped to the transition, not just the id. {transitionID} and the child id
+// are separate path segments and nothing ties them together, so an unscoped
+// delete lets an admin naming one of their OWN transitions remove a row
+// belonging to any other — including another organisation's. Zero rows is the
+// adapter's ErrNotFound, which the handler answers as 404.
+func (q *Queries) DeleteTransitionPostFunction(ctx context.Context, arg DeleteTransitionPostFunctionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTransitionPostFunction, arg.ID, arg.TransitionID)
 	if err != nil {
 		return 0, err
 	}
@@ -349,7 +394,7 @@ func (q *Queries) DeleteTransitionPostFunction(ctx context.Context, id uuid.UUID
 
 const getApproval = `-- name: GetApproval :one
 SELECT
-    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision,
+    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision, a.reason,
     COALESCE(r.display_name, '')::text AS requested_by_name,
     COALESCE(d.display_name, '')::text AS decided_by_name
 FROM workflow_approvals a
@@ -382,6 +427,7 @@ func (q *Queries) GetApproval(ctx context.Context, id uuid.UUID) (GetApprovalRow
 		&i.WorkflowApproval.DecidedBy,
 		&i.WorkflowApproval.DecidedAt,
 		&i.WorkflowApproval.Decision,
+		&i.WorkflowApproval.Reason,
 		&i.RequestedByName,
 		&i.DecidedByName,
 	)
@@ -389,7 +435,7 @@ func (q *Queries) GetApproval(ctx context.Context, id uuid.UUID) (GetApprovalRow
 }
 
 const getPendingApprovalForEntity = `-- name: GetPendingApprovalForEntity :one
-SELECT id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision FROM workflow_approvals
+SELECT id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision, reason FROM workflow_approvals
 WHERE entity_type = $1 AND entity_id = $2 AND decided_at IS NULL
 `
 
@@ -416,6 +462,7 @@ func (q *Queries) GetPendingApprovalForEntity(ctx context.Context, arg GetPendin
 		&i.DecidedBy,
 		&i.DecidedAt,
 		&i.Decision,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -513,7 +560,7 @@ func (q *Queries) GetWorkflowStateByName(ctx context.Context, arg GetWorkflowSta
 
 const listApprovalsForEntity = `-- name: ListApprovalsForEntity :many
 SELECT
-    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision,
+    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision, a.reason,
     COALESCE(r.display_name, '')::text AS requested_by_name,
     COALESCE(d.display_name, '')::text AS decided_by_name
 FROM workflow_approvals a
@@ -561,6 +608,7 @@ func (q *Queries) ListApprovalsForEntity(ctx context.Context, arg ListApprovalsF
 			&i.WorkflowApproval.DecidedBy,
 			&i.WorkflowApproval.DecidedAt,
 			&i.WorkflowApproval.Decision,
+			&i.WorkflowApproval.Reason,
 			&i.RequestedByName,
 			&i.DecidedByName,
 		); err != nil {
@@ -574,9 +622,66 @@ func (q *Queries) ListApprovalsForEntity(ctx context.Context, arg ListApprovalsF
 	return items, nil
 }
 
+const listEffectiveTeamMemberIDs = `-- name: ListEffectiveTeamMemberIDs :many
+
+SELECT DISTINCT tm.user_id
+FROM team_members tm
+JOIN users u ON u.id = tm.user_id AND u.deleted_at IS NULL
+WHERE tm.org_id = $1
+  AND $2::uuid IN (
+      SELECT e.team_id FROM effective_team_ids($1, tm.user_id) AS e(team_id)
+  )
+`
+
+type ListEffectiveTeamMemberIDsParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	TeamID uuid.UUID `json:"team_id"`
+}
+
+// ─── Approval notification recipients ─────────────────────────────────────────
+// Who counts as a member of one team, for the approval-requested notification.
+//
+// This is the INVERSE of effective_team_ids(). That function is subject-side —
+// given a user, which teams do they effectively belong to — and every
+// authorisation read in the product asks it in that direction. Notifying a team
+// approver needs the other direction, and the two must agree: a person the
+// guard would accept as an approver but the notifier never told is an approval
+// that waits on somebody who was never asked.
+//
+// So rather than re-derive the ancestry rule (teams.path overlap, migration
+// 038), this asks the SAME function once per candidate and keeps whoever it
+// answers for. It cannot drift from the authorisation rule because it IS the
+// authorisation rule — the exact reasoning migration 038's header gives for
+// extracting the function rather than letting callers copy the expansion.
+//
+// The candidate set is team_members, not users: somebody in no team cannot be
+// in one team's effective set, so the correlated call runs over the members of
+// the org rather than its whole roster. This runs once per approval REQUEST —
+// a rare write, never a read path — so the correlated shape buys consistency
+// at a cost nothing hot pays.
+func (q *Queries) ListEffectiveTeamMemberIDs(ctx context.Context, arg ListEffectiveTeamMemberIDsParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listEffectiveTeamMemberIDs, arg.OrgID, arg.TeamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingApprovalsForSpace = `-- name: ListPendingApprovalsForSpace :many
 SELECT
-    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision,
+    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision, a.reason,
     COALESCE(r.display_name, '')::text AS requested_by_name,
     ''::text AS decided_by_name
 FROM workflow_approvals a
@@ -618,6 +723,7 @@ func (q *Queries) ListPendingApprovalsForSpace(ctx context.Context, spaceID uuid
 			&i.WorkflowApproval.DecidedBy,
 			&i.WorkflowApproval.DecidedAt,
 			&i.WorkflowApproval.Decision,
+			&i.WorkflowApproval.Reason,
 			&i.RequestedByName,
 			&i.DecidedByName,
 		); err != nil {

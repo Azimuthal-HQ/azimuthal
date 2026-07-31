@@ -26,6 +26,7 @@ import {
   useMe,
   useMembers,
   friendlyErrorMessage,
+  pendingApprovalOf,
   type Ticket,
   type TicketStatus,
 } from '../../lib/api';
@@ -268,6 +269,16 @@ export function KanbanPage() {
       transitionMutation.mutate(
         { ticketId: ticket.id, status: targetColumn as TicketStatus },
         {
+          // A gated transition answers 202 with a pending-approval body, which
+          // is NOT an error, so onError never sees it. Without this branch the
+          // mutation "succeeded", the refetch put the card back where it
+          // started, and the user watched it snap back with no explanation —
+          // the silent no-op PR #86's contract forbids, arriving through the
+          // success path rather than the failure one.
+          onSuccess: (result) => {
+            const pending = pendingApprovalOf(result);
+            setTransitionError(pending ? pending.message : null);
+          },
           onError: (err) =>
             setTransitionError(
               friendlyErrorMessage(err, `"${ticket.title}" could not be moved.`),

@@ -30,21 +30,21 @@ type TierStore interface {
 	// surface.
 	GuardsForWorkflow(ctx context.Context, workflowID uuid.UUID) ([]Guard, error)
 	CreateGuard(ctx context.Context, g Guard) (Guard, error)
-	DeleteGuard(ctx context.Context, id uuid.UUID) error
+	DeleteGuard(ctx context.Context, transitionID, id uuid.UUID) error
 
 	// ── Tier 3: post-functions ──
 
 	PostFunctionsForTransition(ctx context.Context, transitionID uuid.UUID) ([]PostFunction, error)
 	PostFunctionsForWorkflow(ctx context.Context, workflowID uuid.UUID) ([]PostFunction, error)
 	CreatePostFunction(ctx context.Context, p PostFunction) (PostFunction, error)
-	DeletePostFunction(ctx context.Context, id uuid.UUID) error
+	DeletePostFunction(ctx context.Context, transitionID, id uuid.UUID) error
 
 	// ── Tier 2: approver configuration ──
 
 	ApproversForTransition(ctx context.Context, transitionID uuid.UUID) ([]Approver, error)
 	ApproversForWorkflow(ctx context.Context, workflowID uuid.UUID) ([]Approver, error)
 	CreateApprover(ctx context.Context, a Approver) (Approver, error)
-	DeleteApprover(ctx context.Context, id uuid.UUID) error
+	DeleteApprover(ctx context.Context, transitionID, id uuid.UUID) error
 
 	// ── Tier 2: approval instances ──
 
@@ -60,7 +60,12 @@ type TierStore interface {
 	// approver has already decided comes back as ErrApprovalAlreadyDecided
 	// rather than being overwritten — the update carries `decided_at IS NULL`,
 	// so the race is settled by the database.
-	DecideApproval(ctx context.Context, id, decidedBy uuid.UUID, d Decision) (Approval, error)
+	//
+	// reason is nil when the approver said nothing, which migration 050 permits
+	// alongside a decision but never without one. It is written in the same
+	// statement as the decision; see the query's header for why a follow-up
+	// UPDATE would be wrong.
+	DecideApproval(ctx context.Context, id, decidedBy uuid.UUID, d Decision, reason *string) (Approval, error)
 	// ApprovalsForEntity returns every request ever made about an item, newest
 	// first, decided and pending alike.
 	ApprovalsForEntity(ctx context.Context, entityType ApprovalEntityType, entityID uuid.UUID) ([]Approval, error)
@@ -85,4 +90,13 @@ type TierStore interface {
 	// the effective_team_ids() schema function so a guard and a space grant can
 	// never disagree about who is in a team.
 	EffectiveTeamIDs(ctx context.Context, orgID, userID uuid.UUID) ([]uuid.UUID, error)
+	// EffectiveTeamMemberIDs is the same relation read the other way: everyone
+	// for whom this team is in their effective set.
+	//
+	// It exists for the approval-requested notification, and it delegates to the
+	// same schema function rather than re-deriving the ancestry rule. The two
+	// directions must agree — a person the guard would accept as an approver but
+	// the notifier never told is an approval waiting on somebody who was never
+	// asked.
+	EffectiveTeamMemberIDs(ctx context.Context, orgID, teamID uuid.UUID) ([]uuid.UUID, error)
 }

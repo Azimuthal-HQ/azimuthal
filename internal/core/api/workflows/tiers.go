@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -9,10 +10,12 @@ import (
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
 )
 
 // This file carries the ADR-0011 tier surface: the org-scoped configuration
@@ -68,9 +71,20 @@ func (h *Handler) registerTierOrgRoutes(r chi.Router, adminGuard func(http.Handl
 
 // registerTierSpaceRoutes adds the approval surface to the space-scoped
 // workflow router.
+//
+// The two reads are not redundant. /approvals is the space's PENDING set — the
+// board's blocked markers and the "awaiting a decision" list. The per-entity
+// read is one item's whole history, pending and decided alike, and the detail
+// page needs it for a reason the space list structurally cannot serve: the
+// moment an approver declines, the request stops being pending and drops out of
+// /approvals, taking the decline reason with it. A surface built only on the
+// pending list would show the requester a blocked item, then show them nothing
+// at all — the item silently not having moved, which is the exact failure the
+// reason column was added to close.
 func (h *Handler) registerTierSpaceRoutes(r chi.Router) {
 	r.Get("/approvals", h.ListPendingApprovals)
 	r.Post("/approvals/{approvalID}/decide", h.DecideApproval)
+	r.Get("/entities/{entityType}/{entityID}/approvals", h.ListEntityApprovals)
 }
 
 // ─── Request bodies ───────────────────────────────────────────────────────────
@@ -99,6 +113,9 @@ type createApproverRequest struct {
 
 type decideApprovalRequest struct {
 	Decision string `json:"decision"`
+	// Reason is required when Decision is "declined" and optional otherwise.
+	// TierService.Decide owns the rule; see workflow.ErrDeclineReasonRequired.
+	Reason string `json:"reason"`
 }
 
 // ─── Guards ───────────────────────────────────────────────────────────────────
@@ -222,7 +239,8 @@ func (h *Handler) CreateGuard(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/guards/{guardID} [delete]
 func (h *Handler) DeleteGuard(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.resolveTransition(w, r); !ok {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "guardID"))
@@ -230,7 +248,7 @@ func (h *Handler) DeleteGuard(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid guard ID")
 		return
 	}
-	if err := h.tierStore.DeleteGuard(r.Context(), id); err != nil {
+	if err := h.tierStore.DeleteGuard(r.Context(), transitionID, id); err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "guard not found")
 			return
@@ -351,7 +369,8 @@ func (h *Handler) CreatePostFunction(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/post-functions/{postFunctionID} [delete]
 func (h *Handler) DeletePostFunction(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.resolveTransition(w, r); !ok {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "postFunctionID"))
@@ -359,7 +378,7 @@ func (h *Handler) DeletePostFunction(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid post-function ID")
 		return
 	}
-	if err := h.tierStore.DeletePostFunction(r.Context(), id); err != nil {
+	if err := h.tierStore.DeletePostFunction(r.Context(), transitionID, id); err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "post-function not found")
 			return
@@ -480,7 +499,8 @@ func (h *Handler) CreateApprover(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions/{transitionID}/approvers/{approverID} [delete]
 func (h *Handler) DeleteApprover(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.resolveTransition(w, r); !ok {
+	transitionID, ok := h.resolveTransition(w, r)
+	if !ok {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "approverID"))
@@ -488,7 +508,7 @@ func (h *Handler) DeleteApprover(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid approver ID")
 		return
 	}
-	if err := h.tierStore.DeleteApprover(r.Context(), id); err != nil {
+	if err := h.tierStore.DeleteApprover(r.Context(), transitionID, id); err != nil {
 		if errors.Is(err, workflow.ErrNotFound) {
 			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "approver not found")
 			return
@@ -539,7 +559,102 @@ func (h *Handler) ListPendingApprovals(w http.ResponseWriter, r *http.Request) {
 	if approvals == nil {
 		approvals = []workflow.Approval{}
 	}
+	approvals, ok := h.markDecidable(w, r, approvals)
+	if !ok {
+		return
+	}
 	respond.JSON(w, http.StatusOK, approvals)
+}
+
+// ListEntityApprovals returns one item's approval history, pending and decided.
+//
+// Space-read, the same class as the pending list and for the same reason: the
+// block is about an item anyone in the space can already see, and hiding the
+// record from non-approvers would hide it from the requester the decision is
+// addressed to.
+//
+// @Summary      List an item's approvals
+// @Description  Returns every workflow approval ever requested for one ticket or project item, newest first.
+// @Tags         workflows
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID       path      string  true  "Organization ID"
+// @Param        spaceID     path      string  true  "Space ID"
+// @Param        entityType  path      string  true  "ticket or item"
+// @Param        entityID    path      string  true  "Entity ID"
+// @Success      200  {array}   workflow.Approval         "Approvals, newest first"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID or entity type"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/approvals [get]
+func (h *Handler) ListEntityApprovals(w http.ResponseWriter, r *http.Request) {
+	if _, err := spaceIDFromURL(r); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
+		return
+	}
+	if h.tierStore == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow tier evaluation is not configured on this server")
+		return
+	}
+
+	// The discriminator goes through the one permitted string→type boundary, so
+	// an unrecognised word is a 400 naming the two that exist rather than a
+	// silent empty list. tickets and project_items are separate tables
+	// (ADR-0003) and their ids are not unique across the pair, so an entity_id
+	// alone does not identify an item.
+	entityType, err := workflow.ParseApprovalEntityType(chi.URLParam(r, "entityType"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+		return
+	}
+	entityID, err := uuid.Parse(chi.URLParam(r, "entityID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid entity ID")
+		return
+	}
+
+	approvals, err := h.tierStore.ApprovalsForEntity(r.Context(), entityType, entityID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list approvals")
+		return
+	}
+	if approvals == nil {
+		approvals = []workflow.Approval{}
+	}
+	approvals, ok := h.markDecidable(w, r, approvals)
+	if !ok {
+		return
+	}
+	respond.JSON(w, http.StatusOK, approvals)
+}
+
+// markDecidable fills CanDecide for the calling user, answering the request
+// itself on failure and reporting whether the caller may continue.
+func (h *Handler) markDecidable(
+	w http.ResponseWriter, r *http.Request, approvals []workflow.Approval,
+) ([]workflow.Approval, bool) {
+	if h.tierSvc == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow tier evaluation is not configured on this server")
+		return nil, false
+	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return nil, false
+	}
+	orgID, err := uuid.Parse(claims.OrgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return nil, false
+	}
+	marked, err := h.tierSvc.MarkDecidable(r.Context(), orgID, claims.UserID, approvals)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list approvals")
+		return nil, false
+	}
+	return marked, true
 }
 
 // DecideApproval records an approver's verdict and, on approval, applies the
@@ -597,6 +712,7 @@ func (h *Handler) DecideApproval(w http.ResponseWriter, r *http.Request) {
 		ApprovalID: approvalID,
 		ActorID:    claims.UserID,
 		Decision:   decision,
+		Reason:     req.Reason,
 	})
 	if err != nil {
 		respondDecideError(w, r, err)
@@ -627,7 +743,45 @@ func (h *Handler) DecideApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.logApprovalDecision(r, decided)
+	h.notifyDecision(r, decided)
 	respond.JSON(w, http.StatusOK, decided)
+}
+
+// notifyDecision tells the person whose transition was decided what happened.
+//
+// The recipient is the REQUESTER — the actor whose status change was gated —
+// not the approver, who already knows: they just decided. On a decline the
+// reason travels with the notification, because a decline the requester has to
+// go and look up is barely better than one they are never told about.
+//
+// Best-effort, like every other enqueue in this codebase: the decision is
+// already committed and, on an approval, the transition may already have been
+// applied. Failing the request here would report a decision that did happen as
+// one that did not.
+func (h *Handler) notifyDecision(r *http.Request, a workflow.Approval) {
+	if h.notifs == nil || a.Decision == nil {
+		return
+	}
+
+	var message string
+	if *a.Decision == workflow.DecisionApproved {
+		message = fmt.Sprintf("Your move from %q to %q was approved.", a.FromStatus, a.ToStatus)
+	} else {
+		message = fmt.Sprintf("Your move from %q to %q was declined.", a.FromStatus, a.ToStatus)
+		if a.Reason != nil && *a.Reason != "" {
+			message = fmt.Sprintf("Your move from %q to %q was declined: %s",
+				a.FromStatus, a.ToStatus, *a.Reason)
+		}
+	}
+
+	_ = h.notifs.EnqueueNotification(r.Context(), jobs.NotificationArgs{
+		UserID:     a.RequestedBy.String(),
+		EventKind:  tiergate.KindApprovalDecided,
+		Message:    message,
+		ResourceID: a.EntityID.String(),
+		EntityKind: string(a.EntityType),
+		SpaceID:    a.SpaceID.String(),
+	})
 }
 
 // decideInputs resolves and validates everything DecideApproval needs before it
@@ -668,6 +822,12 @@ func respondDecideError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, workflow.ErrNotAnApprover):
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden,
 			"you are not an approver for this transition")
+	case errors.Is(err, workflow.ErrDeclineReasonRequired):
+		// 400 VALIDATION_ERROR, so friendlyErrorMessage passes the sentence
+		// through to the approver unchanged rather than collapsing it into a
+		// generic fallback — the same reason tiergate.Refused uses that code.
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
+			"a decline must say why: add a reason the requester can act on")
 	case errors.Is(err, workflow.ErrApprovalAlreadyDecided):
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict,
 			"this approval has already been decided")

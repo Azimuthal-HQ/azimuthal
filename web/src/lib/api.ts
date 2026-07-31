@@ -52,7 +52,15 @@ export class APIError extends Error {
  */
 export function friendlyErrorMessage(err: unknown, fallback: string): string {
   if (err instanceof APIError && err.message) {
-    const humanCodes = ['VALIDATION_ERROR', 'CONFLICT', 'GONE'];
+    // INVALID_TRANSITION joined the list with the workflow admin surface. It is
+    // the state machine explaining itself — "cannot move from Closed to In
+    // Progress" — and collapsing it into the caller's fallback told the user
+    // only that something failed, on the one screen where the reason is the
+    // whole point. ADR-0011's case for tier 1 rests on the engine being able to
+    // explain a refusal; throwing the sentence away at the last step would undo
+    // that. Note the tier guards themselves answer 422 VALIDATION_ERROR rather
+    // than this code, deliberately, and were already covered.
+    const humanCodes = ['VALIDATION_ERROR', 'CONFLICT', 'GONE', 'INVALID_TRANSITION'];
     if (humanCodes.includes(err.code)) {
       return err.message;
     }
@@ -238,6 +246,35 @@ async function apiFetch<T>(
 // ---------------------------------------------------------------------------
 // Domain types
 // ---------------------------------------------------------------------------
+
+import type {
+  ApprovalEntityType,
+  ApproverSubjectType,
+  Decision,
+  GuardCapability,
+  GuardClass,
+  GuardFieldKey,
+  GuardKind,
+  PostFieldKey,
+  PostFunctionKind,
+} from './workflow/vocabulary';
+
+// Re-exported so consumers reach one module for the whole workflow contract
+// rather than importing the wire types from api.ts and the vocabulary from
+// somewhere else. `isolatedModules` requires the explicit `export type` form —
+// a plain re-export of a type-only import compiles under `tsc --noEmit` and
+// fails under `tsc -b`, which is what the production build runs.
+export type {
+  ApprovalEntityType,
+  ApproverSubjectType,
+  Decision,
+  GuardCapability,
+  GuardClass,
+  GuardFieldKey,
+  GuardKind,
+  PostFieldKey,
+  PostFunctionKind,
+};
 
 export type SpaceType = 'beacon' | 'codex' | 'vector';
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
@@ -2421,6 +2458,21 @@ export const queryKeys = {
   orgWorkflows: (orgId: string) => ['orgWorkflows', orgId] as const,
   orgWorkflowStates: (orgId: string, workflowId: string) =>
     ['orgWorkflowStates', orgId, workflowId] as const,
+  // ADR-0011 tier surface. Each root is its own word rather than a nesting
+  // under an existing one, because queryKeys.test.ts asserts the families are
+  // pairwise disjoint — a key that prefixes another invalidates it by accident,
+  // which is how Home once rendered an array where an object was expected.
+  orgWorkflowTransitions: (orgId: string, workflowId: string) =>
+    ['orgWorkflowTransitions', orgId, workflowId] as const,
+  transitionGuards: (orgId: string, workflowId: string, transitionId: string) =>
+    ['transitionGuards', orgId, workflowId, transitionId] as const,
+  transitionPostFunctions: (orgId: string, workflowId: string, transitionId: string) =>
+    ['transitionPostFunctions', orgId, workflowId, transitionId] as const,
+  transitionApprovers: (orgId: string, workflowId: string, transitionId: string) =>
+    ['transitionApprovers', orgId, workflowId, transitionId] as const,
+  spacePendingApprovals: (spaceId: string) => ['spacePendingApprovals', spaceId] as const,
+  entityApprovals: (spaceId: string, entityType: string, entityId: string) =>
+    ['entityApprovals', spaceId, entityType, entityId] as const,
   // Team keys nest members under ['teams', orgId] so one prefix invalidation
   // catches every membership side effect (default-team re-add, primary moves).
   teams: (orgId: string) => ['teams', orgId] as const,
@@ -2859,6 +2911,17 @@ export function useTransitionTicketStatus(spaceId: string, ticketId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
+      // A gated transition CREATES an approval request, so the block that
+      // renders it must re-read. This lives HERE rather than in the page for a
+      // reason worth keeping: a component-level useQueryClient throws "No
+      // QueryClient set" in every page test that replaces lib/api wholesale —
+      // which is all of them, including the customer portal's — and those
+      // harnesses deliberately mount no provider. Invalidating where the
+      // mutation already holds a client costs the page nothing and keeps the
+      // sibling test suites working.
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.entityApprovals(spaceId, 'ticket', ticketId),
+      });
     },
   });
 }
@@ -3049,6 +3112,17 @@ export function useTransitionProjectItemStatus(spaceId: string, itemId: string) 
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItem(spaceId, itemId) });
+      // A gated transition CREATES an approval request, so the block that
+      // renders it must re-read. This lives HERE rather than in the page for a
+      // reason worth keeping: a component-level useQueryClient throws "No
+      // QueryClient set" in every page test that replaces lib/api wholesale —
+      // which is all of them, including the customer portal's — and those
+      // harnesses deliberately mount no provider. Invalidating where the
+      // mutation already holds a client costs the page nothing and keeps the
+      // sibling test suites working.
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.entityApprovals(spaceId, 'item', itemId),
+      });
     },
   });
 }
@@ -3483,6 +3557,424 @@ export function useOrgWorkflowStates(
     enabled: !!orgId && !!workflowId,
     staleTime: 5 * 60 * 1000, // workflow definitions rarely change
     ...opts,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Workflow tiers — ADR-0011 conditions, validators, approvals, post-functions
+//
+// The configuration half is org-scoped and org-admin; the approval half is
+// space-scoped, and who may DECIDE is data rather than a capability, so the
+// server answers `can_decide` per row and the UI must not compute its own.
+//
+// Every vocabulary these hooks carry is closed and mirrored in
+// lib/workflow/vocabulary.ts, held equal to Go by guards.test.ts. Nothing here
+// accepts a free-text predicate and nothing may be added that does (ADR-0011).
+// ---------------------------------------------------------------------------
+
+export interface WorkflowTransition {
+  id: string;
+  workflow_id: string;
+  from_state_id: string;
+  to_state_id: string;
+  name: string;
+}
+
+export interface WorkflowGuard {
+  id: string;
+  transition_id: string;
+  /** NOTE the wire name: `guard_class`, not `class`. */
+  guard_class: GuardClass;
+  kind: GuardKind;
+  position: number;
+  capability?: GuardCapability;
+  /**
+   * Absent on a DEGRADED guard — migration 046 sets it NULL when the team is
+   * deleted, so the restriction survives as unsatisfiable rather than silently
+   * disappearing. Such a row must be re-scoped, never resubmitted: ValidateGuard
+   * refuses a null team on write even though the database holds one at rest.
+   */
+  team_id?: string;
+  field_key?: GuardFieldKey;
+}
+
+export interface WorkflowPostFunction {
+  id: string;
+  transition_id: string;
+  kind: PostFunctionKind;
+  position: number;
+  assignee_user_id?: string;
+  field_key?: PostFieldKey;
+  field_value?: string;
+}
+
+export interface WorkflowApprover {
+  id: string;
+  transition_id: string;
+  subject_type: ApproverSubjectType;
+  subject_id: string;
+  /** Resolved at read time; empty when the subject no longer exists. */
+  subject_name?: string;
+  /** True when the named user or team has been deleted. */
+  subject_missing?: boolean;
+}
+
+export interface WorkflowApproval {
+  id: string;
+  /** Null when the edge was deleted under the request, which makes it stuck. */
+  transition_id: string | null;
+  entity_type: ApprovalEntityType;
+  entity_id: string;
+  space_id: string;
+  from_state_id: string | null;
+  to_state_id: string | null;
+  from_status: string;
+  to_status: string;
+  requested_by: string;
+  requested_at: string;
+  decided_by?: string;
+  decided_at?: string;
+  decision?: Decision;
+  /** The approver's sentence. Required on a decline (migration 050). */
+  reason?: string;
+  requested_by_name?: string;
+  decided_by_name?: string;
+  /**
+   * Whether the CALLING user may decide. Server-resolved, because approval
+   * authority is being NAMED on the transition — there is no capability to
+   * check and nothing on the row a client could compute it from.
+   */
+  can_decide: boolean;
+}
+
+/**
+ * The 202 body a gated transition answers with.
+ *
+ * This is NOT an error, which is exactly what makes it dangerous: apiFetch
+ * treats every ok status as success and casts the body to the declared type, so
+ * a status mutation that ignores it resolves with this object wearing a Ticket's
+ * type and the UI reports a move that did not happen. Call sites use
+ * `pendingApprovalOf` below rather than checking by hand.
+ */
+export interface PendingApprovalResponse {
+  status: 'pending_approval';
+  message: string;
+  approval_id: string;
+  from_status: string;
+  to_status: string;
+  requested_at: string;
+  transition_id?: string;
+}
+
+/**
+ * Recognises the 202 pending-approval body inside a status-mutation result.
+ *
+ * Every status call site must run its result through this before treating the
+ * transition as applied. Both detail pages and both boards previously assumed
+ * any resolved promise meant success, which turned "waiting on an approver"
+ * into a silent false success — the card stayed in the target column and the
+ * item had never moved.
+ */
+export function pendingApprovalOf(result: unknown): PendingApprovalResponse | null {
+  if (
+    result &&
+    typeof result === 'object' &&
+    (result as { status?: unknown }).status === 'pending_approval' &&
+    typeof (result as { approval_id?: unknown }).approval_id === 'string'
+  ) {
+    return result as PendingApprovalResponse;
+  }
+  return null;
+}
+
+function transitionBase(orgId: string, workflowId: string, transitionId: string): string {
+  return `/orgs/${orgId}/workflows/${workflowId}/transitions/${transitionId}`;
+}
+
+// ─── Transitions ──────────────────────────────────────────────────────────────
+
+export function useOrgWorkflowTransitions(
+  orgId: string,
+  workflowId: string,
+  opts?: QueryOpts<WorkflowTransition[]>,
+) {
+  return useQuery<WorkflowTransition[], APIError>({
+    queryKey: queryKeys.orgWorkflowTransitions(orgId, workflowId),
+    queryFn: () =>
+      apiFetch<WorkflowTransition[]>(`/orgs/${orgId}/workflows/${workflowId}/transitions`),
+    enabled: !!orgId && !!workflowId,
+    staleTime: 5 * 60 * 1000, // workflow definitions rarely change
+    ...opts,
+  });
+}
+
+// ─── Guards (conditions and validators share one table and one route) ─────────
+
+export function useTransitionGuards(
+  orgId: string,
+  workflowId: string,
+  transitionId: string,
+  opts?: QueryOpts<WorkflowGuard[]>,
+) {
+  return useQuery<WorkflowGuard[], APIError>({
+    queryKey: queryKeys.transitionGuards(orgId, workflowId, transitionId),
+    queryFn: () => apiFetch<WorkflowGuard[]>(`${transitionBase(orgId, workflowId, transitionId)}/guards`),
+    enabled: !!orgId && !!workflowId && !!transitionId,
+    ...opts,
+  });
+}
+
+export interface CreateGuardRequest {
+  guard_class: GuardClass;
+  kind: GuardKind;
+  position: number;
+  capability?: GuardCapability;
+  team_id?: string;
+  field_key?: GuardFieldKey;
+}
+
+export function useCreateTransitionGuard(orgId: string, workflowId: string, transitionId: string) {
+  const qc = useQueryClient();
+  return useMutation<WorkflowGuard, APIError, CreateGuardRequest>({
+    mutationFn: (body) =>
+      apiFetch<WorkflowGuard>(`${transitionBase(orgId, workflowId, transitionId)}/guards`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: queryKeys.transitionGuards(orgId, workflowId, transitionId),
+      });
+    },
+  });
+}
+
+export function useDeleteTransitionGuard(orgId: string, workflowId: string, transitionId: string) {
+  const qc = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (guardId) =>
+      apiFetch<void>(`${transitionBase(orgId, workflowId, transitionId)}/guards/${guardId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: queryKeys.transitionGuards(orgId, workflowId, transitionId),
+      });
+    },
+  });
+}
+
+// ─── Post-functions ───────────────────────────────────────────────────────────
+
+export function useTransitionPostFunctions(
+  orgId: string,
+  workflowId: string,
+  transitionId: string,
+  opts?: QueryOpts<WorkflowPostFunction[]>,
+) {
+  return useQuery<WorkflowPostFunction[], APIError>({
+    queryKey: queryKeys.transitionPostFunctions(orgId, workflowId, transitionId),
+    queryFn: () =>
+      apiFetch<WorkflowPostFunction[]>(`${transitionBase(orgId, workflowId, transitionId)}/post-functions`),
+    enabled: !!orgId && !!workflowId && !!transitionId,
+    ...opts,
+  });
+}
+
+export interface CreatePostFunctionRequest {
+  kind: PostFunctionKind;
+  position: number;
+  assignee_user_id?: string;
+  field_key?: PostFieldKey;
+  /**
+   * Encoding is per field and is parsed at WRITE time, so a bad value is
+   * refused on this form rather than at transition time: `due_at` must be
+   * RFC3339, and `labels` is a comma-separated string, NOT a JSON array.
+   */
+  field_value?: string;
+}
+
+export function useCreateTransitionPostFunction(
+  orgId: string,
+  workflowId: string,
+  transitionId: string,
+) {
+  const qc = useQueryClient();
+  return useMutation<WorkflowPostFunction, APIError, CreatePostFunctionRequest>({
+    mutationFn: (body) =>
+      apiFetch<WorkflowPostFunction>(`${transitionBase(orgId, workflowId, transitionId)}/post-functions`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: queryKeys.transitionPostFunctions(orgId, workflowId, transitionId),
+      });
+    },
+  });
+}
+
+export function useDeleteTransitionPostFunction(
+  orgId: string,
+  workflowId: string,
+  transitionId: string,
+) {
+  const qc = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (postFunctionId) =>
+      apiFetch<void>(
+        `${transitionBase(orgId, workflowId, transitionId)}/post-functions/${postFunctionId}`,
+        { method: 'DELETE' },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: queryKeys.transitionPostFunctions(orgId, workflowId, transitionId),
+      });
+    },
+  });
+}
+
+// ─── Approvers ────────────────────────────────────────────────────────────────
+
+export function useTransitionApprovers(
+  orgId: string,
+  workflowId: string,
+  transitionId: string,
+  opts?: QueryOpts<WorkflowApprover[]>,
+) {
+  return useQuery<WorkflowApprover[], APIError>({
+    queryKey: queryKeys.transitionApprovers(orgId, workflowId, transitionId),
+    queryFn: () =>
+      apiFetch<WorkflowApprover[]>(`${transitionBase(orgId, workflowId, transitionId)}/approvers`),
+    enabled: !!orgId && !!workflowId && !!transitionId,
+    ...opts,
+  });
+}
+
+export interface CreateApproverRequest {
+  subject_type: ApproverSubjectType;
+  subject_id: string;
+}
+
+export function useCreateTransitionApprover(
+  orgId: string,
+  workflowId: string,
+  transitionId: string,
+) {
+  const qc = useQueryClient();
+  return useMutation<WorkflowApprover, APIError, CreateApproverRequest>({
+    mutationFn: (body) =>
+      apiFetch<WorkflowApprover>(`${transitionBase(orgId, workflowId, transitionId)}/approvers`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: queryKeys.transitionApprovers(orgId, workflowId, transitionId),
+      });
+    },
+  });
+}
+
+export function useDeleteTransitionApprover(
+  orgId: string,
+  workflowId: string,
+  transitionId: string,
+) {
+  const qc = useQueryClient();
+  return useMutation<void, APIError, string>({
+    mutationFn: (approverId) =>
+      apiFetch<void>(`${transitionBase(orgId, workflowId, transitionId)}/approvers/${approverId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: queryKeys.transitionApprovers(orgId, workflowId, transitionId),
+      });
+    },
+  });
+}
+
+// ─── Approvals (space-scoped) ─────────────────────────────────────────────────
+
+/**
+ * Everything awaiting a decision in a space. Backs the board's blocked markers.
+ *
+ * Space-read by design: anyone who can see the space's items can see that one
+ * is waiting. Do not narrow it to approvers — that would hide the block from
+ * the person it affects.
+ */
+export function useSpacePendingApprovals(spaceId: string, opts?: QueryOpts<WorkflowApproval[]>) {
+  return useQuery<WorkflowApproval[], APIError>({
+    queryKey: queryKeys.spacePendingApprovals(spaceId),
+    queryFn: () => apiFetch<WorkflowApproval[]>(`${spaceBase(spaceId)}/workflow/approvals`),
+    enabled: !!spaceId,
+    ...opts,
+  });
+}
+
+/**
+ * One item's approval history, pending and decided alike.
+ *
+ * The detail surface needs this rather than the space list because a DECIDED
+ * approval leaves the pending set: the moment an approver declines, the request
+ * and its reason vanish from `/approvals`, and a block that simply disappeared
+ * tells the requester nothing.
+ *
+ * entityType is required and is not inferable from the id — tickets and project
+ * items are separate tables (ADR-0003) and their ids are not unique across the
+ * pair.
+ */
+export function useEntityApprovals(
+  spaceId: string,
+  entityType: ApprovalEntityType,
+  entityId: string,
+  opts?: QueryOpts<WorkflowApproval[]>,
+) {
+  return useQuery<WorkflowApproval[], APIError>({
+    queryKey: queryKeys.entityApprovals(spaceId, entityType, entityId),
+    queryFn: () =>
+      apiFetch<WorkflowApproval[]>(
+        `${spaceBase(spaceId)}/workflow/entities/${entityType}/${entityId}/approvals`,
+      ),
+    enabled: !!spaceId && !!entityId,
+    ...opts,
+  });
+}
+
+export interface DecideApprovalRequest {
+  approvalId: string;
+  decision: Decision;
+  /** Required when declining; the server refuses a bare or blank decline. */
+  reason?: string;
+}
+
+/**
+ * Approve or decline a pending transition.
+ *
+ * On approval the server applies the captured transition, so the item's own
+ * queries go stale too — hence the entity and space invalidations alongside the
+ * approval ones. The ticket and item lists are invalidated by the caller, which
+ * knows which of the two it is looking at.
+ */
+export function useDecideApproval(
+  spaceId: string,
+  entityType: ApprovalEntityType,
+  entityId: string,
+) {
+  const qc = useQueryClient();
+  return useMutation<WorkflowApproval, APIError, DecideApprovalRequest>({
+    mutationFn: ({ approvalId, decision, reason }) =>
+      apiFetch<WorkflowApproval>(
+        `${spaceBase(spaceId)}/workflow/approvals/${approvalId}/decide`,
+        { method: 'POST', body: JSON.stringify({ decision, reason: reason ?? '' }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: queryKeys.entityApprovals(spaceId, entityType, entityId),
+      });
+      void qc.invalidateQueries({ queryKey: queryKeys.spacePendingApprovals(spaceId) });
+    },
   });
 }
 

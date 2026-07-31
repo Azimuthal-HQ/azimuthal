@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -120,6 +121,16 @@ type GateResult struct {
 	// approver decides.
 	Pending *Approval
 
+	// PendingIsNew distinguishes "this call created the request" from "a
+	// request was already outstanding and this is it".
+	//
+	// Both answer the caller identically — the item does not move either way —
+	// but they must not notify identically. Two people pressing the same
+	// guarded button is the ordinary case (see requestApproval), and telling
+	// every approver again each time somebody retries turns one decision into
+	// a stream of duplicate alerts that trains people to ignore the real one.
+	PendingIsNew bool
+
 	// Effects are the post-function mutations to apply inside the same
 	// transaction as the status change. Empty when nothing is configured.
 	Effects []Effect
@@ -166,11 +177,14 @@ func (s *TierService) Gate(ctx context.Context, req GateRequest) (GateResult, er
 		return GateResult{}, fmt.Errorf("gate: loading approvers: %w", err)
 	}
 	if RequiresApproval(approvers) {
-		pending, err := s.requestApproval(ctx, req, transition)
+		pending, isNew, err := s.requestApproval(ctx, req, transition)
 		if err != nil {
 			return GateResult{}, err
 		}
-		return GateResult{TransitionID: &transition.ID, ToStateID: &toStateID, Pending: pending}, nil
+		return GateResult{
+			TransitionID: &transition.ID, ToStateID: &toStateID,
+			Pending: pending, PendingIsNew: isNew,
+		}, nil
 	}
 
 	effects, err := s.planEffects(ctx, transition.ID)
@@ -302,7 +316,9 @@ func (s *TierService) resolveActor(ctx context.Context, req GateRequest) (Actor,
 // returned so the caller reports "already awaiting approval" rather than an
 // error. Two people pressing the same guarded button is ordinary, not
 // exceptional.
-func (s *TierService) requestApproval(ctx context.Context, req GateRequest, t *Transition) (*Approval, error) {
+// The bool reports whether this call created the request; see
+// GateResult.PendingIsNew.
+func (s *TierService) requestApproval(ctx context.Context, req GateRequest, t *Transition) (*Approval, bool, error) {
 	fromStateID, toStateID := t.FromStateID, t.ToStateID
 
 	created, err := s.store.CreateApproval(ctx, Approval{
@@ -317,17 +333,17 @@ func (s *TierService) requestApproval(ctx context.Context, req GateRequest, t *T
 		RequestedBy:  req.ActorID,
 	})
 	if err == nil {
-		return &created, nil
+		return &created, true, nil
 	}
 	if !errors.Is(err, ErrApprovalPending) {
-		return nil, fmt.Errorf("gate: requesting approval: %w", err)
+		return nil, false, fmt.Errorf("gate: requesting approval: %w", err)
 	}
 
 	existing, getErr := s.store.PendingApprovalForEntity(ctx, req.EntityType, req.EntityID)
 	if getErr != nil {
-		return nil, fmt.Errorf("gate: reading the pending approval: %w", getErr)
+		return nil, false, fmt.Errorf("gate: reading the pending approval: %w", getErr)
 	}
-	return &existing, nil
+	return &existing, false, nil
 }
 
 // ─── Deciding ─────────────────────────────────────────────────────────────────
@@ -338,6 +354,10 @@ type DecideRequest struct {
 	ApprovalID uuid.UUID
 	ActorID    uuid.UUID
 	Decision   Decision
+
+	// Reason is what the approver says about the verdict. Required on a
+	// decline, optional on an approval; see Decide.
+	Reason string
 }
 
 // Decide records an approver's verdict and reports what the caller must write.
@@ -352,7 +372,21 @@ type DecideRequest struct {
 // decline it applies nothing: the item never left its source status, so
 // "decline returns the item to the source status" is satisfied by the item not
 // having moved. The record of the decline is the trail.
+//
+// # A decline must say why
+//
+// The reason is required on a decline and optional on an approval, and the
+// check runs BEFORE the authority check so a non-approver is told they are not
+// an approver rather than being asked for a reason they were never entitled to
+// give. Whitespace is not a reason: an approver who submits spaces has said
+// nothing, and storing it would produce a decline that renders blank, which is
+// the failure the column was added to close rather than a lesser version of it.
 func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, []Effect, error) {
+	storedReason, err := decisionReason(req.Decision, req.Reason)
+	if err != nil {
+		return Approval{}, nil, err
+	}
+
 	approval, err := s.store.GetApproval(ctx, req.ApprovalID)
 	if err != nil {
 		return Approval{}, nil, fmt.Errorf("decide: loading the approval: %w", err)
@@ -371,7 +405,7 @@ func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, 
 		return Approval{}, nil, err
 	}
 
-	decided, err := s.store.DecideApproval(ctx, req.ApprovalID, req.ActorID, req.Decision)
+	decided, err := s.store.DecideApproval(ctx, req.ApprovalID, req.ActorID, req.Decision, storedReason)
 	if err != nil {
 		return Approval{}, nil, fmt.Errorf("decide: recording the decision: %w", err)
 	}
@@ -385,6 +419,131 @@ func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, 
 		return Approval{}, nil, err
 	}
 	return decided, effects, nil
+}
+
+// ApproverRecipients returns every user who may decide a transition, expanded.
+//
+// It is the notification fan-out's list, and it is deliberately built from the
+// SAME two facts CanDecide consults — the configured approver rows, and
+// ADR-0007 effective team membership — rather than from a convenient
+// approximation like a team's direct members. If the two disagreed, the
+// disagreement would be silent in the worst direction: an approval sitting
+// pending on somebody the guard would happily accept but nobody ever told.
+//
+// Ids are de-duplicated, because one person can be named directly and also sit
+// in a named team, and being named twice is not a reason to be alerted twice.
+//
+// An unknown subject type contributes nobody. That is the same fail-closed
+// direction CanDecide takes for the same value, and here it is merely quiet
+// rather than unsafe: a subject this build cannot resolve has not been shown to
+// include anybody.
+func (s *TierService) ApproverRecipients(
+	ctx context.Context, orgID, transitionID uuid.UUID,
+) ([]uuid.UUID, error) {
+	approvers, err := s.store.ApproversForTransition(ctx, transitionID)
+	if err != nil {
+		return nil, fmt.Errorf("approver recipients: loading approvers: %w", err)
+	}
+
+	seen := make(map[uuid.UUID]struct{}, len(approvers))
+	out := make([]uuid.UUID, 0, len(approvers))
+	add := func(id uuid.UUID) {
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+
+	for _, ap := range approvers {
+		switch ap.SubjectType {
+		case ApproverUser:
+			add(ap.SubjectID)
+		case ApproverTeam:
+			members, err := s.store.EffectiveTeamMemberIDs(ctx, orgID, ap.SubjectID)
+			if err != nil {
+				return nil, fmt.Errorf("approver recipients: expanding team: %w", err)
+			}
+			for _, m := range members {
+				add(m)
+			}
+		default:
+			continue
+		}
+	}
+	return out, nil
+}
+
+// MarkDecidable fills CanDecide on each approval for the given actor.
+//
+// It exists because approval authority is DATA — being named on the transition,
+// directly or through an ADR-0007 effective team — so a client has no way to
+// work out whether it may offer an Approve button. There is no capability to
+// consult and nothing on the approval row that answers it. Without this the
+// only honest UI would show the buttons to everybody and let the 403 explain,
+// which puts the refusal after the click instead of before it.
+//
+// The actor is resolved ONCE. Effective team expansion is a recursive query,
+// and doing it per row would make a busy space's pending list cost a traversal
+// per approval to answer one question that does not vary between them. Approver
+// lists are cached per transition for the same reason: a space blocked on one
+// guarded edge has many approvals sharing a single approver set.
+//
+// An approval whose transition has been deleted (TransitionID nil, migration
+// 047's ON DELETE SET NULL) is decidable by nobody — there is no approver list
+// left to consult — and keeps CanDecide false. It is deliberately still
+// returned: the requester needs to see that their request is stuck, which is
+// the same reason the row survived the delete at all.
+func (s *TierService) MarkDecidable(
+	ctx context.Context, orgID, actorID uuid.UUID, approvals []Approval,
+) ([]Approval, error) {
+	if len(approvals) == 0 {
+		return approvals, nil
+	}
+
+	actor, err := s.resolveActor(ctx, GateRequest{OrgID: orgID, ActorID: actorID})
+	if err != nil {
+		return nil, err
+	}
+
+	byTransition := make(map[uuid.UUID]bool, len(approvals))
+	for i := range approvals {
+		if approvals[i].TransitionID == nil {
+			continue
+		}
+		tid := *approvals[i].TransitionID
+		decidable, seen := byTransition[tid]
+		if !seen {
+			approvers, err := s.store.ApproversForTransition(ctx, tid)
+			if err != nil {
+				return nil, fmt.Errorf("marking decidable: loading approvers: %w", err)
+			}
+			decidable = CanDecide(approvers, actor)
+			byTransition[tid] = decidable
+		}
+		approvals[i].CanDecide = decidable
+	}
+	return approvals, nil
+}
+
+// decisionReason validates and normalises what the approver said.
+//
+// A decline must carry one; an approval need not. Whitespace is not a reason —
+// an approver who submits spaces has said nothing, and storing it would produce
+// a decline that renders blank, which is the failure migration 050 exists to
+// close rather than a lesser version of it.
+//
+// An empty reason on an APPROVAL becomes NULL rather than "", so "said nothing"
+// and "said the empty string" are not two representations of one thing.
+func decisionReason(d Decision, raw string) (*string, error) {
+	reason := strings.TrimSpace(raw)
+	if d == DecisionDeclined && reason == "" {
+		return nil, ErrDeclineReasonRequired
+	}
+	if reason == "" {
+		return nil, nil
+	}
+	return &reason, nil
 }
 
 // checkDecideAuthority reports whether the actor is one of the transition's

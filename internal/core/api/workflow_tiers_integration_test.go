@@ -422,11 +422,19 @@ func TestTierAPI_ItemPostFunctionCommitsWithTheStatus(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// A new project item starts at status 'open' (migration 014's column
-	// default), which is NOT a state in the seeded project workflow
-	// (backlog/todo/in_progress/in_review/done, migration 016). So its FIRST
-	// move resolves no edge and no tiers apply — recorded as a finding, not
-	// worked around. Move it onto a real state before testing the guarded edge.
+	// A new project item starts at status 'open', which is NOT a state in the
+	// seeded project workflow (backlog/todo/in_progress/in_review/done,
+	// migration 016). So its FIRST move resolves no edge and no tiers apply —
+	// recorded as a finding, not worked around. Move it onto a real state
+	// before testing the guarded edge.
+	//
+	// NOT migration 014's column default, which this comment and the D72 ledger
+	// entry both used to blame. CreateProjectItem names `status` in its INSERT
+	// column list, so the DEFAULT is never evaluated by the application; the
+	// value comes from internal/core/projects/item.go:114. The distinction
+	// matters because it rules out the cheapest-looking fix: changing the
+	// column default would alter nothing but raw-SQL test fixtures. Corrected
+	// in P-W PR-B; see known-issues #30.
 	r = ts.post(t, fmt.Sprintf("%s/projects/items/%s/status", base, itemID),
 		map[string]any{"status": "backlog"}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)

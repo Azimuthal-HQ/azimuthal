@@ -38,6 +38,7 @@ import {
   transitionProjectItemStatus,
   updateProjectItem,
   friendlyErrorMessage,
+  pendingApprovalOf,
   type ProjectItem,
   type WorkflowState,
   type BoardColumn as BoardColumnConfig,
@@ -463,6 +464,12 @@ export function SprintBoardPage() {
   const [pendingStatus, setPendingStatus] = useState<Record<string, string>>({});
   // Optimistic lane-attribute overrides for a cross-lane drag
   const [pendingLane, setPendingLane] = useState<Record<string, Partial<ProjectItem>>>({});
+  // Why the last drop did not take. There is no ErrorBanner component to reuse
+  // (components/ui exports no alert), and this page mounts no ToastProvider —
+  // its own test files build their own render tree — so a toast would throw in
+  // every existing unit test the moment it was added. An inline notice beside
+  // the board is the shape that already exists here.
+  const [boardNotice, setBoardNotice] = useState<{ kind: 'pending' | 'refused'; message: string } | null>(null);
 
   const queryClient = useQueryClient();
 
@@ -591,7 +598,26 @@ export function SprintBoardPage() {
         if (statusChanged) {
           // Always through the canonical API client — a raw fetch here once
           // bypassed auth/refresh handling and failed silently on error.
-          await transitionProjectItemStatus(spaceId, draggedId, targetStatus);
+          const result = await transitionProjectItemStatus(spaceId, draggedId, targetStatus);
+
+          // A gated transition answers 202 with a pending-approval body, which
+          // is NOT an error and so never reached the catch below. The item did
+          // not move; without this the optimistic pendingStatus was never
+          // cleared and the card sat in the target column indefinitely,
+          // reporting a change that had not happened. PR #86's contract says a
+          // blocked transition is never a silent no-op — a silent false success
+          // is worse.
+          const pending = pendingApprovalOf(result);
+          if (pending) {
+            setBoardNotice({ kind: 'pending', message: pending.message });
+            setPendingStatus((prev) => {
+              const next = { ...prev };
+              delete next[draggedId];
+              return next;
+            });
+          } else {
+            setBoardNotice(null);
+          }
         }
         if (laneChanged) {
           // Both lane axes now persist. Type is editable through the item
@@ -617,7 +643,15 @@ export function SprintBoardPage() {
             await updateProjectItem(spaceId, draggedId, { kind: laneValue });
           }
         }
-      } catch {
+      } catch (err) {
+        // Bound, where it previously was not: `catch {` discarded the error, so
+        // a refused transition had no reason available to show even in
+        // principle. The guard's own sentence arrives under 422
+        // VALIDATION_ERROR and passes through friendlyErrorMessage unchanged.
+        setBoardNotice({
+          kind: 'refused',
+          message: friendlyErrorMessage(err, 'That item could not be moved.'),
+        });
         setPendingStatus((prev) => {
           const next = { ...prev };
           delete next[draggedId];
@@ -694,6 +728,37 @@ export function SprintBoardPage() {
 
   return (
     <div className="space-y-5">
+      {/* A refused or gated drop is NEVER a silent no-op (PR #86's contract).
+          Before this, a refusal was swallowed by a `catch {` with no binding
+          and a pending approval never reached the catch at all. */}
+      {boardNotice && (
+        <div
+          data-testid="board-notice"
+          className={
+            boardNotice.kind === 'pending'
+              ? 'flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-warning)] bg-[color-mix(in_srgb,var(--color-warning)_10%,transparent)] p-3'
+              : 'flex items-center gap-3 rounded-[var(--radius-lg)] border border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_10%,transparent)] p-3'
+          }
+        >
+          <AlertCircle
+            className={
+              boardNotice.kind === 'pending'
+                ? 'h-4 w-4 shrink-0 text-[var(--color-warning)]'
+                : 'h-4 w-4 shrink-0 text-[var(--color-danger)]'
+            }
+          />
+          <p className="text-[var(--text-sm)] text-[var(--color-text)]">{boardNotice.message}</p>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            data-testid="board-notice-dismiss"
+            onClick={() => setBoardNotice(null)}
+            className="ml-auto shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-baseline gap-3">
           <h1 className="text-[var(--text-lg)] font-semibold tracking-[-.01em] text-[var(--color-text)]">

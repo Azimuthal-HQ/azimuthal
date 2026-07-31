@@ -619,7 +619,7 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 	// newTestServer only. A nil gate here would make every status transition in
 	// these tests answer 500 rather than transitioning ungated.
 	refTierStore := adapters.NewWorkflowTierAdapter(queries)
-	refTierGate := tiergate.New(workflow.NewTierService(refTierStore), refTierStore)
+	refTierGate := tiergate.New(workflow.NewTierService(refTierStore), refTierStore, jobs.NoopNotificationEnqueuer{})
 	refTransitionTx := adapters.NewWorkflowTransitionTxAdapter(pool)
 
 	cfg := api.RouterConfig{

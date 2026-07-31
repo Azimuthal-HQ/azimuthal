@@ -146,7 +146,6 @@ export function App() {
           {/* Org settings moved to the admin panel; keep old links working. */}
           <Route path="settings/organization" element={<Navigate to="/admin/settings" replace />} />
           <Route path="settings/:section" element={<SettingsPage />} />
-          <Route path="admin/workflows" element={<WorkflowAdminPage />} />
 
           {/* The administration area (P2.5 W3): People, Teams, Access,
               Spaces, Audit log — org admins only; everyone else gets the
@@ -160,6 +159,19 @@ export function App() {
             <Route path="spaces" element={<SpacesAdminPage />} />
             <Route path="item-types" element={<ItemTypesAdminPage />} />
             <Route path="custom-fields" element={<CustomFieldsAdminPage />} />
+            {/* Workflows was declared OUTSIDE this group until P-W PR-B — as a
+                sibling `admin/workflows` route a few lines above — so it never
+                passed through AdminLayout's caller_is_admin check and rendered
+                for any authenticated org member. That was survivable only
+                because the page was read-only and the workflow READ routes are
+                deliberately org-member. This PR adds mutations to it, at which
+                point the misplacement would have shipped a workflow editor
+                every member could open. The server-side guard is separate and
+                unchanged: the tier mutations carry RequireOrgAdmin
+                independently, which is why this was a disclosure of admin
+                CHROME rather than of admin POWER — but a form whose every
+                button 403s is its own kind of broken. */}
+            <Route path="workflows" element={<WorkflowAdminPage />} />
             <Route path="audit-log" element={<AuditLogPage />} />
             <Route path="settings" element={<OrgSettingsPage />} />
           </Route>

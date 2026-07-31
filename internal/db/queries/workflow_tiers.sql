@@ -31,7 +31,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: DeleteTransitionGuard :execrows
-DELETE FROM workflow_transition_guards WHERE id = $1;
+-- Scoped to the transition, not just the id. {transitionID} and the child id
+-- are separate path segments and nothing ties them together, so an unscoped
+-- delete lets an admin naming one of their OWN transitions remove a row
+-- belonging to any other — including another organisation's. Zero rows is the
+-- adapter's ErrNotFound, which the handler answers as 404.
+DELETE FROM workflow_transition_guards WHERE id = $1 AND transition_id = $2;
 
 
 -- ─── Tier 3: post-functions ───────────────────────────────────────────────────
@@ -56,7 +61,12 @@ VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: DeleteTransitionPostFunction :execrows
-DELETE FROM workflow_transition_post_functions WHERE id = $1;
+-- Scoped to the transition, not just the id. {transitionID} and the child id
+-- are separate path segments and nothing ties them together, so an unscoped
+-- delete lets an admin naming one of their OWN transitions remove a row
+-- belonging to any other — including another organisation's. Zero rows is the
+-- adapter's ErrNotFound, which the handler answers as 404.
+DELETE FROM workflow_transition_post_functions WHERE id = $1 AND transition_id = $2;
 
 -- ─── Tier 2: approver configuration ───────────────────────────────────────────
 
@@ -94,7 +104,12 @@ VALUES ($1, $2, $3)
 RETURNING *;
 
 -- name: DeleteTransitionApprover :execrows
-DELETE FROM workflow_transition_approvers WHERE id = $1;
+-- Scoped to the transition, not just the id. {transitionID} and the child id
+-- are separate path segments and nothing ties them together, so an unscoped
+-- delete lets an admin naming one of their OWN transitions remove a row
+-- belonging to any other — including another organisation's. Zero rows is the
+-- adapter's ErrNotFound, which the handler answers as 404.
+DELETE FROM workflow_transition_approvers WHERE id = $1 AND transition_id = $2;
 
 -- ─── Tier 2: approval instances ───────────────────────────────────────────────
 
@@ -129,8 +144,15 @@ WHERE a.id = $1;
 -- concurrently updates zero rows rather than overwriting the first decision.
 -- The adapter turns zero rows into ErrApprovalAlreadyDecided after a follow-up
 -- read, the way RevokeEntityShare distinguishes already-revoked from not-found.
+--
+-- reason is written in the SAME statement as the decision, never in a follow-up
+-- UPDATE. migration 050's workflow_approvals_reason_requires_decision refuses a
+-- reason without a decision, so a two-statement version would have to write the
+-- decision first — and a failure between the two would leave a decline standing
+-- with no reason, which is exactly the unexplained decline the column exists to
+-- prevent.
 UPDATE workflow_approvals
-SET decided_by = $2, decided_at = now(), decision = $3
+SET decided_by = $2, decided_at = now(), decision = $3, reason = $4
 WHERE id = $1 AND decided_at IS NULL
 RETURNING *;
 
@@ -223,3 +245,34 @@ UPDATE project_items SET
     labels      = CASE WHEN @set_labels::boolean   THEN @labels::text[] ELSE labels END,
     updated_at  = now()
 WHERE id = @id AND deleted_at IS NULL;
+
+-- ─── Approval notification recipients ─────────────────────────────────────────
+
+-- name: ListEffectiveTeamMemberIDs :many
+-- Who counts as a member of one team, for the approval-requested notification.
+--
+-- This is the INVERSE of effective_team_ids(). That function is subject-side —
+-- given a user, which teams do they effectively belong to — and every
+-- authorisation read in the product asks it in that direction. Notifying a team
+-- approver needs the other direction, and the two must agree: a person the
+-- guard would accept as an approver but the notifier never told is an approval
+-- that waits on somebody who was never asked.
+--
+-- So rather than re-derive the ancestry rule (teams.path overlap, migration
+-- 038), this asks the SAME function once per candidate and keeps whoever it
+-- answers for. It cannot drift from the authorisation rule because it IS the
+-- authorisation rule — the exact reasoning migration 038's header gives for
+-- extracting the function rather than letting callers copy the expansion.
+--
+-- The candidate set is team_members, not users: somebody in no team cannot be
+-- in one team's effective set, so the correlated call runs over the members of
+-- the org rather than its whole roster. This runs once per approval REQUEST —
+-- a rare write, never a read path — so the correlated shape buys consistency
+-- at a cost nothing hot pays.
+SELECT DISTINCT tm.user_id
+FROM team_members tm
+JOIN users u ON u.id = tm.user_id AND u.deleted_at IS NULL
+WHERE tm.org_id = @org_id
+  AND @team_id::uuid IN (
+      SELECT e.team_id FROM effective_team_ids(@org_id, tm.user_id) AS e(team_id)
+  );
