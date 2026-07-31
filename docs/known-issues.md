@@ -994,7 +994,39 @@ fix is to invert that test rather than to discover the change downstream.
 
 ---
 
-## 26. A team-shared dashboard cannot be renamed without re-naming its team
+## 26. ~~A team-shared dashboard cannot be renamed without re-naming its team~~ (RESOLVED)
+
+**Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
+**Status**: Resolved by the config & build integrity follow-up. `dashboards.Service.Update` now
+inherits `existing.VisibilityTeamID` alongside `existing.Visibility`, with the semantics #25
+decided: inherit while the audience is unchanged, never across an explicit change.
+
+**Tests.** `TestDashboardUpdate_TheTeamInheritsWithTheVisibility` (four cases) and
+`TestDashboardUpdate_MovingToATeamAudienceStillNamesTheTeam` in
+`internal/core/dashboards/service_test.go`, plus
+`TestDashboardsMatrix_RenamingATeamSharedDashboardKeepsItsTeam` in
+`internal/core/api/dashboards_endpoint_matrix_integration_test.go`, which asserts it over HTTP
+against real PostgreSQL — the layer it was reported at. Both fail against the unfixed service with
+the exact 422 quoted below. The HTTP test uses a **member**, not the org owner: an org admin
+bypasses the team-membership check in `Normalise`, so an owner-persona test would have passed with
+half the rule deleted.
+
+**One thing found while fixing it, which corrects #25's own record.** #25's test comment claims
+both halves of the pattern are load-bearing — "delete the visibility-unchanged guard and the
+team→org case keeps a team id it was told to drop". Mutation-tested here, that is **false**:
+removing the `d.Visibility == existing.Visibility` guard fails no test, because `Normalise`
+independently nils the team id for a private or org audience. The guard is still worth keeping —
+it means the merge never fabricates a pair the caller did not state, rather than relying on a
+downstream function to tidy one away — but it is belt-and-braces, not a second load-bearing half.
+The dashboards tests say so; `internal/core/views/view_refusals_test.go` still carries the
+overstated claim and is left for whoever next has that file open.
+
+**Also noticed, not fixed.** The 422 a *dashboard* PATCH returns reads "a team-visible **view**
+must name a team" — `views.ErrTeamRequired` is a shared sentinel worded for the model it was first
+written in. Right behaviour, wrong noun on the dashboards surface. Rewording it changes the
+saved-views message too, so it is recorded rather than done.
+
+<details><summary>Original entry</summary>
 
 **Severity**: Low (a 422 on a request that is not wrong; no data loss, no disclosure)
 **Status**: Open. Found by the maintenance mini-pass while closing #25, which is the identical
@@ -1036,6 +1068,8 @@ fix, and a move-to-team-without-a-team case that must keep failing after it.
 when somebody fixes this. `internal/core/dashboards/service_test.go:196` renames a dashboard, but
 the fixture is a private one, which is the visibility that carries no payload — so it passes either
 way and says nothing about this.
+
+</details>
 
 ---
 

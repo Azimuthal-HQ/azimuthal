@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -405,5 +406,85 @@ func TestAggregateMatrix_GuardAndValidation(t *testing.T) {
 		res := ts.post(t, path, map[string]any{"query": json.RawMessage(beaconViewQuery)}, true)
 		require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
 		require.Contains(t, string(res.Body), `"buckets":[]`, "buckets is an array, never null")
+	})
+}
+
+// TestDashboardsMatrix_RenamingATeamSharedDashboardKeepsItsTeam is
+// known-issues #26 over the wire, which is the layer it was reported at, and
+// the #25 merge-semantics standard applied to the dashboards twin.
+//
+// PATCH is a merge, so a request carrying only a new name inherits the row's
+// whole audience — the team included. Update inherited the visibility without
+// the team it names, producing "team with no team", and the caller was
+// answered 422 "a team-visible view must name a team" about a field they had
+// not sent.
+//
+// The second half asserts the merge does not overreach: a request that MOVES
+// the dashboard to the org audience drops the team id rather than inheriting
+// it. Both halves run against real PostgreSQL, because the service-level twin
+// runs against a fake store and a fake cannot show that the column was
+// actually written.
+func TestDashboardsMatrix_RenamingATeamSharedDashboardKeepsItsTeam(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+
+	// A member, not the org owner: an org admin bypasses the team-membership
+	// check in Normalise, so an owner-persona test would pass with the
+	// membership half of the rule deleted.
+	member := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	memberToken := ts.tokenFor(t, member.ID, member.Email)
+
+	teamID := uuid.New()
+	_, err := ts.DB.Pool.Exec(ctx,
+		`INSERT INTO teams (id, org_id, slug, name, path) VALUES ($1,$2,$3,$4,ARRAY[$1]::uuid[])`,
+		teamID, ts.OrgID, "dashrenamers-"+uuid.NewString()[:8], "Dash renamers")
+	require.NoError(t, err)
+	_, err = ts.DB.Pool.Exec(ctx,
+		`INSERT INTO team_members (org_id, team_id, user_id) VALUES ($1,$2,$3)`, ts.OrgID, teamID, member.ID)
+	require.NoError(t, err)
+
+	res := ts.postAs(t, memberToken, dashboardsPath(ts.OrgID), map[string]any{
+		"name": "Squad dashboard", "visibility": "team", "visibility_team_id": teamID.String(),
+	})
+	require.Equal(t, http.StatusCreated, res.StatusCode, "%s", res.Body)
+
+	var out struct {
+		ID               uuid.UUID  `json:"id"`
+		Name             string     `json:"name"`
+		Visibility       string     `json:"visibility"`
+		VisibilityTeamID *uuid.UUID `json:"visibility_team_id"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body, &out))
+	require.Equal(t, &teamID, out.VisibilityTeamID)
+	id := out.ID
+
+	t.Run("a name-only PATCH keeps the team share", func(t *testing.T) {
+		res := ts.patchAs(t, memberToken, dashboardsPath(ts.OrgID)+"/"+id.String(), map[string]any{
+			"name": "Squad dashboard v2",
+		})
+		require.Equal(t, http.StatusOK, res.StatusCode,
+			"renaming a team-shared dashboard must not require re-naming its team: %s", res.Body)
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		require.Equal(t, "Squad dashboard v2", out.Name)
+		require.Equal(t, "team", out.Visibility)
+		require.Equal(t, &teamID, out.VisibilityTeamID)
+
+		// And it is what was stored, not only what was echoed.
+		res = ts.getAs(t, memberToken, dashboardsPath(ts.OrgID)+"/"+id.String())
+		require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		require.Equal(t, "team", out.Visibility)
+		require.Equal(t, &teamID, out.VisibilityTeamID)
+	})
+
+	t.Run("moving it to the org audience drops the team", func(t *testing.T) {
+		res := ts.patchAs(t, memberToken, dashboardsPath(ts.OrgID)+"/"+id.String(), map[string]any{
+			"name": "Everyone's dashboard", "visibility": "org",
+		})
+		require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
+		require.NoError(t, json.Unmarshal(res.Body, &out))
+		require.Equal(t, "org", out.Visibility)
+		require.Nil(t, out.VisibilityTeamID,
+			"a widened dashboard carrying its old team id is a lie the next reader has to interpret")
 	})
 }
