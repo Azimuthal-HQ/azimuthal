@@ -1,5 +1,12 @@
-# Logs
-logs
+# Anchoring rule: a pattern with no slash matches at every depth below this
+# file, not just beside it. A pattern meaning one path gets a leading slash; a
+# genuinely global one stays bare. Enforced by
+# TestGitignore_NoUnreviewedBarePatterns in internal/repohygiene.
+
+# Logs.
+# /logs is this directory's own log dir — bare, it also matched web/src/logs/.
+# The globs stay bare: a stray log file is disposable wherever it lands.
+/logs
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,10 +14,12 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# node_modules stays bare: nested ones are real, and all of them are disposable.
 node_modules
 dist/*
 !dist/.gitkeep
-dist-ssr
+# The Vite SSR build output, which lands here and nowhere else.
+/dist-ssr
 *.local
 
 # Editor directories and files

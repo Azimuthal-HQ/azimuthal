@@ -35,12 +35,41 @@ func repoRoot(t *testing.T) string {
 	return ""
 }
 
-// gitignorePatterns returns every non-blank, non-comment line of the root
-// .gitignore, in file order, paired with its 1-based line number.
-func gitignorePatterns(t *testing.T) []gitignoreLine {
+// trackedGitignores returns every .gitignore git knows about, repo-relative
+// and slash-separated.
+//
+// Every one of them, not just the root: git applies each file's patterns
+// relative to its own directory, so a bare pattern in web/.gitignore has
+// exactly the same reach-at-any-depth behaviour within web/ that a bare
+// pattern in the root file has across the repository.
+func trackedGitignores(t *testing.T, root string) []string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(repoRoot(t), ".gitignore"))
-	require.NoError(t, err, "the repository must have a root .gitignore")
+	cmd := exec.Command("git", "ls-files", "--full-name", "*.gitignore", ".gitignore")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	require.NoError(t, err, "listing tracked .gitignore files")
+
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			files = append(files, line)
+		}
+	}
+	require.NotEmpty(t, files, "the repository must have at least a root .gitignore")
+	return files
+}
+
+type gitignoreLine struct {
+	Number  int
+	Pattern string
+}
+
+// gitignorePatterns returns every non-blank, non-comment line of one
+// .gitignore, in file order, paired with its 1-based line number.
+func gitignorePatterns(t *testing.T, root, relPath string) []gitignoreLine {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relPath)))
+	require.NoError(t, err, "reading %s", relPath)
 
 	var out []gitignoreLine
 	for i, line := range strings.Split(string(raw), "\n") {
@@ -53,13 +82,9 @@ func gitignorePatterns(t *testing.T) []gitignoreLine {
 	return out
 }
 
-type gitignoreLine struct {
-	Number  int
-	Pattern string
-}
-
 // isBare reports whether git will match this pattern at EVERY directory depth
-// rather than only against the repository root.
+// below the .gitignore that declares it, rather than only against that file's
+// own directory.
 //
 // git's rule: a pattern containing a slash anywhere other than at the end is
 // relative to the .gitignore's own directory; a pattern with no slash, or with
@@ -71,79 +96,114 @@ func isBare(pattern string) bool {
 	return !strings.Contains(p, "/")
 }
 
-// reviewedBarePatterns is the allowlist: every slash-less pattern that is
-// deliberately global, with the reason it is.
+// reviewedBarePatterns is the allowlist, per .gitignore: every slash-less
+// pattern that is deliberately global, with the reason it is.
 //
 // This is a ledger of decisions, not a ledger of exemptions — each entry names
 // a mechanism that genuinely writes files at arbitrary depth. If you are adding
 // a row here to make the suite pass, the pattern almost certainly wants a
 // leading slash instead. See the header comment in .gitignore.
-var reviewedBarePatterns = map[string]string{
-	"*.exe":   "compiled binary; never committed at any depth",
-	"*.exe~":  "editor backup of a compiled binary",
-	"*.dll":   "compiled binary; never committed at any depth",
-	"*.so":    "compiled binary; never committed at any depth",
-	"*.dylib": "compiled binary; never committed at any depth",
+var reviewedBarePatterns = map[string]map[string]string{
+	".gitignore": {
+		"*.exe":   "compiled binary; never committed at any depth",
+		"*.exe~":  "editor backup of a compiled binary",
+		"*.dll":   "compiled binary; never committed at any depth",
+		"*.so":    "compiled binary; never committed at any depth",
+		"*.dylib": "compiled binary; never committed at any depth",
 
-	"*.test":         "`go test -c` writes it into whichever package directory it ran in",
-	"*.out":          "`go test -coverprofile` and pprof write next to the invocation",
-	"*.coverprofile": "same class as *.out; tooling writes it where it is invoked",
+		"*.test":         "`go test -c` writes it into whichever package directory it ran in",
+		"*.out":          "`go test -coverprofile` and pprof write next to the invocation",
+		"*.coverprofile": "same class as *.out; tooling writes it where it is invoked",
 
-	".env":          "a .env is a secret wherever it appears — web/.env as much as the root one",
-	"!.env.test":    "negation of the above; bare so it keeps tracking samples at any depth",
-	"!.env.example": "negation of the above; bare so it keeps tracking samples at any depth",
+		".env":          "a .env is a secret wherever it appears — web/.env as much as the root one",
+		"!.env.test":    "negation of the above; bare so it keeps tracking samples at any depth",
+		"!.env.example": "negation of the above; bare so it keeps tracking samples at any depth",
 
-	".claude/":          "Claude Code settings; worktrees and nested checkouts each get their own",
-	".golangci-cache*/": "per-worktree lint caches, created beside whichever worktree runs the linter",
+		".claude/":          "Claude Code settings; worktrees and nested checkouts each get their own",
+		".golangci-cache*/": "per-worktree lint caches, created beside whichever worktree runs the linter",
+	},
+	"web/.gitignore": {
+		"*.log":            "a log is disposable wherever it lands",
+		"npm-debug.log*":   "npm writes it into whichever directory it failed in",
+		"yarn-debug.log*":  "as above, yarn",
+		"yarn-error.log*":  "as above, yarn",
+		"pnpm-debug.log*":  "as above, pnpm",
+		"lerna-debug.log*": "as above, lerna",
+
+		"node_modules": "nested node_modules are real and all of them are disposable",
+		"*.local":      "Vite's convention for local-only env files, at any depth",
+
+		".idea":     "JetBrains project dir; can appear beside any sub-project",
+		".DS_Store": "macOS writes one into every directory it browses",
+		"*.suo":     "Visual Studio user options, any depth",
+		"*.ntvs*":   "Visual Studio Node tools, any depth",
+		"*.njsproj": "Visual Studio Node project, any depth",
+		"*.sln":     "Visual Studio solution, any depth",
+		"*.sw?":     "vim swap files, written beside whatever is being edited",
+	},
 }
 
 // TestGitignore_NoUnreviewedBarePatterns fails when a slash-less pattern
-// appears in .gitignore without a reviewed reason.
+// appears in any tracked .gitignore without a reviewed reason.
 //
 // The defect this guards is the `server` trap: a bare `server` pattern matched
 // `cmd/server/`, so every new file added under that directory was skipped
 // silently by `git add -A`. Nothing announced it — `git status` does not report
 // paths it has been told to ignore — and the files were simply missing from the
-// commit. The same shape was live in five other patterns when this test was
-// written (`data/` matched `web/src/data/`, `coverage.*` matched a
+// commit. The same shape was live in eleven other patterns when this test was
+// written: `data/` matched `web/src/data/`, `coverage.*` matched a
 // `docs/coverage.md` that could have been added at any time, plus `bin/`,
-// `go.work` and `profile.cov`).
+// `go.work`, `go.work.sum`, `profile.cov` and the three progress directories in
+// the root file, and `logs` and `dist-ssr` in web/.gitignore.
 //
 // Deleting this test's assertion would let the next one through unnoticed,
 // which is the whole failure mode.
 func TestGitignore_NoUnreviewedBarePatterns(t *testing.T) {
-	var unreviewed []string
-	seen := map[string]bool{}
+	root := repoRoot(t)
+	requireGitRepo(t, root)
 
-	for _, line := range gitignorePatterns(t) {
-		if !isBare(line.Pattern) {
-			continue
-		}
-		seen[line.Pattern] = true
-		if _, ok := reviewedBarePatterns[line.Pattern]; !ok {
-			unreviewed = append(unreviewed, line.Pattern+" (.gitignore:"+strconv.Itoa(line.Number)+")")
-		}
+	for _, file := range trackedGitignores(t, root) {
+		t.Run(file, func(t *testing.T) {
+			reviewed, ok := reviewedBarePatterns[file]
+			require.True(t, ok,
+				"%s is a tracked .gitignore with no entry in reviewedBarePatterns. "+
+					"Add one (an empty map is fine if it has no bare patterns) so a new "+
+					"file cannot arrive with an unreviewed bare pattern in it.", file)
+
+			var unreviewed []string
+			seen := map[string]bool{}
+			for _, line := range gitignorePatterns(t, root, file) {
+				if !isBare(line.Pattern) {
+					continue
+				}
+				seen[line.Pattern] = true
+				if _, allowed := reviewed[line.Pattern]; !allowed {
+					unreviewed = append(unreviewed,
+						line.Pattern+" ("+file+":"+strconv.Itoa(line.Number)+")")
+				}
+			}
+
+			require.Empty(t, unreviewed,
+				"these patterns have no slash, so git matches them at EVERY depth below %s, "+
+					"not just its own directory:\n  %s\n\n"+
+					"If the pattern means one path, give it a leading slash (`/data/`, not `data/`). "+
+					"If it is genuinely global, add it to reviewedBarePatterns with the reason. "+
+					"See the header comment in .gitignore.",
+				file, strings.Join(unreviewed, "\n  "))
+
+			// The ledger must not outlive its entries either: a stale row would
+			// quietly re-permit a pattern someone had deliberately anchored.
+			var stale []string
+			for pattern := range reviewed {
+				if !seen[pattern] {
+					stale = append(stale, pattern)
+				}
+			}
+			require.Empty(t, stale,
+				"reviewedBarePatterns[%q] lists patterns no longer in that file: %v — remove them",
+				file, stale)
+		})
 	}
-
-	require.Empty(t, unreviewed,
-		"these .gitignore patterns have no slash, so git matches them at EVERY depth, "+
-			"not just the repository root:\n  %s\n\n"+
-			"If the pattern means one path, give it a leading slash (`/data/`, not `data/`). "+
-			"If it is genuinely global, add it to reviewedBarePatterns with the reason. "+
-			"See the header comment in .gitignore.",
-		strings.Join(unreviewed, "\n  "))
-
-	// The ledger must not outlive its entries either: a stale row here would
-	// quietly re-permit a pattern someone had deliberately anchored.
-	var stale []string
-	for pattern := range reviewedBarePatterns {
-		if !seen[pattern] {
-			stale = append(stale, pattern)
-		}
-	}
-	require.Empty(t, stale,
-		"reviewedBarePatterns lists patterns that are no longer in .gitignore: %v — remove them",
-		stale)
 }
 
 // TestGitignore_RootIntentPatternsDoNotMatchAtDepth is the behavioural half.
@@ -171,11 +231,13 @@ func TestGitignore_RootIntentPatternsDoNotMatchAtDepth(t *testing.T) {
 		"internal/x/profile.cov",     // was matched by bare `profile.cov`
 		"docs/release-progress/n.md", // was matched by bare `release-progress/`
 		"cmd/server/handlers.go",     // the original defect: bare `server`
+		"web/src/logs/index.ts",      // was matched by bare `logs` in web/.gitignore
+		"web/src/dist-ssr/entry.ts",  // was matched by bare `dist-ssr`
 	}
 	for _, path := range mustBeVisible {
 		ignored, by := gitIgnores(t, root, path)
 		require.False(t, ignored,
-			"%s would be silently ignored by .gitignore rule %q — anchor that pattern with a leading slash", path, by)
+			"%s would be silently ignored by rule %q — anchor that pattern with a leading slash", path, by)
 	}
 
 	// The anchoring must not have weakened anything: these still must be ignored.
@@ -189,6 +251,9 @@ func TestGitignore_RootIntentPatternsDoNotMatchAtDepth(t *testing.T) {
 		"internal/core/api/handler.exe",   // genuinely global extension
 		".env",                            // a secret at the root
 		"web/.env",                        // and at depth — deliberately still global
+		"web/dist/index.html",             // the built bundle, via web/.gitignore
+		"web/logs/vite.log",               // web/.gitignore's own directory
+		"web/dist-ssr/entry.js",           // likewise
 	}
 	for _, path := range mustStayIgnored {
 		ignored, _ := gitIgnores(t, root, path)
