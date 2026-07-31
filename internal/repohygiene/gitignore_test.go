@@ -204,7 +204,10 @@ func requireGitRepo(t *testing.T, root string) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Fatalf("git is not on PATH; this test asks git what .gitignore means: %v", err)
 	}
-	cmd := exec.Command("git", "-C", root, "rev-parse", "--git-dir")
+	// cmd.Dir rather than `-C root`, so this invocation has no variable
+	// argument at all and needs no gosec exemption.
+	cmd := exec.Command("git", "rev-parse", "--git-dir")
+	cmd.Dir = root
 	require.NoError(t, cmd.Run(), "%s is not a git checkout; this test asks git what .gitignore means", root)
 }
 
@@ -215,7 +218,11 @@ func requireGitRepo(t *testing.T, root string) {
 // matches and 1 when none does; anything else is a real error.
 func gitIgnores(t *testing.T, root, path string) (ignored bool, rule string) {
 	t.Helper()
-	cmd := exec.Command("git", "-C", root, "check-ignore", "-v", "--no-index", path)
+	// #nosec G204 -- "git" is constant and path is a string literal from the
+	// tables in this file; nothing here reaches outside the test. Same idiom and
+	// same rule as cmd/server/backup.go.
+	cmd := exec.Command("git", "check-ignore", "-v", "--no-index", path)
+	cmd.Dir = root
 	out, err := cmd.Output()
 	if err == nil {
 		return true, strings.TrimSpace(string(out))

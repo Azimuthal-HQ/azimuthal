@@ -784,6 +784,19 @@ the underlying error into the client-visible message —
 `fmt.Sprintf("ticket operation failed: %v", err)`. Every other 500 in the API uses a fixed string.
 Any future unmapped repository error will ship the same way.
 
+> **Partially closed (hygiene-gates pass, H5).** The three default arms in
+> `internal/core/api/projects` — `handleProjectError`, `handleItemTypeError` and
+> `handleCustomFieldError` — now answer a fixed message and send the full error to the server log
+> under the caller's request id (`respondUnmapped` in that package's handler.go).
+> `TestUnmappedProjectError_*` and `TestUnmappedSchemaErrors_*` fail if any of them interpolates
+> again, and assert the log side too, so the detail is moved rather than discarded.
+>
+> **Still open, same shape:** `handleTicketError` (`internal/core/api/tickets/handler.go:830`) —
+> the arm this issue was actually filed against — and `internal/core/api/wiki/handler.go:864`.
+> Both remain exactly as described above. Each is the same small change plus its fails-before
+> test; they were left out because they are different packages from that pass's scope, and
+> because the tickets one is entangled with (a) and (c) below.
+
 **c. A ticket can be assigned to a user in ANOTHER organisation.** `tickets.assignee_id` references
 the global `users` table, so the FK is satisfied and the write lands: HTTP 200, and the row now
 names somebody with no membership in the org and no access to the space. The notification enqueuer
