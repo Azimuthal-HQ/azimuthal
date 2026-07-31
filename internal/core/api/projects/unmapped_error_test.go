@@ -49,6 +49,14 @@ func (f *failingItemRepo) GetByID(context.Context, uuid.UUID) (*projects.Item, e
 	return nil, errSynthetic
 }
 
+// GetByIDInSpace fails the same way. It is the read the space-scoped routes
+// actually take now, so without this override the handler would answer the
+// embedded mock's ErrNotFound and these tests would assert a 404 mapping rather
+// than the default arm they exist to cover.
+func (f *failingItemRepo) GetByIDInSpace(context.Context, uuid.UUID, uuid.UUID) (*projects.Item, error) {
+	return nil, errSynthetic
+}
+
 func handlerWithFailingItems() *projectsapi.Handler {
 	ir := &failingItemRepo{}
 	sr := &mockSprintRepo{}
@@ -105,7 +113,8 @@ func decodeWireError(t *testing.T, rr *httptest.ResponseRecorder) wireError {
 // again must fail.
 func TestUnmappedProjectError_DoesNotLeakInternalDetailToTheWire(t *testing.T) {
 	h := handlerWithFailingItems()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", uuid.New().String())
+	req := withParam(withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"itemID", uuid.New().String()), "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 
 	h.GetItem(rr, req)
@@ -140,7 +149,8 @@ func TestUnmappedProjectError_FullErrorReachesTheServerLog(t *testing.T) {
 	// the id is empty on both sides and the join below would assert nothing.
 	// A supplied X-Request-ID is echoed verbatim, which makes it deterministic.
 	const wantID = "req_h5_join_probe"
-	r := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", uuid.New().String())
+	r := withParam(withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"itemID", uuid.New().String()), "spaceID", uuid.New().String())
 	r.Header.Set("X-Request-ID", wantID)
 	rr := httptest.NewRecorder()
 	respond.RequestID(http.HandlerFunc(h.GetItem)).ServeHTTP(rr, r)
@@ -230,7 +240,8 @@ func TestUnmappedSchemaErrors_DoNotLeakInternalDetailToTheWire(t *testing.T) {
 func TestMappedProjectErrors_StillCarryTheirOwnMessages(t *testing.T) {
 	h := setupHandler() // mockItemRepo.GetByID returns projects.ErrNotFound
 	rr := httptest.NewRecorder()
-	h.GetItem(rr, withParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", uuid.New().String()))
+	h.GetItem(rr, withParam(withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"itemID", uuid.New().String()), "spaceID", uuid.New().String()))
 
 	require.Equal(t, http.StatusNotFound, rr.Code)
 	env := decodeWireError(t, rr)
