@@ -382,11 +382,12 @@ func (a *WorkflowTierAdapter) DecideApproval(
 
 // ApprovalsForEntity returns every request ever made about an item.
 func (a *WorkflowTierAdapter) ApprovalsForEntity(
-	ctx context.Context, entityType workflow.ApprovalEntityType, entityID uuid.UUID,
+	ctx context.Context, spaceID uuid.UUID, entityType workflow.ApprovalEntityType, entityID uuid.UUID,
 ) ([]workflow.Approval, error) {
 	rows, err := a.q.ListApprovalsForEntity(ctx, generated.ListApprovalsForEntityParams{
 		EntityType: string(entityType),
 		EntityID:   entityID,
+		SpaceID:    spaceID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("workflow tier adapter list approvals for entity: %w", err)

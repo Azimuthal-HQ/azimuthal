@@ -457,6 +457,50 @@ func TestEntitySpaceScoping_WorkflowTransitionIsSpaceScoped(t *testing.T) {
 	})
 }
 
+// TestEntitySpaceScoping_ApprovalHistoryIsSpaceScoped covers the approval
+// surface, which shipped in #99 after the rest of this audit was written and
+// carried the same shape.
+//
+// GET /workflow/entities/{entityType}/{entityID}/approvals parsed {spaceID}
+// into `_` — validating that the URL was well formed and then discarding it —
+// and read the history keyed on the entity id alone. An approval row records
+// who asked, who decided, when, and the decline reason, and workflow_approvals
+// has carried a NOT NULL space_id since migration 047: the column that closes
+// this was already on the row, and the sibling query for the space's pending
+// list already filtered on it.
+//
+// The persona holds `agent` on space A so the route's own guards pass; what it
+// must not reach is an approval belonging to space B.
+func TestEntitySpaceScoping_ApprovalHistoryIsSpaceScoped(t *testing.T) {
+	f := newScopeFixture(t)
+	ctx := context.Background()
+
+	agent := testutil.CreateTestUserWithRole(t, f.ts.DB.Pool, f.ts.OrgID, "member")
+	_, err := f.ts.GrantService.Create(ctx, f.ts.OrgID, f.spaceA.ID,
+		access.SubjectUser, agent.ID, access.RoleAgent, f.ts.UserID)
+	require.NoError(t, err)
+	agentTok := f.ts.tokenFor(t, agent.ID, agent.Email)
+
+	// An approval on the space-B item, carrying a decline reason — the field
+	// with the most to disclose.
+	const declineReason = "XSPACE-SECRET-APPROVAL-REASON"
+	_, err = f.ts.DB.Pool.Exec(ctx,
+		`INSERT INTO workflow_approvals
+		   (id, space_id, entity_type, entity_id, from_status, to_status,
+		    requested_by, decided_by, decided_at, decision, reason)
+		 VALUES ($1,$2,'item',$3,'open','in_review',$4,$4,now(),'declined',$5)`,
+		uuid.New(), f.spaceB.ID, f.itemB, f.ts.UserID, declineReason)
+	require.NoError(t, err)
+
+	res := f.ts.getAs(t, agentTok, fmt.Sprintf(
+		"%s/workflow/entities/item/%s/approvals", f.base(f.spaceA.ID), f.itemB))
+	require.Equal(t, http.StatusOK, res.StatusCode, "body: %s", string(res.Body))
+	require.NotContains(t, string(res.Body), declineReason,
+		"an approval history must not be readable through a space that does not own it")
+	require.Contains(t, []string{"[]", "[]\n"}, string(res.Body),
+		"the history of an entity in another space must come back empty")
+}
+
 // TestEntitySpaceScoping_GivesNoExistenceOracle pins the no-oracle property
 // across the family: an entity that exists in a space the caller cannot read
 // must be indistinguishable from an id that names nothing at all.

@@ -594,7 +594,7 @@ func TestTierAdapter_ApprovalsForEntityKeepsHistory(t *testing.T) {
 	second, err := f.tier.CreateApproval(ctx, request)
 	require.NoError(t, err)
 
-	history, err := f.tier.ApprovalsForEntity(ctx, workflow.ApprovalEntityTicket, entityID)
+	history, err := f.tier.ApprovalsForEntity(ctx, f.spaceID, workflow.ApprovalEntityTicket, entityID)
 	require.NoError(t, err)
 	require.Len(t, history, 2, "a declined request is kept, not replaced")
 
@@ -607,9 +607,16 @@ func TestTierAdapter_ApprovalsForEntityKeepsHistory(t *testing.T) {
 	require.NotEmpty(t, history[1].DecidedByName, "the decider is resolved for display")
 
 	// Another entity's history is empty.
-	other, err := f.tier.ApprovalsForEntity(ctx, workflow.ApprovalEntityTicket, uuid.New())
+	other, err := f.tier.ApprovalsForEntity(ctx, f.spaceID, workflow.ApprovalEntityTicket, uuid.New())
 	require.NoError(t, err)
 	require.Empty(t, other)
+
+	// And so is the SAME entity's history read through a different space: the
+	// query is reconciled against space_id, so an approval history cannot be
+	// reached by naming its entity from a space the caller happens to hold.
+	wrongSpace, err := f.tier.ApprovalsForEntity(ctx, uuid.New(), workflow.ApprovalEntityTicket, entityID)
+	require.NoError(t, err)
+	require.Empty(t, wrongSpace, "an approval history must not be readable through another space")
 }
 
 // Deciding an approval that does not exist reports not-found rather than

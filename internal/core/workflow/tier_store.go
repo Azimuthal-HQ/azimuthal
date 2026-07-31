@@ -67,8 +67,10 @@ type TierStore interface {
 	// UPDATE would be wrong.
 	DecideApproval(ctx context.Context, id, decidedBy uuid.UUID, d Decision, reason *string) (Approval, error)
 	// ApprovalsForEntity returns every request ever made about an item, newest
-	// first, decided and pending alike.
-	ApprovalsForEntity(ctx context.Context, entityType ApprovalEntityType, entityID uuid.UUID) ([]Approval, error)
+	// first, decided and pending alike, reconciled against the space the request
+	// named. An entity in another space yields an empty history rather than
+	// somebody else's.
+	ApprovalsForEntity(ctx context.Context, spaceID uuid.UUID, entityType ApprovalEntityType, entityID uuid.UUID) ([]Approval, error)
 	// PendingApprovalsForSpace powers both the "awaiting a decision" surface
 	// and the board's blocked markers.
 	PendingApprovalsForSpace(ctx context.Context, spaceID uuid.UUID) ([]Approval, error)
