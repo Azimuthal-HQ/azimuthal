@@ -2911,6 +2911,17 @@ export function useTransitionTicketStatus(spaceId: string, ticketId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
+      // A gated transition CREATES an approval request, so the block that
+      // renders it must re-read. This lives HERE rather than in the page for a
+      // reason worth keeping: a component-level useQueryClient throws "No
+      // QueryClient set" in every page test that replaces lib/api wholesale —
+      // which is all of them, including the customer portal's — and those
+      // harnesses deliberately mount no provider. Invalidating where the
+      // mutation already holds a client costs the page nothing and keeps the
+      // sibling test suites working.
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.entityApprovals(spaceId, 'ticket', ticketId),
+      });
     },
   });
 }
@@ -3101,6 +3112,17 @@ export function useTransitionProjectItemStatus(spaceId: string, itemId: string) 
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItem(spaceId, itemId) });
+      // A gated transition CREATES an approval request, so the block that
+      // renders it must re-read. This lives HERE rather than in the page for a
+      // reason worth keeping: a component-level useQueryClient throws "No
+      // QueryClient set" in every page test that replaces lib/api wholesale —
+      // which is all of them, including the customer portal's — and those
+      // harnesses deliberately mount no provider. Invalidating where the
+      // mutation already holds a client costs the page nothing and keeps the
+      // sibling test suites working.
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.entityApprovals(spaceId, 'item', itemId),
+      });
     },
   });
 }

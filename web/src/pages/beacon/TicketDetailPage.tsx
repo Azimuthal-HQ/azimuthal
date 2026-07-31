@@ -15,7 +15,6 @@ import { ModuleChip } from '../../shell/ModuleChip';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import { Markdown } from '../../components/Markdown';
-import { useQueryClient } from '@tanstack/react-query';
 import { ApprovalBlock } from '../../components/workflow/ApprovalBlock';
 import {
   runStatusChange,
@@ -32,7 +31,6 @@ import {
   useMe,
   useSpace,
   friendlyErrorMessage,
-  queryKeys,
   type TicketStatus,
   type CommentVisibility,
 } from '../../lib/api';
@@ -177,7 +175,6 @@ export function TicketDetailPage() {
   // when it should have gone out costs a delay; the reverse cannot be undone.
   const [commentVisibility, setCommentVisibility] = useState<CommentVisibility>('internal');
   const [statusOutcome, setStatusOutcome] = useState<StatusOutcome>({ kind: 'idle' });
-  const queryClient = useQueryClient();
 
   // A status change has THREE outcomes and this page used to handle one. The
   // await had no try/catch and never read `.error`, so a guard refusal was an
@@ -192,14 +189,6 @@ export function TicketDetailPage() {
       'The status could not be changed.',
     );
     setStatusOutcome(outcome);
-    // A gated transition CREATES an approval request, so the block that renders
-    // it has to re-read. Nothing else invalidates that query: the status
-    // mutation knows nothing about approvals, and without this the 202 came
-    // back, the notice appeared, and the pending block did not — which reads as
-    // the approval never having been requested.
-    void queryClient.invalidateQueries({
-      queryKey: queryKeys.entityApprovals(spaceId, 'ticket', ticketId ?? ''),
-    });
     // Refetch on every outcome, not just success: the select is bound to
     // ticket.status, so re-reading the server's truth is what snaps it back
     // when the transition was refused or is merely pending.

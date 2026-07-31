@@ -33,6 +33,13 @@ vi.mock('../../../lib/api', () => ({
   // keeps the share surface out of this page's assertions.
   useEffectiveAccess: () => ({ data: undefined }),
   useEntityShares: () => ({ data: undefined }),
+  // ApprovalBlock (P-W PR-B) renders nothing for an item with no approval
+  // history, which keeps the ADR-0011 surface out of this page's assertions
+  // exactly as the two above keep the share surface out. Declared rather than
+  // omitted because this mock replaces the module wholesale: an unenumerated
+  // dependency throws, which is what makes the block a real inventory of what
+  // the page reaches for.
+  useEntityApprovals: () => ({ data: [], isLoading: false, error: null }),
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
