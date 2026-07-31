@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -87,7 +88,13 @@ type Config struct {
 	AppEnv     string
 	AppPort    int
 	AppBaseURL string
-	LogLevel   string
+	// LogLevel is the minimum level the server logs at, read by
+	// cmd/server/serve.go. It is stored PARSED rather than as the raw string
+	// so that a value which is not a level cannot be represented — LOG_LEVEL
+	// is checked at Load like every other malformed setting here, instead of
+	// being accepted and then quietly ignored, which is what it was until the
+	// config & build integrity follow-up.
+	LogLevel slog.Level
 }
 
 // Bcrypt work-factor bounds.
@@ -195,7 +202,10 @@ func Load() (*Config, error) {
 		AppEnv:             v.GetString("APP_ENV"),
 		AppPort:            v.GetInt("APP_PORT"),
 		AppBaseURL:         v.GetString("APP_BASE_URL"),
-		LogLevel:           v.GetString("LOG_LEVEL"),
+	}
+
+	if err := cfg.parseLogLevel(v); err != nil {
+		return nil, err
 	}
 
 	if err := cfg.parseDurations(v); err != nil {
@@ -253,6 +263,28 @@ func (c *Config) parseDurations(v *viper.Viper) error {
 		return fmt.Errorf("invalid AZIMUTHAL_PORTAL_SESSION_TTL %q: must be positive", v.GetString("AZIMUTHAL_PORTAL_SESSION_TTL"))
 	}
 	c.PortalSessionTTL = portalSessionTTL
+	return nil
+}
+
+// parseLogLevel reads LOG_LEVEL into a slog.Level.
+//
+// slog.Level.UnmarshalText accepts "debug", "info", "warn" and "error" in any
+// case, plus offsets such as "info+2". Anything else is refused at startup
+// rather than silently run at info, on the same reasoning as every other
+// malformed setting in this file: a value the server ignores is worse than one
+// it rejects, because an operator who typed "warning" and got info-level logs
+// has no way to tell that from a server that is genuinely quiet.
+//
+// The viper default guarantees a non-empty string here — an env var set to ""
+// is treated as unset (AllowEmptyEnv is off), so this sees "info" rather than
+// the empty string, which UnmarshalText would reject.
+func (c *Config) parseLogLevel(v *viper.Viper) error {
+	raw := strings.TrimSpace(v.GetString("LOG_LEVEL"))
+	var lvl slog.Level
+	if err := lvl.UnmarshalText([]byte(raw)); err != nil {
+		return fmt.Errorf("invalid LOG_LEVEL %q: must be debug, info, warn or error", raw)
+	}
+	c.LogLevel = lvl
 	return nil
 }
 

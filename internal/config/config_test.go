@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -67,8 +68,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.AppPort != 8080 {
 		t.Errorf("expected default APP_PORT 8080, got %d", cfg.AppPort)
 	}
-	if cfg.LogLevel != "info" {
-		t.Errorf("expected default LOG_LEVEL 'info', got %q", cfg.LogLevel)
+	if cfg.LogLevel != slog.LevelInfo {
+		t.Errorf("expected default LOG_LEVEL info, got %v", cfg.LogLevel)
 	}
 	if cfg.StorageBucket != "azimuthal" {
 		t.Errorf("expected default STORAGE_BUCKET 'azimuthal', got %q", cfg.StorageBucket)
@@ -100,8 +101,8 @@ func TestLoad_ValidConfig(t *testing.T) {
 	if cfg.AppPort != 9090 {
 		t.Errorf("expected APP_PORT 9090, got %d", cfg.AppPort)
 	}
-	if cfg.LogLevel != "debug" {
-		t.Errorf("expected LOG_LEVEL 'debug', got %q", cfg.LogLevel)
+	if cfg.LogLevel != slog.LevelDebug {
+		t.Errorf("expected LOG_LEVEL debug, got %v", cfg.LogLevel)
 	}
 	if cfg.JWTExpiry != 12*time.Hour {
 		t.Errorf("expected JWT_EXPIRY 12h, got %v", cfg.JWTExpiry)
@@ -291,6 +292,58 @@ func TestConfig_InvalidInviteDeliveryRejected(t *testing.T) {
 
 	if _, err := config.Load(); err == nil {
 		t.Fatal("expected a configuration error for an unknown invite delivery mode")
+	}
+}
+
+// --- LOG_LEVEL ---
+//
+// LOG_LEVEL was parsed into Config.LogLevel and read by nothing, while
+// cmd/server/serve.go hardcoded slog.LevelInfo — so both env tables promised
+// debug/warn/error worked and none of them did. It is now parsed into a
+// slog.Level, which is what serve.go feeds to its handler's LevelVar.
+
+func TestLoad_LogLevel_ParsesEveryDocumentedValue(t *testing.T) {
+	for raw, want := range map[string]slog.Level{
+		"debug": slog.LevelDebug,
+		"info":  slog.LevelInfo,
+		"warn":  slog.LevelWarn,
+		"error": slog.LevelError,
+		// Case-insensitive, because an operator who wrote ERROR in a .env
+		// meant error and should not be told otherwise.
+		"ERROR": slog.LevelError,
+		"Warn":  slog.LevelWarn,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+			t.Setenv("LOG_LEVEL", raw)
+
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("LOG_LEVEL=%q must load: %v", raw, err)
+			}
+			if cfg.LogLevel != want {
+				t.Errorf("LOG_LEVEL=%q: expected %v, got %v", raw, want, cfg.LogLevel)
+			}
+		})
+	}
+}
+
+// An unparseable level is refused rather than run at info. Delete the
+// UnmarshalText check and this passes with the old silent behaviour, which is
+// the whole point of asserting it.
+func TestLoad_LogLevel_UnknownValueRejected(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("LOG_LEVEL", "warning") // the near-miss, not a random string
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected an unknown LOG_LEVEL to be refused at startup")
+	}
+	if !strings.Contains(err.Error(), "LOG_LEVEL") {
+		t.Errorf("the error must name the variable, got %q", err)
+	}
+	if !strings.Contains(err.Error(), `"warning"`) {
+		t.Errorf("the error must quote the offending value, got %q", err)
 	}
 }
 

@@ -105,7 +105,7 @@ access. You can then log in at `http://localhost:8080/login` with these credenti
 | `JWT_EXPIRY` | `24h` | Access token lifetime (Go duration format) |
 | `SMTP_HOST` | `localhost` | SMTP relay host for outbound email |
 | `SMTP_PORT` | `25` | SMTP relay port. Note this is the Compose default; the binary's own default is `1025`. |
-| `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error`. **Currently inert** — the value is parsed but nothing reads it; the logger is built with a hardcoded `info` level before config loads. Setting this changes nothing today. |
+| `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` (any case). An unrecognised value is refused at startup. The logger starts at `info` and is re-levelled once config loads, so the first startup line is always emitted. |
 | `DATABASE_URL` | (auto) | PostgreSQL connection string. Auto-constructed in Docker Compose from `POSTGRES_PASSWORD` |
 
 `APP_ENV` is **not** settable through `.env` in this deployment: `build/docker-compose.yml`

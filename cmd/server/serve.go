@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,12 +21,32 @@ var serveCmd = &cobra.Command{
 	RunE:  runServe,
 }
 
+// newLogger builds the server's logger and returns it alongside the LevelVar
+// that controls it.
+//
+// THE LEVEL IS A LevelVar RATHER THAN A FIXED Level because the logger has to
+// exist before the config does: loading the config can itself fail, and that
+// failure has to be logged somewhere. So the handler starts at Info and is
+// re-levelled IN PLACE once LOG_LEVEL is known — the package default, and any
+// logger already derived from this one, follow the change without being
+// rebuilt or re-installed.
+//
+// This is what makes LOG_LEVEL mean anything at all. It was parsed into
+// Config.LogLevel and read by nobody, while this handler hardcoded
+// slog.LevelInfo, so both env tables promised debug/warn/error worked and
+// none of them did.
+//
+// It is a separate function so the re-levelling can be tested. Inline, the
+// only way to reach it would be to start a server.
+func newLogger(w io.Writer) (*slog.Logger, *slog.LevelVar) {
+	level := new(slog.LevelVar) // Info until told otherwise
+	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})), level
+}
+
 // runServe loads config, connects to the DB, runs migrations, and starts the
 // HTTP server with graceful shutdown.
 func runServe(_ *cobra.Command, _ []string) error {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	logger, logLevel := newLogger(os.Stdout)
 	slog.SetDefault(logger)
 
 	slog.Info("starting azimuthal", "version", Version, "build_time", BuildTime)
@@ -34,8 +55,13 @@ func runServe(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+	logLevel.Set(cfg.LogLevel)
 
-	slog.Info("configuration loaded", "env", cfg.AppEnv, "port", cfg.AppPort)
+	// Deliberately after the re-levelling: at LOG_LEVEL=warn or error this line
+	// is meant to disappear, and an operator who asked for a quiet server and
+	// still got a startup banner would reasonably conclude the setting is
+	// inert — which is the exact bug being fixed.
+	slog.Info("configuration loaded", "env", cfg.AppEnv, "port", cfg.AppPort, "log_level", cfg.LogLevel)
 
 	srv, deps, cleanup, err := newServer(cfg)
 	if err != nil {
