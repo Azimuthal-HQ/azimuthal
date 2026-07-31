@@ -1273,3 +1273,32 @@ and is not one. The backfill is a data decision that needs a maintainer, not a p
 **Re-enable condition for the skipped test**: `ItemService.CreateItem` and `TicketService.Create`
 resolve the space workflow's initial state at creation, together with a decision about items
 already sitting at `"open"`.
+
+---
+
+## 31. `verify-api.sh` races the server's startup migration on a fresh database
+
+**Severity**: Low (a local gate fails and reports the wrong reason; no product impact)
+**Status**: Open. Found by P-W PR-B while running the battery, and reproduced identically on
+`origin/main`, so it is not that phase's doing.
+
+`scripts/verify-api.sh` starts the server, sleeps 2 seconds, then runs `admin create-user` and
+logs in. Both the server and the CLI run goose on startup. On a database that has never been
+migrated the server is still applying migrations when the CLI starts, the CLI loses the goose
+advisory lock, and the user is never created — after which the login answers **401** and the
+script fails at step 4 with no indication of the real cause, because the CLI's error is swallowed:
+
+```
+/tmp/azimuthal-test admin create-user … 2>/dev/null || true
+```
+
+It gets worse with every migration added, since the server's startup window grows. At 50
+migrations it is reliable on this Windows box; it was presumably intermittent before.
+
+**Workaround**: pre-migrate the database (any `admin create-user` against it will do) before
+running the script. With that, `verify-api` passes end to end.
+
+**Fix, when somebody wants it**: drop the `2>/dev/null || true` so the failure is visible, and
+replace the `sleep 2` with a poll on `/health` — which the script already knows how to reach, and
+which is exactly the readiness probe `test-db-up` learned to do for postgres for the same class of
+reason.

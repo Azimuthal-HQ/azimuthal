@@ -41,7 +41,22 @@ built in P2.5 as "the reusable replacement for every free-text UUID field."
 > does not fit, extend it; do not fork it.
 
 **Current consumers** — `ShareDialog.tsx` (team audience), `SpaceSettingsPage.tsx` (grant
-subject), `TeamsAdminPage.tsx` (team member).
+subject), `TeamsAdminPage.tsx` (team member), `ViewBuilderPage.tsx` and `QueryFilterBuilder.tsx`
+(person filter values), `DashboardSettingsDialog.tsx` (team visibility), and
+`pages/admin/workflow/TransitionRules.tsx` (a transition's approvers and its `assign_to`
+post-function).
+
+**The multi-select pattern.** The picker is SINGLE-select and stops rendering its input once a
+value is held, so a list of subjects — an approver set, a filter's value list — drives it with
+`value={null}` permanently, appends inside `onChange`, and renders its own chips.
+`QueryFilterBuilder` established it and `TransitionRules` follows it. That is reuse, not a fork:
+the rule in this section is that a second picker is a defect, not that every consumer must want
+exactly one subject.
+
+One thing an approvers list does NOT need from that pattern is `QueryFilterBuilder`'s
+`personLabels` cache. That workaround exists because a saved filter stores an id with no name
+beside it; `workflow.Approver` already carries a read-time-resolved `subject_name` and
+`subject_missing`, so reproducing the cache would be solving a problem the API answered.
 
 **Not yet using it**, and worth knowing before you assume coverage is complete: three admin
 surfaces still select a team through a plain `<select>` over `useTeams()` — the invite's initial
