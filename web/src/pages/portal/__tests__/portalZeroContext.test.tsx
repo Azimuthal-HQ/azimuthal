@@ -67,7 +67,7 @@ const FORBIDDEN = [
   CONTAINER.workflow_state,
 ];
 
-const PORTAL_KEY = 'pk_7f3a9c2e1b';
+const PORTAL_KEY = 'examplesupportportal';
 const REFERENCE = '6f1d8a20-4c11-4c9b-9f2e-7b3d5e0a1c44';
 const SUMMARY = 'Card reader stopped taking chip payments';
 const MESSAGE_BODY = 'Thanks — we have ordered a replacement unit.';

@@ -15,7 +15,7 @@ import {
 // internal ticket at once. These builders are the only place a portal URL is
 // composed, so testing them tests the rule rather than one call site.
 
-const KEY = 'pk_7f3a9c2e1b';
+const KEY = 'examplesupportportal';
 const REFERENCE = '6f1d8a20-4c11-4c9b-9f2e-7b3d5e0a1c44';
 
 // Every builder, with the arguments a real caller passes. Kept as a table so
@@ -31,11 +31,11 @@ const BUILDERS: Array<[string, string]> = [
 
 describe('portalLinks', () => {
   it('composes the exact routes the app declares', () => {
-    expect(portalSignInHref(KEY)).toBe('/portal/pk_7f3a9c2e1b');
-    expect(portalRequestsHref(KEY)).toBe('/portal/pk_7f3a9c2e1b/requests');
-    expect(portalNewRequestHref(KEY)).toBe('/portal/pk_7f3a9c2e1b/requests/new');
+    expect(portalSignInHref(KEY)).toBe('/portal/examplesupportportal');
+    expect(portalRequestsHref(KEY)).toBe('/portal/examplesupportportal/requests');
+    expect(portalNewRequestHref(KEY)).toBe('/portal/examplesupportportal/requests/new');
     expect(portalRequestHref(KEY, REFERENCE)).toBe(
-      `/portal/pk_7f3a9c2e1b/requests/${REFERENCE}`,
+      `/portal/examplesupportportal/requests/${REFERENCE}`,
     );
   });
 
@@ -46,7 +46,7 @@ describe('portalLinks', () => {
     // index.html. This shape is a contract with links already sitting in
     // customers' inboxes, so it is pinned literally.
     expect(portalRedeemHref(KEY, 'raw-link-token')).toBe(
-      '/portal/pk_7f3a9c2e1b/signin/raw-link-token',
+      '/portal/examplesupportportal/signin/raw-link-token',
     );
   });
 
@@ -91,7 +91,7 @@ describe('portalLinks', () => {
 
   it('degrades a missing reference to the list, not to a dead URL', () => {
     expect(portalRequestHref(KEY, undefined as unknown as string)).toBe(
-      '/portal/pk_7f3a9c2e1b/requests',
+      '/portal/examplesupportportal/requests',
     );
   });
 

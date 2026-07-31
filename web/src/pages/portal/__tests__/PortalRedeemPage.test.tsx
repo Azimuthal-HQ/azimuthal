@@ -25,7 +25,7 @@ import { installLocalStorageStub } from '../../../test/localStorageStub';
  *     "Signing you in…" is the same dead end wearing a spinner.
  */
 
-const PORTAL_KEY = 'pk_7f3a9c2e1b';
+const PORTAL_KEY = 'examplesupportportal';
 const TOKEN = 'raw-link-token';
 const SESSION_PREFIX = 'azimuthal_portal_session:';
 
