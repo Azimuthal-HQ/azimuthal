@@ -692,6 +692,12 @@ func TestProjectsNeg_ValidationRefusalsAre400(t *testing.T) {
 // `500 "project operation failed: ... duplicate key value violates unique
 // constraint"` (known-issues #24), leaking the constraint name with it.
 //
+// Both halves of that are closed now: the adapter maps the violation, and the
+// default arm no longer interpolates the error at all — an unmapped 500 here
+// reads `project operation failed` and nothing more, with the cause in the
+// server log under the caller's request id. See TestUnmappedProjectError_* in
+// internal/core/api/projects.
+//
 // This is the end-to-end half of TestLabelAdapter_DuplicateName in
 // internal/db/adapters: that one proves the mapping, this one proves the arm is
 // reachable through the router.
