@@ -45,6 +45,24 @@ type Requester struct {
 	CreatedAt         time.Time
 }
 
+// RequesterIdentity is the subset of a Requester that the AGENT side may see:
+// who raised this ticket, and how to reach them.
+//
+// It is a separate type from Requester deliberately. Requester carries
+// IsActive and SessionGeneration — the state the portal guard compares on
+// every request — and those must never reach an agent response merely because
+// somebody serialised the struct they had to hand. A type that does not carry
+// a field cannot leak it.
+//
+// This travels the agent wire only. The portal's own wire types stay in
+// internal/core/api/portal and gain nothing from this; see
+// TestPortal_WireCarriesNoContainerContext.
+type RequesterIdentity struct {
+	ID          uuid.UUID
+	Email       string
+	DisplayName string
+}
+
 // Portal is one Beacon space's customer-facing surface.
 type Portal struct {
 	ID      uuid.UUID

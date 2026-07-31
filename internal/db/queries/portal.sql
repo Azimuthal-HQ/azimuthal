@@ -40,6 +40,22 @@ RETURNING *;
 -- name: GetRequesterByID :one
 SELECT * FROM requesters WHERE id = $1;
 
+-- GetRequestersByIDs resolves external requester identities in bulk, for the
+-- AGENT side: a portal-raised ticket carries requester_id and no reporter_id
+-- (migration 044's tickets_origin_identity XOR), so without this the agent's
+-- own reporter lookup — which reads `users` — finds nothing and the surface
+-- renders "Unknown".
+--
+-- It takes an array rather than one id because the ticket LIST and kanban
+-- paths resolve a whole page at once; per-row it would be an N+1 against the
+-- table every agent read path now touches.
+--
+-- Only the three columns the agent surface may display are selected. `SELECT
+-- *` would put is_active and session_generation — the revocation state the
+-- portal guard reads — one careless serialiser away from an agent response.
+-- name: GetRequestersByIDs :many
+SELECT id, email, display_name FROM requesters WHERE id = ANY($1::uuid[]);
+
 -- GetRequesterState is the portal guard's per-request revocation read — the
 -- requester-side counterpart of GetUserAuthState, and it must stay exactly
 -- one indexed primary-key lookup for the same reason (spec §2.5 case 23).

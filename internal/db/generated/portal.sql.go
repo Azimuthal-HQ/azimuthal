@@ -421,6 +421,49 @@ func (q *Queries) GetRequesterState(ctx context.Context, id uuid.UUID) (GetReque
 	return i, err
 }
 
+const getRequestersByIDs = `-- name: GetRequestersByIDs :many
+SELECT id, email, display_name FROM requesters WHERE id = ANY($1::uuid[])
+`
+
+type GetRequestersByIDsRow struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+}
+
+// GetRequestersByIDs resolves external requester identities in bulk, for the
+// AGENT side: a portal-raised ticket carries requester_id and no reporter_id
+// (migration 044's tickets_origin_identity XOR), so without this the agent's
+// own reporter lookup — which reads `users` — finds nothing and the surface
+// renders "Unknown".
+//
+// It takes an array rather than one id because the ticket LIST and kanban
+// paths resolve a whole page at once; per-row it would be an N+1 against the
+// table every agent read path now touches.
+//
+// Only the three columns the agent surface may display are selected. `SELECT
+// *` would put is_active and session_generation — the revocation state the
+// portal guard reads — one careless serialiser away from an agent response.
+func (q *Queries) GetRequestersByIDs(ctx context.Context, dollar_1 []uuid.UUID) ([]GetRequestersByIDsRow, error) {
+	rows, err := q.db.Query(ctx, getRequestersByIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetRequestersByIDsRow{}
+	for rows.Next() {
+		var i GetRequestersByIDsRow
+		if err := rows.Scan(&i.ID, &i.Email, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTicketAssignee = `-- name: GetTicketAssignee :one
 SELECT assignee_id FROM tickets WHERE id = $1 AND deleted_at IS NULL
 `
