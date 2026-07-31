@@ -17,6 +17,7 @@ import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
 import { CustomFieldsSection } from '../../components/CustomFieldsSection';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
+import { useQueryClient } from '@tanstack/react-query';
 import { ApprovalBlock } from '../../components/workflow/ApprovalBlock';
 import {
   runStatusChange,
@@ -41,6 +42,7 @@ import {
   useSprints,
   useAssignItemSprint,
   friendlyErrorMessage,
+  queryKeys,
 } from '../../lib/api';
 
 // Sentinel option value for "no sprint" — a <select> option cannot carry null.
@@ -105,6 +107,7 @@ export function ItemDetailPage() {
   const assignSprintMutation = useAssignItemSprint(spaceId);
   const [sprintError, setSprintError] = useState<string | null>(null);
   const [statusOutcome, setStatusOutcome] = useState<StatusOutcome>({ kind: 'idle' });
+  const queryClient = useQueryClient();
 
   const [newComment, setNewComment] = useState('');
 
@@ -149,6 +152,14 @@ export function ItemDetailPage() {
       'The status could not be changed.',
     );
     setStatusOutcome(outcome);
+    // A gated transition CREATES an approval request, so the block that renders
+    // it has to re-read. Nothing else invalidates that query: the status
+    // mutation knows nothing about approvals, and without this the 202 came
+    // back, the notice appeared, and the pending block did not — which reads as
+    // the approval never having been requested.
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.entityApprovals(spaceId, 'item', itemId),
+    });
     refetchItem();
   }
 

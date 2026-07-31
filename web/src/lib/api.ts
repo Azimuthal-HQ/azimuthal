@@ -259,6 +259,23 @@ import type {
   PostFunctionKind,
 } from './workflow/vocabulary';
 
+// Re-exported so consumers reach one module for the whole workflow contract
+// rather than importing the wire types from api.ts and the vocabulary from
+// somewhere else. `isolatedModules` requires the explicit `export type` form —
+// a plain re-export of a type-only import compiles under `tsc --noEmit` and
+// fails under `tsc -b`, which is what the production build runs.
+export type {
+  ApprovalEntityType,
+  ApproverSubjectType,
+  Decision,
+  GuardCapability,
+  GuardClass,
+  GuardFieldKey,
+  GuardKind,
+  PostFieldKey,
+  PostFunctionKind,
+};
+
 export type SpaceType = 'beacon' | 'codex' | 'vector';
 export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type SprintStatus = 'planned' | 'active' | 'completed';
