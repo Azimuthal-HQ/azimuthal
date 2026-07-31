@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -338,6 +339,10 @@ type DecideRequest struct {
 	ApprovalID uuid.UUID
 	ActorID    uuid.UUID
 	Decision   Decision
+
+	// Reason is what the approver says about the verdict. Required on a
+	// decline, optional on an approval; see Decide.
+	Reason string
 }
 
 // Decide records an approver's verdict and reports what the caller must write.
@@ -352,7 +357,21 @@ type DecideRequest struct {
 // decline it applies nothing: the item never left its source status, so
 // "decline returns the item to the source status" is satisfied by the item not
 // having moved. The record of the decline is the trail.
+//
+// # A decline must say why
+//
+// The reason is required on a decline and optional on an approval, and the
+// check runs BEFORE the authority check so a non-approver is told they are not
+// an approver rather than being asked for a reason they were never entitled to
+// give. Whitespace is not a reason: an approver who submits spaces has said
+// nothing, and storing it would produce a decline that renders blank, which is
+// the failure the column was added to close rather than a lesser version of it.
 func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, []Effect, error) {
+	reason := strings.TrimSpace(req.Reason)
+	if req.Decision == DecisionDeclined && reason == "" {
+		return Approval{}, nil, ErrDeclineReasonRequired
+	}
+
 	approval, err := s.store.GetApproval(ctx, req.ApprovalID)
 	if err != nil {
 		return Approval{}, nil, fmt.Errorf("decide: loading the approval: %w", err)
@@ -371,7 +390,15 @@ func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, 
 		return Approval{}, nil, err
 	}
 
-	decided, err := s.store.DecideApproval(ctx, req.ApprovalID, req.ActorID, req.Decision)
+	// An empty reason on an APPROVAL is stored as NULL rather than as "", so
+	// "said nothing" and "said the empty string" are not two representations of
+	// one thing. migration 050's CHECK permits NULL alongside a decision.
+	var storedReason *string
+	if reason != "" {
+		storedReason = &reason
+	}
+
+	decided, err := s.store.DecideApproval(ctx, req.ApprovalID, req.ActorID, req.Decision, storedReason)
 	if err != nil {
 		return Approval{}, nil, fmt.Errorf("decide: recording the decision: %w", err)
 	}
@@ -385,6 +412,58 @@ func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, 
 		return Approval{}, nil, err
 	}
 	return decided, effects, nil
+}
+
+// MarkDecidable fills CanDecide on each approval for the given actor.
+//
+// It exists because approval authority is DATA — being named on the transition,
+// directly or through an ADR-0007 effective team — so a client has no way to
+// work out whether it may offer an Approve button. There is no capability to
+// consult and nothing on the approval row that answers it. Without this the
+// only honest UI would show the buttons to everybody and let the 403 explain,
+// which puts the refusal after the click instead of before it.
+//
+// The actor is resolved ONCE. Effective team expansion is a recursive query,
+// and doing it per row would make a busy space's pending list cost a traversal
+// per approval to answer one question that does not vary between them. Approver
+// lists are cached per transition for the same reason: a space blocked on one
+// guarded edge has many approvals sharing a single approver set.
+//
+// An approval whose transition has been deleted (TransitionID nil, migration
+// 047's ON DELETE SET NULL) is decidable by nobody — there is no approver list
+// left to consult — and keeps CanDecide false. It is deliberately still
+// returned: the requester needs to see that their request is stuck, which is
+// the same reason the row survived the delete at all.
+func (s *TierService) MarkDecidable(
+	ctx context.Context, orgID, actorID uuid.UUID, approvals []Approval,
+) ([]Approval, error) {
+	if len(approvals) == 0 {
+		return approvals, nil
+	}
+
+	actor, err := s.resolveActor(ctx, GateRequest{OrgID: orgID, ActorID: actorID})
+	if err != nil {
+		return nil, err
+	}
+
+	byTransition := make(map[uuid.UUID]bool, len(approvals))
+	for i := range approvals {
+		if approvals[i].TransitionID == nil {
+			continue
+		}
+		tid := *approvals[i].TransitionID
+		decidable, seen := byTransition[tid]
+		if !seen {
+			approvers, err := s.store.ApproversForTransition(ctx, tid)
+			if err != nil {
+				return nil, fmt.Errorf("marking decidable: loading approvers: %w", err)
+			}
+			decidable = CanDecide(approvers, actor)
+			byTransition[tid] = decidable
+		}
+		approvals[i].CanDecide = decidable
+	}
+	return approvals, nil
 }
 
 // checkDecideAuthority reports whether the actor is one of the transition's

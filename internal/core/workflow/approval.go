@@ -121,10 +121,29 @@ type Approval struct {
 	DecidedAt *time.Time `json:"decided_at,omitempty"`
 	Decision  *Decision  `json:"decision,omitempty"`
 
+	// Reason is what the approver said about the decision (migration 050).
+	//
+	// It is REQUIRED on a decline and optional on an approval — see
+	// TierService.Decide. Nil on every pending request, and on rows written
+	// before migration 050 shipped, which is why the column is nullable and the
+	// "declines carry a reason" rule lives in Go rather than in a CHECK.
+	Reason *string `json:"reason,omitempty"`
+
 	// RequestedByName is resolved at read time for display, never stored.
 	RequestedByName string `json:"requested_by_name,omitempty"`
 	// DecidedByName is resolved at read time for display, never stored.
 	DecidedByName string `json:"decided_by_name,omitempty"`
+
+	// CanDecide reports whether the CALLER may decide this request. It is
+	// resolved at read time against the caller's identity and effective teams,
+	// never stored, and it is the only way a client can know: approval
+	// authority is DATA — being named on the transition — so there is no
+	// capability for the frontend to consult and no way to compute it from the
+	// approval row alone.
+	//
+	// Not omitempty. False is the meaningful majority answer, and a client must
+	// be able to tell "you may not decide" from "this build did not say".
+	CanDecide bool `json:"can_decide"`
 }
 
 // IsPending reports whether the request is still awaiting a decision.

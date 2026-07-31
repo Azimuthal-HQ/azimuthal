@@ -356,13 +356,14 @@ func (a *WorkflowTierAdapter) GetApproval(ctx context.Context, id uuid.UUID) (wo
 // Guessing instead would report "already decided" for an id that was never
 // real.
 func (a *WorkflowTierAdapter) DecideApproval(
-	ctx context.Context, id, decidedBy uuid.UUID, d workflow.Decision,
+	ctx context.Context, id, decidedBy uuid.UUID, d workflow.Decision, reason *string,
 ) (workflow.Approval, error) {
 	decision := string(d)
 	row, err := a.q.DecideApproval(ctx, generated.DecideApprovalParams{
 		ID:        id,
 		DecidedBy: pgUUID(&decidedBy),
 		Decision:  &decision,
+		Reason:    reason,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, getErr := a.q.GetApproval(ctx, id); getErr != nil {
@@ -440,12 +441,25 @@ func rowToApproval(r generated.WorkflowApproval) workflow.Approval {
 		RequestedAt:  goTime(r.RequestedAt),
 		DecidedBy:    goUUIDPtr(r.DecidedBy),
 		DecidedAt:    goTimePtr(r.DecidedAt),
+		// Copied, not aliased: r is a value but its *string points into the
+		// scanned row, and every other pointer field here is rebuilt rather
+		// than shared. Reason is nil on every pending request.
+		Reason: copyStr(r.Reason),
 	}
 	if r.Decision != nil {
 		d := workflow.Decision(*r.Decision)
 		ap.Decision = &d
 	}
 	return ap
+}
+
+// copyStr returns a pointer to a copy of the pointed-at string, or nil.
+func copyStr(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	v := *s
+	return &v
 }
 
 // ─── Resolution helpers for the chokepoint ────────────────────────────────────

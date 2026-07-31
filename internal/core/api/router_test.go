@@ -2598,7 +2598,9 @@ func (m *mockTierStore) PendingApprovalForEntity(context.Context, workflow.Appro
 func (m *mockTierStore) GetApproval(context.Context, uuid.UUID) (workflow.Approval, error) {
 	return workflow.Approval{}, workflow.ErrNotFound
 }
-func (m *mockTierStore) DecideApproval(context.Context, uuid.UUID, uuid.UUID, workflow.Decision) (workflow.Approval, error) {
+func (m *mockTierStore) DecideApproval(
+	context.Context, uuid.UUID, uuid.UUID, workflow.Decision, *string,
+) (workflow.Approval, error) {
 	return workflow.Approval{}, workflow.ErrNotFound
 }
 func (m *mockTierStore) ApprovalsForEntity(context.Context, workflow.ApprovalEntityType, uuid.UUID) ([]workflow.Approval, error) {

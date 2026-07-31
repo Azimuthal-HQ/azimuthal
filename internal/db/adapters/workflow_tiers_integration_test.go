@@ -317,7 +317,7 @@ func TestApprovals_OnlyOnePendingPerEntity(t *testing.T) {
 
 	// Deciding the first frees the item to request again — the index excludes
 	// decided rows precisely so an item can accumulate history.
-	decided, err := f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined)
+	decided, err := f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined, ptr("not this sprint"))
 	require.NoError(t, err)
 	require.False(t, decided.IsPending())
 
@@ -342,10 +342,10 @@ func TestApprovals_ASecondDecisionIsRefused(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionApproved)
+	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionApproved, nil)
 	require.NoError(t, err)
 
-	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionDeclined)
+	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionDeclined, ptr("too late"))
 	require.ErrorIs(t, err, workflow.ErrApprovalAlreadyDecided,
 		"a decided approval must not be re-decided, in either direction")
 
@@ -576,7 +576,7 @@ func TestTierAdapter_ApprovalsForEntityKeepsHistory(t *testing.T) {
 
 	first, err := f.tier.CreateApproval(ctx, request)
 	require.NoError(t, err)
-	_, err = f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined)
+	_, err = f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined, ptr("blocked on release"))
 	require.NoError(t, err)
 
 	second, err := f.tier.CreateApproval(ctx, request)
@@ -604,7 +604,7 @@ func TestTierAdapter_ApprovalsForEntityKeepsHistory(t *testing.T) {
 // "already decided" — the follow-up read is what tells the two apart.
 func TestTierAdapter_DecidingAMissingApprovalIsNotFound(t *testing.T) {
 	f := setupTiers(t)
-	_, err := f.tier.DecideApproval(context.Background(), uuid.New(), f.userID, workflow.DecisionApproved)
+	_, err := f.tier.DecideApproval(context.Background(), uuid.New(), f.userID, workflow.DecisionApproved, nil)
 	require.ErrorIs(t, err, workflow.ErrNotFound)
 }
 

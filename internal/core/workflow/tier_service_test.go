@@ -100,7 +100,9 @@ func (f *fakeTierStore) GetApproval(_ context.Context, id uuid.UUID) (Approval, 
 	return a, nil
 }
 
-func (f *fakeTierStore) DecideApproval(_ context.Context, id, by uuid.UUID, d Decision) (Approval, error) {
+func (f *fakeTierStore) DecideApproval(
+	_ context.Context, id, by uuid.UUID, d Decision, reason *string,
+) (Approval, error) {
 	a, ok := f.approvals[id]
 	if !ok {
 		return Approval{}, ErrNotFound
@@ -110,9 +112,15 @@ func (f *fakeTierStore) DecideApproval(_ context.Context, id, by uuid.UUID, d De
 	}
 	now := a.RequestedAt
 	a.DecidedBy, a.DecidedAt, a.Decision = &by, &now, &d
+	// The reason is written into the stored row and read back from it, never
+	// echoed straight from the argument. A double that returned `reason` while
+	// leaving f.approvals[id] untouched would let a test assert a decline
+	// reason survived when nothing had been stored — the lying-double shape
+	// this repository has already shipped once.
+	a.Reason = reason
 	f.approvals[id] = a
 	delete(f.pending, a.EntityID)
-	return a, nil
+	return f.approvals[id], nil
 }
 
 func (f *fakeTierStore) ApprovalsForEntity(context.Context, ApprovalEntityType, uuid.UUID) ([]Approval, error) {

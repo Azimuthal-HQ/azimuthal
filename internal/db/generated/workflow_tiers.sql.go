@@ -111,7 +111,7 @@ INSERT INTO workflow_approvals (
     transition_id, entity_type, entity_id, space_id,
     from_state_id, to_state_id, from_status, to_status, requested_by
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision
+RETURNING id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision, reason
 `
 
 type CreateApprovalParams struct {
@@ -160,6 +160,7 @@ func (q *Queries) CreateApproval(ctx context.Context, arg CreateApprovalParams) 
 		&i.DecidedBy,
 		&i.DecidedAt,
 		&i.Decision,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -274,23 +275,36 @@ func (q *Queries) CreateTransitionPostFunction(ctx context.Context, arg CreateTr
 
 const decideApproval = `-- name: DecideApproval :one
 UPDATE workflow_approvals
-SET decided_by = $2, decided_at = now(), decision = $3
+SET decided_by = $2, decided_at = now(), decision = $3, reason = $4
 WHERE id = $1 AND decided_at IS NULL
-RETURNING id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision
+RETURNING id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision, reason
 `
 
 type DecideApprovalParams struct {
 	ID        uuid.UUID   `json:"id"`
 	DecidedBy pgtype.UUID `json:"decided_by"`
 	Decision  *string     `json:"decision"`
+	Reason    *string     `json:"reason"`
 }
 
 // The WHERE clause carries `decided_at IS NULL`, so a second approver deciding
 // concurrently updates zero rows rather than overwriting the first decision.
 // The adapter turns zero rows into ErrApprovalAlreadyDecided after a follow-up
 // read, the way RevokeEntityShare distinguishes already-revoked from not-found.
+//
+// reason is written in the SAME statement as the decision, never in a follow-up
+// UPDATE. migration 050's workflow_approvals_reason_requires_decision refuses a
+// reason without a decision, so a two-statement version would have to write the
+// decision first — and a failure between the two would leave a decline standing
+// with no reason, which is exactly the unexplained decline the column exists to
+// prevent.
 func (q *Queries) DecideApproval(ctx context.Context, arg DecideApprovalParams) (WorkflowApproval, error) {
-	row := q.db.QueryRow(ctx, decideApproval, arg.ID, arg.DecidedBy, arg.Decision)
+	row := q.db.QueryRow(ctx, decideApproval,
+		arg.ID,
+		arg.DecidedBy,
+		arg.Decision,
+		arg.Reason,
+	)
 	var i WorkflowApproval
 	err := row.Scan(
 		&i.ID,
@@ -307,6 +321,7 @@ func (q *Queries) DecideApproval(ctx context.Context, arg DecideApprovalParams) 
 		&i.DecidedBy,
 		&i.DecidedAt,
 		&i.Decision,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -349,7 +364,7 @@ func (q *Queries) DeleteTransitionPostFunction(ctx context.Context, id uuid.UUID
 
 const getApproval = `-- name: GetApproval :one
 SELECT
-    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision,
+    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision, a.reason,
     COALESCE(r.display_name, '')::text AS requested_by_name,
     COALESCE(d.display_name, '')::text AS decided_by_name
 FROM workflow_approvals a
@@ -382,6 +397,7 @@ func (q *Queries) GetApproval(ctx context.Context, id uuid.UUID) (GetApprovalRow
 		&i.WorkflowApproval.DecidedBy,
 		&i.WorkflowApproval.DecidedAt,
 		&i.WorkflowApproval.Decision,
+		&i.WorkflowApproval.Reason,
 		&i.RequestedByName,
 		&i.DecidedByName,
 	)
@@ -389,7 +405,7 @@ func (q *Queries) GetApproval(ctx context.Context, id uuid.UUID) (GetApprovalRow
 }
 
 const getPendingApprovalForEntity = `-- name: GetPendingApprovalForEntity :one
-SELECT id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision FROM workflow_approvals
+SELECT id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision, reason FROM workflow_approvals
 WHERE entity_type = $1 AND entity_id = $2 AND decided_at IS NULL
 `
 
@@ -416,6 +432,7 @@ func (q *Queries) GetPendingApprovalForEntity(ctx context.Context, arg GetPendin
 		&i.DecidedBy,
 		&i.DecidedAt,
 		&i.Decision,
+		&i.Reason,
 	)
 	return i, err
 }
@@ -513,7 +530,7 @@ func (q *Queries) GetWorkflowStateByName(ctx context.Context, arg GetWorkflowSta
 
 const listApprovalsForEntity = `-- name: ListApprovalsForEntity :many
 SELECT
-    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision,
+    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision, a.reason,
     COALESCE(r.display_name, '')::text AS requested_by_name,
     COALESCE(d.display_name, '')::text AS decided_by_name
 FROM workflow_approvals a
@@ -561,6 +578,7 @@ func (q *Queries) ListApprovalsForEntity(ctx context.Context, arg ListApprovalsF
 			&i.WorkflowApproval.DecidedBy,
 			&i.WorkflowApproval.DecidedAt,
 			&i.WorkflowApproval.Decision,
+			&i.WorkflowApproval.Reason,
 			&i.RequestedByName,
 			&i.DecidedByName,
 		); err != nil {
@@ -576,7 +594,7 @@ func (q *Queries) ListApprovalsForEntity(ctx context.Context, arg ListApprovalsF
 
 const listPendingApprovalsForSpace = `-- name: ListPendingApprovalsForSpace :many
 SELECT
-    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision,
+    a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision, a.reason,
     COALESCE(r.display_name, '')::text AS requested_by_name,
     ''::text AS decided_by_name
 FROM workflow_approvals a
@@ -618,6 +636,7 @@ func (q *Queries) ListPendingApprovalsForSpace(ctx context.Context, spaceID uuid
 			&i.WorkflowApproval.DecidedBy,
 			&i.WorkflowApproval.DecidedAt,
 			&i.WorkflowApproval.Decision,
+			&i.WorkflowApproval.Reason,
 			&i.RequestedByName,
 			&i.DecidedByName,
 		); err != nil {

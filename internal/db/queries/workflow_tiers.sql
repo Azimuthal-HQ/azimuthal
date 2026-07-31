@@ -129,8 +129,15 @@ WHERE a.id = $1;
 -- concurrently updates zero rows rather than overwriting the first decision.
 -- The adapter turns zero rows into ErrApprovalAlreadyDecided after a follow-up
 -- read, the way RevokeEntityShare distinguishes already-revoked from not-found.
+--
+-- reason is written in the SAME statement as the decision, never in a follow-up
+-- UPDATE. migration 050's workflow_approvals_reason_requires_decision refuses a
+-- reason without a decision, so a two-statement version would have to write the
+-- decision first — and a failure between the two would leave a decline standing
+-- with no reason, which is exactly the unexplained decline the column exists to
+-- prevent.
 UPDATE workflow_approvals
-SET decided_by = $2, decided_at = now(), decision = $3
+SET decided_by = $2, decided_at = now(), decision = $3, reason = $4
 WHERE id = $1 AND decided_at IS NULL
 RETURNING *;
 

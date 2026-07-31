@@ -60,7 +60,12 @@ type TierStore interface {
 	// approver has already decided comes back as ErrApprovalAlreadyDecided
 	// rather than being overwritten — the update carries `decided_at IS NULL`,
 	// so the race is settled by the database.
-	DecideApproval(ctx context.Context, id, decidedBy uuid.UUID, d Decision) (Approval, error)
+	//
+	// reason is nil when the approver said nothing, which migration 050 permits
+	// alongside a decision but never without one. It is written in the same
+	// statement as the decision; see the query's header for why a follow-up
+	// UPDATE would be wrong.
+	DecideApproval(ctx context.Context, id, decidedBy uuid.UUID, d Decision, reason *string) (Approval, error)
 	// ApprovalsForEntity returns every request ever made about an item, newest
 	// first, decided and pending alike.
 	ApprovalsForEntity(ctx context.Context, entityType ApprovalEntityType, entityID uuid.UUID) ([]Approval, error)
