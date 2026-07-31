@@ -274,8 +274,8 @@ type EditableDocument struct {
 // version but the entire ADR-0012 document body. The two ids are reconciled
 // before anything is read, and a page belonging elsewhere is reported exactly
 // as a page that does not exist.
-func (s *DocumentService) OpenDocumentInSpace(ctx context.Context, pageID, spaceID, authorID uuid.UUID) (EditableDocument, error) {
-	page, err := s.pageInSpace(ctx, pageID, spaceID)
+func (s *DocumentService) OpenDocumentInSpace(ctx context.Context, spaceID, pageID, authorID uuid.UUID) (EditableDocument, error) {
+	page, err := s.pageInSpace(ctx, spaceID, pageID)
 	if err != nil {
 		return EditableDocument{}, err
 	}
@@ -781,7 +781,7 @@ func (s *DocumentService) RestoreRevision(ctx context.Context, in RestoreInput) 
 // ErrPageNotFound and therefore as the same 404 with the same body. The route
 // established that {spaceID} is readable and established nothing about
 // {pageID}, so this is where the two are made to agree.
-func (s *DocumentService) pageInSpace(ctx context.Context, pageID, spaceID uuid.UUID) (generated.Page, error) {
+func (s *DocumentService) pageInSpace(ctx context.Context, spaceID, pageID uuid.UUID) (generated.Page, error) {
 	page, err := s.store.GetPageInSpace(ctx, generated.GetPageInSpaceParams{
 		PageID:  pageID,
 		SpaceID: spaceID,

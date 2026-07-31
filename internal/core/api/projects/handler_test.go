@@ -408,7 +408,8 @@ func TestListItemsSuccess(t *testing.T) {
 
 func TestGetItemNotFound(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", uuid.New().String())
+	req := withParam(withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"itemID", uuid.New().String()), "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.GetItem(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -579,7 +580,8 @@ func TestSearchItemsLimitOutOfRange(t *testing.T) {
 
 func TestListRelationsSuccess(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", uuid.New().String())
+	req := withSpaceAccess(t, withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"itemID", uuid.New().String()), uuid.New())
 	rr := httptest.NewRecorder()
 	h.ListRelations(rr, req)
 	if rr.Code != http.StatusOK {
@@ -629,7 +631,8 @@ func TestCreateSprintNoAuth(t *testing.T) {
 
 func TestGetSprintNotFound(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "sprintID", uuid.New().String())
+	req := withParam(withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"sprintID", uuid.New().String()), "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.GetSprint(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -686,7 +689,8 @@ func TestCompleteSprintNotFound(t *testing.T) {
 
 func TestListSprintItemsSuccess(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "sprintID", uuid.New().String())
+	req := withParam(withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"sprintID", uuid.New().String()), "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.ListSprintItems(rr, req)
 	// mock ListBySprint returns nil, nil so this succeeds

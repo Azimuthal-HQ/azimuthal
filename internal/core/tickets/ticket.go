@@ -58,7 +58,7 @@ type TicketRepository interface {
 	// {ticketID}; reconciling the two is what this method is for. The two
 	// misses answer identically because a distinguishable "exists but
 	// forbidden" discloses the same thing in a different shape.
-	GetByIDInSpace(ctx context.Context, id, spaceID uuid.UUID) (*Ticket, error)
+	GetByIDInSpace(ctx context.Context, spaceID, id uuid.UUID) (*Ticket, error)
 	// Update persists changes to an existing ticket.
 	Update(ctx context.Context, t *Ticket) error
 	// UpdateStatus changes only the ticket status. Returns the updated ticket.
@@ -170,8 +170,8 @@ func (s *TicketService) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) 
 // caller-supplied and reconciled nowhere else. The error is wrapped exactly as
 // Get wraps it, so a ticket in another space is reported in the same words as
 // a ticket that does not exist.
-func (s *TicketService) GetInSpace(ctx context.Context, id, spaceID uuid.UUID) (*Ticket, error) {
-	t, err := s.repo.GetByIDInSpace(ctx, id, spaceID)
+func (s *TicketService) GetInSpace(ctx context.Context, spaceID, id uuid.UUID) (*Ticket, error) {
+	t, err := s.repo.GetByIDInSpace(ctx, spaceID, id)
 	if err != nil {
 		return nil, fmt.Errorf("getting ticket: %w", err)
 	}

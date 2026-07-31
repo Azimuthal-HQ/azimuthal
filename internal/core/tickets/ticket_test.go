@@ -56,7 +56,7 @@ func (m *mockRepo) GetByID(_ context.Context, id uuid.UUID) (*Ticket, error) {
 // returns the same ErrNotFound for a ticket in another space as for one that
 // is absent. A mock that ignored spaceID would make every scoped read look
 // correct while asserting nothing about the scoping.
-func (m *mockRepo) GetByIDInSpace(_ context.Context, id, spaceID uuid.UUID) (*Ticket, error) {
+func (m *mockRepo) GetByIDInSpace(_ context.Context, spaceID, id uuid.UUID) (*Ticket, error) {
 	t, ok := m.tickets[id]
 	if !ok || t.SpaceID != spaceID {
 		return nil, ErrNotFound
@@ -303,7 +303,7 @@ func TestGetTicketInSpace(t *testing.T) {
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
 
 	t.Run("in its own space", func(t *testing.T) {
-		got, err := svc.GetInSpace(context.Background(), ticket.ID, spaceID)
+		got, err := svc.GetInSpace(context.Background(), spaceID, ticket.ID)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -313,14 +313,14 @@ func TestGetTicketInSpace(t *testing.T) {
 	})
 
 	t.Run("in another space", func(t *testing.T) {
-		_, err := svc.GetInSpace(context.Background(), ticket.ID, uuid.New())
+		_, err := svc.GetInSpace(context.Background(), uuid.New(), ticket.ID)
 		if !errors.Is(err, ErrNotFound) {
 			t.Fatalf("expected ErrNotFound, got %v", err)
 		}
 	})
 
 	t.Run("absent", func(t *testing.T) {
-		_, err := svc.GetInSpace(context.Background(), uuid.New(), spaceID)
+		_, err := svc.GetInSpace(context.Background(), spaceID, uuid.New())
 		if !errors.Is(err, ErrNotFound) {
 			t.Fatalf("expected ErrNotFound, got %v", err)
 		}

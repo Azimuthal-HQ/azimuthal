@@ -241,7 +241,7 @@ func (h *Handler) GetPage(w http.ResponseWriter, r *http.Request) {
 	// proved nothing about {pageID}; this route returns the page's full content,
 	// so until the two were reconciled a reader of any one space could fetch any
 	// page in any organisation by id.
-	page, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
+	page, err := h.svc.GetPageInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -296,7 +296,7 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 	// mean what it says: CanEditEntity was being evaluated against this route's
 	// spaceID and a foreign page's author, so it decided a question about one
 	// space using the ownership of a page in another.
-	existing, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
+	existing, err := h.svc.GetPageInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -363,7 +363,7 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 	// The space is part of the lookup, so a page in another space is not found
 	// rather than deleted: the delete transaction takes the page id alone, and
 	// this read is what establishes the caller may name it at all.
-	existing, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
+	existing, err := h.svc.GetPageInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -472,7 +472,7 @@ func (h *Handler) moveInputFromRequest(w http.ResponseWriter, r *http.Request) (
 	// a write, reached through the same unreconciled {spaceID}/{pageID} pair as
 	// the read leaks. Checked after the capability so a caller who may not edit
 	// here learns nothing about what lives here.
-	if _, err := h.svc.GetPageInSpace(r.Context(), id, spaceID); err != nil {
+	if _, err := h.svc.GetPageInSpace(r.Context(), spaceID, id); err != nil {
 		handleWikiError(w, r, err)
 		return wiki.MovePageInput{}, false
 	}
@@ -533,7 +533,7 @@ func (h *Handler) ShareImpact(w http.ResponseWriter, r *http.Request) {
 	// Scoped: the count is taken over the page's materialised path, so an
 	// unreconciled read handed the subtree of a foreign page to a share query
 	// that was itself correctly scoped to this space.
-	page, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
+	page, err := h.svc.GetPageInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -697,7 +697,7 @@ func (h *Handler) GetRevision(w http.ResponseWriter, r *http.Request) {
 
 	// One revision is one historical copy of the page, title and body and all,
 	// so this route disclosed as much as the page read did.
-	revision, err := h.svc.GetRevisionInSpace(r.Context(), id, spaceID, int32(v))
+	revision, err := h.svc.GetRevisionInSpace(r.Context(), spaceID, id, int32(v))
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -755,7 +755,7 @@ func (h *Handler) DiffRevisions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A diff is built from two revision bodies, so it says everything they say.
-	diff, err := h.svc.DiffRevisionsInSpace(r.Context(), id, spaceID, int32(from), int32(to))
+	diff, err := h.svc.DiffRevisionsInSpace(r.Context(), spaceID, id, int32(from), int32(to))
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -792,7 +792,7 @@ func (h *Handler) RenderPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Rendering is reading: this route returns the page's whole body as HTML.
-	page, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
+	page, err := h.svc.GetPageInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return

@@ -650,8 +650,14 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Fetch the ticket's current state.
-	ticket, err := h.q.GetTicketByID(r.Context(), ticketID)
+	// Fetch the ticket's current state, reconciled against the space the
+	// request named. The route proves the caller may transition items in
+	// {spaceID} and proves nothing about {ticketID}: without this it applied
+	// THIS space's workflow to a ticket in any other space or organization,
+	// disclosing the ticket and moving its status.
+	ticket, err := h.q.GetTicketInSpace(r.Context(), generated.GetTicketInSpaceParams{
+		TicketID: ticketID, SpaceID: spaceID,
+	})
 	if err != nil {
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "ticket not found")
 		return
@@ -702,7 +708,9 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 		if !h.applyWithEffects(w, r, spaceID, workflow.ApprovalEntityTicket, ticketID, targetState.Name, gated) {
 			return
 		}
-		refreshed, err := h.q.GetTicketByID(r.Context(), ticketID)
+		refreshed, err := h.q.GetTicketInSpace(r.Context(), generated.GetTicketInSpaceParams{
+			TicketID: ticketID, SpaceID: spaceID,
+		})
 		if err != nil {
 			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to read the updated ticket")
 			return
@@ -770,7 +778,10 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	item, err := h.q.GetProjectItemByID(r.Context(), itemID)
+	// Reconciled against the request's space — see the ticket handler above.
+	item, err := h.q.GetProjectItemInSpace(r.Context(), generated.GetProjectItemInSpaceParams{
+		ItemID: itemID, SpaceID: spaceID,
+	})
 	if err != nil {
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "item not found")
 		return
@@ -818,7 +829,9 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 		if !h.applyWithEffects(w, r, spaceID, workflow.ApprovalEntityItem, itemID, targetState.Name, gated) {
 			return
 		}
-		refreshed, err := h.q.GetProjectItemByID(r.Context(), itemID)
+		refreshed, err := h.q.GetProjectItemInSpace(r.Context(), generated.GetProjectItemInSpaceParams{
+			ItemID: itemID, SpaceID: spaceID,
+		})
 		if err != nil {
 			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to read the updated item")
 			return

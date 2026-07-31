@@ -114,7 +114,7 @@ func ValidateTransition(current, next Status) error {
 // is the write. Its only caller is that route, so the parameter is threaded
 // through rather than added as a second method.
 func (s *TicketService) TransitionStatus(ctx context.Context, id, spaceID uuid.UUID, newStatus Status) (*Ticket, error) {
-	t, err := s.repo.GetByIDInSpace(ctx, id, spaceID)
+	t, err := s.repo.GetByIDInSpace(ctx, spaceID, id)
 	if err != nil {
 		return nil, fmt.Errorf("transitioning ticket status: %w", err)
 	}

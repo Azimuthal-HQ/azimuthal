@@ -571,7 +571,7 @@ func TestComments(t *testing.T) {
 		t.Error("comment ID mismatch")
 	}
 	comments, err := q.ListCommentsByEntity(ctx, generated.ListCommentsByEntityParams{
-		EntityType: "project_item", EntityID: item.ID,
+		EntityType: "project_item", EntityID: item.ID, SpaceID: space.ID,
 	})
 	if err != nil {
 		t.Fatalf("ListCommentsByEntity: %v", err)
@@ -619,7 +619,7 @@ func TestComments(t *testing.T) {
 		t.Fatalf("CreateComment on page: %v", err)
 	}
 	pageComments, err := q.ListCommentsByEntity(ctx, generated.ListCommentsByEntityParams{
-		EntityType: "page", EntityID: page.ID,
+		EntityType: "page", EntityID: page.ID, SpaceID: codexSpace.ID,
 	})
 	if err != nil {
 		t.Fatalf("ListCommentsByEntity for page: %v", err)

@@ -249,7 +249,7 @@ func TestSprintService_CompleteSprint(t *testing.T) {
 func TestSprintService_CompleteSprint_InvalidTransition_FromPlanned(t *testing.T) {
 	spaceID := uuid.New()
 	svc := NewSprintService(newStubSprintRepo())
-	created, _ := svc.CreateSprint(context.Background(), makeSprint(uuid.New()))
+	created, _ := svc.CreateSprint(context.Background(), makeSprint(spaceID))
 
 	_, err := svc.CompleteSprint(context.Background(), spaceID, created.ID, CompleteOptions{})
 	if !errors.Is(err, ErrInvalidTransition) {
@@ -293,7 +293,7 @@ func TestSprintService_CompleteSprint_NextSprint_Valid(t *testing.T) {
 func TestSprintService_CompleteSprint_NextSprint_NotFound(t *testing.T) {
 	spaceID := uuid.New()
 	svc := NewSprintService(newStubSprintRepo())
-	current := startActiveSprint(t, svc, uuid.New())
+	current := startActiveSprint(t, svc, spaceID)
 
 	missing := uuid.New()
 	_, err := svc.CompleteSprint(context.Background(), spaceID, current.ID, CompleteOptions{NextSprintID: &missing})
@@ -305,7 +305,7 @@ func TestSprintService_CompleteSprint_NextSprint_NotFound(t *testing.T) {
 func TestSprintService_CompleteSprint_NextSprint_DifferentSpace(t *testing.T) {
 	spaceID := uuid.New()
 	svc := NewSprintService(newStubSprintRepo())
-	current := startActiveSprint(t, svc, uuid.New())
+	current := startActiveSprint(t, svc, spaceID)
 
 	// A sprint in a different space is not a valid carry-over target.
 	other, err := svc.CreateSprint(context.Background(), makeSprint(uuid.New()))
@@ -321,7 +321,7 @@ func TestSprintService_CompleteSprint_NextSprint_DifferentSpace(t *testing.T) {
 func TestSprintService_CompleteSprint_NextSprint_Self(t *testing.T) {
 	spaceID := uuid.New()
 	svc := NewSprintService(newStubSprintRepo())
-	current := startActiveSprint(t, svc, uuid.New())
+	current := startActiveSprint(t, svc, spaceID)
 
 	_, err := svc.CompleteSprint(context.Background(), spaceID, current.ID, CompleteOptions{NextSprintID: &current.ID})
 	if !errors.Is(err, ErrInvalidNextSprint) {

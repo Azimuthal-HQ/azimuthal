@@ -254,7 +254,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := h.svc.GetInSpace(r.Context(), id, spaceID)
+	ticket, err := h.svc.GetInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
@@ -301,7 +301,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	// Scoped to {spaceID}: the ticket the permission check is about has to be
 	// the ticket in the space the caller was authorised against, not whichever
 	// ticket the id happens to name.
-	existing, err := h.svc.GetInSpace(r.Context(), id, spaceID)
+	existing, err := h.svc.GetInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
@@ -360,7 +360,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Scoped to {spaceID}. This read is also what keeps the delete below from
 	// addressing another space: the transactional deleter takes a ticket id
 	// alone, so a ticket outside {spaceID} has to be refused here or nowhere.
-	existing, err := h.svc.GetInSpace(r.Context(), id, spaceID)
+	existing, err := h.svc.GetInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
@@ -438,7 +438,7 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 	// Scoped to {spaceID}, because the capability check above named that space
 	// and the ticket id named nothing: the tiers, the state machine and the
 	// audit row must all be about a ticket the caller was authorised for.
-	current, getErr := h.svc.GetInSpace(r.Context(), id, spaceID)
+	current, getErr := h.svc.GetInSpace(r.Context(), spaceID, id)
 	if getErr != nil {
 		handleTicketError(w, r, getErr)
 		return
@@ -524,7 +524,7 @@ func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	ticket, err := h.svc.GetInSpace(r.Context(), t.ticketID, t.spaceID)
+	ticket, err := h.svc.GetInSpace(r.Context(), t.spaceID, t.ticketID)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return

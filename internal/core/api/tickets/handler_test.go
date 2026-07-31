@@ -40,7 +40,7 @@ func (m *mockTicketRepo) GetByID(_ context.Context, id uuid.UUID) (*tickets.Tick
 // GetByIDInSpace applies the space predicate the real query applies, so a
 // handler that dropped the space argument would stop being covered here rather
 // than quietly keep passing.
-func (m *mockTicketRepo) GetByIDInSpace(_ context.Context, id, spaceID uuid.UUID) (*tickets.Ticket, error) {
+func (m *mockTicketRepo) GetByIDInSpace(_ context.Context, spaceID, id uuid.UUID) (*tickets.Ticket, error) {
 	t, ok := m.tickets[id]
 	if !ok || t.SpaceID != spaceID {
 		return nil, tickets.ErrNotFound

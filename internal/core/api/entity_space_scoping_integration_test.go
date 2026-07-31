@@ -371,6 +371,92 @@ func TestEntitySpaceScoping_CrossOrgReadsDiscloseNothing(t *testing.T) {
 	require.NotContains(t, string(res.Body), "FOREIGN-ORG-SECRET")
 }
 
+// TestEntitySpaceScoping_WorkflowTransitionIsSpaceScoped covers the two routes
+// where the missing reconciliation was not only a disclosure but a MUTATION.
+//
+// ApplyWorkflowTransitionToTicket and ...ToItem loaded the entity with a bare id
+// and then applied the URL space's workflow to it. The capability check is
+// against {spaceID}, which the caller genuinely holds — so an agent in space A
+// could drive the state machine of a ticket or item in any other space, or any
+// other organization, and the audit row would name the wrong space.
+//
+// Asserted at the boundary rather than by outcome: the refusal has to arrive
+// before anything is written, so the far entity's status is re-read afterwards
+// and must be untouched.
+func TestEntitySpaceScoping_WorkflowTransitionIsSpaceScoped(t *testing.T) {
+	f := newScopeFixture(t)
+
+	// The persona has to CLEAR the capability check to reach the code under
+	// test. A contributor is refused 403 by RequireWriteFloor/CapTransitionAnyItem
+	// before the entity is ever loaded, so a test written with the fixture's
+	// default persona would assert the capability gate and would pass with the
+	// space reconciliation deleted. This one holds `agent` on space A — every
+	// capability the route asks for, in the space the URL names — and still
+	// must not reach an entity in space B.
+	ctx := context.Background()
+	agent := testutil.CreateTestUserWithRole(t, f.ts.DB.Pool, f.ts.OrgID, "member")
+	for _, s := range []testutil.Space{f.spaceA, f.beaconA} {
+		_, err := f.ts.GrantService.Create(ctx, f.ts.OrgID, s.ID,
+			access.SubjectUser, agent.ID, access.RoleAgent, f.ts.UserID)
+		require.NoError(t, err)
+	}
+	agentTok := f.ts.tokenFor(t, agent.ID, agent.Email)
+
+	// The URL space needs a workflow assigned, and the body needs a state the
+	// workflow actually contains. Without both, the handler answers 404 from
+	// "no workflow assigned to space" or 409 from an unknown state BEFORE it
+	// ever loads the entity — and the test would pass with the reconciliation
+	// deleted, asserting nothing. Verified by reverting the fix: this test must
+	// fail, and it does.
+	wf := f.ts.WorkflowAdapter
+	require.NoError(t, wf.SeedDefaultWorkflows(ctx, f.ts.OrgID))
+	require.NoError(t, wf.AssignDefaultWorkflowToSpace(ctx, f.ts.OrgID, "beacon", f.beaconA.ID))
+	require.NoError(t, wf.AssignDefaultWorkflowToSpace(ctx, f.ts.OrgID, "vector", f.spaceA.ID))
+
+	// A state the URL space's workflow really offers from its initial state.
+	targetState := func(t *testing.T, module string) string {
+		t.Helper()
+		w, err := wf.GetDefaultWorkflow(ctx, f.ts.OrgID, module)
+		require.NoError(t, err)
+		initial, err := wf.GetInitialState(ctx, w.ID)
+		require.NoError(t, err)
+		transitions, err := wf.ListAvailableTransitions(ctx, w.ID, initial.ID)
+		require.NoError(t, err)
+		require.NotEmpty(t, transitions)
+		return transitions[0].ToStateID.String()
+	}
+
+	statusOf := func(t *testing.T, table string, id uuid.UUID) string {
+		t.Helper()
+		var status string
+		require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
+			`SELECT status FROM `+table+` WHERE id = $1`, id).Scan(&status))
+		return status
+	}
+
+	t.Run("ticket", func(t *testing.T) {
+		before := statusOf(t, "tickets", f.ticketB)
+		res := f.ts.postAs(t, agentTok, fmt.Sprintf(
+			"%s/tickets/%s/workflow-state", f.base(f.beaconA.ID), f.ticketB),
+			map[string]any{"state_id": targetState(t, "tickets")})
+		require.Equal(t, http.StatusNotFound, res.StatusCode, "body: %s", string(res.Body))
+		require.NotContains(t, string(res.Body), secretTicket)
+		require.Equal(t, before, statusOf(t, "tickets", f.ticketB),
+			"a refused transition must not have moved the far ticket")
+	})
+
+	t.Run("item", func(t *testing.T) {
+		before := statusOf(t, "project_items", f.itemB)
+		res := f.ts.postAs(t, agentTok, fmt.Sprintf(
+			"%s/projects/items/%s/workflow-state", f.base(f.spaceA.ID), f.itemB),
+			map[string]any{"state_id": targetState(t, "project_items")})
+		require.Equal(t, http.StatusNotFound, res.StatusCode, "body: %s", string(res.Body))
+		require.NotContains(t, string(res.Body), secretItem)
+		require.Equal(t, before, statusOf(t, "project_items", f.itemB),
+			"a refused transition must not have moved the far item")
+	})
+}
+
 // TestEntitySpaceScoping_GivesNoExistenceOracle pins the no-oracle property
 // across the family: an entity that exists in a space the caller cannot read
 // must be indistinguishable from an id that names nothing at all.

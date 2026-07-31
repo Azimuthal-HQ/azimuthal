@@ -43,7 +43,7 @@ func (s *Service) UpdatePageOrConflict(ctx context.Context, input UpdatePageInpu
 	// the space the route named. The conflict body returns the page in full, so
 	// this is a page read like any other and gets the same reconciliation: the
 	// route proved {spaceID} readable and proved nothing about {pageID}.
-	current, getErr := s.GetPageInSpace(ctx, input.PageID, input.SpaceID)
+	current, getErr := s.GetPageInSpace(ctx, input.SpaceID, input.PageID)
 	if getErr != nil {
 		return generated.Page{}, nil, fmt.Errorf("fetching current page after conflict: %w", getErr)
 	}

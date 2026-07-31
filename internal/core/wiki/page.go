@@ -234,7 +234,7 @@ func (s *Service) GetPage(ctx context.Context, id uuid.UUID) (generated.Page, er
 // A page in another space reports ErrPageNotFound, which is exactly what a page
 // that does not exist reports. Answering "it exists but you may not have it"
 // would be the same disclosure wearing a different status code.
-func (s *Service) GetPageInSpace(ctx context.Context, id, spaceID uuid.UUID) (generated.Page, error) {
+func (s *Service) GetPageInSpace(ctx context.Context, spaceID, id uuid.UUID) (generated.Page, error) {
 	page, err := s.store.GetPageInSpace(ctx, generated.GetPageInSpaceParams{
 		PageID:  id,
 		SpaceID: spaceID,

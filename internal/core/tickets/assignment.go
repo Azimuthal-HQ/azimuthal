@@ -28,7 +28,7 @@ type AssignmentNotifier interface {
 // caller is the space-scoped HTTP route, so the parameter is threaded through
 // rather than added as a second method.
 func (s *TicketService) Assign(ctx context.Context, ticketID, spaceID uuid.UUID, assigneeID uuid.UUID, notifier AssignmentNotifier) (*Ticket, error) {
-	t, err := s.repo.GetByIDInSpace(ctx, ticketID, spaceID)
+	t, err := s.repo.GetByIDInSpace(ctx, spaceID, ticketID)
 	if err != nil {
 		return nil, fmt.Errorf("assigning ticket: %w", err)
 	}
@@ -56,7 +56,7 @@ func (s *TicketService) Assign(ctx context.Context, ticketID, spaceID uuid.UUID,
 // same weight it does in Assign — the route proved {spaceID} readable and
 // {ticketID} nothing, and it reaches this write without reading first.
 func (s *TicketService) Unassign(ctx context.Context, ticketID, spaceID uuid.UUID) (*Ticket, error) {
-	t, err := s.repo.GetByIDInSpace(ctx, ticketID, spaceID)
+	t, err := s.repo.GetByIDInSpace(ctx, spaceID, ticketID)
 	if err != nil {
 		return nil, fmt.Errorf("unassigning ticket: %w", err)
 	}

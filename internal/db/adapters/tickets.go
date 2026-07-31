@@ -76,7 +76,7 @@ func (a *TicketAdapter) GetByID(ctx context.Context, id uuid.UUID) (*tickets.Tic
 // this has authorised its caller against the space id in the URL only. The two
 // misses collapse onto the same error so the route answers its ordinary 404
 // with its ordinary body either way.
-func (a *TicketAdapter) GetByIDInSpace(ctx context.Context, id, spaceID uuid.UUID) (*tickets.Ticket, error) {
+func (a *TicketAdapter) GetByIDInSpace(ctx context.Context, spaceID, id uuid.UUID) (*tickets.Ticket, error) {
 	row, err := a.q.GetTicketInSpace(ctx, generated.GetTicketInSpaceParams{
 		TicketID: id,
 		SpaceID:  spaceID,

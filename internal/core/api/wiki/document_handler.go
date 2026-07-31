@@ -77,7 +77,7 @@ func (h *Handler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	// nothing about {pageID}, so the page is reconciled against the space before
 	// the document is assembled — a page elsewhere is a 404, indistinguishable
 	// from a page that is not there at all.
-	document, err := h.docs.OpenDocumentInSpace(r.Context(), pageID, spaceID, claims.UserID)
+	document, err := h.docs.OpenDocumentInSpace(r.Context(), spaceID, pageID, claims.UserID)
 	if err != nil {
 		handleDocumentError(w, r, err)
 		return
@@ -453,7 +453,7 @@ func (h *Handler) editablePage(w http.ResponseWriter, r *http.Request) (uuid.UUI
 	// FOREIGN page's author, so it answered a question about one space out of
 	// another space's ownership. A page that is not in this space is now not
 	// found, and never reaches the check at all.
-	page, err := h.svc.GetPageInSpace(r.Context(), pageID, spaceID)
+	page, err := h.svc.GetPageInSpace(r.Context(), spaceID, pageID)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return uuid.Nil, nil, false

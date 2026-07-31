@@ -99,8 +99,8 @@ func (s *Service) ListRevisions(ctx context.Context, pageID, spaceID uuid.UUID) 
 // to — and a revision carries the full historical title and body, so reading one
 // by page id was the same disclosure as reading the page. Proving the page is in
 // the space is what makes the second read safe.
-func (s *Service) GetRevisionInSpace(ctx context.Context, pageID, spaceID uuid.UUID, version int32) (generated.PageRevision, error) {
-	if _, err := s.GetPageInSpace(ctx, pageID, spaceID); err != nil {
+func (s *Service) GetRevisionInSpace(ctx context.Context, spaceID, pageID uuid.UUID, version int32) (generated.PageRevision, error) {
+	if _, err := s.GetPageInSpace(ctx, spaceID, pageID); err != nil {
 		return generated.PageRevision{}, err
 	}
 	return s.GetRevision(ctx, pageID, version)
@@ -130,8 +130,8 @@ func (s *Service) GetRevision(ctx context.Context, pageID uuid.UUID, version int
 // Same reason as [Service.GetRevisionInSpace]: the diff is built out of two
 // revision bodies, so it discloses everything the revisions do. The page is
 // reconciled against the space before either one is read.
-func (s *Service) DiffRevisionsInSpace(ctx context.Context, pageID, spaceID uuid.UUID, fromVersion, toVersion int32) (RevisionDiff, error) {
-	if _, err := s.GetPageInSpace(ctx, pageID, spaceID); err != nil {
+func (s *Service) DiffRevisionsInSpace(ctx context.Context, spaceID, pageID uuid.UUID, fromVersion, toVersion int32) (RevisionDiff, error) {
+	if _, err := s.GetPageInSpace(ctx, spaceID, pageID); err != nil {
 		return RevisionDiff{}, err
 	}
 	return s.DiffRevisions(ctx, pageID, fromVersion, toVersion)
