@@ -330,11 +330,12 @@ func TestItemRelations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEntityRelation: %v", err)
 	}
-	rels, err := q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
-		FromID: from.ID, FromType: "project_item",
+	rels, err := q.ListEntityRelationsForEntity(ctx, generated.ListEntityRelationsForEntityParams{
+		EntityID: from.ID, EntityType: "project_item",
+		ReadableSpaceIds: []uuid.UUID{space.ID},
 	})
 	if err != nil {
-		t.Fatalf("ListEntityRelationsByEntity: %v", err)
+		t.Fatalf("ListEntityRelationsForEntity: %v", err)
 	}
 	if len(rels) == 0 {
 		t.Error("expected at least one relation")

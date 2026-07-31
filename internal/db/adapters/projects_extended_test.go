@@ -234,8 +234,8 @@ func TestRelationAdapter_CreateListDelete(t *testing.T) {
 	}
 	require.NoError(t, ticketAdapter.Create(ctx, tkt))
 
-	rel := &projects.Relation{
-		ID:        uuid.New(),
+	relID := uuid.New()
+	rel := &projects.NewRelation{
 		FromID:    item.ID,
 		FromType:  "project_item",
 		ToID:      tkt.ID,
@@ -243,28 +243,35 @@ func TestRelationAdapter_CreateListDelete(t *testing.T) {
 		Kind:      "blocks",
 		CreatedBy: user.ID,
 	}
-	require.NoError(t, relationAdapter.Create(ctx, rel))
+	require.NoError(t, relationAdapter.Create(ctx, relID, rel))
 
-	// ListByItem (project_item type).
-	rels, err := relationAdapter.ListByItem(ctx, item.ID)
+	readable := []uuid.UUID{spaceA.ID, spaceB.ID}
+
+	rels, err := relationAdapter.ListForEntity(ctx, item.ID, "project_item", readable)
 	require.NoError(t, err)
 	require.Len(t, rels, 1)
-	require.Equal(t, rel.ID, rels[0].ID)
-
-	// ListByEntity explicit.
-	rels2, err := relationAdapter.ListByEntity(ctx, item.ID, "project_item")
-	require.NoError(t, err)
-	require.Len(t, rels2, 1)
+	require.Equal(t, relID, rels[0].ID)
+	require.Equal(t, projects.DirectionOutgoing, rels[0].Direction)
+	require.True(t, rels[0].FarReadable)
+	require.Equal(t, "Target ticket", *rels[0].FarTitle)
 
 	// Delete.
-	require.NoError(t, relationAdapter.Delete(ctx, rel.ID))
+	require.NoError(t, relationAdapter.Delete(ctx, relID))
 
-	rels3, err := relationAdapter.ListByEntity(ctx, item.ID, "project_item")
+	rels3, err := relationAdapter.ListForEntity(ctx, item.ID, "project_item", readable)
 	require.NoError(t, err)
 	require.Empty(t, rels3)
 }
 
-func TestRelationAdapter_ListByItem_FallsBackToTicket(t *testing.T) {
+// TestRelationAdapter_ListForEntity_TypeIsExplicit replaces a test of the
+// removed ListByItem shim, which ran the query as 'project_item' and, on an
+// empty result, ran it again as 'ticket' — inferring the entity's type by
+// guessing rather than being told.
+//
+// The type is now a required argument, so this asserts the property that
+// replaced the fallback: a ticket-typed entity lists its own relations, and the
+// same id queried under the wrong type lists nothing.
+func TestRelationAdapter_ListForEntity_TypeIsExplicit(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
@@ -291,19 +298,23 @@ func TestRelationAdapter_ListByItem_FallsBackToTicket(t *testing.T) {
 	}
 	require.NoError(t, itemAdapter.Create(ctx, targetItem))
 
-	rel := &projects.Relation{
-		ID:        uuid.New(),
+	require.NoError(t, relationAdapter.Create(ctx, uuid.New(), &projects.NewRelation{
 		FromID:    tkt.ID,
 		FromType:  "ticket",
 		ToID:      targetItem.ID,
 		ToType:    "project_item",
 		Kind:      "relates_to",
 		CreatedBy: user.ID,
-	}
-	require.NoError(t, relationAdapter.Create(ctx, rel))
+	}))
 
-	// ListByItem falls back to ticket when project_item returns empty.
-	rels, err := relationAdapter.ListByItem(ctx, tkt.ID)
+	readable := []uuid.UUID{spaceA.ID, spaceB.ID}
+
+	rels, err := relationAdapter.ListForEntity(ctx, tkt.ID, "ticket", readable)
 	require.NoError(t, err)
 	require.Len(t, rels, 1)
+	require.Equal(t, "Target item", *rels[0].FarTitle)
+
+	wrongType, err := relationAdapter.ListForEntity(ctx, tkt.ID, "project_item", readable)
+	require.NoError(t, err)
+	require.Empty(t, wrongType, "the same id under the wrong entity type must not match")
 }

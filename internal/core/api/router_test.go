@@ -671,14 +671,13 @@ func (m *mockSprintRepo) ListBySpace(_ context.Context, _ uuid.UUID) ([]*project
 
 type mockRelationRepo struct{}
 
-func (m *mockRelationRepo) Create(_ context.Context, rel *projects.Relation) error {
-	rel.ID = uuid.New()
+func (m *mockRelationRepo) Create(_ context.Context, _ uuid.UUID, _ *projects.NewRelation) error {
 	return nil
 }
-func (m *mockRelationRepo) ListByItem(_ context.Context, _ uuid.UUID) ([]*projects.Relation, error) {
-	return nil, nil
+func (m *mockRelationRepo) TargetIsReadable(_ context.Context, _ uuid.UUID, _ string, _ []uuid.UUID) (bool, error) {
+	return true, nil
 }
-func (m *mockRelationRepo) ListByEntity(_ context.Context, _ uuid.UUID, _ string) ([]*projects.Relation, error) {
+func (m *mockRelationRepo) ListForEntity(_ context.Context, _ uuid.UUID, _ string, _ []uuid.UUID) ([]*projects.Relation, error) {
 	return nil, nil
 }
 func (m *mockRelationRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }

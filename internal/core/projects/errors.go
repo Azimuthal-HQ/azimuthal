@@ -42,6 +42,22 @@ var (
 	// an item to itself.
 	ErrSelfRelation = errors.New("cannot create a relation from an item to itself")
 
+	// ErrInvalidEntityType is returned when a relation endpoint names an entity
+	// kind outside the entity_relations CHECK constraint set. Without this the
+	// value reaches Postgres and the constraint violation surfaces as a 500.
+	ErrInvalidEntityType = errors.New("entity type must be ticket, project_item, or page")
+
+	// ErrRelationTargetNotFound is returned when a relation's target cannot be
+	// resolved against the caller's readable spaces.
+	//
+	// It is deliberately ONE error covering two situations — the target does
+	// not exist, and the target exists in a space the caller may not read. They
+	// are not told apart anywhere below this line either: the repository answers
+	// with a single bool, so no branch exists that could drift into reporting
+	// them differently. A distinguishable "exists but forbidden" would be the
+	// same disclosure as returning the title, in a different shape.
+	ErrRelationTargetNotFound = errors.New("relation target not found")
+
 	// ErrLabelDuplicate is returned when a label with the same name already
 	// exists in the organization.
 	ErrLabelDuplicate = errors.New("label with this name already exists")

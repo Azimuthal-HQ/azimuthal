@@ -1021,7 +1021,12 @@ func (h *Handler) ListRelations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rels, err := h.relations.ListRelations(r.Context(), id)
+	readable, ok := readableSpaceIDs(w, r)
+	if !ok {
+		return
+	}
+
+	rels, err := h.relations.ListRelations(r.Context(), id, projects.EntityTypeProjectItem, readable)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -1065,20 +1070,25 @@ func (h *Handler) CreateRelation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	readable, ok := readableSpaceIDs(w, r)
+	if !ok {
+		return
+	}
+
 	toType := req.ToType
 	if toType == "" {
-		toType = "project_item"
+		toType = projects.EntityTypeProjectItem
 	}
-	rel := &projects.Relation{
+	rel := &projects.NewRelation{
 		FromID:    fromID,
-		FromType:  "project_item",
+		FromType:  projects.EntityTypeProjectItem,
 		ToID:      req.ToID,
 		ToType:    toType,
 		Kind:      req.Kind,
 		CreatedBy: claims.UserID,
 	}
 
-	created, err := h.relations.CreateRelation(r.Context(), rel)
+	created, err := h.relations.CreateRelation(r.Context(), rel, readable)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -2208,6 +2218,24 @@ func itemIDFromURL(r *http.Request) (uuid.UUID, error) {
 	return id, nil
 }
 
+// readableSpaceIDs returns the caller's resolved readable set, or writes a 404
+// and reports false when no resolution ran.
+//
+// A missing resolution denies rather than degrades. The alternative — carrying
+// on with an empty set — is safe in the sense that every far side would redact,
+// but it makes an unwired route answer 200 with plausible-looking rows instead
+// of announcing that its authorization never executed. RequireSpaceReadable
+// made the same call one layer up ("fail closed: a missing resolution denies,
+// never allows"), and 404 rather than 403 for the same reason it does.
+func readableSpaceIDs(w http.ResponseWriter, r *http.Request) ([]uuid.UUID, bool) {
+	res := access.FromContext(r.Context())
+	if res == nil {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "not found")
+		return nil, false
+	}
+	return res.ReadableSpaceIDs(), true
+}
+
 func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "spaceID"))
 	if err != nil {
@@ -2260,8 +2288,13 @@ func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, projects.ErrInvalidKind),
 		errors.Is(err, projects.ErrInvalidRelationKind),
 		errors.Is(err, projects.ErrInvalidNextSprint),
+		errors.Is(err, projects.ErrInvalidEntityType),
 		errors.Is(err, projects.ErrSelfRelation):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+	case errors.Is(err, projects.ErrRelationTargetNotFound):
+		// Deliberately the same 404 body an absent target produces. The service
+		// cannot tell the two apart, and neither can this.
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
 	case errors.Is(err, projects.ErrLabelDuplicate):
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
 	default:

@@ -423,9 +423,9 @@ func NewRelationAdapter(q *generated.Queries) *RelationAdapter {
 }
 
 // Create persists a new polymorphic entity relation.
-func (a *RelationAdapter) Create(ctx context.Context, rel *projects.Relation) error {
+func (a *RelationAdapter) Create(ctx context.Context, id uuid.UUID, rel *projects.NewRelation) error {
 	_, err := a.q.CreateEntityRelation(ctx, generated.CreateEntityRelationParams{
-		ID:        rel.ID,
+		ID:        id,
 		FromID:    rel.FromID,
 		FromType:  rel.FromType,
 		ToID:      rel.ToID,
@@ -439,39 +439,36 @@ func (a *RelationAdapter) Create(ctx context.Context, rel *projects.Relation) er
 	return nil
 }
 
-// ListByItem returns all relations from a given entity (identified by fromID and fromType).
-func (a *RelationAdapter) ListByItem(ctx context.Context, fromID uuid.UUID) ([]*projects.Relation, error) {
-	// Attempt to list from both entity types — try project_item first, then ticket.
-	// In practice, callers pass a from_type too; this shim queries without type constraint.
-	// For full polymorphism, use ListByEntity which accepts a from_type.
-	rows, err := a.q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
-		FromID:   fromID,
-		FromType: "project_item",
+// TargetIsReadable reports whether a relation target both exists and sits in a
+// space the caller may read. One bool, so the two failure modes cannot be told
+// apart by anything downstream.
+func (a *RelationAdapter) TargetIsReadable(ctx context.Context, targetID uuid.UUID, targetType string, readableSpaceIDs []uuid.UUID) (bool, error) {
+	ok, err := a.q.EntityRelationTargetIsReadable(ctx, generated.EntityRelationTargetIsReadableParams{
+		TargetID:         targetID,
+		TargetType:       targetType,
+		ReadableSpaceIds: nonNilUUIDs(readableSpaceIDs),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("relation adapter list by item: %w", err)
+		return false, fmt.Errorf("relation adapter target readable: %w", err)
 	}
-	if len(rows) == 0 {
-		// Fall back to ticket type.
-		rows, err = a.q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
-			FromID:   fromID,
-			FromType: "ticket",
-		})
-		if err != nil {
-			return nil, fmt.Errorf("relation adapter list by item (ticket): %w", err)
-		}
-	}
-	return dbEntityRelationRowsToRelations(rows), nil
+	return ok, nil
 }
 
-// ListByEntity returns all relations from a specific typed entity.
-func (a *RelationAdapter) ListByEntity(ctx context.Context, fromID uuid.UUID, fromType string) ([]*projects.Relation, error) {
-	rows, err := a.q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
-		FromID:   fromID,
-		FromType: fromType,
+// ListForEntity returns every relation touching the entity, in both directions,
+// with far sides resolved only where the caller may read them.
+//
+// The type-probing shim this replaced ran the query as 'project_item' and, on
+// an empty result, ran it again as 'ticket' — so a caller that did not know the
+// entity's type got an answer anyway, by guessing. The type is now required,
+// because the route always knows it.
+func (a *RelationAdapter) ListForEntity(ctx context.Context, entityID uuid.UUID, entityType string, readableSpaceIDs []uuid.UUID) ([]*projects.Relation, error) {
+	rows, err := a.q.ListEntityRelationsForEntity(ctx, generated.ListEntityRelationsForEntityParams{
+		EntityID:         entityID,
+		EntityType:       entityType,
+		ReadableSpaceIds: nonNilUUIDs(readableSpaceIDs),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("relation adapter list by entity: %w", err)
+		return nil, fmt.Errorf("relation adapter list for entity: %w", err)
 	}
 	return dbEntityRelationRowsToRelations(rows), nil
 }
@@ -484,20 +481,33 @@ func (a *RelationAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func dbEntityRelationRowsToRelations(rows []generated.ListEntityRelationsByEntityRow) []*projects.Relation {
+// dbEntityRelationRowsToRelations maps gated rows onto the viewer-facing type.
+//
+// FarID.Valid is the single readability signal, and it is the query's answer
+// rather than this function's: the far side joined, or it did not. Every other
+// far field is copied only inside that branch, so an unreadable relation cannot
+// acquire an identity through a mapping mistake here.
+func dbEntityRelationRowsToRelations(rows []generated.ListEntityRelationsForEntityRow) []*projects.Relation {
 	result := make([]*projects.Relation, len(rows))
 	for i, row := range rows {
-		result[i] = &projects.Relation{
-			ID:        row.ID,
-			FromID:    row.FromID,
-			FromType:  row.FromType,
-			ToID:      row.ToID,
-			ToType:    row.ToType,
-			Kind:      row.Kind,
-			CreatedBy: row.CreatedBy,
-			ToTitle:   row.ToTitle,
-			ToStatus:  row.ToStatus,
+		direction := projects.DirectionIncoming
+		if row.IsOutgoing {
+			direction = projects.DirectionOutgoing
 		}
+		rel := &projects.Relation{
+			ID:        row.ID,
+			Kind:      row.Kind,
+			Direction: direction,
+		}
+		if row.FarID.Valid {
+			farID := uuid.UUID(row.FarID.Bytes)
+			rel.FarReadable = true
+			rel.FarID = &farID
+			rel.FarType = row.FarType
+			rel.FarTitle = row.FarTitle
+			rel.FarStatus = row.FarStatus
+		}
+		result[i] = rel
 	}
 	return result
 }
