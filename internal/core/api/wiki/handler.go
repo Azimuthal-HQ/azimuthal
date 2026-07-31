@@ -445,20 +445,30 @@ func (h *Handler) MovePage(w http.ResponseWriter, r *http.Request) {
 // the destination's existence from leaking), confirms the page really is in
 // the source space, and returns the assembled input. It writes its own error
 // response and returns ok=false on failure.
-func (h *Handler) moveInputFromRequest(w http.ResponseWriter, r *http.Request) (wiki.MovePageInput, bool) {
-	id, err := pageIDFromURL(r)
+// moveURLIDs parses the three ids the move route carries, writing its own 400
+// and reporting ok=false on the first that will not parse.
+func moveURLIDs(w http.ResponseWriter, r *http.Request) (orgID, spaceID, pageID uuid.UUID, ok bool) {
+	pageID, err := pageIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
-		return wiki.MovePageInput{}, false
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
 	}
-	spaceID, err := spaceIDFromURL(r)
+	spaceID, err = spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
-		return wiki.MovePageInput{}, false
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
 	}
-	orgID, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	orgID, err = uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	return orgID, spaceID, pageID, true
+}
+
+func (h *Handler) moveInputFromRequest(w http.ResponseWriter, r *http.Request) (wiki.MovePageInput, bool) {
+	orgID, spaceID, id, ok := moveURLIDs(w, r)
+	if !ok {
 		return wiki.MovePageInput{}, false
 	}
 	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {

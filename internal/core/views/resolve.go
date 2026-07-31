@@ -57,9 +57,6 @@ type Viewer struct {
 	At time.Time
 }
 
-// Result is one row of a saved view's results, from either module. The shape
-// is deliberately the same for both so the merge compares like with like and
-// the API renders one row component.
 // Origin records how a row became visible, which decides what may be said
 // about it. A row reached only through an entity share carries no container
 // identity, so the surface has to render provenance instead of inventing one.
@@ -76,6 +73,9 @@ const (
 	OriginShare Origin = "share"
 )
 
+// Result is one row of a saved view's results, from either module. The shape
+// is deliberately the same for both so the merge compares like with like and
+// the API renders one row component.
 type Result struct {
 	Module Module
 	ID     uuid.UUID
