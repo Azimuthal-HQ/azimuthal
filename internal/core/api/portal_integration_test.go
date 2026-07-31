@@ -87,11 +87,21 @@ func newPortalFixture(t *testing.T) *portalFixture {
 // signIn drives the real sign-in flow: request a link, then redeem it. It uses
 // the HTTP surface rather than the service so that the guard, the router and
 // the wire format are all exercised.
+//
+// The display name is the address here, which is fine for the tests below —
+// none of them read it. A test that DOES assert on the display name must use
+// signInAs, or it is comparing the email to itself.
 func (f *portalFixture) signIn(t *testing.T, email string) string {
+	t.Helper()
+	return f.signInAs(t, email, email)
+}
+
+// signInAs is signIn with the requester's display name stated separately.
+func (f *portalFixture) signInAs(t *testing.T, email, name string) string {
 	t.Helper()
 
 	res := f.ts.post(t, "/api/v1/portal/"+f.portalKey+"/auth/request-link",
-		map[string]string{"email": email, "name": email}, false)
+		map[string]string{"email": email, "name": name}, false)
 	require.Equal(t, http.StatusAccepted, res.StatusCode, string(res.Body))
 
 	var issued struct {

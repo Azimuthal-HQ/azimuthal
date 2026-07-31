@@ -55,17 +55,15 @@ type kanbanColumnView struct {
 	Tickets []ticketView   `json:"tickets"`
 }
 
-// resolveRequesters turns domain tickets into agent views, resolving the
-// external identity of every portal-raised one in a single round trip.
+// distinctRequesterIDs collects the external identities a page of tickets
+// names, once each.
 //
-// A ticket whose requester row has vanished serialises with a null requester
-// rather than failing the read: the ticket still exists and the agent still
-// needs it. A lookup that ERRORS is a different thing and is returned, because
-// answering "no requester" when the truth is "we could not tell" is precisely
-// the silent degradation that leaves this surface reading "Unknown".
-func (h *Handler) resolveRequesters(ctx context.Context, ts []*tickets.Ticket) ([]ticketView, error) {
-	views := make([]ticketView, 0, len(ts))
-
+// The de-duplication is what makes the lookup one round trip rather than one
+// per portal ticket: a busy queue is frequently several requests from the same
+// customer, and asking for the same id four times is an N+1 wearing a bulk
+// signature. TestTicketRequester_ListResolvesWithoutNPlusOne asserts the batch
+// this returns, not just the number of calls.
+func distinctRequesterIDs(ts []*tickets.Ticket) []uuid.UUID {
 	ids := make([]uuid.UUID, 0, len(ts))
 	seen := make(map[uuid.UUID]struct{}, len(ts))
 	for _, t := range ts {
@@ -78,6 +76,20 @@ func (h *Handler) resolveRequesters(ctx context.Context, ts []*tickets.Ticket) (
 		seen[*t.RequesterID] = struct{}{}
 		ids = append(ids, *t.RequesterID)
 	}
+	return ids
+}
+
+// resolveRequesters turns domain tickets into agent views, resolving the
+// external identity of every portal-raised one in a single round trip.
+//
+// A ticket whose requester row has vanished serialises with a null requester
+// rather than failing the read: the ticket still exists and the agent still
+// needs it. A lookup that ERRORS is a different thing and is returned, because
+// answering "no requester" when the truth is "we could not tell" is precisely
+// the silent degradation that leaves this surface reading "Unknown".
+func (h *Handler) resolveRequesters(ctx context.Context, ts []*tickets.Ticket) ([]ticketView, error) {
+	views := make([]ticketView, 0, len(ts))
+	ids := distinctRequesterIDs(ts)
 
 	// No portal-raised ticket on this page: no lookup, no dependency on the
 	// portal being wired at all. This is the common case in a space that does
