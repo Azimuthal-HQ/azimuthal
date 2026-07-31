@@ -757,12 +757,36 @@ comments in it is a poor feed.
 
 ---
 
-## 23. `POST /tickets/{id}/assign` performs no referential check, and its 500 discloses SQL
+## 23. ~~`POST /tickets/{id}/assign` performs no referential check, and its 500 discloses SQL~~ (RESOLVED, with one part deliberately left open)
 
 **Severity**: High (information disclosure, and a cross-organisation write)
-**Status**: Open. Found by P5's coverage pass, confirmed live against real PostgreSQL. Deliberately
-**not fixed there**: a dashboards phase must not quietly rewrite the ticket assignment path, and
-two of the three parts need a policy decision rather than a patch.
+**Status**: Resolved by the write-authorisation pass. Both defects this entry names are closed and
+each has a test that fails with the property reverted, verified in both directions.
+
+**(a) and (c).** `TicketService.Assign` now asks whether the assignee belongs to the organisation
+that owns the ticket's space, and refuses with `tickets.ErrAssigneeNotOrgMember` → **400
+VALIDATION_ERROR** when they do not. Membership is resolved *through the space*
+(`UserIsMemberOfSpaceOrg`) rather than read from the caller's token, so the check is about the
+entity being written rather than about who is asking. The check runs before the already-assigned
+comparison, so a foreign assignee is refused as one rather than being told the ticket is already
+theirs. A refused assignment writes nothing and enqueues no notification — which matters, because
+the notification carried the ticket's title.
+
+**(b).** `handleTicketError`'s default arm is `respondUnmapped`, matching the three project
+surfaces H5 closed. The client gets a fixed message plus the request id it already had; the full
+error goes to the server log under that id. `TestUnmappedTicketError_DoesNotLeakInternalDetailToTheWire`
+and `..._FullErrorReachesTheServerLog` fail against the old arm, the first on the constraint name
+appearing in the body.
+
+**The wiki sibling this entry named is closed too**, by the same change in the same shape
+(`internal/core/api/notifications` — see #28; `internal/core/api/wiki/handler.go` remains and is
+the last of the family).
+
+**Still open, deliberately.** The weaker sibling case: assigning an org member who holds no grant
+on the ticket's space still answers 200. This entry calls that "arguably policy" and asks for a
+maintainer's decision, so the pass changed no behaviour for it. Deciding it means deciding whether
+assignment is a statement about who *may work on* an item or about who *is responsible for* it,
+and those give opposite answers.
 
 `internal/core/api/tickets/handler.go` `Assign` writes `assignee_id` with no check that the id
 names anybody this organisation knows. Three consequences, in increasing order of seriousness:
@@ -1086,13 +1110,19 @@ way and says nothing about this.
 
 ---
 
-## 27. `POST /wiki` accepts a `parent_id` in another space, and roots the new page under it
+## 27. ~~`POST /wiki` accepts a `parent_id` in another space, and roots the new page under it~~ (RESOLVED)
 
 **Severity**: Medium (silent tree corruption; no disclosure beyond what the endpoint already told
 you, no data loss)
-**Status**: Open. Found by the maintenance mini-pass while closing #24's first site, and verified
-over HTTP. Not fixed — it is a new refusal rather than a status-class repair, so it needs its own
-decision about what to do with pages already in this state.
+**Status**: Resolved by the cross-space read-authorisation pass, which reached this path while
+closing the entity-by-id family. `wiki.Service.CreatePage` resolves the parent with
+`GetPageInSpace` against the space the page is being created in, and a parent elsewhere answers
+`ErrParentPageNotFound` → 404, identically to one that does not exist.
+
+**This entry was stale for one release.** It was recorded as open, and the description below still
+reads as though `GetPageByID` were the call — it is not, and has not been since that pass. Verify
+the code before acting on the paragraphs that follow. The decision the entry asked for (what to do
+about pages *already* in this state) was not made and is not made here: the fix refuses new ones.
 
 `wiki.Service.CreatePage` (`internal/core/wiki/page.go`) resolves the parent with a bare
 `s.store.GetPageByID(ctx, *input.ParentID)` and never compares `parent.SpaceID` to
@@ -1127,12 +1157,17 @@ classes.
 
 ---
 
-## 28. Four `notifications` handlers interpolate the raw error into the 500 body
+## 28. ~~Four `notifications` handlers interpolate the raw error into the 500 body~~ (RESOLVED)
 
 **Severity**: Low–Medium (internal disclosure; same mechanism as #23(b), smaller surface)
-**Status**: Open. Found by the hygiene-gates pass (H5) while fixing the same shape in
-`internal/core/api/projects`. Recorded rather than fixed: a different package from that pass's
-scope, and fixing it well means deciding where the shared helper lives (below).
+**Status**: Resolved by the write-authorisation pass, which was already changing this file for the
+notification read gate. All four arms call a package-local `respondUnmapped`: the client gets a
+fixed message and the request id, the full error and the operation name go to the server log.
+
+**The "where does the helper live" question was not answered, and did not need to be.** Each
+package has its own small `respondUnmapped` — projects, tickets and now notifications — because
+the surface name in the message differs and a shared one would need it passed in anyway. If a
+fourth copy appears, that is the point to extract it.
 
 ```
 internal/core/api/notifications/handler.go:74   fmt.Sprintf("listing notifications: %v", err)
@@ -1305,4 +1340,6 @@ reason.
 
 ---
 
-Write-path authorization hardening is tracked privately as a follow-up to the read-path work.
+Write-path authorization hardening was carried out as a follow-up to the read-path work. As with
+that pass, the specifics stay out of public history and went to the maintainer; what is recorded
+here is only that the work happened and which already-public entries it closed (#23, #27, #28).
