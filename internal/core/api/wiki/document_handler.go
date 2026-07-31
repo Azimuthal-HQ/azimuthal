@@ -67,7 +67,17 @@ func (h *Handler) GetDocument(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	document, err := h.docs.OpenDocument(r.Context(), pageID, claims.UserID)
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	// The heaviest disclosure in this module: the whole stored document, not a
+	// title and a version. The route's guard proved {spaceID} readable and proved
+	// nothing about {pageID}, so the page is reconciled against the space before
+	// the document is assembled — a page elsewhere is a 404, indistinguishable
+	// from a page that is not there at all.
+	document, err := h.docs.OpenDocumentInSpace(r.Context(), spaceID, pageID, claims.UserID)
 	if err != nil {
 		handleDocumentError(w, r, err)
 		return
@@ -400,8 +410,12 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, image)
 }
 
-// pageAndCaller parses the page id and requires authentication. Read paths use
-// it; the space-read guard on the subtree has already run.
+// pageAndCaller parses the page id and requires authentication.
+//
+// It authorises nothing on its own. The subtree's space-read guard has run, but
+// that guard is about {spaceID} and says nothing about the {pageID} in the same
+// URL — so every caller of this helper still has to reconcile the two, either
+// through a space-scoped read of its own or through editablePage below.
 func (h *Handler) pageAndCaller(w http.ResponseWriter, r *http.Request) (uuid.UUID, *auth.Claims, bool) {
 	pageID, err := pageIDFromURL(r)
 	if err != nil {
@@ -434,7 +448,12 @@ func (h *Handler) editablePage(w http.ResponseWriter, r *http.Request) (uuid.UUI
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
 		return uuid.Nil, nil, false
 	}
-	page, err := h.svc.GetPage(r.Context(), pageID)
+	// Loaded WITH the space, and that fixes the capability check as much as the
+	// read: CanEditEntity was being asked about this route's spaceID using a
+	// FOREIGN page's author, so it answered a question about one space out of
+	// another space's ownership. A page that is not in this space is now not
+	// found, and never reaches the check at all.
+	page, err := h.svc.GetPageInSpace(r.Context(), spaceID, pageID)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return uuid.Nil, nil, false

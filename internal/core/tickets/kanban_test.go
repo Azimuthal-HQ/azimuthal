@@ -20,13 +20,13 @@ func TestKanbanBoard(t *testing.T) {
 	t3 := createTestTicket(t, svc, spaceID, reporterID)
 
 	// Move t2 to in_progress, t3 to resolved
-	if _, err := svc.TransitionStatus(ctx, t2.ID, StatusInProgress); err != nil {
+	if _, err := svc.TransitionStatus(ctx, t2.ID, spaceID, StatusInProgress); err != nil {
 		t.Fatalf("transitioning t2: %v", err)
 	}
-	if _, err := svc.TransitionStatus(ctx, t3.ID, StatusInProgress); err != nil {
+	if _, err := svc.TransitionStatus(ctx, t3.ID, spaceID, StatusInProgress); err != nil {
 		t.Fatalf("transitioning t3 to in_progress: %v", err)
 	}
-	if _, err := svc.TransitionStatus(ctx, t3.ID, StatusResolved); err != nil {
+	if _, err := svc.TransitionStatus(ctx, t3.ID, spaceID, StatusResolved); err != nil {
 		t.Fatalf("transitioning t3 to resolved: %v", err)
 	}
 
@@ -69,7 +69,7 @@ func TestListByAssignee(t *testing.T) {
 	assigneeID := uuid.New()
 
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
-	if _, err := svc.Assign(ctx, ticket.ID, assigneeID, nil); err != nil {
+	if _, err := svc.Assign(ctx, ticket.ID, spaceID, assigneeID, nil); err != nil {
 		t.Fatalf("assigning ticket: %v", err)
 	}
 

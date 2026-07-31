@@ -30,7 +30,16 @@ const MODULE_DETAIL_SUBPATH: Record<ViewModule, string> = {
   vector: 'backlog',
 };
 
-function resultPath(r: ViewResult): string {
+/**
+ * The detail route of a row, or null when there is nowhere this viewer may go.
+ *
+ * A share-only row carries no space, and the module detail route lives inside
+ * one — so there is no link to build. Fabricating a path from an absent space id
+ * would produce a URL that 404s at best, and at worst reads as an invitation
+ * into a space the viewer cannot enter.
+ */
+function resultPath(r: ViewResult): string | null {
+  if (!r.space_id) return null;
   return spacePath(r.module, r.space_id, `${MODULE_DETAIL_SUBPATH[r.module]}/${r.id}`);
 }
 
@@ -96,16 +105,30 @@ export function ViewResultRow({ result, meId }: { result: ViewResult; meId?: str
     >
       <div className="flex flex-wrap items-center gap-2">
         <ModuleChip module={result.module} />
-        <Link
-          to={path}
-          className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline"
-          style={{ fontFamily: 'var(--font-mono)' }}
-        >
-          {result.key || result.id.slice(0, 8)}
-        </Link>
-        <Link to={path} className="text-[13px] text-[var(--color-text)] hover:underline">
-          {result.title}
-        </Link>
+        {path ? (
+          <>
+            <Link
+              to={path}
+              className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline"
+              style={{ fontFamily: 'var(--font-mono)' }}
+            >
+              {result.key || result.id.slice(0, 8)}
+            </Link>
+            <Link to={path} className="text-[13px] text-[var(--color-text)] hover:underline">
+              {result.title}
+            </Link>
+          </>
+        ) : (
+          <>
+            <span
+              className="text-[var(--text-xs)] text-[var(--color-text-muted)]"
+              style={{ fontFamily: 'var(--font-mono)' }}
+            >
+              {result.id.slice(0, 8)}
+            </span>
+            <span className="text-[13px] text-[var(--color-text)]">{result.title}</span>
+          </>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-[var(--text-xs)]">
         {result.kind && <Badge variant="outline">{humanStatus(result.kind)}</Badge>}
@@ -116,9 +139,20 @@ export function ViewResultRow({ result, meId }: { result: ViewResult; meId?: str
           assigneeName={result.assignee_name}
           meId={meId}
         />
+        {/*
+          Provenance, not a container. A share-only row has no space to name —
+          saying "Shared with you" is the whole of what the viewer is entitled
+          to know about where it lives (matrix case 16).
+        */}
         <span className="text-[var(--color-text-muted)]">
-          {result.space_key ? `${result.space_key} · ` : ''}
-          {result.space_name}
+          {result.origin === 'share' ? (
+            'Shared with you'
+          ) : (
+            <>
+              {result.space_key ? `${result.space_key} · ` : ''}
+              {result.space_name}
+            </>
+          )}
         </span>
       </div>
     </li>

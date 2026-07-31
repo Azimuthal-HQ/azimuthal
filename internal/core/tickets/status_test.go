@@ -115,7 +115,7 @@ func TestTransitionStatus(t *testing.T) {
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
 
 	t.Run("open to in_progress", func(t *testing.T) {
-		updated, err := svc.TransitionStatus(context.Background(), ticket.ID, StatusInProgress)
+		updated, err := svc.TransitionStatus(context.Background(), ticket.ID, spaceID, StatusInProgress)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -125,7 +125,7 @@ func TestTransitionStatus(t *testing.T) {
 	})
 
 	t.Run("in_progress to resolved", func(t *testing.T) {
-		updated, err := svc.TransitionStatus(context.Background(), ticket.ID, StatusResolved)
+		updated, err := svc.TransitionStatus(context.Background(), ticket.ID, spaceID, StatusResolved)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -135,7 +135,7 @@ func TestTransitionStatus(t *testing.T) {
 	})
 
 	t.Run("resolved to closed", func(t *testing.T) {
-		updated, err := svc.TransitionStatus(context.Background(), ticket.ID, StatusClosed)
+		updated, err := svc.TransitionStatus(context.Background(), ticket.ID, spaceID, StatusClosed)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -145,7 +145,7 @@ func TestTransitionStatus(t *testing.T) {
 	})
 
 	t.Run("reopen from closed", func(t *testing.T) {
-		updated, err := svc.TransitionStatus(context.Background(), ticket.ID, StatusOpen)
+		updated, err := svc.TransitionStatus(context.Background(), ticket.ID, spaceID, StatusOpen)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -155,16 +155,29 @@ func TestTransitionStatus(t *testing.T) {
 	})
 
 	t.Run("invalid transition rejected", func(t *testing.T) {
-		_, err := svc.TransitionStatus(context.Background(), ticket.ID, StatusResolved)
+		_, err := svc.TransitionStatus(context.Background(), ticket.ID, spaceID, StatusResolved)
 		if !errors.Is(err, ErrInvalidTransition) {
 			t.Errorf("expected ErrInvalidTransition, got %v", err)
 		}
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		_, err := svc.TransitionStatus(context.Background(), uuid.New(), StatusInProgress)
+		_, err := svc.TransitionStatus(context.Background(), uuid.New(), spaceID, StatusInProgress)
 		if err == nil {
 			t.Error("expected error for missing ticket")
+		}
+	})
+
+	// The ticket is open by this point and open -> in_progress is legal, so
+	// this case would transition were the space predicate not applied. It
+	// asserts the scoping rather than the state machine.
+	t.Run("ticket in another space is not found", func(t *testing.T) {
+		_, err := svc.TransitionStatus(context.Background(), ticket.ID, uuid.New(), StatusInProgress)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("expected ErrNotFound, got %v", err)
+		}
+		if ticket.Status != StatusOpen {
+			t.Errorf("expected status to stay %q after a cross-space transition, got %q", StatusOpen, ticket.Status)
 		}
 	})
 }
@@ -181,16 +194,16 @@ func TestFullLifecycle(t *testing.T) {
 	}
 
 	// open -> in_progress -> resolved -> closed
-	ticket, _ = svc.TransitionStatus(ctx, ticket.ID, StatusInProgress)
-	ticket, _ = svc.TransitionStatus(ctx, ticket.ID, StatusResolved)
-	ticket, _ = svc.TransitionStatus(ctx, ticket.ID, StatusClosed)
+	ticket, _ = svc.TransitionStatus(ctx, ticket.ID, spaceID, StatusInProgress)
+	ticket, _ = svc.TransitionStatus(ctx, ticket.ID, spaceID, StatusResolved)
+	ticket, _ = svc.TransitionStatus(ctx, ticket.ID, spaceID, StatusClosed)
 
 	if ticket.Status != StatusClosed {
 		t.Errorf("expected closed, got %q", ticket.Status)
 	}
 
 	// reopen
-	ticket, _ = svc.TransitionStatus(ctx, ticket.ID, StatusOpen)
+	ticket, _ = svc.TransitionStatus(ctx, ticket.ID, spaceID, StatusOpen)
 	if ticket.Status != StatusOpen {
 		t.Errorf("expected open after reopen, got %q", ticket.Status)
 	}

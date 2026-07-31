@@ -588,7 +588,11 @@ func (h *Handler) ListPendingApprovals(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/approvals [get]
 func (h *Handler) ListEntityApprovals(w http.ResponseWriter, r *http.Request) {
-	if _, err := spaceIDFromURL(r); err != nil {
+	// The space is used, not merely validated. It used to be parsed into `_`
+	// purely to reject a malformed URL, so the read that followed was keyed on
+	// the entity id alone and returned another space's approval history.
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
 		return
 	}
@@ -614,7 +618,7 @@ func (h *Handler) ListEntityApprovals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	approvals, err := h.tierStore.ApprovalsForEntity(r.Context(), entityType, entityID)
+	approvals, err := h.tierStore.ApprovalsForEntity(r.Context(), spaceID, entityType, entityID)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list approvals")
 		return

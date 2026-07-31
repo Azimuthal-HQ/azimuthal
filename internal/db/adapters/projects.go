@@ -82,6 +82,25 @@ func (a *ItemAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Item
 	return dbProjectItemToItem(row), nil
 }
 
+// GetByIDInSpace retrieves an item reconciled against the given space.
+//
+// A wrong space produces pgx.ErrNoRows and therefore the same ErrNotFound an
+// absent item produces. That collapse is the point: the caller cannot use this
+// endpoint to learn whether an id it guessed names something real.
+func (a *ItemAdapter) GetByIDInSpace(ctx context.Context, spaceID, id uuid.UUID) (*projects.Item, error) {
+	row, err := a.q.GetProjectItemInSpace(ctx, generated.GetProjectItemInSpaceParams{
+		ItemID:  id,
+		SpaceID: spaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("item adapter get by id in space: %w", err)
+	}
+	return dbProjectItemToItem(row), nil
+}
+
 // Update persists changes to an existing item. An item that is gone by the time
 // the write lands is ErrNotFound, not an internal error: every handler on this
 // path pre-loads the item, so this is the TOCTOU window between the read and
@@ -181,8 +200,11 @@ func (a *ItemAdapter) ListByAssignee(ctx context.Context, spaceID uuid.UUID, ass
 }
 
 // ListBySprint returns all items in a given sprint, ordered by rank.
-func (a *ItemAdapter) ListBySprint(ctx context.Context, sprintID uuid.UUID) ([]*projects.Item, error) {
-	rows, err := a.q.ListProjectItemsBySprint(ctx, pgUUID(&sprintID))
+func (a *ItemAdapter) ListBySprint(ctx context.Context, spaceID, sprintID uuid.UUID) ([]*projects.Item, error) {
+	rows, err := a.q.ListProjectItemsBySprint(ctx, generated.ListProjectItemsBySprintParams{
+		SprintID: pgUUID(&sprintID),
+		SpaceID:  spaceID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("item adapter list by sprint: %w", err)
 	}
@@ -269,6 +291,22 @@ func (a *SprintAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Sp
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sprint adapter get by id: %w", err)
+	}
+	return dbSprintToProject(row), nil
+}
+
+// GetByIDInSpace retrieves a sprint reconciled against the given space. A
+// sprint in another space is ErrNotFound, exactly as an absent one is.
+func (a *SprintAdapter) GetByIDInSpace(ctx context.Context, spaceID, id uuid.UUID) (*projects.Sprint, error) {
+	row, err := a.q.GetSprintInSpace(ctx, generated.GetSprintInSpaceParams{
+		SprintID: id,
+		SpaceID:  spaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sprint adapter get by id in space: %w", err)
 	}
 	return dbSprintToProject(row), nil
 }
@@ -423,9 +461,9 @@ func NewRelationAdapter(q *generated.Queries) *RelationAdapter {
 }
 
 // Create persists a new polymorphic entity relation.
-func (a *RelationAdapter) Create(ctx context.Context, rel *projects.Relation) error {
+func (a *RelationAdapter) Create(ctx context.Context, id uuid.UUID, rel *projects.NewRelation) error {
 	_, err := a.q.CreateEntityRelation(ctx, generated.CreateEntityRelationParams{
-		ID:        rel.ID,
+		ID:        id,
 		FromID:    rel.FromID,
 		FromType:  rel.FromType,
 		ToID:      rel.ToID,
@@ -439,39 +477,36 @@ func (a *RelationAdapter) Create(ctx context.Context, rel *projects.Relation) er
 	return nil
 }
 
-// ListByItem returns all relations from a given entity (identified by fromID and fromType).
-func (a *RelationAdapter) ListByItem(ctx context.Context, fromID uuid.UUID) ([]*projects.Relation, error) {
-	// Attempt to list from both entity types — try project_item first, then ticket.
-	// In practice, callers pass a from_type too; this shim queries without type constraint.
-	// For full polymorphism, use ListByEntity which accepts a from_type.
-	rows, err := a.q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
-		FromID:   fromID,
-		FromType: "project_item",
+// TargetIsReadable reports whether a relation target both exists and sits in a
+// space the caller may read. One bool, so the two failure modes cannot be told
+// apart by anything downstream.
+func (a *RelationAdapter) TargetIsReadable(ctx context.Context, targetID uuid.UUID, targetType string, readableSpaceIDs []uuid.UUID) (bool, error) {
+	ok, err := a.q.EntityRelationTargetIsReadable(ctx, generated.EntityRelationTargetIsReadableParams{
+		TargetID:         targetID,
+		TargetType:       targetType,
+		ReadableSpaceIds: nonNilUUIDs(readableSpaceIDs),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("relation adapter list by item: %w", err)
+		return false, fmt.Errorf("relation adapter target readable: %w", err)
 	}
-	if len(rows) == 0 {
-		// Fall back to ticket type.
-		rows, err = a.q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
-			FromID:   fromID,
-			FromType: "ticket",
-		})
-		if err != nil {
-			return nil, fmt.Errorf("relation adapter list by item (ticket): %w", err)
-		}
-	}
-	return dbEntityRelationRowsToRelations(rows), nil
+	return ok, nil
 }
 
-// ListByEntity returns all relations from a specific typed entity.
-func (a *RelationAdapter) ListByEntity(ctx context.Context, fromID uuid.UUID, fromType string) ([]*projects.Relation, error) {
-	rows, err := a.q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
-		FromID:   fromID,
-		FromType: fromType,
+// ListForEntity returns every relation touching the entity, in both directions,
+// with far sides resolved only where the caller may read them.
+//
+// The type-probing shim this replaced ran the query as 'project_item' and, on
+// an empty result, ran it again as 'ticket' — so a caller that did not know the
+// entity's type got an answer anyway, by guessing. The type is now required,
+// because the route always knows it.
+func (a *RelationAdapter) ListForEntity(ctx context.Context, entityID uuid.UUID, entityType string, readableSpaceIDs []uuid.UUID) ([]*projects.Relation, error) {
+	rows, err := a.q.ListEntityRelationsForEntity(ctx, generated.ListEntityRelationsForEntityParams{
+		EntityID:         entityID,
+		EntityType:       entityType,
+		ReadableSpaceIds: nonNilUUIDs(readableSpaceIDs),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("relation adapter list by entity: %w", err)
+		return nil, fmt.Errorf("relation adapter list for entity: %w", err)
 	}
 	return dbEntityRelationRowsToRelations(rows), nil
 }
@@ -484,20 +519,33 @@ func (a *RelationAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func dbEntityRelationRowsToRelations(rows []generated.ListEntityRelationsByEntityRow) []*projects.Relation {
+// dbEntityRelationRowsToRelations maps gated rows onto the viewer-facing type.
+//
+// FarID.Valid is the single readability signal, and it is the query's answer
+// rather than this function's: the far side joined, or it did not. Every other
+// far field is copied only inside that branch, so an unreadable relation cannot
+// acquire an identity through a mapping mistake here.
+func dbEntityRelationRowsToRelations(rows []generated.ListEntityRelationsForEntityRow) []*projects.Relation {
 	result := make([]*projects.Relation, len(rows))
 	for i, row := range rows {
-		result[i] = &projects.Relation{
-			ID:        row.ID,
-			FromID:    row.FromID,
-			FromType:  row.FromType,
-			ToID:      row.ToID,
-			ToType:    row.ToType,
-			Kind:      row.Kind,
-			CreatedBy: row.CreatedBy,
-			ToTitle:   row.ToTitle,
-			ToStatus:  row.ToStatus,
+		direction := projects.DirectionIncoming
+		if row.IsOutgoing {
+			direction = projects.DirectionOutgoing
 		}
+		rel := &projects.Relation{
+			ID:        row.ID,
+			Kind:      row.Kind,
+			Direction: direction,
+		}
+		if row.FarID.Valid {
+			farID := uuid.UUID(row.FarID.Bytes)
+			rel.FarReadable = true
+			rel.FarID = &farID
+			rel.FarType = row.FarType
+			rel.FarTitle = row.FarTitle
+			rel.FarStatus = row.FarStatus
+		}
+		result[i] = rel
 	}
 	return result
 }

@@ -56,7 +56,7 @@ func TestBacklogService_GetSprintBacklog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := backlogSvc.GetSprintBacklog(context.Background(), sprintID)
+	items, err := backlogSvc.GetSprintBacklog(context.Background(), spaceID, sprintID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -20,6 +20,7 @@ function result(overrides: Partial<ViewResult>): ViewResult {
     id: 'id-1',
     key: 'SD-4',
     title: 'Login returns 500',
+    origin: 'space',
     space_id: 'space-1',
     space_key: 'SD',
     space_name: 'Support',
@@ -64,6 +65,35 @@ describe('ViewResultList', () => {
       'href',
       '/vector/space-2/backlog/p1',
     );
+  });
+
+  // A saved view is the one listing allowed to union entity shares into a
+  // cross-space result set (ADR-0008 §13). That widens which rows are visible,
+  // not what may be said about them: matrix case 16 forbids a share-only read
+  // from disclosing the space it lives in, so the server sends no space fields
+  // and no key for such a row. This asserts the surface honours that instead of
+  // fabricating a container or a link into one.
+  it('names no container, and offers no link into one, for a share-only row', () => {
+    renderResults([
+      result({
+        id: 'shared-1',
+        title: 'Escalation from another team',
+        origin: 'share',
+        key: undefined,
+        space_id: undefined,
+        space_key: undefined,
+        space_name: undefined,
+      }),
+    ]);
+
+    const row = screen.getAllByTestId('view-result-row')[0];
+    expect(within(row).queryByRole('link')).toBeNull();
+    expect(within(row).getByText('Shared with you')).toBeInTheDocument();
+    expect(within(row).getByText('Escalation from another team')).toBeInTheDocument();
+    // Nothing that names the space may survive anywhere in the rendered row.
+    expect(row.textContent).not.toContain('SD');
+    expect(row.textContent).not.toContain('Support');
+    expect(row.textContent).not.toContain('space-1');
   });
 
   it('carries a module provenance chip on every row', () => {

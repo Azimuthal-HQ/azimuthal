@@ -48,6 +48,19 @@ func (m *mockStore) CreatePage(_ context.Context, arg generated.CreatePageParams
 	return p, nil
 }
 
+func (m *mockStore) GetPageInSpace(ctx context.Context, p generated.GetPageInSpaceParams) (generated.Page, error) {
+	// The space check is a real predicate in PostgreSQL; here it is modelled
+	// so a wrong space misses exactly as the query would.
+	page, err := m.GetPageByID(ctx, p.PageID)
+	if err != nil {
+		return generated.Page{}, err
+	}
+	if page.SpaceID != p.SpaceID {
+		return generated.Page{}, pgx.ErrNoRows
+	}
+	return page, nil
+}
+
 func (m *mockStore) GetPageByID(_ context.Context, id uuid.UUID) (generated.Page, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -219,12 +232,19 @@ func (m *mockStore) GetPageRevision(_ context.Context, arg generated.GetPageRevi
 	return generated.PageRevision{}, pgx.ErrNoRows
 }
 
-func (m *mockStore) ListPageRevisions(_ context.Context, pageID uuid.UUID) ([]generated.ListPageRevisionsRow, error) {
+func (m *mockStore) ListPageRevisions(_ context.Context, arg generated.ListPageRevisionsParams) ([]generated.ListPageRevisionsRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// The real query joins page_revisions to pages and tests the PAGE's space,
+	// because a revision has none of its own. Modelled here rather than ignored:
+	// a double that answered regardless of the space would let every caller
+	// below pass against the very leak the parameter closes.
+	if page, ok := m.pages[arg.PageID]; !ok || page.SpaceID != arg.SpaceID {
+		return nil, nil
+	}
 	var result []generated.ListPageRevisionsRow
-	for i := len(m.revisions[pageID]) - 1; i >= 0; i-- {
-		r := m.revisions[pageID][i]
+	for i := len(m.revisions[arg.PageID]) - 1; i >= 0; i-- {
+		r := m.revisions[arg.PageID][i]
 		result = append(result, generated.ListPageRevisionsRow{
 			ID:       r.ID,
 			PageID:   r.PageID,
@@ -563,7 +583,7 @@ func TestCreatePage_CreatesInitialRevision(t *testing.T) {
 
 	page := createTestPage(t, svc, spaceID, authorID, "Rev Test", "initial", nil)
 
-	revs, err := svc.ListRevisions(ctx, page.ID)
+	revs, err := svc.ListRevisions(ctx, page.ID, page.SpaceID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -594,7 +614,7 @@ func TestUpdatePage_CreatesRevision(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	revs, err := svc.ListRevisions(ctx, page.ID)
+	revs, err := svc.ListRevisions(ctx, page.ID, page.SpaceID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -769,9 +789,12 @@ func TestUpdatePageOrConflict_ReturnsConflictDetail(t *testing.T) {
 		t.Fatalf("first update failed: %v", err)
 	}
 
-	// Stale update via UpdatePageOrConflict.
+	// Stale update via UpdatePageOrConflict. SpaceID is set because the conflict
+	// body is built from a space-scoped re-read of the page — the detail is the
+	// whole current page, content included, so it is a read path in its own right.
 	_, conflict, err := svc.UpdatePageOrConflict(ctx, wiki.UpdatePageInput{
 		PageID:          page.ID,
+		SpaceID:         spaceID,
 		ExpectedVersion: 1,
 		Title:           "Stale",
 		Content:         "stale",
@@ -1087,6 +1110,7 @@ func TestUpdatePageOrConflict_Success(t *testing.T) {
 
 	updated, conflict, err := svc.UpdatePageOrConflict(ctx, wiki.UpdatePageInput{
 		PageID:          page.ID,
+		SpaceID:         spaceID,
 		ExpectedVersion: 1,
 		Title:           "New Title",
 		Content:         "new content",
@@ -1188,7 +1212,7 @@ func TestUpdatePage_RefusesDocumentBackedPage(t *testing.T) {
 	if after.Content != "markdown body" {
 		t.Errorf("refused save changed the content to %q", after.Content)
 	}
-	revs, err := svc.ListRevisions(ctx, page.ID)
+	revs, err := svc.ListRevisions(ctx, page.ID, page.SpaceID)
 	if err != nil {
 		t.Fatalf("listing revisions: %v", err)
 	}
@@ -1242,6 +1266,7 @@ func TestUpdatePageOrConflict_DocumentRefusalIsNotAConflictDetail(t *testing.T) 
 
 	_, conflict, err := svc.UpdatePageOrConflict(ctx, wiki.UpdatePageInput{
 		PageID:          page.ID,
+		SpaceID:         spaceID,
 		ExpectedVersion: 1,
 		Title:           "Overwrite",
 		Content:         "overwrite",

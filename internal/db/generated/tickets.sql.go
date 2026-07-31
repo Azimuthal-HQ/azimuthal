@@ -78,8 +78,53 @@ const getTicketByID = `-- name: GetTicketByID :one
 SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets WHERE id = $1 AND deleted_at IS NULL
 `
 
+// UNSCOPED. The legitimate callers are the entity-share read path (ADR-0008,
+// where share coverage authorises instead of space access) and the customer
+// portal, whose requester holds no space membership at all and is authorised
+// by its own token audience. Every space-scoped route wants GetTicketInSpace.
 func (q *Queries) GetTicketByID(ctx context.Context, id uuid.UUID) (Ticket, error) {
 	row := q.db.QueryRow(ctx, getTicketByID, id)
+	var i Ticket
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Number,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.ReporterID,
+		&i.AssigneeID,
+		&i.Labels,
+		&i.DueAt,
+		&i.ResolvedAt,
+		&i.Rank,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.WorkflowStateID,
+		&i.RequesterID,
+		&i.SearchVector,
+	)
+	return i, err
+}
+
+const getTicketInSpace = `-- name: GetTicketInSpace :one
+SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
+WHERE id = $1 AND space_id = $2 AND deleted_at IS NULL
+`
+
+type GetTicketInSpaceParams struct {
+	TicketID uuid.UUID `json:"ticket_id"`
+	SpaceID  uuid.UUID `json:"space_id"`
+}
+
+// A ticket, reconciled against the space the request named. See the note on
+// GetProjectItemInSpace in project_items.sql — this is the same missing
+// predicate on the Beacon side, and it disclosed the whole ticket including
+// its description.
+func (q *Queries) GetTicketInSpace(ctx context.Context, arg GetTicketInSpaceParams) (Ticket, error) {
+	row := q.db.QueryRow(ctx, getTicketInSpace, arg.TicketID, arg.SpaceID)
 	var i Ticket
 	err := row.Scan(
 		&i.ID,

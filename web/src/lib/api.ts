@@ -742,15 +742,30 @@ export interface TaggedPages {
   truncated?: boolean;
 }
 
+/**
+ * One link touching the item being viewed, as THIS viewer may see it.
+ *
+ * Only the far side is described — the near side is the item whose panel is
+ * being rendered — and `direction` says which end of the stored relation the
+ * viewed item sits on. Incoming rows exist because the server unions the
+ * reverse direction; no inverse row is stored, so a "blocks" link used to be
+ * invisible to the very item it blocked.
+ *
+ * Every far field is nullable, and they are null together. When `far_readable`
+ * is false the far entity sits in a space this viewer cannot read, and the
+ * server sends no id, type, title or status for it. The row still arrives so
+ * the panel can show that a link exists — an item needs to know it is blocked —
+ * but nothing identifies what it points at.
+ */
 export interface Relation {
   id: string;
-  from_id: string;
-  to_id: string;
   kind: string;
-  created_by: string;
-  to_title: string;
-  to_status: string;
-  to_kind: string;
+  direction: 'outgoing' | 'incoming';
+  far_readable: boolean;
+  far_id: string | null;
+  far_type: string | null;
+  far_title: string | null;
+  far_status: string | null;
 }
 
 export interface RoadmapItem {
@@ -4833,15 +4848,28 @@ export interface ViewRequest {
   visibility_team_id: string | null;
 }
 
-/** One row of a resolved view, from either module. */
+/**
+ * One row of a resolved view, from either module.
+ *
+ * `origin` decides what may be SAID about the row, exactly as it does for a
+ * search hit. A saved view is the one listing allowed to union entity shares
+ * into a cross-space result set (ADR-0008 §13) — that widens which rows are
+ * visible, not what may be disclosed about them. For `share` rows the viewer
+ * cannot enter the space, so the server sends no space_id/space_key/space_name
+ * and no key (the key embeds the space key), and the surface must render
+ * provenance rather than invent a container.
+ */
 export interface ViewResult {
   module: ViewModule;
   id: string;
-  key: string;
+  /** Absent on a share-only row: the key is composed from the space key. */
+  key?: string;
   title: string;
-  space_id: string;
-  space_key: string;
-  space_name: string;
+  origin: 'space' | 'share';
+  /** Absent on a share-only row. */
+  space_id?: string;
+  space_key?: string;
+  space_name?: string;
   status: string;
   priority: string;
   assignee_id: string | null;

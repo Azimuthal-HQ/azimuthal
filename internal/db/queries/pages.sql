@@ -3,7 +3,21 @@ INSERT INTO pages (id, space_id, parent_id, title, content, author_id, position,
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
+-- name: GetPageInSpace :one
+-- A page, reconciled against the space the request named. See the note on
+-- GetProjectItemInSpace in project_items.sql.
+--
+-- This one disclosed the most of any member of that family: the wiki read
+-- routes return the page's full content and, through the document handler, its
+-- whole ADR-0012 document body — not a title and a status.
+SELECT * FROM pages
+WHERE id = @page_id AND space_id = @space_id AND deleted_at IS NULL;
+
 -- name: GetPageByID :one
+-- UNSCOPED. The legitimate caller is the entity-share read path (ADR-0008),
+-- where share coverage authorises instead of space access, plus the internal
+-- parent/ancestor resolution inside a transaction that has already established
+-- the space. Every space-scoped route wants GetPageInSpace.
 SELECT * FROM pages WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GetPageForUpdate :one
@@ -131,11 +145,19 @@ SELECT * FROM page_revisions WHERE page_id = $1 AND version = $2;
 -- would start blanking the author of every version published by anybody who has
 -- since been deactivated, which is most of the history of a long-lived page —
 -- and deactivating an account is not meant to rewrite what they wrote.
+-- The space test is on the PAGE, not on the revision: page_revisions has no
+-- space_id of its own, and the revision ledger is readable exactly when its
+-- page is. Without it a page id alone returned the full historical title of
+-- every version, across any space boundary.
 SELECT r.id, r.page_id, r.version, r.title, r.author_id, r.created_at,
        u.display_name AS author_name
 FROM page_revisions r
+JOIN pages p ON p.id = r.page_id
 LEFT JOIN users u ON u.id = r.author_id
-WHERE r.page_id = $1 ORDER BY r.version DESC;
+WHERE r.page_id = @page_id
+  AND p.space_id = @space_id
+  AND p.deleted_at IS NULL
+ORDER BY r.version DESC;
 
 -- The page-lock queries were removed in S2 along with the page_locks table
 -- (migration 037). The lock was advisory only — no write path consulted it.

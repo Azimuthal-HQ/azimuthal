@@ -52,6 +52,18 @@ func (m *mockRepo) GetByID(_ context.Context, id uuid.UUID) (*Ticket, error) {
 	return t, nil
 }
 
+// GetByIDInSpace applies the same space predicate the query applies, and
+// returns the same ErrNotFound for a ticket in another space as for one that
+// is absent. A mock that ignored spaceID would make every scoped read look
+// correct while asserting nothing about the scoping.
+func (m *mockRepo) GetByIDInSpace(_ context.Context, spaceID, id uuid.UUID) (*Ticket, error) {
+	t, ok := m.tickets[id]
+	if !ok || t.SpaceID != spaceID {
+		return nil, ErrNotFound
+	}
+	return t, nil
+}
+
 func (m *mockRepo) Update(_ context.Context, t *Ticket) error {
 	if _, ok := m.tickets[t.ID]; !ok {
 		return ErrNotFound
@@ -276,6 +288,41 @@ func TestGetTicket(t *testing.T) {
 		_, err := svc.Get(context.Background(), uuid.New())
 		if err == nil {
 			t.Error("expected error for missing ticket")
+		}
+	})
+}
+
+// TestGetTicketInSpace covers the reconciliation the space-scoped routes rely
+// on: a ticket read under its own space is returned, and the same ticket read
+// under any other space is reported as ErrNotFound — the same error, in the
+// same words, as a ticket that was never there.
+func TestGetTicketInSpace(t *testing.T) {
+	svc := NewTicketService(newMockRepo(), noopShareDeleter{})
+	spaceID := uuid.New()
+	reporterID := uuid.New()
+	ticket := createTestTicket(t, svc, spaceID, reporterID)
+
+	t.Run("in its own space", func(t *testing.T) {
+		got, err := svc.GetInSpace(context.Background(), spaceID, ticket.ID)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.ID != ticket.ID {
+			t.Errorf("expected ID %s, got %s", ticket.ID, got.ID)
+		}
+	})
+
+	t.Run("in another space", func(t *testing.T) {
+		_, err := svc.GetInSpace(context.Background(), uuid.New(), ticket.ID)
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("expected ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("absent", func(t *testing.T) {
+		_, err := svc.GetInSpace(context.Background(), spaceID, uuid.New())
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("expected ErrNotFound, got %v", err)
 		}
 	})
 }

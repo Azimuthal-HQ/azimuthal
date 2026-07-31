@@ -41,10 +41,37 @@ SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
        c.visibility, c.author_requester_id,
        COALESCE(u.display_name, r.display_name, '') AS author_name,
        u.avatar_url AS author_avatar
+--
+-- The entity is reconciled against the space the request named. Comments carry
+-- no space_id of their own — they are readable exactly when the thing they are
+-- attached to is — so the test is an EXISTS against whichever table entity_type
+-- names. Without it a bare entity id returned every comment body on any item,
+-- ticket or page in the installation, including internal-visibility notes that
+-- the customer-facing surface deliberately withholds.
+--
+-- The three arms are mutually exclusive on entity_type, so exactly one can
+-- match; writing it as a union rather than three OR'd branches keeps each arm's
+-- id comparison bound to its own table.
 FROM comments c
 LEFT JOIN users u ON u.id = c.author_id
 LEFT JOIN requesters r ON r.id = c.author_requester_id
-WHERE c.entity_type = $1 AND c.entity_id = $2 AND c.parent_id IS NULL AND c.deleted_at IS NULL
+WHERE c.entity_type = @entity_type::text
+  AND c.entity_id = @entity_id
+  AND c.parent_id IS NULL
+  AND c.deleted_at IS NULL
+  AND EXISTS (
+      SELECT 1 FROM project_items pi
+       WHERE @entity_type::text = 'project_item'
+         AND pi.id = @entity_id AND pi.space_id = @space_id AND pi.deleted_at IS NULL
+      UNION ALL
+      SELECT 1 FROM tickets t
+       WHERE @entity_type::text = 'ticket'
+         AND t.id = @entity_id AND t.space_id = @space_id AND t.deleted_at IS NULL
+      UNION ALL
+      SELECT 1 FROM pages p
+       WHERE @entity_type::text = 'page'
+         AND p.id = @entity_id AND p.space_id = @space_id AND p.deleted_at IS NULL
+  )
 ORDER BY c.created_at ASC;
 
 -- name: ListCommentReplies :many

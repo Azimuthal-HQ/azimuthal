@@ -127,7 +127,7 @@ func (f *fakeTierStore) DecideApproval(
 	return f.approvals[id], nil
 }
 
-func (f *fakeTierStore) ApprovalsForEntity(context.Context, ApprovalEntityType, uuid.UUID) ([]Approval, error) {
+func (f *fakeTierStore) ApprovalsForEntity(context.Context, uuid.UUID, ApprovalEntityType, uuid.UUID) ([]Approval, error) {
 	return nil, nil
 }
 func (f *fakeTierStore) PendingApprovalsForSpace(context.Context, uuid.UUID) ([]Approval, error) {

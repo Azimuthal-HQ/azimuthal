@@ -119,13 +119,18 @@ func toViewResponse(v views.View, a views.Actor) (viewResponse, error) {
 }
 
 type resultResponse struct {
-	Module     string     `json:"module"`
-	ID         uuid.UUID  `json:"id"`
-	Key        string     `json:"key"`
-	Title      string     `json:"title"`
-	SpaceID    uuid.UUID  `json:"space_id"`
-	SpaceKey   string     `json:"space_key"`
-	SpaceName  string     `json:"space_name"`
+	Module string    `json:"module"`
+	ID     uuid.UUID `json:"id"`
+	Key    string    `json:"key,omitempty"`
+	Title  string    `json:"title"`
+	// Origin says whether this row was reached through its space or only
+	// through a share on the entity itself. The three space fields are ABSENT
+	// rather than empty on a share-only row (matrix case 16), so the surface
+	// renders provenance instead of a container it must not name.
+	Origin     string     `json:"origin"`
+	SpaceID    *uuid.UUID `json:"space_id,omitempty"`
+	SpaceKey   string     `json:"space_key,omitempty"`
+	SpaceName  string     `json:"space_name,omitempty"`
 	Status     string     `json:"status"`
 	Priority   string     `json:"priority"`
 	AssigneeID *uuid.UUID `json:"assignee_id"`
@@ -156,9 +161,18 @@ func toResultResponses(rows []views.Result) []resultResponse {
 		if labels == nil {
 			labels = []string{}
 		}
+		// A share-only row carries no container: SpaceID stays nil so the
+		// field is omitted entirely rather than serialised as the zero UUID,
+		// which a client would happily build a link out of.
+		var spaceID *uuid.UUID
+		if r.SpaceID != uuid.Nil {
+			id := r.SpaceID
+			spaceID = &id
+		}
 		out = append(out, resultResponse{
 			Module: string(r.Module), ID: r.ID, Key: r.Key, Title: r.Title,
-			SpaceID: r.SpaceID, SpaceKey: r.SpaceKey, SpaceName: r.SpaceName,
+			Origin:  string(r.Origin),
+			SpaceID: spaceID, SpaceKey: r.SpaceKey, SpaceName: r.SpaceName,
 			Status: r.Status, Priority: r.Priority,
 			AssigneeID: r.AssigneeID, AssigneeName: r.AssigneeName,
 			Labels: labels, Kind: r.Kind, SprintID: r.SprintID,

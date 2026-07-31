@@ -53,6 +53,9 @@ func (a *TicketAdapter) Create(ctx context.Context, t *tickets.Ticket) error {
 
 // GetByID retrieves a ticket by primary key. Returns tickets.ErrNotFound if
 // absent.
+//
+// Unscoped by design — see the note on tickets.TicketRepository.GetByID for
+// which callers legitimately read a ticket without a space.
 func (a *TicketAdapter) GetByID(ctx context.Context, id uuid.UUID) (*tickets.Ticket, error) {
 	row, err := a.q.GetTicketByID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -60,6 +63,29 @@ func (a *TicketAdapter) GetByID(ctx context.Context, id uuid.UUID) (*tickets.Tic
 	}
 	if err != nil {
 		return nil, fmt.Errorf("ticket adapter get by id: %w", err)
+	}
+	return dbTicketToTicket(row), nil
+}
+
+// GetByIDInSpace retrieves a ticket by primary key from within one space,
+// returning tickets.ErrNotFound when the ticket is absent AND when it belongs
+// to another space.
+//
+// The space predicate lives in the query rather than in a comparison here: a
+// row read and then discarded has still been read, and the route that calls
+// this has authorised its caller against the space id in the URL only. The two
+// misses collapse onto the same error so the route answers its ordinary 404
+// with its ordinary body either way.
+func (a *TicketAdapter) GetByIDInSpace(ctx context.Context, spaceID, id uuid.UUID) (*tickets.Ticket, error) {
+	row, err := a.q.GetTicketInSpace(ctx, generated.GetTicketInSpaceParams{
+		TicketID: id,
+		SpaceID:  spaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, tickets.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("ticket adapter get by id in space: %w", err)
 	}
 	return dbTicketToTicket(row), nil
 }

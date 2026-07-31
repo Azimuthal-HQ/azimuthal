@@ -23,6 +23,9 @@ func (m *mockItemRepo) Create(_ context.Context, _ *projects.Item) error { retur
 func (m *mockItemRepo) GetByID(_ context.Context, _ uuid.UUID) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
 }
+func (m *mockItemRepo) GetByIDInSpace(_ context.Context, _, _ uuid.UUID) (*projects.Item, error) {
+	return nil, projects.ErrNotFound
+}
 func (m *mockItemRepo) GetByOrgKey(_ context.Context, _ uuid.UUID, _ string) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
 }
@@ -43,7 +46,7 @@ func (m *mockItemRepo) ListByStatus(_ context.Context, _ uuid.UUID, _ string) ([
 func (m *mockItemRepo) ListByAssignee(_ context.Context, _ uuid.UUID, _ uuid.UUID) ([]*projects.Item, error) {
 	return nil, nil
 }
-func (m *mockItemRepo) ListBySprint(_ context.Context, _ uuid.UUID) ([]*projects.Item, error) {
+func (m *mockItemRepo) ListBySprint(_ context.Context, _, _ uuid.UUID) ([]*projects.Item, error) {
 	return nil, nil
 }
 func (m *mockItemRepo) Search(_ context.Context, _ uuid.UUID, _ string, _ int) ([]*projects.Item, error) {
@@ -54,6 +57,9 @@ type mockSprintRepo struct{}
 
 func (m *mockSprintRepo) Create(_ context.Context, _ *projects.Sprint) error { return nil }
 func (m *mockSprintRepo) GetByID(_ context.Context, _ uuid.UUID) (*projects.Sprint, error) {
+	return nil, projects.ErrNotFound
+}
+func (m *mockSprintRepo) GetByIDInSpace(_ context.Context, _, _ uuid.UUID) (*projects.Sprint, error) {
 	return nil, projects.ErrNotFound
 }
 func (m *mockSprintRepo) GetActiveBySpace(_ context.Context, _ uuid.UUID) (*projects.Sprint, error) {
@@ -72,11 +78,13 @@ func (m *mockSprintRepo) ListBySpace(_ context.Context, _ uuid.UUID) ([]*project
 
 type mockRelationRepo struct{}
 
-func (m *mockRelationRepo) Create(_ context.Context, _ *projects.Relation) error { return nil }
-func (m *mockRelationRepo) ListByItem(_ context.Context, _ uuid.UUID) ([]*projects.Relation, error) {
-	return nil, nil
+func (m *mockRelationRepo) Create(_ context.Context, _ uuid.UUID, _ *projects.NewRelation) error {
+	return nil
 }
-func (m *mockRelationRepo) ListByEntity(_ context.Context, _ uuid.UUID, _ string) ([]*projects.Relation, error) {
+func (m *mockRelationRepo) TargetIsReadable(_ context.Context, _ uuid.UUID, _ string, _ []uuid.UUID) (bool, error) {
+	return true, nil
+}
+func (m *mockRelationRepo) ListForEntity(_ context.Context, _ uuid.UUID, _ string, _ []uuid.UUID) ([]*projects.Relation, error) {
 	return nil, nil
 }
 func (m *mockRelationRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
@@ -400,7 +408,8 @@ func TestListItemsSuccess(t *testing.T) {
 
 func TestGetItemNotFound(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", uuid.New().String())
+	req := withParam(withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"itemID", uuid.New().String()), "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.GetItem(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -571,7 +580,8 @@ func TestSearchItemsLimitOutOfRange(t *testing.T) {
 
 func TestListRelationsSuccess(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "itemID", uuid.New().String())
+	req := withSpaceAccess(t, withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"itemID", uuid.New().String()), uuid.New())
 	rr := httptest.NewRecorder()
 	h.ListRelations(rr, req)
 	if rr.Code != http.StatusOK {
@@ -621,7 +631,8 @@ func TestCreateSprintNoAuth(t *testing.T) {
 
 func TestGetSprintNotFound(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "sprintID", uuid.New().String())
+	req := withParam(withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"sprintID", uuid.New().String()), "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.GetSprint(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -678,7 +689,8 @@ func TestCompleteSprintNotFound(t *testing.T) {
 
 func TestListSprintItemsSuccess(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "sprintID", uuid.New().String())
+	req := withParam(withParam(httptest.NewRequest(http.MethodGet, "/", nil),
+		"sprintID", uuid.New().String()), "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.ListSprintItems(rr, req)
 	// mock ListBySprint returns nil, nil so this succeeds

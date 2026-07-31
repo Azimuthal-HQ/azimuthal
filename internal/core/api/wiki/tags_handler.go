@@ -117,7 +117,16 @@ func (h *Handler) ListPageTags(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	list, err := h.tags.ForPage(r.Context(), pageID)
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	// A tag set describes what a page is about, so this read is scoped like any
+	// other: the route proved {spaceID} readable and proved nothing about
+	// {pageID}. A page in another space carries no tags here rather than being
+	// refused, so the answer never says whether such a page exists.
+	list, err := h.tags.ForPage(r.Context(), pageID, spaceID)
 	if err != nil {
 		handleTagError(w, r, err)
 		return

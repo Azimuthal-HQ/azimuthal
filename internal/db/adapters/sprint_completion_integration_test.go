@@ -115,7 +115,7 @@ func TestSprintAdapter_CompleteWithDisposition_ToNextSprint(t *testing.T) {
 	require.Equal(t, current.ID, *stayed)
 
 	// The next sprint now lists exactly the carried-over item.
-	carried, err := itemAdapter.ListBySprint(ctx, next.ID)
+	carried, err := itemAdapter.ListBySprint(ctx, space.ID, next.ID)
 	require.NoError(t, err)
 	require.Len(t, carried, 1)
 	require.Equal(t, openItem.ID, carried[0].ID)

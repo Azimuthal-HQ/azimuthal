@@ -73,7 +73,13 @@ const (
 // DocumentStore is the persistence the document surface needs. Deliberately
 // narrow, and satisfied by *generated.Queries directly.
 type DocumentStore interface {
+	// GetPageByID is UNSCOPED — see the note on [PageStore.GetPageByID].
 	GetPageByID(ctx context.Context, id uuid.UUID) (generated.Page, error)
+	// GetPageInSpace reconciles the page against the space the route named,
+	// which for this surface is the difference between opening a page and
+	// handing out the whole ADR-0012 document body of any page in the
+	// installation by id.
+	GetPageInSpace(ctx context.Context, arg generated.GetPageInSpaceParams) (generated.Page, error)
 	GetPageRevisionDocument(ctx context.Context, arg generated.GetPageRevisionDocumentParams) (generated.GetPageRevisionDocumentRow, error)
 	UpsertPageDraft(ctx context.Context, arg generated.UpsertPageDraftParams) (generated.PageDraft, error)
 	GetPageDraft(ctx context.Context, arg generated.GetPageDraftParams) (generated.PageDraft, error)
@@ -259,18 +265,45 @@ type EditableDocument struct {
 	Draft        *DraftDocument `json:"draft"`
 }
 
+// OpenDocumentInSpace returns the editable document of a page that lives in the
+// given space.
+//
+// This is what the space-scoped route calls. Its guard proved {spaceID}
+// readable and proved nothing whatever about {pageID}, and of the whole
+// cross-space read family this response disclosed the most — not a title and a
+// version but the entire ADR-0012 document body. The two ids are reconciled
+// before anything is read, and a page belonging elsewhere is reported exactly
+// as a page that does not exist.
+func (s *DocumentService) OpenDocumentInSpace(ctx context.Context, spaceID, pageID, authorID uuid.UUID) (EditableDocument, error) {
+	page, err := s.pageInSpace(ctx, spaceID, pageID)
+	if err != nil {
+		return EditableDocument{}, err
+	}
+	return s.openDocument(ctx, page, authorID)
+}
+
 // OpenDocument returns the page's editable document for one caller.
 //
-// A page that has only ever held markdown is converted here and NOT written
-// back: opening a page is a read. The conversion is deterministic, so publish
-// can re-derive exactly this document to resolve the preservation ids it
-// handed out.
+// UNSCOPED: it reconciles the page against no space. Space-scoped routes use
+// [DocumentService.OpenDocumentInSpace].
 func (s *DocumentService) OpenDocument(ctx context.Context, pageID, authorID uuid.UUID) (EditableDocument, error) {
 	page, err := s.page(ctx, pageID)
 	if err != nil {
 		return EditableDocument{}, err
 	}
+	return s.openDocument(ctx, page, authorID)
+}
 
+// openDocument builds the editable document from a page that has already been
+// loaded — and, with it, already authorised. Splitting it out is what lets the
+// scoped and unscoped entry points differ in exactly one thing: which read they
+// used to get the page.
+//
+// A page that has only ever held markdown is converted here and NOT written
+// back: opening a page is a read. The conversion is deterministic, so publish
+// can re-derive exactly this document to resolve the preservation ids it
+// handed out.
+func (s *DocumentService) openDocument(ctx context.Context, page generated.Page, authorID uuid.UUID) (EditableDocument, error) {
 	base, format, err := documentOfPage(page)
 	if err != nil {
 		return EditableDocument{}, err
@@ -292,7 +325,7 @@ func (s *DocumentService) OpenDocument(ctx context.Context, pageID, authorID uui
 		out.PreservedIDs = []string{}
 	}
 
-	draft, err := s.Draft(ctx, pageID, authorID)
+	draft, err := s.Draft(ctx, page.ID, authorID)
 	switch {
 	case err == nil:
 		draft.Stale = draft.BaseVersion != page.Version
@@ -742,7 +775,34 @@ func (s *DocumentService) RestoreRevision(ctx context.Context, in RestoreInput) 
 	return RestoreResult{PublishResult: published}, nil
 }
 
+// pageInSpace loads a live page that belongs to the given space.
+//
+// A page that is not in the space is absent, not refused: both come back as
+// ErrPageNotFound and therefore as the same 404 with the same body. The route
+// established that {spaceID} is readable and established nothing about
+// {pageID}, so this is where the two are made to agree.
+func (s *DocumentService) pageInSpace(ctx context.Context, spaceID, pageID uuid.UUID) (generated.Page, error) {
+	page, err := s.store.GetPageInSpace(ctx, generated.GetPageInSpaceParams{
+		PageID:  pageID,
+		SpaceID: spaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return generated.Page{}, ErrPageNotFound
+	}
+	if err != nil {
+		return generated.Page{}, fmt.Errorf("getting page: %w", err)
+	}
+	return page, nil
+}
+
 // page loads a live page, mapping absence to ErrPageNotFound.
+//
+// UNSCOPED. Its remaining callers — publish, restore and the editor image
+// upload — are all write paths, and every one of them is reached through the
+// API's editablePage helper, which loads the page WITH the space in order to
+// evaluate the page-edit capability against its author. So the id these callers
+// hold has already been reconciled against the route's space; this is a re-read
+// of a page proved to be there, not a second way in.
 func (s *DocumentService) page(ctx context.Context, pageID uuid.UUID) (generated.Page, error) {
 	page, err := s.store.GetPageByID(ctx, pageID)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -23,7 +23,30 @@ SELECT $1, $2, sp.org_id, $3, seq.last_number, sp.key || '-' || seq.last_number,
 FROM seq, sp
 RETURNING *;
 
+-- name: GetProjectItemInSpace :one
+-- An item, reconciled against the space the request named.
+--
+-- This is the read every space-scoped route must use. The routes are shaped
+-- /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}, and the middleware
+-- proves the caller may read {spaceID} — but nothing proved {itemID} lives
+-- there, so an authorised member of any one space could read any item in the
+-- installation by id, across hidden spaces and across organizations. Adding
+-- space_id here rather than comparing item.SpaceID in each handler is what
+-- makes the guarantee structural: a handler that forgets cannot get the row.
+--
+-- A miss is indistinguishable from an absent item, deliberately: both return no
+-- rows and become ErrNotFound, so the endpoint is not an existence oracle.
+SELECT * FROM project_items
+WHERE id = @item_id AND space_id = @space_id AND deleted_at IS NULL;
+
 -- name: GetProjectItemByID :one
+-- UNSCOPED. Reaches an item without reference to any space, so it must only be
+-- used where authorisation has already been established by other means.
+--
+-- The one legitimate caller is the entity-share read path (ADR-0008), where
+-- access is granted by share coverage precisely so that it can bypass space
+-- access — CoversForCaller has already answered before this runs. Every other
+-- caller wants GetProjectItemInSpace.
 SELECT * FROM project_items WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GetProjectItemByOrgKey :one
@@ -47,9 +70,21 @@ WHERE space_id = $1 AND assignee_id = $2 AND deleted_at IS NULL
 ORDER BY rank ASC, created_at DESC;
 
 -- name: ListProjectItemsBySprint :many
-SELECT * FROM project_items
-WHERE sprint_id = $1 AND deleted_at IS NULL
-ORDER BY rank ASC;
+-- A sprint's items, reconciled against the space the request named.
+--
+-- The sprint id alone used to be enough, which made this a bulk disclosure:
+-- one guessed or leaked sprint id returned every item on it regardless of
+-- whose space it was. Items and sprints both carry space_id, and both are
+-- checked — the item test is the one that authorises, and the sprint test
+-- stops a sprint from another space matching through items that happen to
+-- share this one.
+SELECT pi.* FROM project_items pi
+JOIN sprints s ON s.id = pi.sprint_id
+WHERE pi.sprint_id = @sprint_id
+  AND pi.space_id = @space_id
+  AND s.space_id = @space_id
+  AND pi.deleted_at IS NULL
+ORDER BY pi.rank ASC;
 
 -- name: UpdateProjectItem :one
 -- kind is appended last so every existing parameter position stays stable.

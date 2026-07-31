@@ -566,13 +566,16 @@ SELECT
 FROM workflow_approvals a
 LEFT JOIN users r ON r.id = a.requested_by
 LEFT JOIN users d ON d.id = a.decided_by
-WHERE a.entity_type = $1 AND a.entity_id = $2
+WHERE a.entity_type = $1
+  AND a.entity_id = $2
+  AND a.space_id = $3
 ORDER BY a.requested_at DESC, a.id
 `
 
 type ListApprovalsForEntityParams struct {
 	EntityType string    `json:"entity_type"`
 	EntityID   uuid.UUID `json:"entity_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
 }
 
 type ListApprovalsForEntityRow struct {
@@ -584,8 +587,19 @@ type ListApprovalsForEntityRow struct {
 // The item's own history: every request ever made about it, newest first. A
 // declined request is kept, so the record of who asked and who refused survives
 // the item moving on.
+//
+// Reconciled against the space the request named. The route is
+// /orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/approvals
+// and its guards prove the caller may read {spaceID}; they prove nothing at all
+// about {entityID}. Keyed on the entity id alone, this handed back another
+// space's approval history by id — who asked, who decided, when, and the
+// decline reason.
+//
+// space_id was already on the row. Migration 047 denormalised it onto
+// workflow_approvals deliberately, and ListPendingApprovals immediately above
+// filters on it; this query simply never consulted it.
 func (q *Queries) ListApprovalsForEntity(ctx context.Context, arg ListApprovalsForEntityParams) ([]ListApprovalsForEntityRow, error) {
-	rows, err := q.db.Query(ctx, listApprovalsForEntity, arg.EntityType, arg.EntityID)
+	rows, err := q.db.Query(ctx, listApprovalsForEntity, arg.EntityType, arg.EntityID, arg.SpaceID)
 	if err != nil {
 		return nil, err
 	}

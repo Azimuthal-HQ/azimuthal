@@ -62,7 +62,7 @@ func TestItemService_ListItemsBySprint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := svc.ListItemsBySprint(ctx, sprintID)
+	items, err := svc.ListItemsBySprint(ctx, spaceID, sprintID)
 	if err != nil {
 		t.Fatalf("ListItemsBySprint: %v", err)
 	}

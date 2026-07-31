@@ -106,7 +106,12 @@ type Repository interface {
 	// Upsert creates the tag or returns the existing one. The first spelling of
 	// a slug wins; a later name for the same slug does not overwrite it.
 	Upsert(ctx context.Context, orgID uuid.UUID, slug, name string) (Tag, error)
-	ForPage(ctx context.Context, pageID uuid.UUID) ([]Tag, error)
+	// ForPage reads a page's tags, reconciled against the space the route named.
+	// A tag set says what a page is about, so reading one across a space
+	// boundary describes the subject matter of a page the caller cannot open —
+	// and the route proved {spaceID} readable while proving nothing about
+	// {pageID}.
+	ForPage(ctx context.Context, pageID, spaceID uuid.UUID) ([]Tag, error)
 	// ReplacePageTags makes the page's associations exactly tagIDs.
 	ReplacePageTags(ctx context.Context, pageID uuid.UUID, tagIDs []uuid.UUID) error
 	// AddPageTags adds associations without removing any.
@@ -146,9 +151,15 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Tag, error) {
 	return out, nil
 }
 
-// ForPage returns the tags a page carries.
-func (s *Service) ForPage(ctx context.Context, pageID uuid.UUID) ([]Tag, error) {
-	out, err := s.repo.ForPage(ctx, pageID)
+// ForPage returns the tags a page in the given space carries.
+//
+// The space is not a filter on the answer, it is the authorisation for asking:
+// page_tags is keyed on the page alone, so the query joins through the page to
+// establish that the page id the caller named really is in the space their
+// request was authorised against. A page elsewhere carries no tags here, which
+// is what a page that does not exist carries.
+func (s *Service) ForPage(ctx context.Context, pageID, spaceID uuid.UUID) ([]Tag, error) {
+	out, err := s.repo.ForPage(ctx, pageID, spaceID)
 	if err != nil {
 		return nil, fmt.Errorf("listing a page's tags: %w", err)
 	}

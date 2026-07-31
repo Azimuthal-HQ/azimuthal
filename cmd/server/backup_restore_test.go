@@ -292,6 +292,11 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	itemComments, err := dstQueries.ListCommentsByEntity(ctx, generated.ListCommentsByEntityParams{
 		EntityType: "ticket",
 		EntityID:   seed.item.ID,
+		// The query now reconciles the commented-on entity against a space.
+		// Omitting this leaves SpaceID at uuid.Nil and the EXISTS arm matches
+		// nothing — a zero value rather than a compile error, which is why the
+		// round trip reported an empty comment list instead of failing to build.
+		SpaceID: seed.space.ID,
 	})
 	require.NoError(t, err, "item comments must round-trip")
 	require.Len(t, itemComments, 1, "exactly one comment expected on the item")

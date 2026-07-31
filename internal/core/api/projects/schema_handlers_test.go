@@ -102,7 +102,7 @@ func (m *mockFieldDefRepo) NextPosition(context.Context, uuid.UUID) (int, error)
 
 type mockFieldValueRepo struct{}
 
-func (m *mockFieldValueRepo) ListByItem(context.Context, uuid.UUID) ([]customfields.StoredValue, error) {
+func (m *mockFieldValueRepo) ListByItemInSpace(context.Context, uuid.UUID, uuid.UUID) ([]customfields.StoredValue, error) {
 	return nil, nil
 }
 func (m *mockFieldValueRepo) Upsert(context.Context, uuid.UUID, string, string) error { return nil }
@@ -334,7 +334,9 @@ func TestCustomFieldHandlers_Branches(t *testing.T) {
 	})
 	t.Run("get item fields ok", func(t *testing.T) {
 		h := schemaHandler(&mockTypeRepo{}, &mockFieldDefRepo{})
-		if code := run(t, h, h.GetItemFields, req(t, http.MethodGet, "", map[string]string{"orgID": org, "itemID": uuid.New().String()})); code != http.StatusOK {
+		// spaceID is required now: the field values are reconciled against the
+		// item's space, so the route cannot answer without one.
+		if code := run(t, h, h.GetItemFields, req(t, http.MethodGet, "", map[string]string{"orgID": org, "spaceID": uuid.New().String(), "itemID": uuid.New().String()})); code != http.StatusOK {
 			t.Errorf("got %d", code)
 		}
 	})

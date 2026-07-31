@@ -35,7 +35,16 @@ DELETE FROM custom_field_defs WHERE id = $1;
 SELECT COALESCE(MAX(position), 0)::int AS max_position FROM custom_field_defs WHERE org_id = $1;
 
 -- name: ListItemFieldValues :many
-SELECT * FROM item_field_values WHERE item_id = $1 ORDER BY field_slug;
+-- An item's stored custom-field values, reconciled against the space the
+-- request named. item_field_values carries no space_id — the values are
+-- readable exactly when their item is — so the test joins the item, which is
+-- also what makes a soft-deleted item's values stop being readable.
+SELECT v.* FROM item_field_values v
+JOIN project_items pi ON pi.id = v.item_id
+WHERE v.item_id = @item_id
+  AND pi.space_id = @space_id
+  AND pi.deleted_at IS NULL
+ORDER BY v.field_slug;
 
 -- name: UpsertItemFieldValue :one
 INSERT INTO item_field_values (id, item_id, field_slug, value)

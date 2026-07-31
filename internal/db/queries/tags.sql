@@ -23,10 +23,16 @@ ON CONFLICT (org_id, slug) DO UPDATE SET name = tags.name
 RETURNING id, org_id, slug, name, created_at;
 
 -- name: ListTagsForPage :many
+-- A page's tags, reconciled against the space the request named. A tag set
+-- describes what a page is about, so reading one across a space boundary
+-- discloses the subject matter of a page the caller cannot open.
 SELECT t.id, t.org_id, t.slug, t.name, t.created_at
 FROM page_tags pt
 JOIN tags t ON t.id = pt.tag_id
-WHERE pt.page_id = $1
+JOIN pages p ON p.id = pt.page_id
+WHERE pt.page_id = @page_id
+  AND p.space_id = @space_id
+  AND p.deleted_at IS NULL
 ORDER BY t.name;
 
 -- name: AddPageTag :exec

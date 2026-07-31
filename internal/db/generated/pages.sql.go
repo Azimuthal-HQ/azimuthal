@@ -146,6 +146,10 @@ const getPageByID = `-- name: GetPageByID :one
 SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path, doc FROM pages WHERE id = $1 AND deleted_at IS NULL
 `
 
+// UNSCOPED. The legitimate caller is the entity-share read path (ADR-0008),
+// where share coverage authorises instead of space access, plus the internal
+// parent/ancestor resolution inside a transaction that has already established
+// the space. Every space-scoped route wants GetPageInSpace.
 func (q *Queries) GetPageByID(ctx context.Context, id uuid.UUID) (Page, error) {
 	row := q.db.QueryRow(ctx, getPageByID, id)
 	var i Page
@@ -234,6 +238,44 @@ SELECT id, space_id, parent_id, title, content, version, author_id, position, cr
 // the same page so descendant path rewrites cannot interleave.
 func (q *Queries) GetPageForUpdate(ctx context.Context, id uuid.UUID) (Page, error) {
 	row := q.db.QueryRow(ctx, getPageForUpdate, id)
+	var i Page
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.ParentID,
+		&i.Title,
+		&i.Content,
+		&i.Version,
+		&i.AuthorID,
+		&i.Position,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SearchVector,
+		&i.Path,
+		&i.Doc,
+	)
+	return i, err
+}
+
+const getPageInSpace = `-- name: GetPageInSpace :one
+SELECT id, space_id, parent_id, title, content, version, author_id, position, created_at, updated_at, deleted_at, search_vector, path, doc FROM pages
+WHERE id = $1 AND space_id = $2 AND deleted_at IS NULL
+`
+
+type GetPageInSpaceParams struct {
+	PageID  uuid.UUID `json:"page_id"`
+	SpaceID uuid.UUID `json:"space_id"`
+}
+
+// A page, reconciled against the space the request named. See the note on
+// GetProjectItemInSpace in project_items.sql.
+//
+// This one disclosed the most of any member of that family: the wiki read
+// routes return the page's full content and, through the document handler, its
+// whole ADR-0012 document body — not a title and a status.
+func (q *Queries) GetPageInSpace(ctx context.Context, arg GetPageInSpaceParams) (Page, error) {
+	row := q.db.QueryRow(ctx, getPageInSpace, arg.PageID, arg.SpaceID)
 	var i Page
 	err := row.Scan(
 		&i.ID,
@@ -413,9 +455,18 @@ const listPageRevisions = `-- name: ListPageRevisions :many
 SELECT r.id, r.page_id, r.version, r.title, r.author_id, r.created_at,
        u.display_name AS author_name
 FROM page_revisions r
+JOIN pages p ON p.id = r.page_id
 LEFT JOIN users u ON u.id = r.author_id
-WHERE r.page_id = $1 ORDER BY r.version DESC
+WHERE r.page_id = $1
+  AND p.space_id = $2
+  AND p.deleted_at IS NULL
+ORDER BY r.version DESC
 `
+
+type ListPageRevisionsParams struct {
+	PageID  uuid.UUID `json:"page_id"`
+	SpaceID uuid.UUID `json:"space_id"`
+}
 
 type ListPageRevisionsRow struct {
 	ID         uuid.UUID          `json:"id"`
@@ -444,8 +495,12 @@ type ListPageRevisionsRow struct {
 // would start blanking the author of every version published by anybody who has
 // since been deactivated, which is most of the history of a long-lived page —
 // and deactivating an account is not meant to rewrite what they wrote.
-func (q *Queries) ListPageRevisions(ctx context.Context, pageID uuid.UUID) ([]ListPageRevisionsRow, error) {
-	rows, err := q.db.Query(ctx, listPageRevisions, pageID)
+// The space test is on the PAGE, not on the revision: page_revisions has no
+// space_id of its own, and the revision ledger is readable exactly when its
+// page is. Without it a page id alone returned the full historical title of
+// every version, across any space boundary.
+func (q *Queries) ListPageRevisions(ctx context.Context, arg ListPageRevisionsParams) ([]ListPageRevisionsRow, error) {
+	rows, err := q.db.Query(ctx, listPageRevisions, arg.PageID, arg.SpaceID)
 	if err != nil {
 		return nil, err
 	}

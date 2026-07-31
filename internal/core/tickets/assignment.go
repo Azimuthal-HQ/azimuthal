@@ -16,10 +16,19 @@ type AssignmentNotifier interface {
 	NotifyAssignment(ctx context.Context, ticketID uuid.UUID, spaceID uuid.UUID, assigneeID uuid.UUID, title string) error
 }
 
-// Assign sets or changes the assignee on a ticket. It validates that the new
-// assignee differs from the current one and sends a notification on success.
-func (s *TicketService) Assign(ctx context.Context, ticketID uuid.UUID, assigneeID uuid.UUID, notifier AssignmentNotifier) (*Ticket, error) {
-	t, err := s.repo.GetByID(ctx, ticketID)
+// Assign sets or changes the assignee on a ticket in spaceID. It validates
+// that the new assignee differs from the current one and sends a notification
+// on success.
+//
+// spaceID is here because the assign route checks CapEditAnyItem against the
+// {spaceID} in its URL and never reconciled it with {ticketID}: read the
+// ticket unscoped and an editor in one space could reassign a ticket in any
+// other. Unlike the read routes this one takes no prior look at the ticket, so
+// the scoped read here is the only thing standing between the two ids. Every
+// caller is the space-scoped HTTP route, so the parameter is threaded through
+// rather than added as a second method.
+func (s *TicketService) Assign(ctx context.Context, ticketID, spaceID uuid.UUID, assigneeID uuid.UUID, notifier AssignmentNotifier) (*Ticket, error) {
+	t, err := s.repo.GetByIDInSpace(ctx, spaceID, ticketID)
 	if err != nil {
 		return nil, fmt.Errorf("assigning ticket: %w", err)
 	}
@@ -43,9 +52,11 @@ func (s *TicketService) Assign(ctx context.Context, ticketID uuid.UUID, assignee
 	return t, nil
 }
 
-// Unassign removes the assignee from a ticket.
-func (s *TicketService) Unassign(ctx context.Context, ticketID uuid.UUID) (*Ticket, error) {
-	t, err := s.repo.GetByID(ctx, ticketID)
+// Unassign removes the assignee from a ticket in spaceID. spaceID carries the
+// same weight it does in Assign — the route proved {spaceID} readable and
+// {ticketID} nothing, and it reaches this write without reading first.
+func (s *TicketService) Unassign(ctx context.Context, ticketID, spaceID uuid.UUID) (*Ticket, error) {
+	t, err := s.repo.GetByIDInSpace(ctx, spaceID, ticketID)
 	if err != nil {
 		return nil, fmt.Errorf("unassigning ticket: %w", err)
 	}

@@ -106,7 +106,7 @@ func TestCustomFieldValueAdapter_RoundTrip(t *testing.T) {
 
 	// Insert.
 	require.NoError(t, values.Upsert(ctx, item.ID, "points", "5"))
-	list, err := values.ListByItem(ctx, item.ID)
+	list, err := values.ListByItemInSpace(ctx, space.ID, item.ID)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	require.Equal(t, "points", list[0].FieldSlug)
@@ -114,14 +114,14 @@ func TestCustomFieldValueAdapter_RoundTrip(t *testing.T) {
 
 	// Upsert again → updates in place (still one row).
 	require.NoError(t, values.Upsert(ctx, item.ID, "points", "8"))
-	list, err = values.ListByItem(ctx, item.ID)
+	list, err = values.ListByItemInSpace(ctx, space.ID, item.ID)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	require.Equal(t, "8", list[0].Value)
 
 	// Delete.
 	require.NoError(t, values.Delete(ctx, item.ID, "points"))
-	list, err = values.ListByItem(ctx, item.ID)
+	list, err = values.ListByItemInSpace(ctx, space.ID, item.ID)
 	require.NoError(t, err)
 	require.Empty(t, list)
 }

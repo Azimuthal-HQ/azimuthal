@@ -330,11 +330,12 @@ func TestItemRelations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEntityRelation: %v", err)
 	}
-	rels, err := q.ListEntityRelationsByEntity(ctx, generated.ListEntityRelationsByEntityParams{
-		FromID: from.ID, FromType: "project_item",
+	rels, err := q.ListEntityRelationsForEntity(ctx, generated.ListEntityRelationsForEntityParams{
+		EntityID: from.ID, EntityType: "project_item",
+		ReadableSpaceIds: []uuid.UUID{space.ID},
 	})
 	if err != nil {
-		t.Fatalf("ListEntityRelationsByEntity: %v", err)
+		t.Fatalf("ListEntityRelationsForEntity: %v", err)
 	}
 	if len(rels) == 0 {
 		t.Error("expected at least one relation")
@@ -441,7 +442,7 @@ func TestSprints(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateProjectItemSprint: %v", err)
 	}
-	sprintItems, err := q.ListProjectItemsBySprint(ctx, sprintUID)
+	sprintItems, err := q.ListProjectItemsBySprint(ctx, generated.ListProjectItemsBySprintParams{SprintID: sprintUID, SpaceID: space.ID})
 	if err != nil {
 		t.Fatalf("ListProjectItemsBySprint: %v", err)
 	}
@@ -570,7 +571,7 @@ func TestComments(t *testing.T) {
 		t.Error("comment ID mismatch")
 	}
 	comments, err := q.ListCommentsByEntity(ctx, generated.ListCommentsByEntityParams{
-		EntityType: "project_item", EntityID: item.ID,
+		EntityType: "project_item", EntityID: item.ID, SpaceID: space.ID,
 	})
 	if err != nil {
 		t.Fatalf("ListCommentsByEntity: %v", err)
@@ -618,7 +619,7 @@ func TestComments(t *testing.T) {
 		t.Fatalf("CreateComment on page: %v", err)
 	}
 	pageComments, err := q.ListCommentsByEntity(ctx, generated.ListCommentsByEntityParams{
-		EntityType: "page", EntityID: page.ID,
+		EntityType: "page", EntityID: page.ID, SpaceID: codexSpace.ID,
 	})
 	if err != nil {
 		t.Fatalf("ListCommentsByEntity for page: %v", err)

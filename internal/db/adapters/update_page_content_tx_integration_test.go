@@ -24,6 +24,7 @@ type pageTxFixture struct {
 	adapter *adapters.ContentTxAdapter
 	q       *generated.Queries
 	pageID  uuid.UUID
+	spaceID uuid.UUID
 	author  uuid.UUID
 }
 
@@ -54,6 +55,7 @@ func newPageTxFixture(t *testing.T) *pageTxFixture {
 		adapter: adapters.NewContentTxAdapter(db.Pool),
 		q:       q,
 		pageID:  pageID,
+		spaceID: space.ID,
 		author:  user.ID,
 	}
 }
@@ -67,7 +69,7 @@ func (f *pageTxFixture) page(t *testing.T) generated.Page {
 
 func (f *pageTxFixture) revisionCount(t *testing.T) int {
 	t.Helper()
-	revs, err := f.q.ListPageRevisions(f.ctx, f.pageID)
+	revs, err := f.q.ListPageRevisions(f.ctx, generated.ListPageRevisionsParams{PageID: f.pageID, SpaceID: f.spaceID})
 	require.NoError(t, err)
 	return len(revs)
 }

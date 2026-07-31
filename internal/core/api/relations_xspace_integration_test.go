@@ -1,0 +1,438 @@
+package api_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
+	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
+	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
+)
+
+// Cross-space read authorization on the item-relations path, against the full
+// production router and real PostgreSQL.
+//
+// These tests exist because the relations read join was keyed on a bare
+// `er.to_id` with no readable-space predicate and no org predicate, while the
+// route itself is space-scoped — the trap rather than the mitigation, because
+// the {spaceID} in the URL authorises the FROM item and the far side's space
+// was never consulted at all. The whole class is asserted here rather than in
+// the service tests because a stub repository would only be asserting a Go
+// reimplementation of a predicate that lives in SQL (D45).
+//
+// The persona matters as much as the assertions. testutil.CreateTestUser makes
+// an org OWNER, and an org admin holds every capability on every space through
+// the middleware bypass — so a test written with that user cannot observe a
+// space boundary at all, and would pass with the entire fix deleted. Every
+// assertion below that must fail before the fix runs as `member`: an org
+// `member` (not owner, not admin) holding a viewer grant on space A and nothing
+// whatsoever on space B.
+
+type relFixture struct {
+	ts *testServer
+	q  *generated.Queries
+
+	spaceA, spaceB testutil.Space
+	member         testutil.User
+	memberTok      string
+	ownerTok       string
+
+	// itemA1 and itemA2 live in space A, which member may read.
+	itemA1, itemA2 uuid.UUID
+	// itemB lives in space B, which member may not read.
+	itemB uuid.UUID
+	// foreignItem lives in a different organization entirely.
+	foreignItem uuid.UUID
+}
+
+func newRelFixture(t *testing.T) *relFixture {
+	t.Helper()
+	ts := newTestServer(t)
+	q := generated.New(ts.DB.Pool)
+	ctx := context.Background()
+
+	f := &relFixture{ts: ts, q: q}
+
+	f.spaceA = testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "vector")
+	f.spaceB = testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "vector")
+
+	// member is an org member, so no admin bypass. A viewer grant on space A
+	// and no grant at all on space B is the smallest persona that can observe
+	// the boundary: they clear every guard on the route and still must not see
+	// across it.
+	f.member = testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	_, err := ts.GrantService.Create(ctx, ts.OrgID, f.spaceA.ID,
+		access.SubjectUser, f.member.ID, access.RoleContributor, ts.UserID)
+	require.NoError(t, err)
+
+	f.memberTok = ts.tokenFor(t, f.member.ID, f.member.Email)
+	f.ownerTok = ts.Token
+
+	f.itemA1 = f.mkItem(t, f.spaceA.ID, "Readable A1")
+	f.itemA2 = f.mkItem(t, f.spaceA.ID, "Readable A2")
+	f.itemB = f.mkItem(t, f.spaceB.ID, "SECRET-TITLE-IN-B")
+
+	// A whole separate organization, to prove the org boundary as well as the
+	// space one. The direct read of this item correctly 404s for our member;
+	// the relations panel used to hand back its title anyway.
+	otherOrg := testutil.CreateTestOrg(t, ts.DB.Pool)
+	otherUser := testutil.CreateTestUser(t, ts.DB.Pool, otherOrg.ID)
+	otherSpace := testutil.CreateTestSpace(t, ts.DB.Pool, otherOrg.ID, otherUser.ID, "vector")
+	f.foreignItem = f.mkItemAs(t, otherSpace.ID, "SECRET-TITLE-IN-OTHER-ORG", otherUser.ID)
+
+	return f
+}
+
+func (f *relFixture) mkItem(t *testing.T, spaceID uuid.UUID, title string) uuid.UUID {
+	t.Helper()
+	return f.mkItemAs(t, spaceID, title, f.ts.UserID)
+}
+
+func (f *relFixture) mkItemAs(t *testing.T, spaceID uuid.UUID, title string, reporter uuid.UUID) uuid.UUID {
+	t.Helper()
+	item, err := f.q.CreateProjectItem(context.Background(), generated.CreateProjectItemParams{
+		ID: uuid.New(), SpaceID: spaceID, Kind: "task", Title: title,
+		Description: "", Status: "open", Priority: "medium",
+		ReporterID: reporter, Labels: []string{}, Rank: "a",
+	})
+	require.NoError(t, err)
+	return item.ID
+}
+
+// link writes a relation row directly, bypassing the API. The write path is
+// itself under test elsewhere in this file, and several of the read cases below
+// describe rows that the fixed write path would now refuse to create — which is
+// exactly why they must be plantable: existing databases already contain them.
+func (f *relFixture) link(t *testing.T, fromID, toID uuid.UUID, kind string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	_, err := f.q.CreateEntityRelation(context.Background(), generated.CreateEntityRelationParams{
+		ID: id, FromID: fromID, FromType: "project_item",
+		ToID: toID, ToType: "project_item", Kind: kind, CreatedBy: f.ts.UserID,
+	})
+	require.NoError(t, err)
+	return id
+}
+
+// relationsPath is the space-scoped route. spaceID is always space A: the
+// caller is authorised for A, and the question every test asks is what that
+// authorisation is allowed to reach.
+func (f *relFixture) relationsPath(itemID uuid.UUID) string {
+	return fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items/%s/relations",
+		f.ts.OrgID, f.spaceA.ID, itemID)
+}
+
+// wireRelation mirrors the JSON the handler emits, so the assertions test the
+// bytes on the wire rather than a Go struct that never left the process.
+type wireRelation struct {
+	ID          uuid.UUID  `json:"id"`
+	Kind        string     `json:"kind"`
+	Direction   string     `json:"direction"`
+	FarReadable bool       `json:"far_readable"`
+	FarID       *uuid.UUID `json:"far_id"`
+	FarType     *string    `json:"far_type"`
+	FarTitle    *string    `json:"far_title"`
+	FarStatus   *string    `json:"far_status"`
+}
+
+func decodeRelations(t *testing.T, body []byte) []wireRelation {
+	t.Helper()
+	var out []wireRelation
+	require.NoError(t, json.Unmarshal(body, &out), "body was: %s", string(body))
+	return out
+}
+
+// requireNoIdentity asserts the D82 placeholder shape: the row is present, so
+// the panel can say a link exists, but nothing about the far entity survives.
+func requireNoIdentity(t *testing.T, rel wireRelation, forbidden ...string) {
+	t.Helper()
+	require.False(t, rel.FarReadable, "far side must not be marked readable")
+	require.Nil(t, rel.FarID, "an unreadable far side must not disclose its id")
+	require.Nil(t, rel.FarType, "an unreadable far side must not disclose its type")
+	require.Nil(t, rel.FarTitle, "an unreadable far side must not disclose its title")
+	require.Nil(t, rel.FarStatus, "an unreadable far side must not disclose its status")
+	raw, err := json.Marshal(rel)
+	require.NoError(t, err)
+	for _, s := range forbidden {
+		require.NotContains(t, string(raw), s,
+			"the serialized row must not carry the far side's identity anywhere")
+	}
+}
+
+// TestRelations_FarSideInUnreadableSpaceIsRedacted is the acute defect.
+//
+// FAILS BEFORE THE FIX: the previous query returned COALESCE(t.title, pi.title)
+// for whatever `er.to_id` matched, so far_title came back "SECRET-TITLE-IN-B"
+// for a member with no access to space B at all.
+func TestRelations_FarSideInUnreadableSpaceIsRedacted(t *testing.T) {
+	f := newRelFixture(t)
+	f.link(t, f.itemA1, f.itemB, "blocks")
+
+	// The direct read is already correctly refused — which is what made the
+	// relations disclosure a bypass rather than a policy difference.
+	direct := f.ts.getAs(t, f.memberTok, fmt.Sprintf(
+		"/api/v1/orgs/%s/spaces/%s/projects/items/%s", f.ts.OrgID, f.spaceB.ID, f.itemB))
+	require.Equal(t, http.StatusNotFound, direct.StatusCode,
+		"precondition: space B must be unreadable to this persona by the normal route")
+
+	res := f.ts.getAs(t, f.memberTok, f.relationsPath(f.itemA1))
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	rels := decodeRelations(t, res.Body)
+	require.Len(t, rels, 1)
+	require.Equal(t, "blocks", rels[0].Kind)
+	require.Equal(t, "outgoing", rels[0].Direction)
+	requireNoIdentity(t, rels[0], "SECRET-TITLE-IN-B", f.itemB.String())
+}
+
+// TestRelations_FarSideInAnotherOrgIsRedacted is the same defect across the
+// organization boundary.
+//
+// FAILS BEFORE THE FIX: the join had no org predicate either, so a relation
+// planted at any UUID returned that entity's title regardless of tenancy.
+func TestRelations_FarSideInAnotherOrgIsRedacted(t *testing.T) {
+	f := newRelFixture(t)
+	f.link(t, f.itemA1, f.foreignItem, "relates_to")
+
+	res := f.ts.getAs(t, f.memberTok, f.relationsPath(f.itemA1))
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	rels := decodeRelations(t, res.Body)
+	require.Len(t, rels, 1)
+	requireNoIdentity(t, rels[0], "SECRET-TITLE-IN-OTHER-ORG", f.foreignItem.String())
+}
+
+// TestRelations_ReadableFarSideStillResolves is the negative control. Without
+// it, "redact everything unconditionally" would pass every other test in this
+// file while destroying the feature.
+func TestRelations_ReadableFarSideStillResolves(t *testing.T) {
+	f := newRelFixture(t)
+	f.link(t, f.itemA1, f.itemA2, "relates_to")
+
+	res := f.ts.getAs(t, f.memberTok, f.relationsPath(f.itemA1))
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	rels := decodeRelations(t, res.Body)
+	require.Len(t, rels, 1)
+	require.True(t, rels[0].FarReadable)
+	require.NotNil(t, rels[0].FarTitle)
+	require.Equal(t, "Readable A2", *rels[0].FarTitle)
+	require.Equal(t, "open", *rels[0].FarStatus)
+	require.Equal(t, f.itemA2, *rels[0].FarID)
+	require.Equal(t, "project_item", *rels[0].FarType)
+}
+
+// TestRelations_SoftDeletedFarSideIsRedacted covers the row that escapes a
+// space predicate by not being live. The previous join tested neither
+// deleted_at nor space_id, so a soft-deleted item kept disclosing its title
+// through the relations panel long after it stopped being readable anywhere
+// else.
+func TestRelations_SoftDeletedFarSideIsRedacted(t *testing.T) {
+	f := newRelFixture(t)
+	f.link(t, f.itemA1, f.itemA2, "relates_to")
+	require.NoError(t, f.q.SoftDeleteProjectItem(context.Background(), f.itemA2))
+
+	res := f.ts.getAs(t, f.memberTok, f.relationsPath(f.itemA1))
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	rels := decodeRelations(t, res.Body)
+	require.Len(t, rels, 1)
+	requireNoIdentity(t, rels[0], "Readable A2", f.itemA2.String())
+}
+
+// TestRelations_BlockedItemSeesTheRelation is the reciprocal-visibility fix
+// (the T1 finding), and it is a functional gap as much as a security one.
+//
+// FAILS BEFORE THE FIX: the query matched `WHERE er.from_id = $1` with no
+// `OR to_id = $1` and no union, and CreateEntityRelation writes exactly one row
+// with no inverse. A "blocks" link was therefore invisible to the very item it
+// blocked — that item's Relations panel was empty.
+func TestRelations_BlockedItemSeesTheRelation(t *testing.T) {
+	f := newRelFixture(t)
+	f.link(t, f.itemA1, f.itemA2, "blocks")
+
+	res := f.ts.getAs(t, f.memberTok, f.relationsPath(f.itemA2))
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	rels := decodeRelations(t, res.Body)
+	require.Len(t, rels, 1, "the blocked item must see the relation that blocks it")
+	require.Equal(t, "incoming", rels[0].Direction)
+	require.Equal(t, "blocks", rels[0].Kind)
+	require.True(t, rels[0].FarReadable)
+	require.Equal(t, "Readable A1", *rels[0].FarTitle)
+	require.Equal(t, f.itemA1, *rels[0].FarID)
+}
+
+// TestRelations_ReciprocalVisibilityIsItselfGated is the pair the D82 rule
+// turns on: the same incoming relation, read by someone who may see the far
+// side and by someone who may not.
+//
+// The row appears for both — that is the point of surfacing the reverse
+// direction, since an item needs to know it is blocked — but only one of them
+// learns what is doing the blocking.
+func TestRelations_ReciprocalVisibilityIsItselfGated(t *testing.T) {
+	f := newRelFixture(t)
+	// Something in space B blocks an item in space A.
+	f.link(t, f.itemB, f.itemA1, "blocks")
+
+	t.Run("viewer who cannot read the far side gets a placeholder", func(t *testing.T) {
+		res := f.ts.getAs(t, f.memberTok, f.relationsPath(f.itemA1))
+		require.Equal(t, http.StatusOK, res.StatusCode)
+
+		rels := decodeRelations(t, res.Body)
+		require.Len(t, rels, 1, "the blocked item still learns that it is blocked")
+		require.Equal(t, "incoming", rels[0].Direction)
+		require.Equal(t, "blocks", rels[0].Kind)
+		requireNoIdentity(t, rels[0], "SECRET-TITLE-IN-B", f.itemB.String())
+	})
+
+	t.Run("viewer who can read the far side gets the identity", func(t *testing.T) {
+		// The org owner reads every space through the ADR-0007 middleware
+		// bypass, which produces a readable set with nothing filtered out
+		// rather than a special case in the query.
+		res := f.ts.getAs(t, f.ownerTok, f.relationsPath(f.itemA1))
+		require.Equal(t, http.StatusOK, res.StatusCode)
+
+		rels := decodeRelations(t, res.Body)
+		require.Len(t, rels, 1)
+		require.Equal(t, "incoming", rels[0].Direction)
+		require.True(t, rels[0].FarReadable)
+		require.Equal(t, "SECRET-TITLE-IN-B", *rels[0].FarTitle)
+		require.Equal(t, f.itemB, *rels[0].FarID)
+	})
+}
+
+// TestRelations_CreateRefusesUnreadableTarget is the write half.
+//
+// FAILS BEFORE THE FIX: validateRelation checked only that the kind was known
+// and that from and to differed. It never resolved the target, migration 015
+// dropped the foreign keys so the database did not either, and the row was
+// stored — after which the read path handed the title back.
+func TestRelations_CreateRefusesUnreadableTarget(t *testing.T) {
+	f := newRelFixture(t)
+
+	res := f.ts.postAs(t, f.memberTok, f.relationsPath(f.itemA1), map[string]any{
+		"to_id": f.itemB.String(),
+		"kind":  "blocks",
+	})
+	require.Equal(t, http.StatusNotFound, res.StatusCode,
+		"a target in an unreadable space must be refused")
+	require.NotContains(t, string(res.Body), "SECRET-TITLE-IN-B")
+
+	var count int
+	require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM entity_relations WHERE from_id = $1`, f.itemA1).Scan(&count))
+	require.Zero(t, count, "a refused relation must not be persisted")
+}
+
+// TestRelations_CreateRefusesForeignOrgTarget is the same refusal across the
+// organization boundary.
+func TestRelations_CreateRefusesForeignOrgTarget(t *testing.T) {
+	f := newRelFixture(t)
+
+	res := f.ts.postAs(t, f.memberTok, f.relationsPath(f.itemA1), map[string]any{
+		"to_id": f.foreignItem.String(),
+		"kind":  "relates_to",
+	})
+	require.Equal(t, http.StatusNotFound, res.StatusCode)
+
+	var count int
+	require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM entity_relations WHERE from_id = $1`, f.itemA1).Scan(&count))
+	require.Zero(t, count)
+}
+
+// TestRelations_CreateAllowsReadableTarget is the negative control for the
+// write refusal: "refuse everything" must not pass.
+func TestRelations_CreateAllowsReadableTarget(t *testing.T) {
+	f := newRelFixture(t)
+
+	res := f.ts.postAs(t, f.memberTok, f.relationsPath(f.itemA1), map[string]any{
+		"to_id": f.itemA2.String(),
+		"kind":  "blocks",
+	})
+	require.Equal(t, http.StatusCreated, res.StatusCode, "body: %s", string(res.Body))
+
+	var count int
+	require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM entity_relations WHERE from_id = $1`, f.itemA1).Scan(&count))
+	require.Equal(t, 1, count)
+}
+
+// TestRelations_CreateGivesNoExistenceOracle is the no-oracle proof.
+//
+// A distinguishable "exists but forbidden" is the same disclosure as returning
+// the title, in a different shape: it turns the endpoint into a probe for
+// whether an arbitrary UUID names a real entity. So the two refusals must be
+// byte-identical, not merely both-4xx.
+//
+// The property is structural rather than a matched pair of literals in the
+// handler: the repository answers with one bool, so the service has a single
+// error value to return and no branch that could drift apart. This test pins
+// the observable consequence.
+func TestRelations_CreateGivesNoExistenceOracle(t *testing.T) {
+	f := newRelFixture(t)
+
+	// Exists, in a space this persona cannot read.
+	forbidden := f.ts.postAs(t, f.memberTok, f.relationsPath(f.itemA1), map[string]any{
+		"to_id": f.itemB.String(),
+		"kind":  "blocks",
+	})
+	// Does not exist anywhere.
+	absent := f.ts.postAs(t, f.memberTok, f.relationsPath(f.itemA1), map[string]any{
+		"to_id": uuid.New().String(),
+		"kind":  "blocks",
+	})
+
+	require.Equal(t, http.StatusNotFound, forbidden.StatusCode)
+	require.Equal(t, absent.StatusCode, forbidden.StatusCode,
+		"an existing-but-forbidden target must not be distinguishable by status")
+	require.Equal(t, withoutRequestID(t, absent.Body), withoutRequestID(t, forbidden.Body),
+		"an existing-but-forbidden target must not be distinguishable by body")
+}
+
+// withoutRequestID renders an error body with the per-request correlation id
+// removed. Everything else is compared verbatim rather than field by field, so
+// a future field that did differ between the two refusals would still fail this
+// test instead of going unnoticed.
+func withoutRequestID(t *testing.T, body []byte) string {
+	t.Helper()
+	var envelope struct {
+		Error map[string]any `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(body, &envelope), "body was: %s", string(body))
+	require.NotEmpty(t, envelope.Error["request_id"], "the error envelope should carry a request id")
+	delete(envelope.Error, "request_id")
+	out, err := json.Marshal(envelope)
+	require.NoError(t, err)
+	return string(out)
+}
+
+// TestRelations_EmptyReadableSetResolvesNothing pins the degenerate case the
+// SQL comment flags: `= ANY('{}')` is false for every row, and a nil array is
+// NULL, which is equally non-matching in a JOIN. Both are fail-closed, but by
+// accident of SQL semantics rather than by intent — so the behaviour is
+// asserted rather than left resting on the trivia.
+//
+// The persona is an org member with no grants at all, which is the only way to
+// reach an empty readable set through the real router.
+func TestRelations_EmptyReadableSetResolvesNothing(t *testing.T) {
+	f := newRelFixture(t)
+	f.link(t, f.itemA1, f.itemA2, "relates_to")
+
+	stranger := testutil.CreateTestUserWithRole(t, f.ts.DB.Pool, f.ts.OrgID, "member")
+	strangerTok := f.ts.tokenFor(t, stranger.ID, stranger.Email)
+
+	// They cannot reach the route at all — RequireSpaceReadable 404s first,
+	// which is the correct outer behaviour and is asserted here so that a
+	// regression in the guard shows up as a failure of this test rather than
+	// as silently broader access.
+	res := f.ts.getAs(t, strangerTok, f.relationsPath(f.itemA1))
+	require.Equal(t, http.StatusNotFound, res.StatusCode)
+}

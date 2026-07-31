@@ -48,6 +48,17 @@ func (r *stubItemRepo) GetByID(_ context.Context, id uuid.UUID) (*Item, error) {
 	return item, nil
 }
 
+// GetByIDInSpace models the real query's space predicate: a wrong space is
+// the same ErrNotFound an absent item produces, which is the property the
+// endpoint's no-oracle behaviour rests on.
+func (r *stubItemRepo) GetByIDInSpace(_ context.Context, spaceID, id uuid.UUID) (*Item, error) {
+	item, ok := r.items[id]
+	if !ok || item.DeletedAt != nil || item.SpaceID != spaceID {
+		return nil, ErrNotFound
+	}
+	return item, nil
+}
+
 func (r *stubItemRepo) GetByOrgKey(_ context.Context, _ uuid.UUID, key string) (*Item, error) {
 	for _, item := range r.items {
 		if item.ItemKey == key && item.DeletedAt == nil {
@@ -123,9 +134,12 @@ func (r *stubItemRepo) ListByAssignee(_ context.Context, spaceID uuid.UUID, assi
 	return result, nil
 }
 
-func (r *stubItemRepo) ListBySprint(_ context.Context, sprintID uuid.UUID) ([]*Item, error) {
+func (r *stubItemRepo) ListBySprint(_ context.Context, spaceID, sprintID uuid.UUID) ([]*Item, error) {
 	result := make([]*Item, 0)
 	for _, item := range r.items {
+		if item.SpaceID != spaceID {
+			continue
+		}
 		if item.SprintID != nil && *item.SprintID == sprintID && item.DeletedAt == nil {
 			result = append(result, item)
 		}

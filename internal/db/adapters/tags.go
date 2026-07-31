@@ -61,8 +61,15 @@ func (a *TagAdapter) Upsert(ctx context.Context, orgID uuid.UUID, slug, name str
 }
 
 // ForPage implements the repository interface.
-func (a *TagAdapter) ForPage(ctx context.Context, pageID uuid.UUID) ([]tags.Tag, error) {
-	rows, err := a.q.ListTagsForPage(ctx, pageID)
+//
+// The space parameter reaches the query rather than being applied here: the
+// association table has no space of its own, so the reconciliation is a join
+// through the page and belongs in SQL, where it cannot be forgotten by a caller.
+func (a *TagAdapter) ForPage(ctx context.Context, pageID, spaceID uuid.UUID) ([]tags.Tag, error) {
+	rows, err := a.q.ListTagsForPage(ctx, generated.ListTagsForPageParams{
+		PageID:  pageID,
+		SpaceID: spaceID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("tag adapter list for page: %w", err)
 	}

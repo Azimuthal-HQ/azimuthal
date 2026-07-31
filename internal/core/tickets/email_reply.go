@@ -22,6 +22,12 @@ type ReplyParams struct {
 
 // SendReply sends an outbound email reply for a ticket. It fetches the ticket
 // to include the subject line, then delegates to the EmailSender.
+//
+// The read below stays unscoped, and deliberately: email egress is reached
+// from no HTTP route at all, so there is no {spaceID} in the URL to reconcile
+// {ticketID} against and no caller that could supply one. Should a route ever
+// mount this, it takes a space id and reads through GetByIDInSpace like every
+// other space-scoped path.
 func (s *TicketService) SendReply(ctx context.Context, sender EmailSender, params ReplyParams) error {
 	if sender == nil {
 		return fmt.Errorf("sending ticket reply: email sender is nil")
