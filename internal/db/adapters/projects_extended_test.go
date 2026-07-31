@@ -100,7 +100,7 @@ func TestItemAdapter_UpdateSprint(t *testing.T) {
 	// Assign to sprint.
 	require.NoError(t, itemAdapter.UpdateSprint(ctx, item.ID, &sprint.ID))
 
-	inSprint, err := itemAdapter.ListBySprint(ctx, sprint.ID)
+	inSprint, err := itemAdapter.ListBySprint(ctx, space.ID, sprint.ID)
 	require.NoError(t, err)
 	require.Len(t, inSprint, 1)
 	require.Equal(t, item.ID, inSprint[0].ID)
@@ -108,7 +108,7 @@ func TestItemAdapter_UpdateSprint(t *testing.T) {
 	// Remove from sprint.
 	require.NoError(t, itemAdapter.UpdateSprint(ctx, item.ID, nil))
 
-	inSprint, err = itemAdapter.ListBySprint(ctx, sprint.ID)
+	inSprint, err = itemAdapter.ListBySprint(ctx, space.ID, sprint.ID)
 	require.NoError(t, err)
 	require.Empty(t, inSprint)
 }

@@ -152,6 +152,14 @@ func (m *mockTicketRepo) Create(_ context.Context, t *tickets.Ticket) error {
 	return nil
 }
 
+func (m *mockTicketRepo) GetByIDInSpace(_ context.Context, spaceID, id uuid.UUID) (*tickets.Ticket, error) {
+	t, ok := m.tickets[id]
+	if !ok || t.SpaceID != spaceID {
+		return nil, tickets.ErrNotFound
+	}
+	return t, nil
+}
+
 func (m *mockTicketRepo) GetByID(_ context.Context, id uuid.UUID) (*tickets.Ticket, error) {
 	t, ok := m.tickets[id]
 	if !ok {
@@ -236,6 +244,14 @@ func (m *mockPageStore) CreatePage(_ context.Context, arg generated.CreatePagePa
 	return p, nil
 }
 
+func (m *mockPageStore) GetPageInSpace(_ context.Context, p generated.GetPageInSpaceParams) (generated.Page, error) {
+	page, ok := m.pages[p.PageID]
+	if !ok || page.SpaceID != p.SpaceID {
+		return generated.Page{}, wiki.ErrPageNotFound
+	}
+	return page, nil
+}
+
 func (m *mockPageStore) GetPageByID(_ context.Context, id uuid.UUID) (generated.Page, error) {
 	p, ok := m.pages[id]
 	if !ok {
@@ -311,7 +327,7 @@ func (m *mockPageStore) GetPageRevision(_ context.Context, arg generated.GetPage
 	return generated.PageRevision{}, wiki.ErrRevisionNotFound
 }
 
-func (m *mockPageStore) ListPageRevisions(_ context.Context, _ uuid.UUID) ([]generated.ListPageRevisionsRow, error) {
+func (m *mockPageStore) ListPageRevisions(_ context.Context, _ generated.ListPageRevisionsParams) ([]generated.ListPageRevisionsRow, error) {
 	return nil, nil
 }
 
@@ -535,7 +551,7 @@ func (m *mockCustomFieldDefRepo) NextPosition(_ context.Context, _ uuid.UUID) (i
 
 type mockCustomFieldValueRepo struct{}
 
-func (m *mockCustomFieldValueRepo) ListByItem(_ context.Context, _ uuid.UUID) ([]customfields.StoredValue, error) {
+func (m *mockCustomFieldValueRepo) ListByItemInSpace(_ context.Context, _, _ uuid.UUID) ([]customfields.StoredValue, error) {
 	return nil, nil
 }
 func (m *mockCustomFieldValueRepo) Upsert(_ context.Context, _ uuid.UUID, _, _ string) error {
@@ -553,6 +569,14 @@ func (m *mockCustomFieldValueRepo) CountByOrgSlug(_ context.Context, _ uuid.UUID
 func (m *mockItemRepo) GetByID(_ context.Context, id uuid.UUID) (*projects.Item, error) {
 	item, ok := m.items[id]
 	if !ok {
+		return nil, projects.ErrNotFound
+	}
+	return item, nil
+}
+
+func (m *mockItemRepo) GetByIDInSpace(_ context.Context, spaceID, id uuid.UUID) (*projects.Item, error) {
+	item, ok := m.items[id]
+	if !ok || item.SpaceID != spaceID {
 		return nil, projects.ErrNotFound
 	}
 	return item, nil
@@ -604,7 +628,7 @@ func (m *mockItemRepo) ListByAssignee(_ context.Context, _ uuid.UUID, _ uuid.UUI
 	return nil, nil
 }
 
-func (m *mockItemRepo) ListBySprint(_ context.Context, _ uuid.UUID) ([]*projects.Item, error) {
+func (m *mockItemRepo) ListBySprint(_ context.Context, _, _ uuid.UUID) ([]*projects.Item, error) {
 	return nil, nil
 }
 
@@ -628,6 +652,14 @@ func (m *mockSprintRepo) Create(_ context.Context, s *projects.Sprint) error {
 func (m *mockSprintRepo) GetByID(_ context.Context, id uuid.UUID) (*projects.Sprint, error) {
 	s, ok := m.sprints[id]
 	if !ok {
+		return nil, projects.ErrNotFound
+	}
+	return s, nil
+}
+
+func (m *mockSprintRepo) GetByIDInSpace(_ context.Context, spaceID, id uuid.UUID) (*projects.Sprint, error) {
+	s, ok := m.sprints[id]
+	if !ok || s.SpaceID != spaceID {
 		return nil, projects.ErrNotFound
 	}
 	return s, nil
@@ -712,7 +744,9 @@ func (m *mockTagRepo) GetByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (ta
 func (m *mockTagRepo) Upsert(_ context.Context, orgID uuid.UUID, slug, name string) (tags.Tag, error) {
 	return tags.Tag{ID: uuid.New(), OrgID: orgID, Slug: slug, Name: name}, nil
 }
-func (m *mockTagRepo) ForPage(_ context.Context, _ uuid.UUID) ([]tags.Tag, error) { return nil, nil }
+func (m *mockTagRepo) ForPage(_ context.Context, _, _ uuid.UUID) ([]tags.Tag, error) {
+	return nil, nil
+}
 func (m *mockTagRepo) ReplacePageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error {
 	return nil
 }

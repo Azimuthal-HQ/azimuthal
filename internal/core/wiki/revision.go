@@ -71,16 +71,45 @@ type RevisionDiff struct {
 	ContentSegments []DiffSegment `json:"content_segments"`
 }
 
-// ListRevisions returns all revisions for a page, ordered newest first.
-func (s *Service) ListRevisions(ctx context.Context, pageID uuid.UUID) ([]generated.ListPageRevisionsRow, error) {
-	revisions, err := s.store.ListPageRevisions(ctx, pageID)
+// ListRevisions returns all revisions of a page in the given space, ordered
+// newest first.
+//
+// The space is carried because page_revisions has no space of its own: the
+// ledger is readable exactly when its page is, and the query joins through the
+// page to say so. Without it a page id alone returned every version's title and
+// author across any space or organisation boundary — the route had proved
+// {spaceID} readable and nothing at all about {pageID}. A page in another space
+// yields an empty ledger, which is what a page that does not exist yields.
+func (s *Service) ListRevisions(ctx context.Context, pageID, spaceID uuid.UUID) ([]generated.ListPageRevisionsRow, error) {
+	revisions, err := s.store.ListPageRevisions(ctx, generated.ListPageRevisionsParams{
+		PageID:  pageID,
+		SpaceID: spaceID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing revisions: %w", err)
 	}
 	return revisions, nil
 }
 
+// GetRevisionInSpace retrieves one revision of a page that lives in the given
+// space.
+//
+// The page is reconciled first and the revision is read second. `page_revisions`
+// is keyed on the page alone — there is no space-scoped revision query to switch
+// to — and a revision carries the full historical title and body, so reading one
+// by page id was the same disclosure as reading the page. Proving the page is in
+// the space is what makes the second read safe.
+func (s *Service) GetRevisionInSpace(ctx context.Context, pageID, spaceID uuid.UUID, version int32) (generated.PageRevision, error) {
+	if _, err := s.GetPageInSpace(ctx, pageID, spaceID); err != nil {
+		return generated.PageRevision{}, err
+	}
+	return s.GetRevision(ctx, pageID, version)
+}
+
 // GetRevision retrieves a specific revision by page ID and version number.
+//
+// UNSCOPED: it takes no space and reconciles nothing. Space-scoped routes use
+// [Service.GetRevisionInSpace].
 func (s *Service) GetRevision(ctx context.Context, pageID uuid.UUID, version int32) (generated.PageRevision, error) {
 	rev, err := s.store.GetPageRevision(ctx, generated.GetPageRevisionParams{
 		PageID:  pageID,
@@ -95,7 +124,22 @@ func (s *Service) GetRevision(ctx context.Context, pageID uuid.UUID, version int
 	return rev, nil
 }
 
+// DiffRevisionsInSpace compares two revisions of a page that lives in the given
+// space.
+//
+// Same reason as [Service.GetRevisionInSpace]: the diff is built out of two
+// revision bodies, so it discloses everything the revisions do. The page is
+// reconciled against the space before either one is read.
+func (s *Service) DiffRevisionsInSpace(ctx context.Context, pageID, spaceID uuid.UUID, fromVersion, toVersion int32) (RevisionDiff, error) {
+	if _, err := s.GetPageInSpace(ctx, pageID, spaceID); err != nil {
+		return RevisionDiff{}, err
+	}
+	return s.DiffRevisions(ctx, pageID, fromVersion, toVersion)
+}
+
 // DiffRevisions computes a unified diff between two revisions of the same page.
+//
+// UNSCOPED. Space-scoped routes use [Service.DiffRevisionsInSpace].
 func (s *Service) DiffRevisions(ctx context.Context, pageID uuid.UUID, fromVersion, toVersion int32) (RevisionDiff, error) {
 	// The wrapping names the VERSION, not the call site. handleWikiError passes
 	// a not-found error's own text through as the 404 body, so "getting

@@ -389,6 +389,17 @@ func redactSharedContainers(rows []Result, readable []uuid.UUID) {
 		rows[i].SpaceID = nil
 		rows[i].SpaceKey = ""
 		rows[i].SpaceName = ""
+		// The per-module identity fields encode the container too, so clearing
+		// the three space fields alone left it reachable by another name.
+		// ItemKey is composed as <SPACE_KEY>-<number> and carries the space key
+		// verbatim; Number is the per-space sequence, which estimates the size
+		// of a space the viewer cannot open; Path is Codex's materialised
+		// ancestor chain, naming the pages above this one inside that space.
+		// The canonical share projection (internal/core/api/shares/reader.go)
+		// withholds all three.
+		rows[i].Number = 0
+		rows[i].ItemKey = ""
+		rows[i].Path = ""
 	}
 }
 

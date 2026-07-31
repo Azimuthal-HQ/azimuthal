@@ -58,7 +58,21 @@ type Item struct {
 type ItemRepository interface {
 	// Create persists a new item.
 	Create(ctx context.Context, item *Item) error
-	// GetByID retrieves an item by primary key. Returns ErrNotFound if absent or soft-deleted.
+	// GetByIDInSpace retrieves an item by primary key, reconciled against the
+	// space the request named. Returns ErrNotFound if absent, soft-deleted, OR
+	// in a different space — the three are indistinguishable on purpose.
+	//
+	// This is the read every space-scoped route must use. Those routes prove
+	// the caller may read {spaceID} and prove nothing whatever about {itemID},
+	// so reading by id alone let an authorised member of any one space reach
+	// every item in the installation, across organizations included.
+	GetByIDInSpace(ctx context.Context, spaceID, id uuid.UUID) (*Item, error)
+	// GetByID retrieves an item by primary key with NO space reconciliation.
+	// Returns ErrNotFound if absent or soft-deleted.
+	//
+	// Only for callers whose authorisation is established some other way — the
+	// entity-share read path (ADR-0008), where share coverage deliberately
+	// grants access without space access. Everything else wants GetByIDInSpace.
 	GetByID(ctx context.Context, id uuid.UUID) (*Item, error)
 	// GetByOrgKey resolves a human-readable key (e.g. VEC-123) to an item
 	// within an org. Returns ErrNotFound if absent or soft-deleted.
@@ -77,8 +91,11 @@ type ItemRepository interface {
 	ListByStatus(ctx context.Context, spaceID uuid.UUID, status string) ([]*Item, error)
 	// ListByAssignee returns items assigned to a specific user within a space.
 	ListByAssignee(ctx context.Context, spaceID uuid.UUID, assigneeID uuid.UUID) ([]*Item, error)
-	// ListBySprint returns all items in a given sprint, ordered by rank.
-	ListBySprint(ctx context.Context, sprintID uuid.UUID) ([]*Item, error)
+	// ListBySprint returns all items in a given sprint, ordered by rank, with
+	// both the sprint and its items reconciled against the given space. A
+	// sprint id on its own used to be enough, which made this a bulk read of
+	// another space's sprint.
+	ListBySprint(ctx context.Context, spaceID, sprintID uuid.UUID) ([]*Item, error)
 	// Search performs full-text search on items within a space.
 	Search(ctx context.Context, spaceID uuid.UUID, query string, limit int) ([]*Item, error)
 }
@@ -126,7 +143,22 @@ func (s *ItemService) CreateItem(ctx context.Context, item *Item) (*Item, error)
 	return item, nil
 }
 
-// GetItem retrieves a project item by ID.
+// GetItemInSpace retrieves a project item by ID, reconciled against the space
+// the request named. This is the read every space-scoped route must use; see
+// ItemRepository.GetByIDInSpace for why.
+func (s *ItemService) GetItemInSpace(ctx context.Context, spaceID, id uuid.UUID) (*Item, error) {
+	item, err := s.repo.GetByIDInSpace(ctx, spaceID, id)
+	if err != nil {
+		return nil, fmt.Errorf("getting item: %w", err)
+	}
+	return item, nil
+}
+
+// GetItem retrieves a project item by ID with NO space reconciliation.
+//
+// Reserved for callers authorised some other way — the entity-share reader,
+// where coverage grants access without space access (ADR-0008). A space-scoped
+// route reaching for this is a defect; it wants GetItemInSpace.
 func (s *ItemService) GetItem(ctx context.Context, id uuid.UUID) (*Item, error) {
 	item, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -216,9 +248,11 @@ func (s *ItemService) ListItemsByAssignee(ctx context.Context, spaceID uuid.UUID
 	return items, nil
 }
 
-// ListItemsBySprint returns items in a sprint.
-func (s *ItemService) ListItemsBySprint(ctx context.Context, sprintID uuid.UUID) ([]*Item, error) {
-	items, err := s.repo.ListBySprint(ctx, sprintID)
+// ListItemsBySprint returns items in a sprint, reconciled against the space the
+// request named. A sprint id on its own was enough before, which made this a
+// bulk read of another space's sprint.
+func (s *ItemService) ListItemsBySprint(ctx context.Context, spaceID, sprintID uuid.UUID) ([]*Item, error) {
+	items, err := s.repo.ListBySprint(ctx, spaceID, sprintID)
 	if err != nil {
 		return nil, fmt.Errorf("listing items by sprint: %w", err)
 	}

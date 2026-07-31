@@ -448,8 +448,13 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
-	item, err := h.items.GetItem(r.Context(), id)
+	item, err := h.items.GetItemInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -525,7 +530,7 @@ func (h *Handler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.items.GetItem(r.Context(), id)
+	existing, err := h.items.GetItemInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -590,7 +595,7 @@ func (h *Handler) DeleteItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.items.GetItem(r.Context(), id)
+	existing, err := h.items.GetItemInSpace(r.Context(), spaceID, id)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -665,7 +670,7 @@ func (h *Handler) UpdateItemStatus(w http.ResponseWriter, r *http.Request) {
 	// any string it was given — so the read is new, and it is what lets a guard
 	// see the item it is guarding. Legality is still not adjudicated here: the
 	// tiers add restrictions and do not invent a rule this route never had.
-	current, getErr := h.items.GetItem(r.Context(), id)
+	current, getErr := h.items.GetItemInSpace(r.Context(), spaceID, id)
 	if getErr != nil {
 		handleProjectError(w, r, getErr)
 		return
@@ -769,7 +774,10 @@ func (h *Handler) applyItemTransition(w http.ResponseWriter, r *http.Request, t 
 		return
 	}
 
-	item, err := h.items.GetItem(r.Context(), t.itemID)
+	// Scoped read-back, even though the gate already loaded this item within
+	// the space: the itemTransition carries its space, so using it costs
+	// nothing and leaves no unscoped read anywhere on a request path.
+	item, err := h.items.GetItemInSpace(r.Context(), t.spaceID, t.itemID)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -1234,8 +1242,13 @@ func (h *Handler) GetSprint(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid sprint ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
-	sprint, err := h.sprints.GetSprint(r.Context(), id)
+	sprint, err := h.sprints.GetSprint(r.Context(), spaceID, id)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -1283,7 +1296,7 @@ func (h *Handler) UpdateSprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.sprints.GetSprint(r.Context(), id)
+	existing, err := h.sprints.GetSprint(r.Context(), spaceID, id)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -1335,7 +1348,7 @@ func (h *Handler) StartSprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sprint, err := h.sprints.StartSprint(r.Context(), id)
+	sprint, err := h.sprints.StartSprint(r.Context(), spaceID, id)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -1388,7 +1401,7 @@ func (h *Handler) CompleteSprint(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sprint, err := h.sprints.CompleteSprint(r.Context(), id, projects.CompleteOptions{NextSprintID: req.NextSprintID})
+	sprint, err := h.sprints.CompleteSprint(r.Context(), spaceID, id, projects.CompleteOptions{NextSprintID: req.NextSprintID})
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -1417,8 +1430,13 @@ func (h *Handler) ListSprintItems(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid sprint ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
-	items, err := h.backlog.GetSprintBacklog(r.Context(), id)
+	items, err := h.backlog.GetSprintBacklog(r.Context(), spaceID, id)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return
@@ -2118,12 +2136,20 @@ func (h *Handler) GetItemFields(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 	itemID, err := itemIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
 		return
 	}
-	fields, err := h.customFields.RenderForItem(r.Context(), orgID, itemID)
+	// The space goes down with the item id: the route proved {spaceID} readable
+	// and proved nothing about {itemID}, so values were rendered for any item in
+	// the installation under any space's URL.
+	fields, err := h.customFields.RenderForItem(r.Context(), orgID, spaceID, itemID)
 	if err != nil {
 		handleCustomFieldError(w, r, err)
 		return
@@ -2165,7 +2191,13 @@ func (h *Handler) SetItemField(w http.ResponseWriter, r *http.Request) {
 
 	// Setting a field value is editing the item — gate exactly like UpdateItem
 	// (edit_own for the reporter, edit_any otherwise).
-	existing, err := h.items.GetItem(r.Context(), itemID)
+	//
+	// Resolving the item through the space is also what reconciles the write.
+	// The value is upserted on (item_id, field_slug) with no space column to
+	// test, so an id from another space wrote there unchallenged; this read is
+	// the reconciliation, and an item outside {spaceID} leaves through the
+	// item's own 404 before anything is written.
+	existing, err := h.items.GetItemInSpace(r.Context(), spaceID, itemID)
 	if err != nil {
 		handleProjectError(w, r, err)
 		return

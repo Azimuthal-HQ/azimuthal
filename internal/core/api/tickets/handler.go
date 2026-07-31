@@ -245,8 +245,16 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")
 		return
 	}
+	// The route's middleware proved the caller may read {spaceID}. It proved
+	// nothing about {ticketID}, so the read is scoped to the space and a ticket
+	// belonging to another one 404s exactly as a missing ticket does.
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
-	ticket, err := h.svc.Get(r.Context(), id)
+	ticket, err := h.svc.GetInSpace(r.Context(), id, spaceID)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
@@ -290,7 +298,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.svc.Get(r.Context(), id)
+	// Scoped to {spaceID}: the ticket the permission check is about has to be
+	// the ticket in the space the caller was authorised against, not whichever
+	// ticket the id happens to name.
+	existing, err := h.svc.GetInSpace(r.Context(), id, spaceID)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
@@ -346,7 +357,10 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.svc.Get(r.Context(), id)
+	// Scoped to {spaceID}. This read is also what keeps the delete below from
+	// addressing another space: the transactional deleter takes a ticket id
+	// alone, so a ticket outside {spaceID} has to be refused here or nowhere.
+	existing, err := h.svc.GetInSpace(r.Context(), id, spaceID)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
@@ -420,7 +434,11 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 	// The hardcoded state machine still decides LEGALITY, exactly as before.
 	// The tiers only add restrictions on top of it, so a transition this
 	// machine rejects is still rejected the same way, with the same error.
-	current, getErr := h.svc.Get(r.Context(), id)
+	//
+	// Scoped to {spaceID}, because the capability check above named that space
+	// and the ticket id named nothing: the tiers, the state machine and the
+	// audit row must all be about a ticket the caller was authorised for.
+	current, getErr := h.svc.GetInSpace(r.Context(), id, spaceID)
 	if getErr != nil {
 		handleTicketError(w, r, getErr)
 		return
@@ -473,7 +491,7 @@ type ticketTransition struct {
 // distinction is deliberate rather than an inconsistency.
 func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, t ticketTransition) {
 	if len(t.gated.Effects) == 0 {
-		ticket, err := h.svc.TransitionStatus(r.Context(), t.ticketID, t.status)
+		ticket, err := h.svc.TransitionStatus(r.Context(), t.ticketID, t.spaceID, t.status)
 		if err != nil {
 			handleTicketError(w, r, err)
 			return
@@ -506,7 +524,7 @@ func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	ticket, err := h.svc.Get(r.Context(), t.ticketID)
+	ticket, err := h.svc.GetInSpace(r.Context(), t.ticketID, t.spaceID)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
@@ -635,7 +653,7 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 
 	// null assignee_id means unassign
 	if req.AssigneeID == nil {
-		ticket, err := h.svc.Unassign(r.Context(), id)
+		ticket, err := h.svc.Unassign(r.Context(), id, spaceID)
 		if err != nil {
 			handleTicketError(w, r, err)
 			return
@@ -655,7 +673,11 @@ func (h *Handler) Assign(w http.ResponseWriter, r *http.Request) { //nolint:cycl
 	if h.notifs != nil {
 		notifier = &queueAssignmentNotifier{enqueuer: h.notifs}
 	}
-	ticket, err := h.svc.Assign(r.Context(), id, *req.AssigneeID, notifier)
+	// {spaceID} goes to the service, not just to the capability check above:
+	// this is the one pair of routes that writes without reading the ticket
+	// first, so the scoped read inside Assign/Unassign is the only place the
+	// two URL ids are reconciled.
+	ticket, err := h.svc.Assign(r.Context(), id, spaceID, *req.AssigneeID, notifier)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
@@ -703,7 +725,7 @@ func (h *Handler) Unassign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := h.svc.Unassign(r.Context(), id)
+	ticket, err := h.svc.Unassign(r.Context(), id, spaceID)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return

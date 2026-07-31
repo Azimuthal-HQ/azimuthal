@@ -103,11 +103,18 @@ func ValidateTransition(current, next Status) error {
 	return nil
 }
 
-// TransitionStatus validates and applies a status transition on the given ticket
-// via the repository. Returns the updated ticket or an error if the transition
-// is invalid.
-func (s *TicketService) TransitionStatus(ctx context.Context, id uuid.UUID, newStatus Status) (*Ticket, error) {
-	t, err := s.repo.GetByID(ctx, id)
+// TransitionStatus validates and applies a status transition on the given
+// ticket in spaceID, via the repository. Returns the updated ticket or an
+// error if the transition is invalid.
+//
+// spaceID is the same reconciliation Assign makes: the status route authorises
+// against the {spaceID} in its URL, and {ticketID} arrives unchecked. The
+// route does read the ticket first — but a read that happens to precede the
+// write is not the same as a write that cannot address another space, and this
+// is the write. Its only caller is that route, so the parameter is threaded
+// through rather than added as a second method.
+func (s *TicketService) TransitionStatus(ctx context.Context, id, spaceID uuid.UUID, newStatus Status) (*Ticket, error) {
+	t, err := s.repo.GetByIDInSpace(ctx, id, spaceID)
 	if err != nil {
 		return nil, fmt.Errorf("transitioning ticket status: %w", err)
 	}

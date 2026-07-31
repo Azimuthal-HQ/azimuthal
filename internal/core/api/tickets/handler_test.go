@@ -37,6 +37,17 @@ func (m *mockTicketRepo) GetByID(_ context.Context, id uuid.UUID) (*tickets.Tick
 	return t, nil
 }
 
+// GetByIDInSpace applies the space predicate the real query applies, so a
+// handler that dropped the space argument would stop being covered here rather
+// than quietly keep passing.
+func (m *mockTicketRepo) GetByIDInSpace(_ context.Context, id, spaceID uuid.UUID) (*tickets.Ticket, error) {
+	t, ok := m.tickets[id]
+	if !ok || t.SpaceID != spaceID {
+		return nil, tickets.ErrNotFound
+	}
+	return t, nil
+}
+
 func (m *mockTicketRepo) Update(_ context.Context, t *tickets.Ticket) error {
 	m.tickets[t.ID] = t
 	return nil
@@ -240,10 +251,28 @@ func TestGetNotFound(t *testing.T) {
 	h := setupTicketHandler()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = withChiParam(req, "ticketID", uuid.New().String())
+	// Get reads through the space now, so the route's spaceID has to be present
+	// for the request to reach the repository at all.
+	req = withChiParam(req, "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.Get(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusNotFound)
+	}
+}
+
+// TestGetInvalidSpaceID pins the 400 on an unparseable {spaceID}: the read is
+// scoped to that space, so a request that does not name one legibly cannot be
+// answered rather than falling back to an unscoped read.
+func TestGetInvalidSpaceID(t *testing.T) {
+	h := setupTicketHandler()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = withChiParam(req, "ticketID", uuid.New().String())
+	req = withChiParam(req, "spaceID", "not-a-uuid")
+	rr := httptest.NewRecorder()
+	h.Get(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusBadRequest)
 	}
 }
 

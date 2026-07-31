@@ -105,6 +105,13 @@ const getProjectItemByID = `-- name: GetProjectItemByID :one
 SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items WHERE id = $1 AND deleted_at IS NULL
 `
 
+// UNSCOPED. Reaches an item without reference to any space, so it must only be
+// used where authorisation has already been established by other means.
+//
+// The one legitimate caller is the entity-share read path (ADR-0008), where
+// access is granted by share coverage precisely so that it can bypass space
+// access — CoversForCaller has already answered before this runs. Every other
+// caller wants GetProjectItemInSpace.
 func (q *Queries) GetProjectItemByID(ctx context.Context, id uuid.UUID) (ProjectItem, error) {
 	row := q.db.QueryRow(ctx, getProjectItemByID, id)
 	var i ProjectItem
@@ -149,6 +156,59 @@ type GetProjectItemByOrgKeyParams struct {
 // Resolves a human-readable key (e.g. VEC-123) to an item within an org.
 func (q *Queries) GetProjectItemByOrgKey(ctx context.Context, arg GetProjectItemByOrgKeyParams) (ProjectItem, error) {
 	row := q.db.QueryRow(ctx, getProjectItemByOrgKey, arg.OrgID, arg.ItemKey)
+	var i ProjectItem
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.ParentID,
+		&i.Number,
+		&i.Kind,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.ReporterID,
+		&i.AssigneeID,
+		&i.SprintID,
+		&i.Labels,
+		&i.DueAt,
+		&i.ResolvedAt,
+		&i.Rank,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.WorkflowStateID,
+		&i.OrgID,
+		&i.ItemKey,
+		&i.SearchVector,
+	)
+	return i, err
+}
+
+const getProjectItemInSpace = `-- name: GetProjectItemInSpace :one
+SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items
+WHERE id = $1 AND space_id = $2 AND deleted_at IS NULL
+`
+
+type GetProjectItemInSpaceParams struct {
+	ItemID  uuid.UUID `json:"item_id"`
+	SpaceID uuid.UUID `json:"space_id"`
+}
+
+// An item, reconciled against the space the request named.
+//
+// This is the read every space-scoped route must use. The routes are shaped
+// /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}, and the middleware
+// proves the caller may read {spaceID} — but nothing proved {itemID} lives
+// there, so an authorised member of any one space could read any item in the
+// installation by id, across hidden spaces and across organizations. Adding
+// space_id here rather than comparing item.SpaceID in each handler is what
+// makes the guarantee structural: a handler that forgets cannot get the row.
+//
+// A miss is indistinguishable from an absent item, deliberately: both return no
+// rows and become ErrNotFound, so the endpoint is not an existence oracle.
+func (q *Queries) GetProjectItemInSpace(ctx context.Context, arg GetProjectItemInSpaceParams) (ProjectItem, error) {
+	row := q.db.QueryRow(ctx, getProjectItemInSpace, arg.ItemID, arg.SpaceID)
 	var i ProjectItem
 	err := row.Scan(
 		&i.ID,
@@ -284,13 +344,30 @@ func (q *Queries) ListProjectItemsBySpace(ctx context.Context, spaceID uuid.UUID
 }
 
 const listProjectItemsBySprint = `-- name: ListProjectItemsBySprint :many
-SELECT id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector FROM project_items
-WHERE sprint_id = $1 AND deleted_at IS NULL
-ORDER BY rank ASC
+SELECT pi.id, pi.space_id, pi.parent_id, pi.number, pi.kind, pi.title, pi.description, pi.status, pi.priority, pi.reporter_id, pi.assignee_id, pi.sprint_id, pi.labels, pi.due_at, pi.resolved_at, pi.rank, pi.created_at, pi.updated_at, pi.deleted_at, pi.workflow_state_id, pi.org_id, pi.item_key, pi.search_vector FROM project_items pi
+JOIN sprints s ON s.id = pi.sprint_id
+WHERE pi.sprint_id = $1
+  AND pi.space_id = $2
+  AND s.space_id = $2
+  AND pi.deleted_at IS NULL
+ORDER BY pi.rank ASC
 `
 
-func (q *Queries) ListProjectItemsBySprint(ctx context.Context, sprintID pgtype.UUID) ([]ProjectItem, error) {
-	rows, err := q.db.Query(ctx, listProjectItemsBySprint, sprintID)
+type ListProjectItemsBySprintParams struct {
+	SprintID pgtype.UUID `json:"sprint_id"`
+	SpaceID  uuid.UUID   `json:"space_id"`
+}
+
+// A sprint's items, reconciled against the space the request named.
+//
+// The sprint id alone used to be enough, which made this a bulk disclosure:
+// one guessed or leaked sprint id returned every item on it regardless of
+// whose space it was. Items and sprints both carry space_id, and both are
+// checked — the item test is the one that authorises, and the sprint test
+// stops a sprint from another space matching through items that happen to
+// share this one.
+func (q *Queries) ListProjectItemsBySprint(ctx context.Context, arg ListProjectItemsBySprintParams) ([]ProjectItem, error) {
+	rows, err := q.db.Query(ctx, listProjectItemsBySprint, arg.SprintID, arg.SpaceID)
 	if err != nil {
 		return nil, err
 	}

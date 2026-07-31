@@ -231,8 +231,17 @@ func (h *Handler) GetPage(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
-	page, err := h.svc.GetPage(r.Context(), id)
+	// Read by page AND space. The subtree's guard proved {spaceID} readable and
+	// proved nothing about {pageID}; this route returns the page's full content,
+	// so until the two were reconciled a reader of any one space could fetch any
+	// page in any organisation by id.
+	page, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -283,7 +292,11 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.svc.GetPage(r.Context(), id)
+	// Loaded WITH the space, which is also what makes the capability check below
+	// mean what it says: CanEditEntity was being evaluated against this route's
+	// spaceID and a foreign page's author, so it decided a question about one
+	// space using the ownership of a page in another.
+	existing, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -295,6 +308,7 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 
 	page, conflict, err := h.svc.UpdatePageOrConflict(r.Context(), wiki.UpdatePageInput{
 		PageID:          id,
+		SpaceID:         spaceID,
 		ExpectedVersion: req.ExpectedVersion,
 		Title:           req.Title,
 		Content:         req.Content,
@@ -346,7 +360,10 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.svc.GetPage(r.Context(), id)
+	// The space is part of the lookup, so a page in another space is not found
+	// rather than deleted: the delete transaction takes the page id alone, and
+	// this read is what establishes the caller may name it at all.
+	existing, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -425,8 +442,9 @@ func (h *Handler) MovePage(w http.ResponseWriter, r *http.Request) {
 
 // moveInputFromRequest parses the move request, enforces edit_any on the
 // source (and, for a cross-space move, on the destination — 404 there keeps
-// the destination's existence from leaking), and returns the assembled
-// input. It writes its own error response and returns ok=false on failure.
+// the destination's existence from leaking), confirms the page really is in
+// the source space, and returns the assembled input. It writes its own error
+// response and returns ok=false on failure.
 func (h *Handler) moveInputFromRequest(w http.ResponseWriter, r *http.Request) (wiki.MovePageInput, bool) {
 	id, err := pageIDFromURL(r)
 	if err != nil {
@@ -445,6 +463,17 @@ func (h *Handler) moveInputFromRequest(w http.ResponseWriter, r *http.Request) (
 	}
 	if !access.Can(r.Context(), access.CapEditAnyItem, spaceID) {
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return wiki.MovePageInput{}, false
+	}
+	// The page has to be in the space this request was authorised against, and
+	// the move transaction does not check it: it locks the page by id and then
+	// validates the page's OWN space against the org. So edit_any in one space
+	// was enough to drag a page out of any other space in the organisation —
+	// a write, reached through the same unreconciled {spaceID}/{pageID} pair as
+	// the read leaks. Checked after the capability so a caller who may not edit
+	// here learns nothing about what lives here.
+	if _, err := h.svc.GetPageInSpace(r.Context(), id, spaceID); err != nil {
+		handleWikiError(w, r, err)
 		return wiki.MovePageInput{}, false
 	}
 	var req movePageRequest
@@ -501,7 +530,10 @@ func (h *Handler) ShareImpact(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
 		return
 	}
-	page, err := h.svc.GetPage(r.Context(), id)
+	// Scoped: the count is taken over the page's materialised path, so an
+	// unreconciled read handed the subtree of a foreign page to a share query
+	// that was itself correctly scoped to this space.
+	page, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -609,8 +641,16 @@ func (h *Handler) ListRevisions(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
-	revisions, err := h.svc.ListRevisions(r.Context(), id)
+	// The ledger is readable exactly when its page is, and the route proved only
+	// that {spaceID} is: a revision list names every historical title and the
+	// people who wrote them.
+	revisions, err := h.svc.ListRevisions(r.Context(), id, spaceID)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -642,6 +682,12 @@ func (h *Handler) GetRevision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+
 	vStr := chi.URLParam(r, "version")
 	v, err := strconv.ParseInt(vStr, 10, 32)
 	if err != nil {
@@ -649,7 +695,9 @@ func (h *Handler) GetRevision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	revision, err := h.svc.GetRevision(r.Context(), id, int32(v))
+	// One revision is one historical copy of the page, title and body and all,
+	// so this route disclosed as much as the page read did.
+	revision, err := h.svc.GetRevisionInSpace(r.Context(), id, spaceID, int32(v))
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -682,6 +730,12 @@ func (h *Handler) DiffRevisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
 	if fromStr == "" || toStr == "" {
@@ -700,7 +754,8 @@ func (h *Handler) DiffRevisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	diff, err := h.svc.DiffRevisions(r.Context(), id, int32(from), int32(to))
+	// A diff is built from two revision bodies, so it says everything they say.
+	diff, err := h.svc.DiffRevisionsInSpace(r.Context(), id, spaceID, int32(from), int32(to))
 	if err != nil {
 		handleWikiError(w, r, err)
 		return
@@ -730,8 +785,14 @@ func (h *Handler) RenderPage(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid page ID")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
-	page, err := h.svc.GetPage(r.Context(), id)
+	// Rendering is reading: this route returns the page's whole body as HTML.
+	page, err := h.svc.GetPageInSpace(r.Context(), id, spaceID)
 	if err != nil {
 		handleWikiError(w, r, err)
 		return

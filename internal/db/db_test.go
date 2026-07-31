@@ -664,7 +664,7 @@ func TestPageRevisions(t *testing.T) {
 		t.Fatalf("CreatePageRevision: %v", err)
 	}
 
-	revs, err := q.ListPageRevisions(ctx, page.ID)
+	revs, err := q.ListPageRevisions(ctx, generated.ListPageRevisionsParams{PageID: page.ID, SpaceID: page.SpaceID})
 	if err != nil {
 		t.Fatalf("ListPageRevisions: %v", err)
 	}

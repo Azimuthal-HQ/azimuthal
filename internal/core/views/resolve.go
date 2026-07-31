@@ -60,12 +60,31 @@ type Viewer struct {
 // Result is one row of a saved view's results, from either module. The shape
 // is deliberately the same for both so the merge compares like with like and
 // the API renders one row component.
+// Origin records how a row became visible, which decides what may be said
+// about it. A row reached only through an entity share carries no container
+// identity, so the surface has to render provenance instead of inventing one.
+//
+// The values mirror the search surface's `origin` field deliberately: the same
+// distinction, the same wire vocabulary, so one row component can render either.
+type Origin string
+
+const (
+	// OriginSpace means the viewer can read the space this row lives in.
+	OriginSpace Origin = "space"
+	// OriginShare means the row reached the viewer through a share on the
+	// entity itself and they cannot enter its space.
+	OriginShare Origin = "share"
+)
+
 type Result struct {
-	Module   Module
-	ID       uuid.UUID
-	Key      string
-	Number   int32
-	Title    string
+	Module Module
+	ID     uuid.UUID
+	Key    string
+	Number int32
+	Title  string
+	// Origin is set by redactSharedContainers, after the fan-outs and before
+	// anything is rendered — never by a query.
+	Origin   Origin
 	SpaceID  uuid.UUID
 	SpaceKey string
 	// SpaceName is carried because a cross-container result list has to say
@@ -240,6 +259,8 @@ func Resolve(ctx context.Context, store ResultStore, q Query, v Viewer, cursor s
 		merged = append(merged, rows...)
 	}
 
+	redactSharedContainers(merged, v.ReadableSpaceIDs)
+
 	sortResults(merged, q.Sort.Dir == "desc")
 
 	page := Page{Results: merged}
@@ -255,6 +276,50 @@ func Resolve(ctx context.Context, store ResultStore, q Query, v Viewer, cursor s
 		page.Results = []Result{}
 	}
 	return page, nil
+}
+
+// redactSharedContainers strips container identity from every row the viewer
+// reached only through an entity share.
+//
+// The §13 exception lets a saved view union shares into a cross-space listing —
+// that is the one place a space-scoped listing may do so. It widens which ROWS
+// are visible; it does not widen what may be said ABOUT them. Matrix case 16
+// forbids a share-only read from disclosing the space it lives in, and a saved
+// view row is still a read. Search enforced exactly this at
+// search.redactSharedContainers and the views fan-out had no equivalent, so the
+// same union that made the row visible also emitted its space id, space key and
+// space name.
+//
+// What is stripped follows the canonical share projection in
+// internal/core/api/shares/reader.go, which is the sanctioned shape for "an
+// entity seen through a share": id, title, body, status, priority, timestamps —
+// no container, no human key, no assignee. Key and Number go with the space
+// because both encode it: Key is composed as <SPACE_KEY>-<number>, so leaving it
+// would hand back the space key the SpaceKey field just removed.
+//
+// The decision is by SPACE, not by "was it in the shared-id list": an entity can
+// be both directly shared and in a space the viewer can read, and then the
+// container is already theirs to see. Enforced here, once, at the merge, rather
+// than in the handler — so a second response shape cannot forget it.
+func redactSharedContainers(rows []Result, readable []uuid.UUID) {
+	readableSet := make(map[uuid.UUID]struct{}, len(readable))
+	for _, id := range readable {
+		readableSet[id] = struct{}{}
+	}
+	for i := range rows {
+		if _, ok := readableSet[rows[i].SpaceID]; ok {
+			rows[i].Origin = OriginSpace
+			continue
+		}
+		rows[i].Origin = OriginShare
+		rows[i].SpaceID = uuid.Nil
+		rows[i].SpaceKey = ""
+		rows[i].SpaceName = ""
+		rows[i].Key = ""
+		rows[i].Number = 0
+		rows[i].AssigneeID = nil
+		rows[i].AssigneeName = nil
+	}
 }
 
 // buildParams turns a stored query plus a viewer into the parameters both

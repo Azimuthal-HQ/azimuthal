@@ -442,7 +442,7 @@ func TestSprints(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateProjectItemSprint: %v", err)
 	}
-	sprintItems, err := q.ListProjectItemsBySprint(ctx, sprintUID)
+	sprintItems, err := q.ListProjectItemsBySprint(ctx, generated.ListProjectItemsBySprintParams{SprintID: sprintUID, SpaceID: space.ID})
 	if err != nil {
 		t.Fatalf("ListProjectItemsBySprint: %v", err)
 	}

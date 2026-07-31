@@ -171,12 +171,23 @@ const listTagsForPage = `-- name: ListTagsForPage :many
 SELECT t.id, t.org_id, t.slug, t.name, t.created_at
 FROM page_tags pt
 JOIN tags t ON t.id = pt.tag_id
+JOIN pages p ON p.id = pt.page_id
 WHERE pt.page_id = $1
+  AND p.space_id = $2
+  AND p.deleted_at IS NULL
 ORDER BY t.name
 `
 
-func (q *Queries) ListTagsForPage(ctx context.Context, pageID uuid.UUID) ([]Tag, error) {
-	rows, err := q.db.Query(ctx, listTagsForPage, pageID)
+type ListTagsForPageParams struct {
+	PageID  uuid.UUID `json:"page_id"`
+	SpaceID uuid.UUID `json:"space_id"`
+}
+
+// A page's tags, reconciled against the space the request named. A tag set
+// describes what a page is about, so reading one across a space boundary
+// discloses the subject matter of a page the caller cannot open.
+func (q *Queries) ListTagsForPage(ctx context.Context, arg ListTagsForPageParams) ([]Tag, error) {
+	rows, err := q.db.Query(ctx, listTagsForPage, arg.PageID, arg.SpaceID)
 	if err != nil {
 		return nil, err
 	}

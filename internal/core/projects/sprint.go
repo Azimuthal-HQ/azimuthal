@@ -63,7 +63,14 @@ type SprintRepository interface {
 	// Create persists a new sprint.
 	Create(ctx context.Context, sprint *Sprint) error
 	// GetByID retrieves a sprint by primary key. Returns ErrNotFound if absent.
+	//
+	// No space reconciliation: reserved for internal resolution that compares
+	// spaces itself (validateNextSprint). A route wants GetByIDInSpace.
 	GetByID(ctx context.Context, id uuid.UUID) (*Sprint, error)
+	// GetByIDInSpace retrieves a sprint reconciled against the space the
+	// request named. Returns ErrNotFound if absent OR in another space —
+	// indistinguishable on purpose, so the route is not an existence oracle.
+	GetByIDInSpace(ctx context.Context, spaceID, id uuid.UUID) (*Sprint, error)
 	// GetActiveBySpace returns the currently active sprint for a space.
 	// Returns ErrNotFound if no active sprint exists.
 	GetActiveBySpace(ctx context.Context, spaceID uuid.UUID) (*Sprint, error)
@@ -107,9 +114,12 @@ func (s *SprintService) CreateSprint(ctx context.Context, sprint *Sprint) (*Spri
 	return sprint, nil
 }
 
-// GetSprint retrieves a sprint by ID.
-func (s *SprintService) GetSprint(ctx context.Context, id uuid.UUID) (*Sprint, error) {
-	sprint, err := s.repo.GetByID(ctx, id)
+// GetSprint retrieves a sprint by ID, reconciled against the space the request
+// named. The route proves the caller may read that space and proves nothing
+// about the sprint id, so without this a sprint's name, goal and dates were
+// readable across every space boundary.
+func (s *SprintService) GetSprint(ctx context.Context, spaceID, id uuid.UUID) (*Sprint, error) {
+	sprint, err := s.repo.GetByIDInSpace(ctx, spaceID, id)
 	if err != nil {
 		return nil, fmt.Errorf("getting sprint: %w", err)
 	}
@@ -132,8 +142,8 @@ func (s *SprintService) UpdateSprint(ctx context.Context, sprint *Sprint) (*Spri
 // StartSprint transitions a sprint from planned to active.
 // Returns ErrSprintActive if another sprint is already active in the same space.
 // Returns ErrInvalidTransition if the sprint is not in planned status.
-func (s *SprintService) StartSprint(ctx context.Context, id uuid.UUID) (*Sprint, error) {
-	sprint, err := s.repo.GetByID(ctx, id)
+func (s *SprintService) StartSprint(ctx context.Context, spaceID, id uuid.UUID) (*Sprint, error) {
+	sprint, err := s.repo.GetByIDInSpace(ctx, spaceID, id)
 	if err != nil {
 		return nil, fmt.Errorf("starting sprint: %w", err)
 	}
@@ -169,8 +179,8 @@ type CompleteOptions struct {
 // Returns ErrInvalidTransition if the sprint is not active, and
 // ErrInvalidNextSprint if opts.NextSprintID names a sprint that does not exist,
 // is in another space, is the sprint being completed, or is already completed.
-func (s *SprintService) CompleteSprint(ctx context.Context, id uuid.UUID, opts CompleteOptions) (*Sprint, error) {
-	sprint, err := s.repo.GetByID(ctx, id)
+func (s *SprintService) CompleteSprint(ctx context.Context, spaceID, id uuid.UUID, opts CompleteOptions) (*Sprint, error) {
+	sprint, err := s.repo.GetByIDInSpace(ctx, spaceID, id)
 	if err != nil {
 		return nil, fmt.Errorf("completing sprint: %w", err)
 	}

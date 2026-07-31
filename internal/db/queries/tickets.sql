@@ -4,7 +4,19 @@ INSERT INTO tickets (id, space_id, number, title, description, status, priority,
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING *;
 
+-- name: GetTicketInSpace :one
+-- A ticket, reconciled against the space the request named. See the note on
+-- GetProjectItemInSpace in project_items.sql — this is the same missing
+-- predicate on the Beacon side, and it disclosed the whole ticket including
+-- its description.
+SELECT * FROM tickets
+WHERE id = @ticket_id AND space_id = @space_id AND deleted_at IS NULL;
+
 -- name: GetTicketByID :one
+-- UNSCOPED. The legitimate callers are the entity-share read path (ADR-0008,
+-- where share coverage authorises instead of space access) and the customer
+-- portal, whose requester holds no space membership at all and is authorised
+-- by its own token audience. Every space-scoped route wants GetTicketInSpace.
 SELECT * FROM tickets WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: ListTicketsBySpace :many

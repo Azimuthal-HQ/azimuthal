@@ -82,6 +82,25 @@ func (a *ItemAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Item
 	return dbProjectItemToItem(row), nil
 }
 
+// GetByIDInSpace retrieves an item reconciled against the given space.
+//
+// A wrong space produces pgx.ErrNoRows and therefore the same ErrNotFound an
+// absent item produces. That collapse is the point: the caller cannot use this
+// endpoint to learn whether an id it guessed names something real.
+func (a *ItemAdapter) GetByIDInSpace(ctx context.Context, spaceID, id uuid.UUID) (*projects.Item, error) {
+	row, err := a.q.GetProjectItemInSpace(ctx, generated.GetProjectItemInSpaceParams{
+		ItemID:  id,
+		SpaceID: spaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("item adapter get by id in space: %w", err)
+	}
+	return dbProjectItemToItem(row), nil
+}
+
 // Update persists changes to an existing item. An item that is gone by the time
 // the write lands is ErrNotFound, not an internal error: every handler on this
 // path pre-loads the item, so this is the TOCTOU window between the read and
@@ -181,8 +200,11 @@ func (a *ItemAdapter) ListByAssignee(ctx context.Context, spaceID uuid.UUID, ass
 }
 
 // ListBySprint returns all items in a given sprint, ordered by rank.
-func (a *ItemAdapter) ListBySprint(ctx context.Context, sprintID uuid.UUID) ([]*projects.Item, error) {
-	rows, err := a.q.ListProjectItemsBySprint(ctx, pgUUID(&sprintID))
+func (a *ItemAdapter) ListBySprint(ctx context.Context, spaceID, sprintID uuid.UUID) ([]*projects.Item, error) {
+	rows, err := a.q.ListProjectItemsBySprint(ctx, generated.ListProjectItemsBySprintParams{
+		SprintID: pgUUID(&sprintID),
+		SpaceID:  spaceID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("item adapter list by sprint: %w", err)
 	}
@@ -269,6 +291,22 @@ func (a *SprintAdapter) GetByID(ctx context.Context, id uuid.UUID) (*projects.Sp
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sprint adapter get by id: %w", err)
+	}
+	return dbSprintToProject(row), nil
+}
+
+// GetByIDInSpace retrieves a sprint reconciled against the given space. A
+// sprint in another space is ErrNotFound, exactly as an absent one is.
+func (a *SprintAdapter) GetByIDInSpace(ctx context.Context, spaceID, id uuid.UUID) (*projects.Sprint, error) {
+	row, err := a.q.GetSprintInSpace(ctx, generated.GetSprintInSpaceParams{
+		SprintID: id,
+		SpaceID:  spaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, projects.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sprint adapter get by id in space: %w", err)
 	}
 	return dbSprintToProject(row), nil
 }

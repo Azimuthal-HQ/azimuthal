@@ -96,7 +96,18 @@ type DefRepository interface {
 
 // ValueRepository is the data-access contract for per-item values.
 type ValueRepository interface {
-	ListByItem(ctx context.Context, itemID uuid.UUID) ([]StoredValue, error)
+	// ListByItemInSpace returns an item's stored values, reconciled against the
+	// space the request named. The route that reaches this proved the caller may
+	// read {spaceID} and proved nothing whatever about {itemID}, so reading by
+	// item id alone surfaced every item's custom-field values in the
+	// installation, across organizations included. An item in another space
+	// returns no values, exactly as an unknown item does.
+	ListByItemInSpace(ctx context.Context, spaceID, itemID uuid.UUID) ([]StoredValue, error)
+	// Upsert and Delete write by bare item id: item_field_values has no space
+	// column and the upsert conflicts on (item_id, field_slug). The space
+	// reconciliation for the write path therefore happens before the call —
+	// SetItemField resolves the item through the space first, and refuses with
+	// the item's own 404 when it belongs to another one.
 	Upsert(ctx context.Context, itemID uuid.UUID, slug, value string) error
 	Delete(ctx context.Context, itemID uuid.UUID, slug string) error
 	// CountByOrgSlug counts the org's live items holding a value under slug.
@@ -239,12 +250,19 @@ func (s *Service) DeleteDef(ctx context.Context, orgID, id uuid.UUID) error {
 // RenderForItem composes the fields shown on an item: every active definition
 // (with its current value), followed by any stored value whose definition is no
 // longer active — the legacy, read-only fields.
-func (s *Service) RenderForItem(ctx context.Context, orgID, itemID uuid.UUID) ([]RenderedField, error) {
+//
+// spaceID is the space the request named, and the values are read through it.
+// The route proved that space readable; it proved nothing about itemID, so an
+// item id on its own was enough to read another space's — or another org's —
+// custom-field values. An item outside the space renders the org's active
+// definitions with empty values and no legacy fields, which is what an item
+// that has never been given a value renders.
+func (s *Service) RenderForItem(ctx context.Context, orgID, spaceID, itemID uuid.UUID) ([]RenderedField, error) {
 	defs, err := s.defs.ListActiveByOrg(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("listing active defs: %w", err)
 	}
-	stored, err := s.values.ListByItem(ctx, itemID)
+	stored, err := s.values.ListByItemInSpace(ctx, spaceID, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("listing item values: %w", err)
 	}
@@ -276,6 +294,12 @@ func (s *Service) RenderForItem(ctx context.Context, orgID, itemID uuid.UUID) ([
 // SetValue writes an item's value for an active field, validating it against the
 // field type. An empty value clears the field. Values for undefined/archived
 // (legacy) fields cannot be written — they are read-only (ErrUndefinedField).
+//
+// itemID arrives without a space deliberately, and the caller owes it one: the
+// write is keyed on (item_id, field_slug) and there is no space column to test
+// against, so this cannot reconcile the item itself. Every caller must resolve
+// the item through the request's space before calling — SetItemField does, via
+// ItemService.GetItemInSpace, which is the same read its permission gate needs.
 func (s *Service) SetValue(ctx context.Context, orgID, itemID uuid.UUID, slug, value string) error {
 	def, err := s.defs.GetByOrgSlug(ctx, orgID, slug)
 	if errors.Is(err, ErrNotFound) {

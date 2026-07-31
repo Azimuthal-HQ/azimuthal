@@ -248,8 +248,41 @@ const getSprintByID = `-- name: GetSprintByID :one
 SELECT id, space_id, name, goal, status, starts_at, ends_at, created_by, created_at, updated_at FROM sprints WHERE id = $1
 `
 
+// UNSCOPED. No space reconciliation — only for callers that have established
+// authorisation another way. Prefer GetSprintInSpace.
 func (q *Queries) GetSprintByID(ctx context.Context, id uuid.UUID) (Sprint, error) {
 	row := q.db.QueryRow(ctx, getSprintByID, id)
+	var i Sprint
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Name,
+		&i.Goal,
+		&i.Status,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSprintInSpace = `-- name: GetSprintInSpace :one
+SELECT id, space_id, name, goal, status, starts_at, ends_at, created_by, created_at, updated_at FROM sprints WHERE id = $1 AND space_id = $2
+`
+
+type GetSprintInSpaceParams struct {
+	SprintID uuid.UUID `json:"sprint_id"`
+	SpaceID  uuid.UUID `json:"space_id"`
+}
+
+// A sprint, reconciled against the space the request named. See the note on
+// GetProjectItemInSpace: the route proves the caller may read {spaceID} and
+// proved nothing at all about {sprintID}, so sprint names, goals and dates were
+// readable across every space boundary by id.
+func (q *Queries) GetSprintInSpace(ctx context.Context, arg GetSprintInSpaceParams) (Sprint, error) {
+	row := q.db.QueryRow(ctx, getSprintInSpace, arg.SprintID, arg.SpaceID)
 	var i Sprint
 	err := row.Scan(
 		&i.ID,

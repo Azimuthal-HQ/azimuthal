@@ -147,9 +147,17 @@ func NewCustomFieldValueAdapter(q *generated.Queries) *CustomFieldValueAdapter {
 	return &CustomFieldValueAdapter{q: q}
 }
 
-// ListByItem implements the repository interface.
-func (a *CustomFieldValueAdapter) ListByItem(ctx context.Context, itemID uuid.UUID) ([]customfields.StoredValue, error) {
-	rows, err := a.q.ListItemFieldValues(ctx, itemID)
+// ListByItemInSpace implements the repository interface. The values are
+// reconciled against the space through their item: item_field_values carries no
+// space of its own, and the route that reaches this proved {spaceID} readable
+// while proving nothing about {itemID}. An item in another space yields no
+// rows, which is what an item with no values yields too — the two are
+// indistinguishable on purpose.
+func (a *CustomFieldValueAdapter) ListByItemInSpace(ctx context.Context, spaceID, itemID uuid.UUID) ([]customfields.StoredValue, error) {
+	rows, err := a.q.ListItemFieldValues(ctx, generated.ListItemFieldValuesParams{
+		ItemID:  itemID,
+		SpaceID: spaceID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("custom field value adapter list by item: %w", err)
 	}

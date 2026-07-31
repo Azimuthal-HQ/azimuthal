@@ -17,7 +17,7 @@ func TestAssign(t *testing.T) {
 
 	t.Run("assign to user", func(t *testing.T) {
 		notifier := &mockNotifier{}
-		updated, err := svc.Assign(context.Background(), ticket.ID, assigneeID, notifier)
+		updated, err := svc.Assign(context.Background(), ticket.ID, spaceID, assigneeID, notifier)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -33,7 +33,7 @@ func TestAssign(t *testing.T) {
 	})
 
 	t.Run("already assigned", func(t *testing.T) {
-		_, err := svc.Assign(context.Background(), ticket.ID, assigneeID, &mockNotifier{})
+		_, err := svc.Assign(context.Background(), ticket.ID, spaceID, assigneeID, &mockNotifier{})
 		if !errors.Is(err, ErrAlreadyAssigned) {
 			t.Errorf("expected ErrAlreadyAssigned, got %v", err)
 		}
@@ -41,7 +41,7 @@ func TestAssign(t *testing.T) {
 
 	t.Run("reassign to different user", func(t *testing.T) {
 		newAssignee := uuid.New()
-		updated, err := svc.Assign(context.Background(), ticket.ID, newAssignee, &mockNotifier{})
+		updated, err := svc.Assign(context.Background(), ticket.ID, spaceID, newAssignee, &mockNotifier{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -52,16 +52,31 @@ func TestAssign(t *testing.T) {
 
 	t.Run("nil notifier", func(t *testing.T) {
 		anotherTicket := createTestTicket(t, svc, spaceID, reporterID)
-		_, err := svc.Assign(context.Background(), anotherTicket.ID, assigneeID, nil)
+		_, err := svc.Assign(context.Background(), anotherTicket.ID, spaceID, assigneeID, nil)
 		if err != nil {
 			t.Fatalf("unexpected error with nil notifier: %v", err)
 		}
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		_, err := svc.Assign(context.Background(), uuid.New(), assigneeID, &mockNotifier{})
+		_, err := svc.Assign(context.Background(), uuid.New(), spaceID, assigneeID, &mockNotifier{})
 		if err == nil {
 			t.Error("expected error for missing ticket")
+		}
+	})
+
+	// A real ticket named under the wrong space is refused, and refused as
+	// ErrNotFound rather than as anything that would confirm it exists. Delete
+	// the space predicate in Assign and this case assigns successfully.
+	t.Run("ticket in another space is not found", func(t *testing.T) {
+		otherSpace := uuid.New()
+		before := ticket.AssigneeID
+		_, err := svc.Assign(context.Background(), ticket.ID, otherSpace, uuid.New(), &mockNotifier{})
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("expected ErrNotFound, got %v", err)
+		}
+		if ticket.AssigneeID != before {
+			t.Error("expected the assignee to be untouched by a cross-space assign")
 		}
 	})
 }
@@ -74,13 +89,27 @@ func TestUnassign(t *testing.T) {
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
 
 	// First assign
-	_, err := svc.Assign(context.Background(), ticket.ID, assigneeID, nil)
+	_, err := svc.Assign(context.Background(), ticket.ID, spaceID, assigneeID, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// Ordered before the successful unassign so the ticket still has an
+	// assignee to lose: a cross-space unassign that got through would clear it,
+	// and the assertion below would catch that rather than passing on a ticket
+	// that was already unassigned.
+	t.Run("ticket in another space is not found", func(t *testing.T) {
+		_, err := svc.Unassign(context.Background(), ticket.ID, uuid.New())
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("expected ErrNotFound, got %v", err)
+		}
+		if ticket.AssigneeID == nil {
+			t.Error("expected the assignee to survive a cross-space unassign")
+		}
+	})
+
 	t.Run("unassign", func(t *testing.T) {
-		updated, err := svc.Unassign(context.Background(), ticket.ID)
+		updated, err := svc.Unassign(context.Background(), ticket.ID, spaceID)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -90,7 +119,7 @@ func TestUnassign(t *testing.T) {
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		_, err := svc.Unassign(context.Background(), uuid.New())
+		_, err := svc.Unassign(context.Background(), uuid.New(), spaceID)
 		if err == nil {
 			t.Error("expected error for missing ticket")
 		}

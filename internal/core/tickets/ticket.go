@@ -43,7 +43,22 @@ type TicketRepository interface {
 	// Create persists a new ticket.
 	Create(ctx context.Context, t *Ticket) error
 	// GetByID retrieves a ticket by primary key. Returns ErrNotFound if absent.
+	//
+	// UNSCOPED, deliberately. Its callers are the ones that authorise without a
+	// space: the entity-share reader (ADR-0008, where share coverage is the
+	// authorisation) and the customer portal, whose requester holds no space
+	// membership at all. A space-scoped route wants GetByIDInSpace.
 	GetByID(ctx context.Context, id uuid.UUID) (*Ticket, error)
+	// GetByIDInSpace retrieves a ticket by primary key, but only when it lives
+	// in spaceID. Returns ErrNotFound both when the ticket is absent and when
+	// it belongs to another space.
+	//
+	// A route under /spaces/{spaceID}/tickets/{ticketID} has its caller
+	// authorised against {spaceID} and proves nothing whatever about
+	// {ticketID}; reconciling the two is what this method is for. The two
+	// misses answer identically because a distinguishable "exists but
+	// forbidden" discloses the same thing in a different shape.
+	GetByIDInSpace(ctx context.Context, id, spaceID uuid.UUID) (*Ticket, error)
 	// Update persists changes to an existing ticket.
 	Update(ctx context.Context, t *Ticket) error
 	// UpdateStatus changes only the ticket status. Returns the updated ticket.
@@ -135,9 +150,28 @@ func (s *TicketService) Create(ctx context.Context, params CreateTicketParams) (
 	return t, nil
 }
 
-// Get retrieves a ticket by ID.
+// Get retrieves a ticket by ID, without regard to which space it is in.
+//
+// The remaining callers are the space-less ones: the entity-share reader
+// (api/shares), which satisfies its TicketReader interface with this method,
+// and the customer portal. Every route that names a space uses GetInSpace.
 func (s *TicketService) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 	t, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("getting ticket: %w", err)
+	}
+	return t, nil
+}
+
+// GetInSpace retrieves a ticket by ID, but only when it lives in spaceID.
+//
+// The space-scoped ticket routes read through here because their middleware
+// proved only that the caller may read {spaceID} — a ticket id in the URL is
+// caller-supplied and reconciled nowhere else. The error is wrapped exactly as
+// Get wraps it, so a ticket in another space is reported in the same words as
+// a ticket that does not exist.
+func (s *TicketService) GetInSpace(ctx context.Context, id, spaceID uuid.UUID) (*Ticket, error) {
+	t, err := s.repo.GetByIDInSpace(ctx, id, spaceID)
 	if err != nil {
 		return nil, fmt.Errorf("getting ticket: %w", err)
 	}

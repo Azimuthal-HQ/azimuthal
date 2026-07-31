@@ -3,10 +3,13 @@ package comments
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
@@ -230,17 +233,30 @@ func resolveVisibility(v *string) (string, bool) {
 }
 
 // list returns all top-level comments for the entity whose ID is carried by
-// the idParam URL parameter.
+// the idParam URL parameter, reconciled against the space the URL names.
+//
+// THE SPACE IS PASSED TO THE QUERY, not assumed from the route. The middleware
+// proved {spaceID} readable for this caller and proved nothing whatever about
+// {entityID}, so on a bare entity id this returned the entire thread — internal
+// notes included — on any item, ticket or page in any other space and any other
+// organization. An entity outside the space now matches no row, which is the
+// same empty list an entity that never existed has always produced.
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, entityType, idParam string) {
 	entityID, err := uuid.Parse(chi.URLParam(r, idParam))
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid entity ID")
 		return
 	}
+	spaceID, err := uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
 	rows, err := h.queries.ListCommentsByEntity(r.Context(), generated.ListCommentsByEntityParams{
 		EntityType: entityType,
 		EntityID:   entityID,
+		SpaceID:    spaceID,
 	})
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list comments")
@@ -255,7 +271,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, entityType, idPar
 }
 
 // create adds a new comment to the entity whose ID is carried by the idParam
-// URL parameter.
+// URL parameter, after reconciling that entity against the space the URL names
+// — see entityInSpace for why the capability check alone does not do it.
 func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idParam string) { //nolint:funlen,cyclop // HTTP handler; polymorphic entity dispatch + validation + capability check + notification dispatch
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -275,6 +292,19 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idP
 	}
 	if !access.Can(r.Context(), access.CapComment, spaceID) {
 		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
+	// The capability was asked about the space; nothing has yet been asked
+	// about the entity. Without this the same id that leaked a foreign thread
+	// on the read side accepted a write onto it — a comment posted into a space
+	// the author cannot see, visible to everyone who can.
+	inSpace, err := h.entityInSpace(r.Context(), entityType, entityID, spaceID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create comment")
+		return
+	}
+	if !inSpace {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "entity not found")
 		return
 	}
 
@@ -352,6 +382,45 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, entityType, idP
 		CreatedAt:  comment.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:  comment.UpdatedAt.Time.Format("2006-01-02T15:04:05Z"),
 	})
+}
+
+// entityInSpace reports whether the entity a comment hangs off lives in the
+// space the URL named.
+//
+// The route proves {spaceID} readable and proves nothing at all about
+// {entityID}: RequireSpaceReadable authorises the space, and access.CapComment
+// asks about the space too, so both checks are satisfied by a member of the
+// space in the URL regardless of where the entity actually lives. Comments
+// carry no space of their own — they are reachable exactly when the thing they
+// are attached to is — so the reconciliation has to run against whichever table
+// entity_type names, which is why this dispatches rather than taking one id.
+//
+// A miss is reported as absent, never as forbidden. The caller answers its
+// ordinary 404, because a distinguishable "this exists but is not yours"
+// discloses the same fact in a different shape.
+func (h *Handler) entityInSpace(ctx context.Context, entityType string, entityID, spaceID uuid.UUID) (bool, error) {
+	var err error
+	switch entityType {
+	case "ticket":
+		_, err = h.queries.GetTicketInSpace(ctx, generated.GetTicketInSpaceParams{TicketID: entityID, SpaceID: spaceID})
+	case "project_item":
+		_, err = h.queries.GetProjectItemInSpace(ctx, generated.GetProjectItemInSpaceParams{ItemID: entityID, SpaceID: spaceID})
+	case "page":
+		_, err = h.queries.GetPageInSpace(ctx, generated.GetPageInSpaceParams{PageID: entityID, SpaceID: spaceID})
+	default:
+		// Unreachable through the router: entityType is a literal fixed by the
+		// wrapper the route is bound to. A new wrapper that forgot to add its
+		// arm here would otherwise be reconciled against nothing, so this fails
+		// closed rather than returning true.
+		return false, fmt.Errorf("comments: unknown entity type %q", entityType)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reconcile %s %s against space %s: %w", entityType, entityID, spaceID, err)
+	}
+	return true, nil
 }
 
 func rowToResponse(row generated.ListCommentsByEntityRow) commentResponse {

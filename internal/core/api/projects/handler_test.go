@@ -23,6 +23,9 @@ func (m *mockItemRepo) Create(_ context.Context, _ *projects.Item) error { retur
 func (m *mockItemRepo) GetByID(_ context.Context, _ uuid.UUID) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
 }
+func (m *mockItemRepo) GetByIDInSpace(_ context.Context, _, _ uuid.UUID) (*projects.Item, error) {
+	return nil, projects.ErrNotFound
+}
 func (m *mockItemRepo) GetByOrgKey(_ context.Context, _ uuid.UUID, _ string) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
 }
@@ -43,7 +46,7 @@ func (m *mockItemRepo) ListByStatus(_ context.Context, _ uuid.UUID, _ string) ([
 func (m *mockItemRepo) ListByAssignee(_ context.Context, _ uuid.UUID, _ uuid.UUID) ([]*projects.Item, error) {
 	return nil, nil
 }
-func (m *mockItemRepo) ListBySprint(_ context.Context, _ uuid.UUID) ([]*projects.Item, error) {
+func (m *mockItemRepo) ListBySprint(_ context.Context, _, _ uuid.UUID) ([]*projects.Item, error) {
 	return nil, nil
 }
 func (m *mockItemRepo) Search(_ context.Context, _ uuid.UUID, _ string, _ int) ([]*projects.Item, error) {
@@ -54,6 +57,9 @@ type mockSprintRepo struct{}
 
 func (m *mockSprintRepo) Create(_ context.Context, _ *projects.Sprint) error { return nil }
 func (m *mockSprintRepo) GetByID(_ context.Context, _ uuid.UUID) (*projects.Sprint, error) {
+	return nil, projects.ErrNotFound
+}
+func (m *mockSprintRepo) GetByIDInSpace(_ context.Context, _, _ uuid.UUID) (*projects.Sprint, error) {
 	return nil, projects.ErrNotFound
 }
 func (m *mockSprintRepo) GetActiveBySpace(_ context.Context, _ uuid.UUID) (*projects.Sprint, error) {

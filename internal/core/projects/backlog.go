@@ -36,9 +36,10 @@ func (s *BacklogService) GetBacklog(ctx context.Context, spaceID uuid.UUID) ([]*
 	return backlog, nil
 }
 
-// GetSprintBacklog returns all items assigned to a specific sprint, ordered by rank.
-func (s *BacklogService) GetSprintBacklog(ctx context.Context, sprintID uuid.UUID) ([]*Item, error) {
-	items, err := s.itemRepo.ListBySprint(ctx, sprintID)
+// GetSprintBacklog returns all items assigned to a specific sprint, ordered by
+// rank, reconciled against the space the request named.
+func (s *BacklogService) GetSprintBacklog(ctx context.Context, spaceID, sprintID uuid.UUID) ([]*Item, error) {
+	items, err := s.itemRepo.ListBySprint(ctx, spaceID, sprintID)
 	if err != nil {
 		return nil, fmt.Errorf("getting sprint backlog: %w", err)
 	}

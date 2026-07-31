@@ -177,13 +177,30 @@ SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
 FROM comments c
 LEFT JOIN users u ON u.id = c.author_id
 LEFT JOIN requesters r ON r.id = c.author_requester_id
-WHERE c.entity_type = $1 AND c.entity_id = $2 AND c.parent_id IS NULL AND c.deleted_at IS NULL
+WHERE c.entity_type = $1::text
+  AND c.entity_id = $2
+  AND c.parent_id IS NULL
+  AND c.deleted_at IS NULL
+  AND EXISTS (
+      SELECT 1 FROM project_items pi
+       WHERE $1::text = 'project_item'
+         AND pi.id = $2 AND pi.space_id = $3 AND pi.deleted_at IS NULL
+      UNION ALL
+      SELECT 1 FROM tickets t
+       WHERE $1::text = 'ticket'
+         AND t.id = $2 AND t.space_id = $3 AND t.deleted_at IS NULL
+      UNION ALL
+      SELECT 1 FROM pages p
+       WHERE $1::text = 'page'
+         AND p.id = $2 AND p.space_id = $3 AND p.deleted_at IS NULL
+  )
 ORDER BY c.created_at ASC
 `
 
 type ListCommentsByEntityParams struct {
 	EntityType string    `json:"entity_type"`
 	EntityID   uuid.UUID `json:"entity_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
 }
 
 type ListCommentsByEntityRow struct {
@@ -214,8 +231,19 @@ type ListCommentsByEntityRow struct {
 // have dropped every requester message from the agent's view of the
 // conversation — silently, with the agent seeing a thread that appeared to
 // have no customer in it.
+//
+// The entity is reconciled against the space the request named. Comments carry
+// no space_id of their own — they are readable exactly when the thing they are
+// attached to is — so the test is an EXISTS against whichever table entity_type
+// names. Without it a bare entity id returned every comment body on any item,
+// ticket or page in the installation, including internal-visibility notes that
+// the customer-facing surface deliberately withholds.
+//
+// The three arms are mutually exclusive on entity_type, so exactly one can
+// match; writing it as a union rather than three OR'd branches keeps each arm's
+// id comparison bound to its own table.
 func (q *Queries) ListCommentsByEntity(ctx context.Context, arg ListCommentsByEntityParams) ([]ListCommentsByEntityRow, error) {
-	rows, err := q.db.Query(ctx, listCommentsByEntity, arg.EntityType, arg.EntityID)
+	rows, err := q.db.Query(ctx, listCommentsByEntity, arg.EntityType, arg.EntityID, arg.SpaceID)
 	if err != nil {
 		return nil, err
 	}

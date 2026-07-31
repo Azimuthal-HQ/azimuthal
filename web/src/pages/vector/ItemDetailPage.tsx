@@ -347,10 +347,26 @@ export function ItemDetailPage() {
                 {relations.map(rel => (
                   <div key={rel.id} className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)]">
                     <span className="shrink-0 rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[var(--text-xs)] capitalize text-[var(--color-text-muted)]">
-                      {rel.kind.replace(/_/g, ' ')}
+                      {rel.direction === 'incoming' ? '← ' : ''}{rel.kind.replace(/_/g, ' ')}
                     </span>
-                    <span className="flex-1 truncate text-[var(--color-text)]">{rel.to_title}</span>
-                    <span className="shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)]">{rel.to_status}</span>
+                    {/*
+                      A relation whose far side sits in a space this viewer
+                      cannot read arrives with every far field null. Showing the
+                      row is deliberate — an item needs to know it is blocked —
+                      but the placeholder must stay free of anything that
+                      identifies the far entity, so there is no title, no key
+                      and no link to follow.
+                    */}
+                    {rel.far_readable ? (
+                      <>
+                        <span className="flex-1 truncate text-[var(--color-text)]">{rel.far_title}</span>
+                        <span className="shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)]">{rel.far_status}</span>
+                      </>
+                    ) : (
+                      <span className="flex-1 truncate italic text-[var(--color-text-muted)]">
+                        Restricted item
+                      </span>
+                    )}
                     <button
                       onClick={() => deleteRelationMutation.mutate(rel.id)}
                       className="ml-1 rounded p-0.5 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-danger)]"

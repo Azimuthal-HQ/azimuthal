@@ -36,6 +36,16 @@ func (r *stubSprintRepo) GetByID(_ context.Context, id uuid.UUID) (*Sprint, erro
 	return sprint, nil
 }
 
+// GetByIDInSpace models the real query's space predicate: a sprint in another
+// space is the same ErrNotFound an absent one produces.
+func (r *stubSprintRepo) GetByIDInSpace(_ context.Context, spaceID, id uuid.UUID) (*Sprint, error) {
+	sprint, ok := r.sprints[id]
+	if !ok || sprint.SpaceID != spaceID {
+		return nil, ErrNotFound
+	}
+	return sprint, nil
+}
+
 func (r *stubSprintRepo) GetActiveBySpace(_ context.Context, spaceID uuid.UUID) (*Sprint, error) {
 	for _, sprint := range r.sprints {
 		if sprint.SpaceID == spaceID && sprint.Status == SprintStatusActive {
@@ -123,9 +133,10 @@ func TestSprintService_CreateSprint_NameRequired(t *testing.T) {
 
 func TestSprintService_GetSprint(t *testing.T) {
 	svc := NewSprintService(newStubSprintRepo())
-	created, _ := svc.CreateSprint(context.Background(), makeSprint(uuid.New()))
+	spaceID := uuid.New()
+	created, _ := svc.CreateSprint(context.Background(), makeSprint(spaceID))
 
-	got, err := svc.GetSprint(context.Background(), created.ID)
+	got, err := svc.GetSprint(context.Background(), spaceID, created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,7 +147,8 @@ func TestSprintService_GetSprint(t *testing.T) {
 
 func TestSprintService_GetSprint_NotFound(t *testing.T) {
 	svc := NewSprintService(newStubSprintRepo())
-	_, err := svc.GetSprint(context.Background(), uuid.New())
+	spaceID := uuid.New()
+	_, err := svc.GetSprint(context.Background(), spaceID, uuid.New())
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -172,7 +184,7 @@ func TestSprintService_StartSprint(t *testing.T) {
 	spaceID := uuid.New()
 	created, _ := svc.CreateSprint(context.Background(), makeSprint(spaceID))
 
-	started, err := svc.StartSprint(context.Background(), created.ID)
+	started, err := svc.StartSprint(context.Background(), spaceID, created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,12 +199,12 @@ func TestSprintService_StartSprint_AlreadyActive(t *testing.T) {
 	spaceID := uuid.New()
 
 	first, _ := svc.CreateSprint(context.Background(), makeSprint(spaceID))
-	if _, err := svc.StartSprint(context.Background(), first.ID); err != nil {
+	if _, err := svc.StartSprint(context.Background(), spaceID, first.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	second, _ := svc.CreateSprint(context.Background(), makeSprint(spaceID))
-	_, err := svc.StartSprint(context.Background(), second.ID)
+	_, err := svc.StartSprint(context.Background(), spaceID, second.ID)
 	if !errors.Is(err, ErrSprintActive) {
 		t.Errorf("expected ErrSprintActive, got %v", err)
 	}
@@ -204,14 +216,14 @@ func TestSprintService_StartSprint_InvalidTransition_FromCompleted(t *testing.T)
 	spaceID := uuid.New()
 
 	sprint, _ := svc.CreateSprint(context.Background(), makeSprint(spaceID))
-	if _, err := svc.StartSprint(context.Background(), sprint.ID); err != nil {
+	if _, err := svc.StartSprint(context.Background(), spaceID, sprint.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.CompleteSprint(context.Background(), sprint.ID, CompleteOptions{}); err != nil {
+	if _, err := svc.CompleteSprint(context.Background(), spaceID, sprint.ID, CompleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := svc.StartSprint(context.Background(), sprint.ID)
+	_, err := svc.StartSprint(context.Background(), spaceID, sprint.ID)
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition, got %v", err)
 	}
@@ -221,11 +233,11 @@ func TestSprintService_CompleteSprint(t *testing.T) {
 	svc := NewSprintService(newStubSprintRepo())
 	spaceID := uuid.New()
 	created, _ := svc.CreateSprint(context.Background(), makeSprint(spaceID))
-	if _, err := svc.StartSprint(context.Background(), created.ID); err != nil {
+	if _, err := svc.StartSprint(context.Background(), spaceID, created.ID); err != nil {
 		t.Fatal(err)
 	}
 
-	completed, err := svc.CompleteSprint(context.Background(), created.ID, CompleteOptions{})
+	completed, err := svc.CompleteSprint(context.Background(), spaceID, created.ID, CompleteOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,10 +247,11 @@ func TestSprintService_CompleteSprint(t *testing.T) {
 }
 
 func TestSprintService_CompleteSprint_InvalidTransition_FromPlanned(t *testing.T) {
+	spaceID := uuid.New()
 	svc := NewSprintService(newStubSprintRepo())
 	created, _ := svc.CreateSprint(context.Background(), makeSprint(uuid.New()))
 
-	_, err := svc.CompleteSprint(context.Background(), created.ID, CompleteOptions{})
+	_, err := svc.CompleteSprint(context.Background(), spaceID, created.ID, CompleteOptions{})
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition, got %v", err)
 	}
@@ -251,7 +264,7 @@ func startActiveSprint(t *testing.T, svc *SprintService, spaceID uuid.UUID) *Spr
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.StartSprint(context.Background(), s.ID); err != nil {
+	if _, err := svc.StartSprint(context.Background(), spaceID, s.ID); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -268,7 +281,7 @@ func TestSprintService_CompleteSprint_NextSprint_Valid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	completed, err := svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &next.ID})
+	completed, err := svc.CompleteSprint(context.Background(), spaceID, current.ID, CompleteOptions{NextSprintID: &next.ID})
 	if err != nil {
 		t.Fatalf("expected success carrying over to a planned sprint in the same space, got %v", err)
 	}
@@ -278,17 +291,19 @@ func TestSprintService_CompleteSprint_NextSprint_Valid(t *testing.T) {
 }
 
 func TestSprintService_CompleteSprint_NextSprint_NotFound(t *testing.T) {
+	spaceID := uuid.New()
 	svc := NewSprintService(newStubSprintRepo())
 	current := startActiveSprint(t, svc, uuid.New())
 
 	missing := uuid.New()
-	_, err := svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &missing})
+	_, err := svc.CompleteSprint(context.Background(), spaceID, current.ID, CompleteOptions{NextSprintID: &missing})
 	if !errors.Is(err, ErrInvalidNextSprint) {
 		t.Errorf("expected ErrInvalidNextSprint for a missing next sprint, got %v", err)
 	}
 }
 
 func TestSprintService_CompleteSprint_NextSprint_DifferentSpace(t *testing.T) {
+	spaceID := uuid.New()
 	svc := NewSprintService(newStubSprintRepo())
 	current := startActiveSprint(t, svc, uuid.New())
 
@@ -297,17 +312,18 @@ func TestSprintService_CompleteSprint_NextSprint_DifferentSpace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &other.ID})
+	_, err = svc.CompleteSprint(context.Background(), spaceID, current.ID, CompleteOptions{NextSprintID: &other.ID})
 	if !errors.Is(err, ErrInvalidNextSprint) {
 		t.Errorf("expected ErrInvalidNextSprint for a cross-space next sprint, got %v", err)
 	}
 }
 
 func TestSprintService_CompleteSprint_NextSprint_Self(t *testing.T) {
+	spaceID := uuid.New()
 	svc := NewSprintService(newStubSprintRepo())
 	current := startActiveSprint(t, svc, uuid.New())
 
-	_, err := svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &current.ID})
+	_, err := svc.CompleteSprint(context.Background(), spaceID, current.ID, CompleteOptions{NextSprintID: &current.ID})
 	if !errors.Is(err, ErrInvalidNextSprint) {
 		t.Errorf("expected ErrInvalidNextSprint when carrying over to the sprint being completed, got %v", err)
 	}
@@ -319,12 +335,12 @@ func TestSprintService_CompleteSprint_NextSprint_Completed(t *testing.T) {
 
 	// A completed sprint cannot receive carried-over work.
 	done := startActiveSprint(t, svc, spaceID)
-	if _, err := svc.CompleteSprint(context.Background(), done.ID, CompleteOptions{}); err != nil {
+	if _, err := svc.CompleteSprint(context.Background(), spaceID, done.ID, CompleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
 	current := startActiveSprint(t, svc, spaceID)
-	_, err := svc.CompleteSprint(context.Background(), current.ID, CompleteOptions{NextSprintID: &done.ID})
+	_, err := svc.CompleteSprint(context.Background(), spaceID, current.ID, CompleteOptions{NextSprintID: &done.ID})
 	if !errors.Is(err, ErrInvalidNextSprint) {
 		t.Errorf("expected ErrInvalidNextSprint for an already-completed next sprint, got %v", err)
 	}
@@ -344,7 +360,7 @@ func TestSprintService_FullLifecycle(t *testing.T) {
 	}
 
 	// Start → active.
-	sprint, err = svc.StartSprint(context.Background(), sprint.ID)
+	sprint, err = svc.StartSprint(context.Background(), spaceID, sprint.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +369,7 @@ func TestSprintService_FullLifecycle(t *testing.T) {
 	}
 
 	// Complete → completed.
-	sprint, err = svc.CompleteSprint(context.Background(), sprint.ID, CompleteOptions{})
+	sprint, err = svc.CompleteSprint(context.Background(), spaceID, sprint.ID, CompleteOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +408,7 @@ func TestSprintService_GetActiveSprint(t *testing.T) {
 	spaceID := uuid.New()
 
 	sprint, _ := svc.CreateSprint(context.Background(), makeSprint(spaceID))
-	if _, err := svc.StartSprint(context.Background(), sprint.ID); err != nil {
+	if _, err := svc.StartSprint(context.Background(), spaceID, sprint.ID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -60,13 +60,24 @@ var (
 // PageStore defines the database operations required by the wiki service.
 type PageStore interface {
 	CreatePage(ctx context.Context, arg generated.CreatePageParams) (generated.Page, error)
+	// GetPageByID is UNSCOPED. It stays for the entity-share read path
+	// (ADR-0008), where share coverage is what authorises the read and the
+	// caller holds no access to the page's space at all.
 	GetPageByID(ctx context.Context, id uuid.UUID) (generated.Page, error)
+	// GetPageInSpace reconciles the page against a space. A route of the shape
+	// /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID} proves {spaceID} readable and
+	// proves nothing whatever about {pageID}, so a page id on its own must not be
+	// enough to load a page — every space-scoped route uses this one.
+	GetPageInSpace(ctx context.Context, arg generated.GetPageInSpaceParams) (generated.Page, error)
 	ListPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]generated.ListPagesBySpaceRow, error)
 	ListRootPagesBySpace(ctx context.Context, spaceID uuid.UUID) ([]generated.ListRootPagesBySpaceRow, error)
 	ListChildPages(ctx context.Context, parentID pgtype.UUID) ([]generated.ListChildPagesRow, error)
 	CreatePageRevision(ctx context.Context, arg generated.CreatePageRevisionParams) (generated.PageRevision, error)
 	GetPageRevision(ctx context.Context, arg generated.GetPageRevisionParams) (generated.PageRevision, error)
-	ListPageRevisions(ctx context.Context, pageID uuid.UUID) ([]generated.ListPageRevisionsRow, error)
+	// ListPageRevisions carries the space because page_revisions has no space of
+	// its own: the ledger is readable exactly when its page is, and the query
+	// joins through the page to say so.
+	ListPageRevisions(ctx context.Context, arg generated.ListPageRevisionsParams) ([]generated.ListPageRevisionsRow, error)
 	SearchPages(ctx context.Context, arg generated.SearchPagesParams) ([]generated.SearchPagesRow, error)
 }
 
@@ -139,7 +150,15 @@ func (s *Service) CreatePage(ctx context.Context, input CreatePageInput) (genera
 	var path string
 	if input.ParentID != nil {
 		parentID = pgtype.UUID{Bytes: *input.ParentID, Valid: true}
-		parent, err := s.store.GetPageByID(ctx, *input.ParentID)
+		// Reconciled against the space the page is being created in. The route
+		// proved {spaceID} writable and proved nothing about the parent id in the
+		// body, and the parent's materialised path becomes this page's prefix — so
+		// an unscoped read here both confirmed that a foreign page exists and
+		// returned its path inside the created page's own.
+		parent, err := s.store.GetPageInSpace(ctx, generated.GetPageInSpaceParams{
+			PageID:  *input.ParentID,
+			SpaceID: input.SpaceID,
+		})
 		// A parent_id naming nothing is the caller's mistake, not the server's.
 		// Unmapped, this returned a bare pgx.ErrNoRows that no arm of
 		// handleWikiError matched, so the request answered 500 and echoed
@@ -187,7 +206,12 @@ func (s *Service) CreatePage(ctx context.Context, input CreatePageInput) (genera
 	return page, nil
 }
 
-// GetPage retrieves a page by ID.
+// GetPage retrieves a page by ID, without reference to any space.
+//
+// UNSCOPED, and deliberately so: the caller is the entity-share read path
+// (internal/core/api/shares/reader.go), where an ADR-0008 share is what
+// authorises the read and the reader holds no access to the page's space.
+// A space-scoped route must use [Service.GetPageInSpace] instead.
 func (s *Service) GetPage(ctx context.Context, id uuid.UUID) (generated.Page, error) {
 	page, err := s.store.GetPageByID(ctx, id)
 	if err != nil {
@@ -199,9 +223,39 @@ func (s *Service) GetPage(ctx context.Context, id uuid.UUID) (generated.Page, er
 	return page, nil
 }
 
+// GetPageInSpace retrieves a page that lives in the given space.
+//
+// The space parameter is the authorisation, not a filter. A route shaped
+// /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID} runs its space-read guard against
+// {spaceID} and establishes nothing at all about {pageID}; until the two were
+// reconciled, a member of any one space could read every page in every other
+// space and every other organisation by id.
+//
+// A page in another space reports ErrPageNotFound, which is exactly what a page
+// that does not exist reports. Answering "it exists but you may not have it"
+// would be the same disclosure wearing a different status code.
+func (s *Service) GetPageInSpace(ctx context.Context, id, spaceID uuid.UUID) (generated.Page, error) {
+	page, err := s.store.GetPageInSpace(ctx, generated.GetPageInSpaceParams{
+		PageID:  id,
+		SpaceID: spaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return generated.Page{}, ErrPageNotFound
+		}
+		return generated.Page{}, fmt.Errorf("getting page: %w", err)
+	}
+	return page, nil
+}
+
 // UpdatePageInput holds parameters for updating page content.
 type UpdatePageInput struct {
-	PageID          uuid.UUID
+	PageID uuid.UUID
+	// SpaceID is the space the route named, and it scopes the page re-read that
+	// builds the 409 conflict body — see [Service.UpdatePageOrConflict]. That body
+	// carries the whole current page, content included, so it is a read path in
+	// its own right and cannot be keyed on the page id alone.
+	SpaceID         uuid.UUID
 	ExpectedVersion int32
 	Title           string
 	Content         string

@@ -12,7 +12,16 @@ INSERT INTO sprints (id, space_id, name, goal, status, starts_at, ends_at, creat
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
+-- name: GetSprintInSpace :one
+-- A sprint, reconciled against the space the request named. See the note on
+-- GetProjectItemInSpace: the route proves the caller may read {spaceID} and
+-- proved nothing at all about {sprintID}, so sprint names, goals and dates were
+-- readable across every space boundary by id.
+SELECT * FROM sprints WHERE id = @sprint_id AND space_id = @space_id;
+
 -- name: GetSprintByID :one
+-- UNSCOPED. No space reconciliation — only for callers that have established
+-- authorisation another way. Prefer GetSprintInSpace.
 SELECT * FROM sprints WHERE id = $1;
 
 -- name: ListSprintsBySpace :many

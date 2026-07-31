@@ -39,8 +39,11 @@ func (s *Service) UpdatePageOrConflict(ctx context.Context, input UpdatePageInpu
 		return generated.Page{}, nil, err
 	}
 
-	// Fetch the current state so the caller can show both versions.
-	current, getErr := s.store.GetPageByID(ctx, input.PageID)
+	// Fetch the current state so the caller can show both versions — scoped to
+	// the space the route named. The conflict body returns the page in full, so
+	// this is a page read like any other and gets the same reconciliation: the
+	// route proved {spaceID} readable and proved nothing about {pageID}.
+	current, getErr := s.GetPageInSpace(ctx, input.PageID, input.SpaceID)
 	if getErr != nil {
 		return generated.Page{}, nil, fmt.Errorf("fetching current page after conflict: %w", getErr)
 	}

@@ -94,7 +94,7 @@ func (s *RoadmapService) GetSprintRoadmap(ctx context.Context, spaceID uuid.UUID
 		if sprint.StartsAt == nil && sprint.EndsAt == nil {
 			continue
 		}
-		items, err := s.itemRepo.ListBySprint(ctx, sprint.ID)
+		items, err := s.itemRepo.ListBySprint(ctx, spaceID, sprint.ID)
 		if err != nil {
 			return nil, fmt.Errorf("getting sprint roadmap items: %w", err)
 		}

@@ -28,6 +28,9 @@ func (m *mockPageStore) CreatePage(_ context.Context, arg generated.CreatePagePa
 func (m *mockPageStore) GetPageByID(_ context.Context, _ uuid.UUID) (generated.Page, error) {
 	return generated.Page{}, wiki.ErrPageNotFound
 }
+func (m *mockPageStore) GetPageInSpace(_ context.Context, _ generated.GetPageInSpaceParams) (generated.Page, error) {
+	return generated.Page{}, wiki.ErrPageNotFound
+}
 func (m *mockPageStore) UpdatePageContent(_ context.Context, _ generated.UpdatePageContentParams) (generated.Page, error) {
 	return generated.Page{}, nil
 }
@@ -46,7 +49,7 @@ func (m *mockPageStore) CreatePageRevision(_ context.Context, _ generated.Create
 func (m *mockPageStore) GetPageRevision(_ context.Context, _ generated.GetPageRevisionParams) (generated.PageRevision, error) {
 	return generated.PageRevision{}, wiki.ErrRevisionNotFound
 }
-func (m *mockPageStore) ListPageRevisions(_ context.Context, _ uuid.UUID) ([]generated.ListPageRevisionsRow, error) {
+func (m *mockPageStore) ListPageRevisions(_ context.Context, _ generated.ListPageRevisionsParams) ([]generated.ListPageRevisionsRow, error) {
 	return nil, nil
 }
 func (m *mockPageStore) SearchPages(_ context.Context, _ generated.SearchPagesParams) ([]generated.SearchPagesRow, error) {
@@ -137,7 +140,7 @@ func (m *mockTagRepo) GetByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (ta
 func (m *mockTagRepo) Upsert(_ context.Context, orgID uuid.UUID, slug, name string) (tags.Tag, error) {
 	return tags.Tag{ID: uuid.New(), OrgID: orgID, Slug: slug, Name: name}, nil
 }
-func (m *mockTagRepo) ForPage(_ context.Context, _ uuid.UUID) ([]tags.Tag, error) { return nil, nil }
+func (m *mockTagRepo) ForPage(_ context.Context, _, _ uuid.UUID) ([]tags.Tag, error) { return nil, nil }
 func (m *mockTagRepo) ReplacePageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error {
 	return nil
 }
@@ -249,6 +252,7 @@ func TestGetRevisionInvalidVersion(t *testing.T) {
 	h := setupWikiHandler()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("pageID", uuid.New().String())
+	rctx.URLParams.Add("spaceID", uuid.New().String())
 	rctx.URLParams.Add("version", "notanumber")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -272,6 +276,7 @@ func TestDiffRevisionsInvalidID(t *testing.T) {
 func TestDiffRevisionsMissingParams(t *testing.T) {
 	h := setupWikiHandler()
 	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "pageID", uuid.New().String())
+	req = withParam(req, "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.DiffRevisions(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -282,6 +287,7 @@ func TestDiffRevisionsMissingParams(t *testing.T) {
 func TestDiffRevisionsInvalidFrom(t *testing.T) {
 	h := setupWikiHandler()
 	req := withParam(httptest.NewRequest(http.MethodGet, "/?from=abc&to=2", nil), "pageID", uuid.New().String())
+	req = withParam(req, "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.DiffRevisions(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -292,6 +298,7 @@ func TestDiffRevisionsInvalidFrom(t *testing.T) {
 func TestDiffRevisionsInvalidTo(t *testing.T) {
 	h := setupWikiHandler()
 	req := withParam(httptest.NewRequest(http.MethodGet, "/?from=1&to=abc", nil), "pageID", uuid.New().String())
+	req = withParam(req, "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.DiffRevisions(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -360,7 +367,11 @@ func TestListPagesSuccess(t *testing.T) {
 
 func TestGetPageNotFound(t *testing.T) {
 	h := setupWikiHandler()
+	// Both ids: the read is keyed on the page AND the space, and a request
+	// carrying only a page id now stops at the space parse with a 400 — which
+	// would make this assert nothing about the not-found path.
 	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "pageID", uuid.New().String())
+	req = withParam(req, "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.GetPage(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -370,8 +381,9 @@ func TestGetPageNotFound(t *testing.T) {
 
 func TestDeletePageNotFound(t *testing.T) {
 	h := setupWikiHandler()
-	// DeletePage fetches the page first (the edit_own/edit_any check needs
-	// the author), and the mock GetPageByID always reports not-found — so
+	// DeletePage fetches the page first, in the space (the edit_own/edit_any
+	// check needs the author, and the page has to be in the space the request
+	// named), and the mock GetPageInSpace always reports not-found — so
 	// deleting a nonexistent page is 404.
 	req := withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "pageID", uuid.New().String())
 	req = withSpaceAccess(t, req, uuid.New())
@@ -443,6 +455,7 @@ func TestTreeSuccess(t *testing.T) {
 func TestListRevisionsPageNotFound(t *testing.T) {
 	h := setupWikiHandler()
 	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "pageID", uuid.New().String())
+	req = withParam(req, "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.ListRevisions(rr, req)
 	// mock ListPageRevisions returns nil, nil so this succeeds
@@ -455,12 +468,16 @@ func TestGetRevisionNotFound(t *testing.T) {
 	h := setupWikiHandler()
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("pageID", uuid.New().String())
+	rctx.URLParams.Add("spaceID", uuid.New().String())
 	rctx.URLParams.Add("version", "1")
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	rr := httptest.NewRecorder()
 	h.GetRevision(rr, req)
-	// mock returns ErrRevisionNotFound
+	// The page is reconciled against the space before the revision is read, and
+	// the mock has no page in any space, so this is the page's 404 rather than
+	// the revision's — the same status and the same body either way, which is
+	// the point of mapping a foreign page onto not-found.
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("got %d, want %d", rr.Code, http.StatusNotFound)
 	}
@@ -469,9 +486,11 @@ func TestGetRevisionNotFound(t *testing.T) {
 func TestDiffRevisionsSuccess(t *testing.T) {
 	h := setupWikiHandler()
 	req := withParam(httptest.NewRequest(http.MethodGet, "/?from=1&to=2", nil), "pageID", uuid.New().String())
+	req = withParam(req, "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.DiffRevisions(rr, req)
-	// mock GetPageRevision returns ErrRevisionNotFound, so this will 404
+	// The page-in-space read comes first and the mock holds no page, so the 404
+	// is the page's rather than the revisions'.
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("got %d, want %d", rr.Code, http.StatusNotFound)
 	}
@@ -480,9 +499,10 @@ func TestDiffRevisionsSuccess(t *testing.T) {
 func TestRenderPageNotFound(t *testing.T) {
 	h := setupWikiHandler()
 	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "pageID", uuid.New().String())
+	req = withParam(req, "spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.RenderPage(rr, req)
-	// mock GetPageByID returns ErrPageNotFound
+	// mock GetPageInSpace returns ErrPageNotFound
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("got %d, want %d", rr.Code, http.StatusNotFound)
 	}

@@ -99,7 +99,12 @@ type stubValueRepo struct {
 func newStubValueRepo() *stubValueRepo  { return &stubValueRepo{values: map[string]string{}} }
 func vkey(i uuid.UUID, s string) string { return i.String() + "|" + s }
 
-func (r *stubValueRepo) ListByItem(_ context.Context, itemID uuid.UUID) ([]StoredValue, error) {
+// ListByItemInSpace ignores the space: the stub is keyed by item alone, and
+// modelling the reconciliation here would be modelling it in the one place it
+// is not implemented. The real join is proved against a real database in
+// internal/db/adapters; what this stub models faithfully is the composition
+// RenderForItem performs over whatever values come back.
+func (r *stubValueRepo) ListByItemInSpace(_ context.Context, _, itemID uuid.UUID) ([]StoredValue, error) {
 	var out []StoredValue
 	for k, v := range r.values {
 		if len(k) > 37 && k[:36] == itemID.String() {
@@ -212,7 +217,7 @@ func TestSetValue_TypeValidation(t *testing.T) {
 func TestLegacyValuesSurvive(t *testing.T) {
 	defs, vals := newStubDefRepo(), newStubValueRepo()
 	svc := NewService(defs, vals)
-	org, item := uuid.New(), uuid.New()
+	org, space, item := uuid.New(), uuid.New(), uuid.New()
 
 	def, _ := svc.CreateDef(context.Background(), org, "Squad", TypeText, nil)
 	if err := svc.SetValue(context.Background(), org, item, def.Slug, "Falcon"); err != nil {
@@ -224,7 +229,7 @@ func TestLegacyValuesSurvive(t *testing.T) {
 		t.Fatalf("archive: %v", err)
 	}
 
-	rendered, err := svc.RenderForItem(context.Background(), org, item)
+	rendered, err := svc.RenderForItem(context.Background(), org, space, item)
 	if err != nil {
 		t.Fatalf("RenderForItem: %v", err)
 	}
@@ -253,7 +258,7 @@ func TestLegacyValuesSurvive(t *testing.T) {
 	if err := svc.DeleteDef(context.Background(), org, def.ID); err != nil {
 		t.Fatalf("delete def: %v", err)
 	}
-	rendered, _ = svc.RenderForItem(context.Background(), org, item)
+	rendered, _ = svc.RenderForItem(context.Background(), org, space, item)
 	found := false
 	for _, f := range rendered {
 		if f.Slug == def.Slug {
@@ -271,13 +276,13 @@ func TestLegacyValuesSurvive(t *testing.T) {
 func TestRenderForItem_ActiveWithValues(t *testing.T) {
 	defs, vals := newStubDefRepo(), newStubValueRepo()
 	svc := NewService(defs, vals)
-	org, item := uuid.New(), uuid.New()
+	org, space, item := uuid.New(), uuid.New(), uuid.New()
 
 	a, _ := svc.CreateDef(context.Background(), org, "Alpha", TypeText, nil)
 	_, _ = svc.CreateDef(context.Background(), org, "Beta", TypeText, nil)
 	_ = svc.SetValue(context.Background(), org, item, a.Slug, "hello")
 
-	rendered, err := svc.RenderForItem(context.Background(), org, item)
+	rendered, err := svc.RenderForItem(context.Background(), org, space, item)
 	if err != nil {
 		t.Fatalf("RenderForItem: %v", err)
 	}

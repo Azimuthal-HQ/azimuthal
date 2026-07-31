@@ -46,6 +46,7 @@ type repoCall struct {
 	slug             string
 	name             string
 	pageID           uuid.UUID
+	spaceID          uuid.UUID
 	tagIDs           []uuid.UUID
 	readableSpaceIDs []uuid.UUID
 }
@@ -90,8 +91,8 @@ func (r *fakeRepo) Upsert(_ context.Context, orgID uuid.UUID, slug, name string)
 	return t, nil
 }
 
-func (r *fakeRepo) ForPage(_ context.Context, pageID uuid.UUID) ([]tags.Tag, error) {
-	r.calls = append(r.calls, repoCall{method: "ForPage", pageID: pageID})
+func (r *fakeRepo) ForPage(_ context.Context, pageID, spaceID uuid.UUID) ([]tags.Tag, error) {
+	r.calls = append(r.calls, repoCall{method: "ForPage", pageID: pageID, spaceID: spaceID})
 	return nil, nil
 }
 
@@ -632,11 +633,15 @@ func TestService_ListAndForPage_PassThrough(t *testing.T) {
 		t.Errorf("List returned %d tags after another org gained one, want %d", len(listed), len(seeded))
 	}
 
-	if _, err := svc.ForPage(context.Background(), page); err != nil {
+	// The space travels down with the page id and is asserted on: it is what
+	// stops a page id alone from reading another space's tag set, so a
+	// delegation that dropped it would be the defect rather than a detail.
+	space := uuid.New()
+	if _, err := svc.ForPage(context.Background(), page, space); err != nil {
 		t.Fatalf("ForPage: %v", err)
 	}
 	fp := repo.callsOf("ForPage")
-	if len(fp) != 1 || fp[0].pageID != page {
-		t.Errorf("ForPage reached the repository as %+v, want one call for page %v", fp, page)
+	if len(fp) != 1 || fp[0].pageID != page || fp[0].spaceID != space {
+		t.Errorf("ForPage reached the repository as %+v, want one call for page %v in space %v", fp, page, space)
 	}
 }

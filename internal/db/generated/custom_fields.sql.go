@@ -232,11 +232,25 @@ func (q *Queries) ListCustomFieldDefsByOrg(ctx context.Context, orgID uuid.UUID)
 }
 
 const listItemFieldValues = `-- name: ListItemFieldValues :many
-SELECT id, item_id, field_slug, value, created_at, updated_at FROM item_field_values WHERE item_id = $1 ORDER BY field_slug
+SELECT v.id, v.item_id, v.field_slug, v.value, v.created_at, v.updated_at FROM item_field_values v
+JOIN project_items pi ON pi.id = v.item_id
+WHERE v.item_id = $1
+  AND pi.space_id = $2
+  AND pi.deleted_at IS NULL
+ORDER BY v.field_slug
 `
 
-func (q *Queries) ListItemFieldValues(ctx context.Context, itemID uuid.UUID) ([]ItemFieldValue, error) {
-	rows, err := q.db.Query(ctx, listItemFieldValues, itemID)
+type ListItemFieldValuesParams struct {
+	ItemID  uuid.UUID `json:"item_id"`
+	SpaceID uuid.UUID `json:"space_id"`
+}
+
+// An item's stored custom-field values, reconciled against the space the
+// request named. item_field_values carries no space_id — the values are
+// readable exactly when their item is — so the test joins the item, which is
+// also what makes a soft-deleted item's values stop being readable.
+func (q *Queries) ListItemFieldValues(ctx context.Context, arg ListItemFieldValuesParams) ([]ItemFieldValue, error) {
+	rows, err := q.db.Query(ctx, listItemFieldValues, arg.ItemID, arg.SpaceID)
 	if err != nil {
 		return nil, err
 	}
