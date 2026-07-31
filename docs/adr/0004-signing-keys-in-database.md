@@ -69,3 +69,36 @@ everything, generation bumping invalidates one user.
 restart. Any change touching key handling, token issuance, or token validation must include a
 test that issues a token, restarts the server, and asserts the token still validates. This is
 non-negotiable and is the direct lesson of v0.1.11.
+
+---
+
+## Correction — 2026-07-31 (spec/repo reconciliation)
+
+**The core decision is implemented correctly.** RS256, generated once, persisted in the database,
+never regenerated at boot — that is what migration 018 and `internal/core/auth/keys.go` do, and
+the restart test this ADR demands exists.
+
+**Rotation with a grace window does not exist and is not representable without a migration.**
+`auth_signing_keys` is a hard singleton: `id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1)`
+(`migrations/018_auth_signing_keys.sql:9`), with four columns and no key id, no active/retired
+flag and no validity window. Two keys cannot coexist, so "the previous key remains valid for
+verification while the new key signs" has nowhere to live. The whole query set is two statements —
+read the row at `id = 1`, and insert-if-absent (`internal/db/queries/auth_signing_keys.sql`) —
+with no UPDATE, no DELETE and no second-key verification path anywhere in Go or SQL. A search for
+`kid`, `jwks`, `rotate` or `rotation` across `internal/core/auth/` returns nothing.
+
+The constraint is load-bearing elsewhere and is acknowledged in code: `internal/core/auth/jwt.go`
+notes that "a key per family is not available without changing that decision", which is why the
+portal token family is separated by an audience claim instead.
+
+Two consequences follow, and both are flagged for the maintainer rather than settled here:
+
+- **The documented procedure this section requires does not exist.** A search for "key rotation"
+  or "grace window" across `docs/` matches only this ADR.
+- **The restore remedy above depends on the missing capability.** "Rotation after restore is the
+  remedy" for the replayed-token consequence is not available today.
+
+This is catalogued as **D100** and is a **maintainer decision, not a documentation fix**: the
+rationale sentence overstates a benefit (a doc correction), while the Consequences obligation is
+unmet (a capability to build). The two have different owners, and the capability half belongs
+with whoever owns auth and operations.

@@ -18,10 +18,15 @@ old one superseded. That leaves an auditable trail.
 | 0008 | Entity shares — widen, never narrow | Accepted | `0008-entity-shares.md` |
 | 0009 | Saved views and dashboards | Accepted | `0009-saved-views-and-dashboards.md` |
 | 0010 | Cross-space route family | Accepted | `0010-cross-space-route-family.md` |
-| 0011 | Workflow capability boundary | Accepted (implementation deferred to v0.4) | `0011-workflow-capability-boundary.md` |
-| 0012 | Content fidelity and unknown nodes | Accepted — binding on issue #15 | `0012-content-fidelity-and-unknown-nodes.md` |
+| 0011 | Workflow capability boundary | Accepted — tiers 1–3 implemented in v0.4 (migrations 046, 047) | `0011-workflow-capability-boundary.md` |
+| 0012 | Content fidelity and unknown nodes | Accepted — implemented in issue #15 (PRs #73, #75) | `0012-content-fidelity-and-unknown-nodes.md` |
 
 Every row points at a file. Nothing is embedded in another document.
+
+The **Status** column abbreviates each ADR's own status line. Where the two disagree the ADR wins
+and the index is the defect — row 0011 said "implementation deferred to v0.4" for weeks after
+ADR-0011 had been amended to record that tiers 1–3 shipped, which is exactly the failure this note
+exists to catch. Corrected 2026-07-31.
 
 ## A note on 0005–0010
 

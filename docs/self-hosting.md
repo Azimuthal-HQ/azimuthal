@@ -107,6 +107,7 @@ access. You can then log in at `http://localhost:8080/login` with these credenti
 | `SMTP_PORT` | `1025` | SMTP relay port. |
 | `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` (any case). An unrecognised value is refused at startup. The logger starts at `info` and is re-levelled once config loads, so the first startup line is always emitted. |
 | `DATABASE_URL` | (auto) | PostgreSQL connection string. Auto-constructed in Docker Compose from `POSTGRES_PASSWORD` |
+| `JWT_PRIVATE_KEY_PATH` | `./data/jwt-private.pem` | One-time import path for a legacy file-based RS256 key. Not required, and **not** where the signing key lives — see the note above. Forwarded by `build/docker-compose.yml`. |
 
 `APP_ENV` is **not** settable through `.env` in this deployment: `build/docker-compose.yml`
 hardcodes `APP_ENV: production`.
@@ -154,12 +155,44 @@ Migrations run automatically on startup. To run them manually:
 docker compose exec app /azimuthal serve
 # Migrations execute on startup before the HTTP server begins listening.
 
-# Or with goose directly (requires goose installed)
+# Or with goose directly (requires goose installed, AND a published database port —
+# see the note below; the bundled compose file does not publish one)
 export DATABASE_URL="postgres://azimuthal:yourpassword@localhost:5432/azimuthal?sslmode=disable"
 goose -dir migrations postgres "$DATABASE_URL" up
 ```
 
+> **The bundled `build/docker-compose.yml` publishes only the `app` port.** Neither `db` nor
+> `storage` declares a `ports:` mapping, so PostgreSQL is reachable only as `db:5432` and MinIO
+> only as `storage:9000`, on the Compose network. Any `localhost:5432` or `localhost:9000` command
+> in this document — the goose recipe above, and the MinIO health check under Troubleshooting —
+> fails with connection refused on a stock deployment unless you add a mapping yourself. (The dev
+> and test overlays do publish ports; they are not the file this guide deploys.) Migrations run
+> automatically at startup, so the goose recipe is a fallback, not a required step. *Noted
+> 2026-07-31.*
+
 ## Backup and Restore
+
+> ### ⚠ These commands do not work inside the container today
+>
+> **Do not rely on the recipes in this section until this warning is removed.** `azimuthal backup`
+> shells out to `pg_dump` and `psql`, and `azimuthal restore` shells out to `psql`. The shipped
+> image is `gcr.io/distroless/static:nonroot`, whose final stage contains the Go binary and no
+> shell, no coreutils and no PostgreSQL client. Every `docker compose exec app /azimuthal backup`
+> below therefore fails at the fork — including the nightly cron, which has never produced a file.
+> An operator following this section believes they have backups and has none.
+>
+> **Until it is fixed, run the binary from a host that has the PostgreSQL 16 client tools on
+> `PATH`**, pointing `DATABASE_URL` at the database. Note that the bundled Compose file does not
+> publish the database port (see the note under Migrations), so you must add a `ports:` mapping to
+> the `db` service, or run the tool on the Compose network.
+>
+> A second, independent defect compounds it: `restore` runs `psql` without
+> `-v ON_ERROR_STOP=1` and discards its output, so a dump whose statements failed still exits 0
+> and prints "Database restored." Fixing the first without the second would produce backups that
+> restore wrongly and say they worked.
+>
+> Both are ledgered as **D105** in `docs/design/spec-repo-reconciliation.md` as code follow-ups.
+> This is a documentation pass and does not fix them.
 
 ### Creating a Backup
 
@@ -223,7 +256,7 @@ See [upgrade.md](upgrade.md) for step-by-step upgrade instructions.
 1. Check logs: `docker compose logs app`
 2. Verify all required environment variables are set in `.env`
 3. Ensure the database is healthy: `docker compose ps db`
-4. Verify DATABASE_URL is correct: `docker compose exec app env | grep DATABASE_URL`
+4. Verify DATABASE_URL is correct: `docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$(docker compose ps -q app)" | grep DATABASE_URL` — the app image is distroless and has no `env` binary, so `docker compose exec app env` fails with an exec error rather than answering
 
 ### Database connection refused
 
@@ -238,7 +271,7 @@ See [upgrade.md](upgrade.md) for step-by-step upgrade instructions.
 **Symptom**: `connecting to object storage: ... connection refused`
 
 1. Check MinIO is running: `docker compose ps storage`
-2. Verify MinIO is healthy: `curl http://localhost:9000/minio/health/live`
+2. Verify MinIO is healthy: `docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q storage)"` — the bundled compose file does not publish `9000` on the host, so `curl http://localhost:9000/...` cannot reach it
 3. Ensure MINIO_ROOT_USER and MINIO_ROOT_PASSWORD match between services
 
 ### A setting in `.env` appears to have no effect
@@ -254,7 +287,8 @@ symptom is indistinguishable from the setting itself not working.
 To confirm what the container actually received:
 
 ```bash
-docker compose -f build/docker-compose.yml exec app env | grep AZIMUTHAL
+docker compose -f build/docker-compose.yml config
+docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$(docker compose ps -q app)" | grep AZIMUTHAL
 ```
 
 Every `AZIMUTHAL_*` setting should appear, with an empty value for the ones you have not set — an
@@ -274,7 +308,7 @@ that output is one the application never saw.
 
 1. Clear browser cache and hard refresh
 2. Check browser console for JavaScript errors
-3. Verify the binary was built with the frontend: `docker compose exec app ls /web/dist/`
+3. Verify the binary was built with the frontend: `docker compose exec app /azimuthal bundle-hash` — the binary reports its own embedded bundle digest. (`docker compose exec app ls /web/dist/` cannot work and was the instruction here until 2026-07-31: the frontend is compiled *into* the binary by `//go:embed all:dist`, so `/web/dist` never exists in the image, and the distroless image has no `ls` either.)
 
 ### Out of disk space
 

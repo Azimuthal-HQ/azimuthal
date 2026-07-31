@@ -70,3 +70,29 @@ dashboards, a unified "assigned to me" list — presents a moment where one tabl
 It is simpler for that feature and worse for everything else. **This decision is not revisited.**
 If a future feature appears to require unification, the correct response is to improve the
 fan-out and merge layer.
+
+---
+
+## Correction — 2026-07-31 (spec/repo reconciliation)
+
+**SLA clocks and first-response/resolution timers do not exist and never have.** The "Different
+lifecycles" contrast above names them as things a ticket has, and "Different query shapes" says a
+queue sorts by SLA breach risk. Neither is true of this repository: there is no SLA table, no
+timer, target, calendar or pause column, no breach concept, and no queue ordering by breach risk.
+A repo-wide search for `sla`, `first_response` and `breach` across Go, SQL and TypeScript returns
+only two unrelated false positives. The tickets table's sole time fields are `due_at` and
+`resolved_at` — a due date and a resolution timestamp, neither of which is a clock.
+
+Every *other* attribute in both lists is realised: the queue (migration 039, on the saved-view
+model), the external requester with no `users` row (migration 044), sprints, backlog rank, epic
+membership via `parent_id`/`kind`, a board column (migration 035), and story points expressible
+through custom fields (migration 033). SLA is the one that is not.
+
+**The decision itself is untouched and is being honoured** — the tables are separate, and the
+fan-out-and-merge consequence is implemented. What is corrected is the rationale: the SLA half of
+the lifecycle contrast is *anticipated*, not shipped, and must not be cited as evidence that SLA
+machinery exists. It is unbuilt and tracked (item 16 of the recommendations in
+`docs/design/parity-review-2026-07.md`), which already records another reader reaching for this
+paragraph and concluding "the architecture was shaped around a feature that was never built."
+
+Catalogued as D101 in `docs/design/spec-repo-reconciliation.md`.

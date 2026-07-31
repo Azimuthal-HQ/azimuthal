@@ -71,13 +71,21 @@ Azimuthal is Apache 2.0, fully featured for every user, with no enterprise tier 
 Specification §2 governs the whole project and overrides any instruction that would reduce
 coverage, weaken an assertion, or defer test work to a later PR. The short version:
 
-**Real PostgreSQL only.** Via `internal/testutil.NewTestDB(t)`, which creates an isolated
-per-test schema and applies all migrations into it. **Never mock the database** — mocks hide
+**Real PostgreSQL only.** Via `internal/testutil.NewTestDB(t)`, which hands each test its own
+PostgreSQL *database*, cloned with `CREATE DATABASE ... TEMPLATE` from a template that already has
+every migration applied. Migrations run once, to build the template, not on every call — the
+template's name embeds a SHA-256 fingerprint of the migration set, so it cannot go stale. (This
+file said "per-test schema … applies all migrations into it" until the reconciliation pass; that
+is the design this replaced, described at `internal/testutil/db.go:13`. The `Schema` field
+survives, always `"public"`, only because tests build a `search_path` from it — `db.go:116`.)
+**Never mock the database** — mocks hide
 constraint violations and casing bugs, both of which shipped in v0.1.x. Any test that touches
 persistence uses a real database.
 
 > Spec §2.8 states this as "No mocks exist, none will be added." The rule stands; the factual
-> half does not. Roughly thirty hand-written `mock*` fakes exist in Go handler and service tests
+> half does not. **40** hand-written `mock*` types exist in Go handler and service tests, plus 91
+> `vi.mock` calls across 51 frontend test files (counts re-measured 2026-07-31; this said "roughly
+> thirty")
 > (`internal/core/api/router_test.go`, `internal/core/api/auth/handler_test.go` and others), plus
 > `vi.mock` in the frontend suite. They stub repository *interfaces*, not the database — the real
 > database coverage lives in the `*_integration_test.go` files alongside them. This gap between
@@ -98,7 +106,16 @@ own test is incomplete, even with green CI.
 
 **Skip discipline.** Removing a feature means removing its tests, not skipping them. A skip is
 permitted only with all three of: a `SKIP:` comment naming the blocker, a referenced GitHub issue
-number, and a stated re-enable condition. CI fails on any skip lacking these.
+number, and a stated re-enable condition. A skip lacking these is a failing review.
+
+> **Correction, 2026-07-31.** This sentence read "CI fails on any skip lacking these." It does
+> not: nothing in `.github/workflows/ci.yml` inspects skips, and eleven unmarked `t.Skip` calls
+> pass every gate today — mostly environment guards, but
+> `internal/core/api/harness_wiring_test.go:311` is not one. Exactly one skip in the tree carries
+> the marker. The rule stands and is enforced by review; the claim that a gate enforces it was
+> false, and telling an agent a gate will catch it is the worst state to leave this in. The
+> identical sentence in the specification (§2.4) is §2 text and is **not** edited here — whether
+> to build the enforcement or narrow the sentence is a maintainer decision, catalogued as D97.
 
 **The negative-test question.** For every check you add, ask: *would this test still pass if the
 check were deleted?* If yes, it asserts nothing. A test that cannot fail is worse than no test,
@@ -131,8 +148,15 @@ org-level (`set_visibility` holds no space role at all), the persona that must b
 
 **Test debt is not permitted.** No PR merges with "tests to follow." There is no follow-up PR.
 
-Coverage floor is **80%**, rising to 85% at the end of P5. Coverage is a floor, not a goal — §2.5
+Coverage floor is **80%** (`.github/workflows/ci.yml:589`). Coverage is a floor, not a goal — §2.5
 case 23 (constant authorisation queries) is worth more than five percentage points.
+
+> **Overdue, flagged 2026-07-31.** Spec §2.8 and P5's Definition of Done both schedule a raise to
+> **85% at the end of P5**. P5 merged (#88/#89) and P6 merged after it, and the raise never
+> landed — CI still enforces 80, and the comment beside the check at `ci.yml:586-588` still
+> describes the raise in the future tense. This is a lapsed commitment, not a wrong number: 80 is
+> what is enforced. Raising it needs a CI-parity measurement first (the coverage job's own
+> invocation, including `-p 1`), because an unmeasured flip fails every PR. Catalogued as D98.
 
 The permission matrix (§2.5, 23 cases) and the per-endpoint matrix (§2.6) are mandatory for any
 PR touching teams, grants, shares, visibility, or any read path. A missing case is a failing
@@ -150,7 +174,7 @@ make lint
 make test-live       # Go integration tests against real postgres
 make verify-api      # API smoke checks
 make e2e-test        # Playwright
-cd web && npm run type-check && npm run test:unit   # frontend gates — now required in CI
+cd web && npm run type-check && npm run lint && npm run test:unit   # all three are CI gates
 make docs-check      # the OpenAPI spec is regenerated and diffed
 make test-db-down    # NOTE: this DELETES the test data — see below
 ```
@@ -196,9 +220,14 @@ for postgres on `:5433` and MinIO on `:9001`), an `npm ci && npm run build` of t
 built server binary, and Playwright's browsers already installed. **Verify all of that before
 starting a phase that has to run E2E** — discovering it at the gate is how a phase loses an evening.
 
-The port is env-gated. `web/playwright.config.ts` reads **`E2E_PORT`** (default `8082`) in three
-places — `use.baseURL`, the `webServer` `/health` readiness probe, and the spawned server's
-`APP_PORT` — so overriding that one variable moves the whole harness when `8082` is contended.
+The port is env-gated. `web/playwright.config.ts` reads **`E2E_PORT`** (default `8082`) in four
+places — `use.baseURL`, the `webServer` `/health` readiness probe, the spawned server's
+`APP_PORT`, and **`APP_BASE_URL`**, which the server interpolates into every emailed link — so
+overriding that one variable moves the whole harness when `8082` is contended. The fourth is not
+cosmetic and the config says so: without it a captured portal magic link points at `8080`, and if
+a real dev server is answering there the test navigates somewhere else entirely and passes for
+the wrong reason. Note also that `use.baseURL` prefers **`BASE_URL`** when it is set, and CI sets
+it explicitly (`.github/workflows/ci.yml:1001`), so a harness setting both must keep them agreed.
 Note that `.env.test` sets `APP_PORT=8081`; `webServer.env` overrides it, so the E2E server binds
 the `E2E_PORT` value rather than the `.env.test` one.
 
@@ -206,8 +235,10 @@ the `E2E_PORT` value rather than the `.env.test` one.
 the opposite, and which way round it is changes what you do. Playwright builds the spawned server's
 environment as `{...DEFAULT_ENVIRONMENT_VARIABLES, ...process.env, ...webServer.env}`
 (`web/node_modules/playwright/lib/plugins/webServerPlugin.js`, v1.59.1), so the parent process's
-whole environment reaches the server and the seven entries in `webServer.env` merely *override*
-part of it.
+whole environment reaches the server and the entries in `webServer.env` merely *override* part of
+it. (There are nine of them today. The count was "seven" here until 2026-07-31; it is dropped
+rather than incremented, because the paragraph's argument does not depend on it and the number
+has already drifted once.)
 
 Two consequences, pointing opposite ways. A new `AZIMUTHAL_*` setting **does** reach an E2E server
 without being added to that list, so there is nothing to do when one is added — the older note here
@@ -232,11 +263,23 @@ reverse. Check `golangci-lint --version` against the pin before trusting or acti
 
 Two more worth knowing. CI's coverage run passes `-p 1` (no parallel packages) because the tests
 share one database — no Makefile target sets it, so if you reproduce a CI coverage figure locally
-you must pass it yourself. And `make verify-api` needs `.env.test`.
+you must pass it yourself. And `make verify-api` needs `.env.test` — **but its target does not load
+it.** Unlike `test-db-up`, `test-live`, `test-live-verbose`, `test-live-coverage`,
+`regression-test` and `e2e-test`, the `verify-api` target carries no `export $(ENV_TEST_VARS)`
+(`Makefile:206-210`). With nothing exported, `scripts/verify-api.sh:31-37` falls back to the
+**dev** database on `:5432`, storage on `:9000`, bucket `azimuthal`, `APP_ENV=development` — so if
+a dev stack happens to be up (`build/docker-compose.dev.yml` serves exactly those credentials) the
+suite passes against the wrong database instead of failing, and with no dev stack it dies at
+server start. Export the values yourself:
+
+```bash
+export $(grep -v '^#' .env.test | grep -v '^$' | xargs) && make verify-api
+```
 
 ### The frontend gates run in CI
 
-`npm run type-check` and `npm run test:unit` are required CI gates (the `Frontend` job). They were
+`npm run type-check`, `npm run lint` and `npm run test:unit` are required CI gates (the `Frontend`
+job — `.github/workflows/ci.yml:690`, `:695`, `:698`). They were
 local-only until the integrity pass, and with them every drift guard written as a vitest test —
 `web/src/lib/no-direct-fetch.test.ts`, `web/src/lib/codex/schema.test.ts` and
 `web/src/components/codex/extensions/extensions.test.ts`. The last two fail in both directions on
@@ -254,11 +297,14 @@ Two of the rules catch real defects rather than style. P5 tripped
 and `react-refresh/only-export-components` by putting the gadget body components in the same file
 as the registry that looks them up. Both were fixed rather than exempted.
 
-*Superseded:* `npm run lint` is **not** a gate. eslint reports 46 errors on `main` — mostly
+*Superseded, and stated in the past tense so it cannot be skim-read as current:* `npm run lint`
+**was** not a gate. eslint reported **48** errors on `main` across 33 files — mostly
 `react-refresh/only-export-components` and `react-hooks/set-state-in-effect` — so gating on it
-today would fail every pull request, and the alternative is a baseline file, which is an exemption
-ledger. The inventory and what closing it would take are in `docs/known-issues.md`. Do not add a
-baseline; do not add `--max-warnings` slack. Fix the findings or leave the gate off.
+then would have failed every pull request, and the alternative was a baseline file, which is an
+exemption ledger. (This paragraph said "46" until 2026-07-31. 46 was the figure recorded when the
+inventory was taken; the closing pass measured 48, and `docs/known-issues.md:461` already carries
+that correction. `.github/workflows/ci.yml:652` also says 48.) The inventory and what closing it
+took are in `docs/known-issues.md` #17. Do not add a baseline; do not add `--max-warnings` slack.
 
 `make docs-check` is a gate too, and now actually checks: the CI job used to grep the committed
 YAML for four structural markers and two path names, and would have passed a spec that had lost

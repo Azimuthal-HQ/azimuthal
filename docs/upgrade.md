@@ -76,12 +76,24 @@ export AZIMUTHAL_VERSION=v1.1.0  # the version you were running before
 
 ```bash
 docker compose up -d db storage  # start only infrastructure
-docker compose exec -T db psql -U azimuthal -d azimuthal < backup-pre-upgrade.sql
-# Or use the full restore command:
-docker cp ./backup-pre-upgrade.tar.gz "$(docker compose ps -q app)":/tmp/backup.tar.gz
-docker compose up -d app
-docker compose exec app /azimuthal restore --input /tmp/backup.tar.gz
+
+# The backup step produced backup-pre-upgrade.tar.gz. The SQL dump is a member
+# named database.sql INSIDE that archive — there is no bare .sql file to redirect.
+# The db service is postgres:16-alpine and does carry psql, so pipe the member in:
+tar -xzOf backup-pre-upgrade.tar.gz database.sql \
+  | docker compose exec -T db psql -v ON_ERROR_STOP=1 -U azimuthal -d azimuthal
 ```
+
+*Corrected 2026-07-31. This step led with
+`docker compose exec -T db psql -U azimuthal -d azimuthal < backup-pre-upgrade.sql` — a file no
+backup step has ever produced (`azimuthal backup` only ever writes a gzip-compressed tar). It
+failed with "No such file or directory" at the worst possible moment, mid-rollback.*
+
+> The `/azimuthal restore` alternative that used to follow **cannot run in the shipped image** —
+> it forks `psql`, and the app image is distroless. See the warning at the top of
+> "Backup and Restore" in [self-hosting.md](self-hosting.md); that fix is ledgered as D105. The
+> `tar`-and-pipe form above works today because it runs `psql` in the **db** container, not the
+> app one.
 
 ### 4. Start the old version
 

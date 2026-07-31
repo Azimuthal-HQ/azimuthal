@@ -534,6 +534,14 @@ quietly fixed, because the failure mode is instructive.
 - **What changed:** nothing in §2. `CLAUDE.md` states the rule as a rule ("never mock the
   database") and carries a note recording the gap, so the rules file does not assert something
   the repository contradicts.
+- **Recount, 2026-07-31 — still open, and the number has grown.** "Roughly thirty across eight
+  files" is now **40** top-level `type mock*` declarations, plus **91** `vi.mock(` calls across 51
+  frontend test files. `internal/core/api/router_test.go` alone declares **20**, not twelve. The
+  qualitative finding is unchanged and was re-verified: every one stubs a repository or module
+  *interface*, none stands in for PostgreSQL, and the real-database coverage still sits in the
+  `*_integration_test.go` files beside them — so the **rule** is being obeyed and only the factual
+  half of §2.8 is false. `CLAUDE.md` §2's note has been updated to the new counts. Restated as
+  **D118** below with the two readings the maintainer must choose between.
 
 #### D46 — The corrected cross-space query shape was itself wrong on first writing
 
@@ -552,6 +560,15 @@ quietly fixed, because the failure mode is instructive.
   `CascadeRootPaths()` returns paths only and `cascadeRoot.spaceID` is unexported. P4 must add an
   accessor returning the pairs. Without that note, the obvious workaround is to bind paths alone,
   which is the defect again.
+- **CLOSED 2026-07-31 — P6 added the accessor, not P4.** `SharedEntities.CascadeRoots()` returns
+  `(SpaceID, Path)` pairs and `CascadeSubtreeArrays()` returns the index-aligned space-id and
+  escaped-pattern arrays, from **one** call so the pairing cannot be lost between caller and query;
+  `internal/core/api/search/handler.go` consumes it and feeds `search.sql`'s `unnest`.
+  `CascadeRootPaths()` survives for single-space callers and now carries a warning that binding it
+  into a cross-space query *is* this defect. The bullet above is left as written — it was accurate
+  when recorded, and it named P4 because P4 was expected to need it; P4 turned out not to (saved
+  views read `tickets` and `project_items` only, and cascade is constrained to pages), so the need
+  fell to P6. Spec §5 has been corrected to match.
 - **Lesson worth keeping:** a correction is not self-verifying. This one read as more rigorous than
   what it replaced while carrying the same class of bug.
 
@@ -1267,6 +1284,15 @@ Untouched here because it is unrelated to this work and the table belongs to no 
 is actively misleading to an operator setting up a deployment: the one row marked required that
 cannot be satisfied, because the variable it names is read by nothing.
 
+**CLOSED 2026-07-31.** The README's Configuration section has since been rewritten and this entry
+is now stale in both of its particulars. There is no `JWT_SECRET` row in the Core table, and the
+table has no "Required" column at all — its columns are Variable / Default / Description, with
+`DATABASE_URL` the only row marked `— (**required**)`. The section additionally opens with a
+standing correction, "**There is no `JWT_SECRET`.**", citing migration 018 and ADR-0004, and
+reframes `JWT_PRIVATE_KEY_PATH` as a legacy one-time import path. The entry is kept rather than
+deleted — the ledger is a history — but a future pass must not act on it: the README line it
+complains about is already correct, and "fixing" it would be a regression.
+
 # v0.4 — Workflow tiers (ADR-0011, migrations 046 & 047)
 
 ## 1. Discrepancies found and corrected
@@ -1833,3 +1859,690 @@ an editor cannot show a transition without listing transitions, and those routes
 D75 does not — the editor configures rules on edges and never asks which workflow is default — so
 it is left exactly as PR #86 recorded it. A partial unique index would close it and could fail on
 existing data, which is a maintainer's call.
+
+---
+
+# Docs-only reconciliation pass — 2026-07-31 (no migration)
+
+## 0. Scope, method, and how to read this section
+
+A documentation-only sweep of the specification, all ten ADRs, the ADR index, `README.md`,
+`CLAUDE.md`, `shared-surfaces.md`, the non-security parts of `known-issues.md`, and the four
+operational documents, against the tree at `1694eab6`. **No code changed.** Where a drift needs a
+code change it is ledgered here and not fixed.
+
+**Method.** Every claim was checked against a code line before being written down, then
+adversarially re-checked by a second reader whose brief was to refute it. That second pass
+mattered: it corrected 25 of the 62 findings — wrong line numbers, overstated absences, and in
+four cases a wrong disposition. Two examples of the kind of error it caught, because they set the
+standard for the next pass: "the word *webhook* appears nowhere in the repository" is false (a
+vendored Swagger-UI bundle contains 31 occurrences) and a ledger entry saying so would be
+contradicted by a one-line grep; and the claim that ADR-0012 is "the only implemented ADR whose
+status still reads as pending" was wrong — ADR-0009 had the identical defect, so a fix scoped to
+one file would have left the other.
+
+**Dispositions.** Each entry is A, B or C:
+
+| | Meaning | What this pass did |
+|---|---|---|
+| **A** | Stale doc, repo authoritative | Fixed the doc. For an ADR, an appended dated Correction note — never a rewritten decision. |
+| **B** | Repo violates a still-valid documented decision | **Left the doc alone** and ledgered a code follow-up. Editing the decision to match the bug is the one move never available. |
+| **C** | Genuinely open or self-contradictory | Presented both readings with a recommendation. The maintainer chooses. |
+
+**The one thing to read first** is §1. Everything else is bookkeeping by comparison.
+
+**A note on the brief that commissioned this pass.** Two of its seeded items were themselves
+stale, and finding that out is part of the result. It said `CLAUDE.md` §3 still claims eslint is
+not a CI gate and that this correction "never got carried by an earlier PR; carry it here." It had
+been carried: `CLAUDE.md` already said "`npm run lint` **is** a required CI gate as of #82", the
+gate is live in the `Frontend` job, and `known-issues.md` #17 records it closed. The brief was
+written against the **stale primary checkout**, not `origin/main`. It also gave the D-number
+mapping as an open problem; it is not (§6). *Verify, don't assume, applies to the brief too.*
+
+---
+
+## 1. The decision this pass exists to surface — spec §10 versus `CLAUDE.md` §4
+
+### D106 — "Agents perform no git operations" versus the autonomy envelope that has governed every phase — **MAINTAINER DECISION, NOT RESOLVED**
+
+This has been flagged by five separate agents across the wave, and by `CLAUDE.md` §4 itself. It is
+recorded here as a decision the maintainer owes, and deliberately **not** settled.
+
+**What the specification says.** §10 "Non-negotiables", prefaced "These override any instruction
+in a task prompt":
+
+> **Repository.** Agents perform **no git operations** — no commits, pushes, tags, or branch
+> changes. Agents **never create or edit the roadmap**. No agent-name file suffixes. Migration
+> numbering is immutable once shipped.
+
+**What has actually happened.** `CLAUDE.md` §4 sets out an autonomy envelope — "Work on your own
+branch, named for the work. Open your own PR", bounded by "Never push to `main`. Never merge your
+own PR", never force-push a shared branch, never tag. Every phase since P0 has worked that way:
+**52 of the commits on `main` are squash-merged PRs**, and the phase prompts instructed exactly
+this. The envelope has itself been amended once under a maintainer instruction — on 2026-07-28
+during P4 PR-A, to permit `--force-with-lease` on an agent's own unmerged branch, because the
+previous absolute wording made a requested rebase impossible to complete without breaking a stated
+rule. So the envelope is not an informal drift; it is a working agreement that has been
+deliberately maintained.
+
+**Why it cannot be left as it is.** `CLAUDE.md` §4 currently resolves the conflict by conceding —
+"the specification wins and the conflict is flagged rather than reconciled" — and then instructs
+agents to do the thing §10 forbids anyway, noting it in each PR body. That is a stable enough
+workaround to have survived a whole wave, and it is corrosive: it teaches every agent that reads
+these documents that a stated non-negotiable can be knowingly disregarded provided you write a
+sentence about it. §10's authority is the thing being spent.
+
+**Option A — §10 means what it says.** Agents produce diffs; a human performs every git operation.
+Coherent, and the only reading that takes the word "non-negotiable" at face value. It has never
+been practised, and adopting it means rewriting the phase-prompt workflow, the review flow, and
+`CLAUDE.md` §4 in full.
+
+**Option B — narrow §10 to what it was protecting.** The four hazards the blanket wording plainly
+targets are pushes to `main`, tags, self-merges, and history rewriting on shared refs. Narrow the
+sentence in place to something like:
+
+> Agents never push to `main`, never merge their own PR, never create or move tags, and never
+> force-push a shared branch. `--force-with-lease` on an agent's own unmerged feature branch is
+> permitted, so that the linear-history requirement is satisfiable.
+
+**Recommendation: Option B.** It is the envelope that has actually governed the wave and worked; it
+has already been amended once by maintainer instruction, which is evidence the narrow rules are the
+ones anyone actually intends; and it makes §10 satisfiable alongside the linear-history
+requirement, which the blanket wording does not — rebasing onto `main` and updating your branch is
+a "branch change", so the absolute reading forbids the workflow the rest of the document requires.
+Closing it this way would also close **D33**, which reached this same point once already.
+
+**But this is the maintainer's call, and Option A is real.** It is a coherent position with a real
+argument behind it — an agent with commit access is a different risk surface from an agent that
+emits patches — and nothing in this pass is evidence against it. What is not tenable is the third
+state we are in now: a non-negotiable that every phase knowingly breaks with a footnote.
+
+**Until it is ruled on**, the standing practice is unchanged: follow the narrow rules — never
+`main`, never a shared force-push, never self-merge, never tag — and note in each PR body that git
+operations were performed under a standing instruction that conflicts with §10. **This PR does so.**
+
+*Nothing in the specification was edited for this item. §10 is §10.*
+
+---
+
+## 2. Maintainer-owed decisions (disposition C)
+
+### D94 — ADR-0011 names webhooks as the home of "genuine automation"; no first-party webhook surface exists
+
+ADR-0011's Consequences: "Genuine automation belongs at the integration boundary — webhooks and the
+job queue — rather than inside the workflow engine." Neither half is available. **No first-party
+webhook surface exists** — no route, table, config key, handler, test or tracking issue. (Be
+precise: a repo-wide grep *does* hit `internal/core/api/swaggerui/assets/swagger-ui-bundle.js`, a
+vendored third-party bundle implementing OpenAPI 3.1's `webhooks` keyword. Say "no first-party
+surface", or the claim is falsified by one grep. The parity review overstates this at its §4.1 and
+the overstatement should not propagate.) The job queue exists but is closed: two workers, email and
+notification, and the only enqueue paths are callable from Go application code — no administrator,
+workflow or external route reaches it.
+
+**Two readings.** Read normatively, the sentence sits under Consequences, says "belongs at", makes
+no existence claim, and needs only the dated note this pass added. Read as **the mitigation that
+makes the permanent scripting exclusion tenable** — which is how the parity review reads it, and how
+a migrating team with 40 Jira automation rules will read it — it leans on a capability that does not
+exist, and the note should instead reference a tracking issue for the webhook surface.
+**Recommendation:** treat it as the second and open the tracking issue; the exclusion is stronger,
+not weaker, when its stated alternative is real. Either way the exclusion itself is not softened.
+*Dated note added to ADR-0011; the reading is not chosen.*
+
+### D96 — ADR-0012 maps dynamic-content macros onto saved views; the saved-views layer has since excluded Codex
+
+ADR-0012 §4: "Dynamic content macros (content by label, page properties reports) map onto the
+saved-views layer, since they are queries." Nothing shipped, and **the named substrate has since
+ruled itself out.** `internal/core/views/filter.go` defines exactly two queryable modules and the
+validator refuses anything else, stating the exclusion as a decision: "Codex is deliberately absent:
+pages are found through P6 search, which owns the page read path and its cascade share semantics."
+Content-by-label and page-properties reports are *page* queries, so under the shipped design they
+cannot map onto saved views at all.
+
+This is a **live conflict between two accepted decisions**, decided on a cascade-share argument
+ADR-0012 never weighed — not an unbuilt plan. ADR-0009 never considered pages either way (it
+contains no mention of Codex or pages), so `filter.go`'s exclusion is the newer and more specific
+decision. **Recommendation:** record the substrate as reopened — which the amendment added to
+ADR-0012 does — and let whoever picks these macros up choose between search and a new page-query
+layer. *One half needs no adjudication and is ledgered separately: the code comment deferring these
+macros gives its reason as "that is P4", and P4 merged in #79/#81, so the stated reason has expired.*
+
+### D97 — "CI fails on any skip lacking these" — no such check exists
+
+`CLAUDE.md` §2 and specification §2.4 both state that a skip is permitted only with a `SKIP:`
+comment, an issue number and a re-enable condition, and that **CI fails on any skip lacking these**.
+Nothing in CI inspects skips: the Test job runs a plain `go test` and gates only on exit status and
+the coverage floor; there is no grep, no skip-audit script, and no Go test walking the tree.
+**Eleven unmarked `t.Skip` calls pass every gate today.** Most are environment guards, but
+`internal/core/api/harness_wiring_test.go:311` — `t.Skip("portal surface is not mounted in this
+harness")` — is not: no marker, no issue, no re-enable condition, and green. Exactly one skip in the
+tree carries the marker.
+
+**Recommendation: do both halves, in this order.** (1) Correct the claim now — done in `CLAUDE.md`,
+which reads "A skip lacking these is a failing review", because telling an agent a gate will catch
+it is the worst state to leave this in. (2) Open a code follow-up adding the enforcement, in the
+mould of `TestHarness_NoDarkDependencies`: walk the test tree and fail on any `t.Skip`/`t.Skipf`
+lacking the triple. If (2) lands, revert (1).
+
+**Why this is C and not simply B:** an enforcement test must exempt or accommodate the
+environment-guard pattern or it fails on eleven legitimate skips on day one, and designing that
+exemption *is* the decision. **The specification's identical sentence at §2.4 is §2 text and was not
+edited** — per §5, a reconciliation pass does not amend §2.
+
+### D100 — ADR-0004 promises key rotation with a grace window; the schema is a singleton row
+
+The core decision is implemented correctly — RS256, generated once, persisted in the database, never
+regenerated at boot, with the restart test the ADR demands. But `auth_signing_keys` is a hard
+singleton (`id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1)`, migration 018) with four columns and
+no key id, no active/retired flag and no validity window, so two keys cannot coexist and the grace
+window has nowhere to live. The entire query set is read-at-`id = 1` and insert-if-absent; there is
+no UPDATE, no DELETE, no second-key verification path, and no `kid`, `jwks`, `rotate` or `rotation`
+anywhere in `internal/core/auth/`. The documented procedure the Consequences section requires does
+not exist either — a search across `docs/` for "key rotation" or "grace window" matches only
+ADR-0004 itself.
+
+**Why C.** The rationale sentence overstates a benefit (pure A, and a dated Correction note is
+added). The Consequences sentence — "Rotation needs a documented procedure" — is an unmet standing
+obligation, closest to B but awkward there because what is unmet is documentary. The two halves have
+materially different fixes and different owners. **Recommendation:** take the doc correction now
+(done) and route the capability to whoever owns auth and operations, rather than annotating
+operational rotation detail into a public ADR. Note the dependency: the ADR's own restore remedy
+("rotation after restore") is unavailable until the capability exists.
+
+### D104 — the phase→version mapping in §9 no longer matches any tag
+
+§9 heads its phases "P4 — v0.3.3", "P5 — v0.3.4", "P6 — v0.3.5". The tags carrying those numbers
+contain entirely different work: `v0.3.3` is #71 (stabilisation pass), `v0.3.4` is #75 (Codex
+editor), `v0.3.5` is #77 (security and integrity release). **P4 actually shipped as `v0.3.6`.** P5
+and P6 are merged and contained in **no tag at all**.
+
+This is D27's predicted shift, realised at three rather than one. **The headings are left as
+written**, and this pass has no authority to change them: §9's own ⚠ block says "This document does
+not renumber them. Renumbering the roadmap is not a documentation correction, and no reconciliation
+pass has the authority to do it", and `CLAUDE.md` §1 forbids an agent editing the roadmap. What *was*
+added is a factual note recording what the tags contain. **Recommendation:** either retitle the
+headings to their released versions and tag P5 and P6, or declare the phase→version mapping
+abandoned. Either is a one-line decision that unblocks four stale headings. The separate v0.3.2
+collision above it remains open and is untouched — nothing in the tag graph resolves it.
+
+### D118 — §2.8's "No mocks exist, none will be added" (restating D45 with current numbers)
+
+Recounted: **40** Go `type mock*` declarations and **91** `vi.mock(` calls across 51 frontend files,
+against a sentence saying none exist. See the closure note appended to D45 for the counts and their
+verification. The **rule** is being obeyed — every double stubs an interface, none stands in for
+PostgreSQL — and only the factual half is false.
+
+**Two readings.** (a) Keep §2 verbatim and treat the 40 doubles as debt to retire; this preserves the
+sentence and costs real work. (b) Narrow the sentence to the rule it was protecting: "Real PostgreSQL
+only for anything touching persistence. Never mock the database. Interface-level doubles in handler
+and service unit tests are permitted only where a real-database `*_integration_test.go` covers the
+same path." **Recommendation: (b)** — it makes the document true without weakening anything §2.1 was
+written to prevent, and (a) has been notionally available since D45 was written without being taken.
+**§2 was not edited.** A reconciliation pass does not amend §2; this is the maintainer's.
+
+### D121 — README advertises backup and restore, and the deployment it recommends cannot run them
+
+Both commands shell out to the PostgreSQL client binaries; the shipped image is
+`gcr.io/distroless/static:nonroot`, which has neither them nor a shell. The README's claim is
+**literally true on a host with `pg_dump`/`psql` on `PATH`** — which is presumably how it was tested
+— and false for the Docker Compose deployment the same file calls "the fastest way to run Azimuthal".
+The distroless choice is reasoned in a comment in the Dockerfile (multi-arch build time), so this is
+not a sentence someone forgot.
+
+**Recommendation, taken in part:** the doc half is done — README now states the host requirement
+explicitly, and `docs/self-hosting.md` carries a warning block above the whole section. The code half
+is **D105** and is not fixed here. Which way to close it — ship the client tools in an ops image
+variant, or replace the fork with an in-process dump — is the maintainer's.
+
+---
+
+## 3. Code follow-ups (disposition B) — ledgered, not fixed
+
+**None of these was fixed in this PR, and no document was edited to match the defect.** Each names
+what the follow-up must do.
+
+### D93 — condition-class workflow guards are configurable, audited, and never evaluated
+
+ADR-0011 Tier 1 defines a condition as determining whether a transition is **offered**; its v0.4
+amendment requires a guard the build cannot honour to be "refused, never skipped", because "a skipped
+condition would offer a transition an administrator restricted". `TierService.Gate` — the chokepoint
+all four status routes reach — evaluates the validator class only. The single production evaluation
+of `GuardConditionClass` lives in `TierService.AvailableTransitions`, which has **no HTTP route and
+no non-test caller**; the only transition-listing route returns the workflow's edges unfiltered.
+Nothing offers, so the assumption `Gate` relies on is never established. Meanwhile the whole
+configuration path ships: the route accepts `guard_class`, migration 046 CHECKs it, creation is
+audited, and the admin UI renders "hides" beside each one.
+
+An administrator configuring **ADR-0011's own Tier-1 example** as a condition gets a 201, an audit
+row, a badge saying it hides the transition, and no enforcement. Reproduced live in
+`docs/design/parity-review-2026-07.md` §5.1: same guard kind and item, `condition` → 200 and the
+transition proceeds, `validator` → 422.
+
+**The follow-up is two-part, and one part alone is insufficient.** Route `AvailableTransitions` so a
+condition removes the transition from the offer, **and** have `Gate` evaluate conditions too, so a
+transition POSTed directly still refuses — hiding is a UI control any HTTP client bypasses. It must
+state that the gate was verified **both ways**: `tier_service_test.go` calls `AvailableTransitions`
+directly and passes regardless of whether any route reaches it, so a test added there proves nothing
+about reachability. Interim mitigation worth taking early: suppress `condition` in the admin picker,
+so no administrator can save a guard that does nothing.
+
+### D98 — the coverage floor was to rise to 85% at the end of P5; CI still enforces 80%
+
+Specification §2.8 states it, and P5's Definition of Done states it as a **delivery obligation**:
+"Coverage gate raised to 85%." CI enforces 80, and its own comment beside the check still describes
+the raise in the future tense. P5 merged (#88/#89) — its PR title even claims "the 85% floor" — and
+P6 merged after it.
+
+**Neither spec line was edited.** §2.8 is §2 text, and editing 85 down to 80 would be the
+assertion-weakening §2.3 forbids. `CLAUDE.md` §2 now records the floor as 80 with a dated note that
+the raise is overdue and flagged. The follow-up must raise `ci.yml` (the step name, the comparison
+and the failure message) and fix the stale comment — **after** measuring actual coverage with CI's
+own invocation, including `-p 1`, because the tests share one database and an unmeasured flip fails
+every PR. If the measurement lands below 85, this is a coverage PR, not a one-line threshold change,
+and **it must not be closed by lowering the target.**
+
+### D105 — backup cannot run where every document says to run it, and restore reports success on a partial recovery
+
+`azimuthal backup` forks `pg_dump` and `psql`; `azimuthal restore` forks `psql`. The shipped image is
+`gcr.io/distroless/static:nonroot` and the final stage copies in one file, the Go binary — no shell,
+no coreutils, no PostgreSQL client. `docs/self-hosting.md` prescribes
+`docker compose exec app /azimuthal backup` in three places including a nightly cron, and
+`docs/upgrade.md` makes it the mandatory pre-upgrade step. The parity review ran it: it exits 1. **An
+operator following the documentation believes they have nightly backups and has none.**
+
+A second failure compounds it and is the more dangerous of the two, because it only manifests on the
+day someone is recovering from an incident: `restore` runs `psql` without `-v ON_ERROR_STOP=1` and
+discards stdout, so a dump whose statements failed still exits 0 and prints "Database restored."
+**Fixing the first without the second produces backups that restore wrongly and say they worked.**
+
+A third, independent: `backup.go` and `restore.go` pass `STORAGE_ENDPOINT` to `minio.New`
+unmodified, while the serve path strips the `http(s)://` scheme first — and the shipped compose file
+sets a scheme-ful value. The serve path was specifically taught to normalise this; the backup path
+was not.
+
+**Follow-up:** decide between an ops image variant carrying the PostgreSQL 16 client and an
+in-process dump; add `-v ON_ERROR_STOP=1` and stop discarding psql's output; normalise
+`STORAGE_ENDPOINT` in both commands. **Documentation half is done** — a warning block now sits above
+the whole section, and `docs/upgrade.md`'s rollback no longer routes through the app container. Do
+not close this by deleting the backup documentation.
+
+### D140 — "`AZIMUTHAL_INVITE_DELIVERY=email` requires `SMTP_FROM`; startup fails otherwise" — the SMTP_FROM half can never fire
+
+`docs/self-hosting.md`, `.env.example` and `README.md` all state it. The `SMTP_HOST` half is enforced
+and works — it deliberately uses a raw `os.Getenv` **precisely so a default cannot satisfy it**, with
+a comment explaining that a config field carrying a default "is never empty and could not
+distinguish" the two cases. The `SMTP_FROM` half then fell into that exact trap two lines later:
+`SMTP_FROM` carries a viper default of `azimuthal@localhost`, viper runs without `AllowEmptyEnv`, so
+an unset *or* empty value resolves to the default and the `if smtpFrom == ""` branch is unreachable.
+Startup never fails for a missing `SMTP_FROM`; delivery proceeds with envelope sender
+`azimuthal@localhost`, which most real relays reject. No test exercises the branch.
+
+**The docs are right and were not edited.** The follow-up must make the requirement real for both
+delivery modes — read it with a raw `os.Getenv` as `SMTP_HOST` already does, or drop the `SetDefault`
+so the field can be empty — and add a config test that sets the delivery mode plus `SMTP_HOST` and
+asserts `Load()` fails. **Mutation-test it:** with the guard removed the test must fail, or it is
+asserting nothing.
+
+### D147 — the shipped migration assessor tells a migrating team their Jira links are unmappable
+
+`internal/assess/jira_assess.go` classes Jira issue links `VerdictUnmappable` with the reason
+"Azimuthal models a parent/child hierarchy on `project_items` but has no typed link graph, so
+blocks/relates-to/duplicates links have nowhere to go", rendered to the user in
+`testdata/report.golden.md`. The second clause is false, and the verdict follows from it:
+`entity_relations` is a polymorphic typed link graph whose kind CHECK names `blocks`,
+`is_blocked_by`, `duplicates` and `relates_to` **literally** — the exact families the sentence says
+have nowhere to go (see D92). Since the ledger defines `VerdictClean` as "a direct representation in
+Azimuthal's model" and `Unmappable` as "would not survive the import at all", those four kinds are
+Clean, and **the report currently tells a migrating team to write off data the target schema holds
+natively.**
+
+One correction to how this is usually stated, because the ledger should be precise: the *first*
+clause is **not** backwards. `project_items.parent_id` is a real self-referencing column carried on
+`CreateProjectItemParams` and written by the adapter, and the assessor judges the **model**, not the
+HTTP API — its own report already reasons about "an importer writing straight to the repository".
+What is true of the hierarchy is narrower: it is unreachable through the API and invisible in the UI,
+not absent from the model.
+
+**Follow-up:** rewrite the reason string so it neither denies the typed link graph nor offers the
+hierarchy as the thing that works; reclassify the four mapped kinds as **Clean** (not "Approximated
+pending an importer" — there is no importer to name, and the assessor is read-only by construction);
+regenerate the golden report; and add a test that fails if the links class is `Unmappable` while
+`entity_relations` still declares those kinds. Ledgered rather than fixed because this pass is
+docs-only and the string is Go code — but it feeds the migration tool, so it is the highest-value
+item on this list for anyone actually evaluating Azimuthal.
+
+### Code-side companions to A-class doc fixes
+
+Small, and each is the in-code twin of a document corrected above.
+
+- **D92-code** — two code comments repeat "no link table exists":
+  `internal/core/workflow/postfunction.go` and `migrations/046_workflow_transition_guards.sql`. 046
+  is shipped, so the widening migration that eventually lands the deferred post-function should carry
+  the correction rather than editing it in place.
+- **D96-code** — the Codex macro module defers dynamic-content macros because saved views are "P4".
+  P4 merged in #79/#81; the live reason is that saved views do not query pages.
+- **D132-code** — the doc comment above `guardClasses` in `route_accounting_test.go` enumerates ten
+  guard classes and omits `org-read` and `portal-session`, exactly as the catalogue did. It is very
+  likely where the catalogue was copied from, and it is the more load-bearing of the two because it
+  sits next to the map it describes.
+- **D134-code** — the JSDoc above `friendlyErrorMessage` in `web/src/lib/api.ts` names three
+  pass-through error codes; the array on the line below it holds four.
+- **D119-code** — `internal/core/auth/doc.go` states "SSO/SAML authentication is available in
+  `internal/core/sso`", and `internal/core/sso/provider.go` asserts "SSO is a standard feature
+  available to all Azimuthal users" directly above the no-op that returns `ErrNotConfigured`. Both
+  restate the README claim corrected below, and would reintroduce the belief.
+
+---
+
+## 4. Documentation corrected in this PR (disposition A)
+
+Grouped by file. Each was verified against a code line and re-verified adversarially.
+
+### The specification
+
+- **D107 — the §4 migration table was stale for the SIXTH time.** The preamble said "The shipped
+  sequence ends at `028`. The repository holds 28 migrations, `001`–`028`, with no gaps." The tree
+  holds **47** migrations, the highest is **050**, and there *are* gaps. Two shipped migrations, 049
+  and 050, had no row at all, and 049 was still listed as "unassigned". D76 corrected the table
+  *body* in P5 and left the prose around it untouched, which is how the preamble survived saying 028
+  while the rows beneath it listed 048 as shipped. **Also corrected: the "next free number" line said
+  `037`; it is `051`.** And the paragraph declaring 041/042/043 "free" is now a warning: the
+  *existing* gap is harmless, but **taking one of those numbers is not** — goose refuses a migration
+  numbered below the current version and `migrate.go` runs at **boot**, so a new 041 landing after
+  050 stops the server on every deployment with history, and no CI job can catch it because every CI
+  database is built fresh. That is D73 and D81, reached independently by two phases in one week, and
+  the sentence inviting it was still there.
+- **D108 — §5 said no shipped endpoint binds a readable set as a query parameter.** It is bound in
+  five query files today, and `search.sql` carries the full designed shape including the paired
+  `unnest` with the per-root pin. The section contradicted itself: a passage further down already
+  acknowledged P4's shipped fan-outs.
+- **D109 — §5 said the `(space_id, pattern)` accessor "P6 must build first" does not exist.** P6
+  built it; see the closure note on D46.
+- **D110 — §6 documented the search endpoint with `modules=`, `team_id=` and `space_id=` and a
+  scoped/global split.** The endpoint reads `q`, `cursor`, `limit` and `snippet`. There is no
+  scoped/global split at this route and nothing to widen; `modules` is an **output** on the response
+  envelope, never an input; and no result carries a team. Module narrowing exists as an in-query
+  operator, not a parameter.
+- **D111 — §7's published `GadgetDefinition` had four wrong members and two missing.**
+  `configSchema: JSONSchema7` does not exist; the shipped member is `configKeys`, a closed enumerated
+  vocabulary. `icon` is a `LucideIcon`. `description` and `Body` are required and were absent. The
+  one rule §7 attaches to the interface — no switch over gadget key in the render path — is honoured
+  and was left verbatim.
+- **D112 — §7's route tree listed two space-scoped routes that were never built.** Views and
+  dashboards are **org-scoped**, and correctly so: a saved view spans spaces by design, so nesting it
+  under a space id would misstate its scope. `ShareBadge.tsx` was also listed under `web/src/shell/`;
+  it is in `web/src/components/`.
+- **D113 — §9's P4 DoD said unknown query fields return 400.** They return **422**
+  `VALIDATION_ERROR`, pinned by an integration test — and §4 of the same document already said so.
+- **D114 — §4 presented the saved-view filter document as v1.** The build writes **v2**: four
+  half-open date ranges and a per-field `Not`. v1 remains valid and round-trips byte-identically.
+  Carried into the spec because it is the stated mapping target for the anticipated importer: **the
+  relative month unit is `mo`, never `m`** — JQL's `m` means minutes, and a shared spelling would let
+  an importer mistranslate by three orders of magnitude.
+- **D115 — §9's tag table stopped at v0.3.2 and asserted "P3 is not contained in any tag".** Six
+  v0.3.x tags exist; P3 is in four of them. `git describe` reads nineteen commits past the newest
+  tag, not four.
+- **D116 / D117 — the search and dashboard migration numbers.** §4's heading, §9's P5 and P6 entries,
+  and Appendix B's decision C4 all still called them unassigned. They shipped as **048** and **049**.
+
+### `README.md`
+
+- **D119 — the Features list advertised SSO and email ingestion.** `internal/core/sso` is an
+  interface plus a no-op returning `ErrNotConfigured`, not imported by `main.go` or the router. The
+  email parser and `CreateFromEmail` exist and are tested but have **zero non-test callers** — no
+  IMAP client, no POP client, no inbound webhook, no poller. Both moved to a clearly-labelled **"Not
+  yet shipped"** section rather than deleted, so the intent survives and the claim does not.
+- **D120 — "Go 1.23+".** `go.mod` requires **1.26.0**; CI and the release image use 1.26.5.
+- **D122 — the README said Compose defaults `SMTP_PORT` to 25.** Compose forwards it **bare**, and
+  its own comment records that `${SMTP_PORT:-25}` was *removed* precisely because it diverged from
+  the binary's 1025 — it is the worked example for why every setting is now forwarded bare. The
+  parenthetical also pointed at `docs/self-hosting.md`, which says 1025. Deleted, not renumbered.
+- **D123 — "Project Structure" listed 9 of 26 `internal/core` packages** and omitted four top-level
+  directories, including `access`, `teams`, `spaces`, `workflow`, `search`, `portal`, `views` and
+  `dashboards`. Regenerated. `notifications` and `analytics` are deliberately **not** added — the
+  first has zero importers repo-wide (the wired package is `internal/core/api/notifications`), the
+  second is imported only by its own test.
+- **D124 — the CLI list omitted `bundle-hash`**, which is the preflight the E2E suite runs.
+- **D125 — "full CRUD" for six resources.** Labels have no update endpoint and sprints no delete.
+  Softened; adding the endpoints is a product call and was deliberately not bundled into a docs pass.
+
+### `CLAUDE.md`
+
+- **D126 — §2 described `NewTestDB` as a per-test *schema* with migrations applied per call.** It
+  clones a per-test **database** from a pre-migrated template whose name embeds a SHA-256 fingerprint
+  of the migration set. Migrations run **once**. Both halves mattered: the `Schema` field survives
+  only to feed a `search_path`, and a reader who believes in per-schema isolation reasons wrongly
+  about migration cost too. CI's own comment already said so.
+- **D127 — two drifted counts in §3.** `webServer.env` has nine entries, not seven — the count is now
+  **dropped** rather than incremented, since the argument does not depend on it. And
+  `playwright.config.ts` reads `E2E_PORT` in **four** places, not three; the missing fourth is
+  `APP_BASE_URL`, and it is not cosmetic — without it a captured portal magic link points at 8080,
+  and a real dev server answering there makes the test pass for the wrong reason.
+- **D128 — "`make verify-api` needs `.env.test`" without saying the target does not load it.** Unlike
+  the six other database-touching targets, `verify-api` has no `export $(ENV_TEST_VARS)`. With
+  nothing exported the script falls back to the **dev** database on `:5432` — so if a dev stack is up
+  it passes against the wrong database instead of failing. The corrected text gives the export line.
+- **D129 — the retained superseded eslint paragraph said "46 errors", in the present tense.** The
+  repo records **48** in two places, one of which explicitly corrects 46 to 48. Fixed, and the whole
+  block moved to past tense so a skim cannot read it as current. Also: §3's verification battery
+  listed two frontend gates; there are three.
+
+### The ADRs (dated Correction notes; no decision rewritten)
+
+- **D92 — ADR-0011's "no link table exists" is false and inverted.** Full evidence in D147 above. A
+  polymorphic typed link table has existed since migration 004, is polymorphic since 015, and is live
+  end to end through a service, three routes, three hooks and a Relations panel. Conversely
+  `project_items.parent_id` — the thing the ADR offers as what *does* exist — is absent from both
+  request structs, has no reparent route, and is null on every item the application creates. **The
+  deferral may stand; the stated reason must not.** Discovered in the parity review and never carried
+  into this ledger until now.
+- **D95 — ADR-0012 §4 promised a Jira-issue/item embed and "Codex↔Vector embedding".** Eight macros
+  shipped; the item embed did not, and no such node exists. The absence is deliberate and reasoned in
+  code — a cross-space route-shape question ADR-0010 governs — but the reason lived only in code. The
+  zero-silent-data-loss guarantee is still met: an imported Jira macro is preserved as
+  `unknownContent`, this ADR's own designed fallback.
+- **D99 — ADR-0008 rule 10 asserts a nightly sweeper.** None exists, and the repo decided against
+  one: revoke-on-delete and revoke-on-move run in the mutation's transaction, shares are never
+  hard-deleted, and expiry is evaluated in the resolution query, so there is no orphan class to
+  collect. Two things make it unarguable — **rule 8, five lines above, already says expiry denies
+  "without waiting for a sweeper"**, and there is a passing test named
+  `TestShare14_ExpiredDeniesWithoutSweeper`. The rule itself is honoured in full.
+- **D101 — ADR-0003 justifies the table split partly on SLA clocks and first-response/resolution
+  timers.** None exists — no table, timer, target, calendar, pause or breach column, and no queue
+  ordering by breach risk. Every *other* attribute in both lifecycle lists is real. The decision is
+  untouched and is being honoured; the rationale is corrected so it stops being cited as evidence
+  that SLA machinery exists, which the parity review already records a reader doing.
+- **D102 — ADR-0007's capability table omits `set_visibility`,** the thirteenth capability and the
+  only org-level one. No space role holds it; it is granted only by the org-admin bypass, and because
+  there is no space to check at creation time it is asked through `CanOrgWide`, not `Can`.
+  Structurally distinct enough to carry its own map and a build-time exhaustive-partition test. This
+  ADR is the **only** human-authored statement of the capability model — spec §3 is now a pointer —
+  so the omission left it documented nowhere but the generated OpenAPI.
+- **D103 — ADR-0012 §5 requires a fidelity report from every import; there is no importer.** `cmd/`
+  holds `migrate` and `server`. `internal/assess` is a read-only assessor with a test keeping it
+  unable to reach a database. The consequence worth stating: **the three preservation carriers have
+  no producer** — correct, tested, drift-guarded in both directions, and never reached by real
+  imported content. The migration story today is assessment, not migration.
+- **D130 — three stale status lines.** ADR-0009 still said "implementation planned for P4 and P5"
+  after both shipped; ADR-0010 still said views, dashboards and search were "planned for P4–P6" after
+  all three shipped (the sentence spans two lines — an edit anchored on the first leaves the false
+  half); and the ADR index still recorded ADR-0011 as "implementation deferred to v0.4", contradicting
+  the file it indexes, which had already been amended. A note was added to the index recording that
+  the Status column abbreviates each ADR's own line and that the ADR wins.
+- **D131 — ADR-0012's Decision section was rewritten on 2026-07-27 and the document recorded
+  nothing.** §1 went from one carrier to three, §3 was extended to marks, and the round-trip
+  consequence was tightened — a decision-level change, authorised, and invisible to any reader of the
+  file. Meanwhile a code comment already cited "the S1 amendment" as established fact. The amendment
+  block and the `Amended:` header field are added now, several days late. This is the precise failure
+  the ADR directory's own preamble exists to prevent.
+
+### `shared-surfaces.md`
+
+- **D132 — the guard-class table listed ten classes; the vocabulary the sweep enforces has twelve.**
+  `org-read` appeared only in later prose, and `portal-session` was absent from the entire document —
+  not just the table — although it guards the customer-portal requester surface and its own code
+  comment calls it "the only route family reachable from the public internet by someone with no
+  account".
+- **D133 — the description of `TestReadPathSweep_GuardClassMatchesMiddleware` understated it and
+  mis-stated it.** It now checks **three** classes, not two, and not uniformly: `org-admin-404` and
+  `portal-session` are bidirectional, `org-admin` is **one-directional** — nothing catches a chain
+  carrying `RequireOrgAdmin` under a weaker claim. Neither of the two **prefix rules** was documented
+  here at all, though they are the stronger guarantee: a route added under the admin or portal
+  subtrees fails on its chain even if its row is honest. `deliberatePublicPortalRoutes` is
+  deliberately empty — a new public portal route belongs outside `/my/`, not inside it with an
+  exemption. `public` and `user-scoped` were also missing from the list of unverified classes.
+- **D134 — §2 named three pass-through error codes; `friendlyErrorMessage` honours four.**
+  `INVALID_TRANSITION` is genuinely on the wire from two handlers with a 409 — the opposite of the
+  `GONE` case this document already annotates as inert.
+- **Checked and found accurate:** the route-accounting row count. It says **217** and the map holds
+  217 (218 method-keyed strings in the file, one of which belongs to `deliberateNonAdminRoutes`).
+  This figure has drifted four times — D59, D64, D83 — and did **not** drift this time. Recorded
+  because a "checked and correct" is worth as much to the next pass as a correction.
+
+### `known-issues.md` (non-security entries only)
+
+- **D135 — §14 described a label admin UI that does not exist**, and was therefore stale in the
+  **worse** direction: the real gap is larger than recorded. There is no label admin page anywhere,
+  the route renders a "coming soon" empty state, and both client functions are orphans. Anyone
+  scoping the fix from the old wording would have budgeted a join-table migration and missed that the
+  whole creation surface must be built too. The Proper fix now names both halves, and the
+  verification bound moved from "migrations 001-028" to 001-050 (the claim survives the widening).
+- **D136 / D137 — two citations pointing ninety and seventeen lines off.** §21 cited
+  `comments/handler.go:264` for the un-orged `comment.created` event; it is at `:354`. §30 cited
+  `projects/item.go:114` for the hardcoded status; it is at `:131`. Both substantive findings were
+  re-derived independently and both still hold — §21's "exactly two un-orged audit events" claim was
+  re-run across all 34 non-test `audit.Event{}` literals and confirmed.
+
+### The operational documents
+
+- **D138 — `upgrade.md`'s rollback led with `psql … < backup-pre-upgrade.sql`,** a file no backup
+  step has ever produced: `azimuthal backup` only writes a gzip-compressed tar, and the SQL dump is a
+  member *inside* it. It failed with "No such file or directory" at the worst possible moment,
+  mid-rollback. Replaced with a `tar -xzO … | docker compose exec -T db psql` form, which works
+  because the `db` service is `postgres:16-alpine` and does carry `psql` — and which therefore
+  survives D105 rather than depending on it.
+- **D139 — `JWT_PRIVATE_KEY_PATH` was absent from the self-hosting environment reference.** It is the
+  only one of `.env.example`'s 24 variables missing from the file `.env.example` itself calls "the
+  full reference". Added adjacent to the "there is no signing secret" callout so the two are not read
+  as contradictory.
+- **D141 — three troubleshooting steps run utilities the image does not contain.** Two run `env` and
+  one runs `ls`, inside a distroless image with neither. (`grep` is fine — it runs host-side on the
+  far end of the pipe.) The `ls /web/dist/` check is doubly wrong: the frontend is compiled *into* the
+  binary by `//go:embed`, so that path never exists in the image and the check would report a false
+  negative even with `ls` present. Replaced with `azimuthal bundle-hash`, which the repository already
+  ships for exactly this, and host-side `docker inspect` for the env checks.
+- **D142 — documented commands reach Postgres and MinIO on `localhost` ports the bundled Compose file
+  does not publish.** Only `app` declares a `ports:` mapping; `db` and `storage` are reachable only on
+  the Compose network. Both host-side commands fail with connection refused on a stock deployment.
+  (The dev and test overlays do publish ports — they are not the file this guide deploys.)
+- **D143 — the gosec annotation census read 8 `#nosec` / 36 total; it is 11 / 39.** Notable for *how*
+  it was wrong: this was a **miscount at authoring time**, not later drift. The census paragraph was
+  written in PR #97, the three unaccounted-for directives arrived in PR #96 — an ancestor — so they
+  were already in the tree on the day a paragraph whose next line corrects two other counts was
+  written. All 39 were re-checked against the policy and all still comply. **A hand-maintained count
+  that has now been wrong twice should be a test.**
+- **D144 — "production paths in `cmd/server/` use `#nosec`, test helpers use `//nolint:gosec`" is not
+  the split in the tree.** Five annotations contradict it in both directions, one of them a test
+  helper whose reason reads "Same idiom and same rule as `cmd/server/backup.go`" — a test file citing
+  a production annotation as its model, the exact inverse of the advice. The real rule is the one the
+  document states correctly two paragraphs earlier: write whichever directive the failing tool reads.
+  This one matters more than the census: it is the sentence that tells a contributor which directive
+  to write.
+- **D145 — `local-dev-requirements.md` set a swag minimum CI's own pin does not satisfy.** It said
+  "Minimum version: v2.0.0"; CI pins `v2.0.0-rc5`, and under semver a prerelease precedes its release.
+  A contributor who checks their version against the stated floor reads it correctly and concludes
+  they are below it. Worse, `make docs-check` byte-diffs regenerated output, so a different generator
+  fails the gate with an error naming the spec, not the toolchain. Changed from a minimum to an exact
+  pin.
+- **D146 — the same file claims to list "all tools required for local development" and omits the Go
+  toolchain entirely** — the tool every entry in its own Go Tools section is installed through. Node,
+  the less constrained of the two, gets an explicit minimum. Added, with the failure mode stated
+  precisely: it is *quiet*, because `go.mod` carries no `toolchain` directive and nothing sets
+  `GOTOOLCHAIN`, so an older Go silently downloads 1.26.0 rather than erroring.
+
+---
+
+## 5. Claims checked and found accurate — recorded so the next pass does not re-litigate them
+
+A drift is sometimes the document being right. These were checked against code and **needed no
+change**:
+
+- **`CLAUDE.md` on the eslint gate.** The brief that commissioned this pass said the correction was
+  owed; it had already landed. `npm run lint` **is** a required CI gate, there is no baseline file,
+  exemptions are per-filename scoped overrides in `web/eslint.config.js` with counts and reasons in
+  their headers, and `known-issues.md` #17 records the gate closed. Only the retained superseded
+  paragraph's "46" was stale (D129).
+- **`shared-surfaces.md`'s route-accounting row count** — 217, and the map holds 217. Four prior
+  passes had to correct this number; this one did not.
+- **ADR-0011's Tier-1 guard vocabulary** — exactly the four kinds the amendment names, matched by
+  `guard.go` and migration 046's CHECK, with the `actor_has_capability` subset matching the four
+  capability constants verbatim.
+- **ADR-0011's Tier-2 and Tier-3 amendments** — approvers are user or team with role genuinely absent
+  rather than approximated; `set_field` ships over `due_at` and `labels` only; `assign_to` ships; team
+  assignment is genuinely not representable (`assignee_id REFERENCES users(id)` on both tables);
+  post-functions run inside the status transaction; an unperformable action aborts rather than being
+  skipped. Every row checked.
+- **ADR-0011's "no resolution field" claim** — correct; only `resolved_at`, a timestamp, exists.
+- **ADR-0012's three preservation carriers** — all three exist and are drift-guarded in both
+  directions. The best-engineered thing in the repository, and it holds up.
+- **ADR-0009's four degradation rules** — all four implemented, server-computed and rendered, and the
+  no-switch-over-gadget-key rule is honoured as a map read.
+- **ADR-0008's rule 10 first sentence, rule 8, and rule 11** — revoke-on-delete and revoke-on-move run
+  in the mutation's transaction, and expiry is evaluated per request.
+- **`README.md`'s configuration section** — no `JWT_SECRET`, `DATABASE_URL` the only required
+  variable, `LOG_LEVEL` live and refused at startup if unrecognised. D70 is closed.
+- **`known-issues.md` §21's "exactly two un-orged audit events"** — re-derived across all 34 non-test
+  `audit.Event{}` literals; still exactly two.
+- **`known-issues.md` §30's load-bearing correction** — `CreateProjectItem` does name `status` in its
+  INSERT column list, so migration 014's `DEFAULT 'open'` is never evaluated and changing the column
+  default would fix nothing. Only the line citation was stale.
+- **`docs/security-scanning.md`'s qualitative claims** — zero accepted-risk suppressions, every
+  annotation naming a rule and a reason, no tracking issues or expiries needed under the policy, and
+  `nolintlint` enabled without `require-explanation`. Only the counts and the split were wrong.
+
+---
+
+## 6. D-number reconciliation — the ledger numbering is canonical
+
+The brief for this pass recorded that the workflow phase's brief used D-numbers running **seven
+behind** this ledger (its D65 = D72, D67 = D74, D68 = D75), and asked for the two to be reconciled or
+the mapping documented once, authoritatively. **This is that record, and the finding is that there is
+nothing in the repository to fix.**
+
+- **This ledger is canonical.** Its numbering is dense and unique from D1 through D91, and this
+  section continues at **D92**.
+- **Every in-repository cross-reference already uses it correctly.** `known-issues.md` §30 cites D72
+  for the ungated first transition; the spec cites D77, D78 and D81 in its migration discussion;
+  D85's own text cites D72; the workflow section cites D71, D74 and D75. Each resolves to the right
+  entry. There is no in-repo reference using the offset numbering.
+- **The offset existed only in an out-of-repo phase brief.** Phase prompts are not checked in, so
+  there is no artefact here to correct — only a hazard to name.
+
+**The rule to carry, since the underlying hazard is real:** a phase brief that assigns D-numbers is
+guessing, exactly as a pre-assigned migration number is (D73, D81). **Read the tail of this file when
+you write an entry, not the number your brief gave you.** If a brief and this ledger disagree, this
+ledger wins and the brief's numbers are noise.
+
+**Next free D-number: D148.** (D92–D147 are taken by this section, including the `-code` suffixed
+companions in §3, which are deliberately suffixed rather than separately numbered because each is the
+in-code twin of a numbered documentation entry.)
+
+---
+
+## 7. What this pass deliberately did not touch
+
+- **Specification §2 and §10.** Non-negotiable text. Three findings land on them — D97 (skip
+  enforcement), D118 (no mocks), D98 (the coverage floor) — and all three are recorded rather than
+  edited. D106 is the whole of §1.
+- **The roadmap.** The phase→version headings in §9 are stale and were left stale (D104). `CLAUDE.md`
+  §1 forbids an agent editing the roadmap, and §9's own text forbids renumbering in a reconciliation
+  pass.
+- **`known-issues.md`'s security entries.** Owned by the concurrent write-authorization track. Not
+  read for drift, not edited.
+- **Any ADR decision.** Every ADR change in this PR is either a status line, an appended dated
+  Correction note, or an amendment block recording a change that had already been made and not
+  written down. No Decision section was rewritten.
+- **Any code.** Ten findings need a code change — five substantive (D93, D98, D105, D140, D147) and
+  five in-code companions to documents corrected here (D92-code, D96-code, D119-code, D132-code,
+  D134-code). All ten are in §3 with the evidence a follow-up needs, and none was fixed here. Two
+  further code items are recommended under §2 rather than ledgered as defects, because building each
+  one *is* the decision: the skip-enforcement test (D97) and multi-key rotation (D100).

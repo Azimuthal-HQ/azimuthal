@@ -1,7 +1,11 @@
 # ADR-0010 — Cross-space route family
 
-**Status:** Accepted — teams, grants and shares route families implemented in P2 and P3;
-views, dashboards and search route families planned for P4–P6.
+**Status:** Accepted — teams, grants and shares route families implemented in P2 and P3; views
+(P4), dashboards (P5) and search (P6) implemented. Every family in the block below is mounted in
+`internal/core/api/router.go` inside the `/orgs/{orgID}` subtree and accounted for by name in
+`internal/core/api/route_accounting_test.go`. *(Status corrected 2026-07-31: the second clause
+still read "planned for P4–P6" after all three had shipped. Only this line changed; the extracted
+body is unchanged.)*
 **Origin:** Written as part of `docs/design/v0.3-ia-spec.md` §3; extracted verbatim into this
 file in the post-P3 documentation pass. The text below is unchanged.
 

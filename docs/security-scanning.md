@@ -367,11 +367,23 @@ Never suppress a whole file or package, in either class — suppress the narrowe
 thing that works. An annotation with no justification at all is rejected in
 review regardless of class.
 
-> **What is in the tree: 36 gosec-facing annotations, all of them
-> rule-inapplicable, and zero accepted-risk suppressions.** 8 `#nosec` and 28
-> `//nolint:gosec`, plus one prose reference to `#nosec` that is not an
-> annotation. None carries a tracking issue or an expiry date, and under the
-> policy above none needs one.
+> **What is in the tree: 39 gosec-facing annotations, all of them
+> rule-inapplicable, and zero accepted-risk suppressions.** 11 `#nosec` and 28
+> `//nolint:gosec`, plus **two** prose references to `#nosec` that are not
+> annotations (`internal/assess/archive/archive.go` and
+> `internal/core/api/projects/handler.go`). None carries a tracking issue or an
+> expiry date, and under the policy above none needs one.
+>
+> *Recounted 2026-07-31. The `#nosec` figure read 8 and the total 36; the real
+> figures are 11 and 39, the three unaccounted-for directives all being in
+> `internal/repohygiene/gitignore_test.go`. This was a **miscount at authoring
+> time**, not later drift: the census paragraph was written in PR #97 and
+> `gitignore_test.go` was added in PR #96, an ancestor of it — so the three
+> directives were already in the tree on the day a paragraph whose next line
+> corrects two other counts was written. Every one of the 39 was re-checked: all
+> name a rule and give a reason, none carries an issue or expiry, none is an
+> accepted-risk suppression. **A count maintained by hand has now been wrong
+> twice; replace it with a test.***
 >
 > This corrects two counts previously recorded here: it is 28 `//nolint:gosec`,
 > not 27, and the claim that *every* one carried a reason was wrong — two were
@@ -409,10 +421,21 @@ need depends on which tool is reporting:
 - **`//nolint:gosec // <reason>`** is golangci-lint's directive. `.golangci.yml`
   enables `gosec` as one of its linters, so this is what silences `make lint`.
 
-Both carry a mandatory reason. Write the one the failing tool reads — this
-repository does not double up, and the existing annotations show the split
-clearly: production paths in `cmd/server/` use `#nosec` with the rule ID and a
-reason, while test helpers use `//nolint:gosec` naming the rule in the comment.
+Both carry a mandatory reason. **Write the one the failing tool reads** — this
+repository does not double up. Which one you need depends on whether the
+standalone `gosec` binary (the `sast` job) or `golangci-lint` reported the
+finding, **not on where the line lives**.
+
+*Corrected 2026-07-31. This said the annotations "show the split clearly:
+production paths in `cmd/server/` use `#nosec` … while test helpers use
+`//nolint:gosec`". Five annotations contradict that in both directions.
+`internal/core/email/sender.go` and `internal/db/adapters/audit_reader.go` are
+production, outside `cmd/server/`, and use `#nosec`; `internal/repohygiene/gitignore_test.go`
+uses `#nosec` three times in test helpers, one of them with the reason "Same
+idiom and same rule as cmd/server/backup.go" — a test file citing a production
+annotation as its model, the exact inverse of the advice. There is no
+location-based rule, and generalising from an incomplete sample was misdirecting
+contributors.*
 
 **The required format**, in both cases, names the rule and says why the pattern
 is not exploitable *here* — not what the rule is:
