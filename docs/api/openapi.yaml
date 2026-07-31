@@ -1177,6 +1177,12 @@ components:
           type: boolean
         kind:
           type: string
+        redacted:
+          description: |-
+            Redacted marks a row whose entity the caller may no longer read. The row
+            survives so the unread count and mark-read keep working; what it named
+            does not.
+          type: boolean
         title:
           type: string
       type: object
