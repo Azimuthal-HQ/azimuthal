@@ -143,6 +143,10 @@ jobs:
     # depend on build and always runs.
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
+    outputs:
+      # The digest of the frontend embedded in the uploaded binary. e2e checks
+      # what it downloaded against this — see the preflight in that job.
+      bundle_hash: ${{ steps.bundle.outputs.hash }}
     steps:
       - uses: actions/checkout@v4
 
@@ -199,6 +203,88 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      # ── H2. The binary embeds the frontend that was just built ────────────
+      #
+      # go:embed reads web/dist at COMPILE time. Nothing downstream can tell a
+      # binary carrying the current bundle from one carrying last week's — it
+      # boots, serves, and answers /health identically. Both times that has gone
+      # wrong here it presented as unrelated E2E failures: once a binary
+      # compiled before `npm run build`, once a bundle left over across a
+      # rebase, the second costing eight phantom failures.
+      #
+      # This is the step that makes the artifact trustworthy: web/dist was
+      # built above from this checkout, the binary was compiled from it, and
+      # this proves the two agree. Every downstream job consumes that artifact,
+      # so proving it once here covers e2e, docker-e2e and container-scan.
+      #
+      # Costs about 40ms — it hashes 65 files. Both sides go through the same
+      # code (`bundle-hash` walks the embedded FS and the directory with one
+      # function), so there is no second implementation to disagree about sort
+      # order or path separators and produce a false alarm.
+      - name: The binary embeds the frontend just built
+        id: bundle
+        run: |
+          ./${{ env.BINARY_NAME }} bundle-hash --verify web/dist
+          echo "hash=$(./${{ env.BINARY_NAME }} bundle-hash)" >> "$GITHUB_OUTPUT"
+          echo "✅ embedded bundle matches web/dist"
+
+      # ── H1. The build left the tree exactly as it found it ────────────────
+      #
+      # Two questions, because they fail differently and `git status` can only
+      # see one of them.
+      #
+      # 1. Did the build write something into the tree that is not ignored?
+      #    That is generated-file drift, or a new build output nobody added to
+      #    .gitignore.
+      #
+      # 2. Is anything tracked that .gitignore ALSO matches? git says nothing
+      #    about this: once a file is committed the ignore rule is inert, git
+      #    keeps tracking it, and `git status` stays clean forever. That is
+      #    exactly how 4,431 golangci-lint cache files rode a green commit into
+      #    this repository past fifteen passing jobs — nothing was dirty,
+      #    because they were already tracked.
+      #
+      # This lives in `build` and nowhere else, and that is not arbitrary:
+      # every other job writes unignored files as a matter of course —
+      # test-output.txt, four SARIF reports, .gosec-bin/, .govulncheck-bin/,
+      # .gitleaks-bin/, .swag-bin/ — so the same step there would be
+      # permanently red. `build` writes only web/dist (ignored by
+      # web/.gitignore) and the binary (ignored by /azimuthal); `go mod
+      # download` and `go mod verify` leave the tree untouched.
+      #
+      # Note it does NOT run `go mod tidy`. The `lint` job does, and that does
+      # dirty go.mod today — a real but separate defect, recorded in
+      # docs/known-issues.md rather than fixed here.
+      - name: The build left the tree clean
+        run: |
+          FAILED=0
+
+          DIRTY=$(git status --porcelain)
+          if [ -n "$DIRTY" ]; then
+            echo "❌ the build created or modified files that are not ignored:"
+            echo "$DIRTY"
+            echo ""
+            echo "Either the file is a build output that belongs in .gitignore,"
+            echo "or it is generated and committed and needs regenerating."
+            FAILED=1
+          fi
+
+          TRACKED_BUT_IGNORED=$(git ls-files --ignored --cached --exclude-standard)
+          if [ -n "$TRACKED_BUT_IGNORED" ]; then
+            COUNT=$(printf '%s\n' "$TRACKED_BUT_IGNORED" | wc -l)
+            echo "❌ $COUNT tracked file(s) are also matched by .gitignore:"
+            printf '%s\n' "$TRACKED_BUT_IGNORED" | head -20
+            [ "$COUNT" -gt 20 ] && echo "  … and $((COUNT - 20)) more"
+            echo ""
+            echo "git keeps updating a file once it is tracked, so the ignore"
+            echo "rule does nothing and git status stays clean. Remove them with"
+            echo "  git rm --cached <path>"
+            FAILED=1
+          fi
+
+          [ "$FAILED" = 0 ] || exit 1
+          echo "✅ working tree clean, and nothing tracked is ignored"
 
       - name: Upload server binary
         uses: actions/upload-artifact@v4
@@ -401,6 +487,93 @@ jobs:
             -coverpkg=./internal/... \
             -timeout=600s \
             ./... 2>&1 | tee test-output.txt; exit ${PIPESTATUS[0]}
+
+      # ── H4. Say what actually broke, instead of burying it ────────────────
+      #
+      # Two different burials, depending on where the error is.
+      #
+      # A broken NON-test file cascades: under -coverpkg=./internal/... one
+      # unbuildable package makes go test report `[build failed]` for EVERY
+      # package — 67 of them, including four that have no test files at all.
+      # The output is short (~70 lines) but it is 2 lines of signal against 67
+      # near-identical FAIL lines, and the run summary page shows only
+      # "Process completed with exit code 1".
+      #
+      # A broken _test.go does NOT cascade, and buries far worse: its single
+      # error line appears at that package's position in a ~10,000-line log —
+      # around line 896 for internal/core/api, ~8,150 for internal/core/views —
+      # with thousands of unrelated `=== RUN`/`--- PASS` after it, and the log
+      # viewer opens scrolled to the tail.
+      #
+      # This extracts; it never dumps. The real output is 1.04 MiB, above the
+      # 1 MiB per-step cap on a job summary.
+      #
+      # Why extraction rather than a `go vet ./...` fail-fast in front of the
+      # suite: build's Vet step already catches a compile error in ~27s,
+      # including in _test.go files (which `go build ./...` silently does not).
+      # A second vet here would charge every green run to reproduce a signal
+      # that already exists. What was missing is that the signal lives in a
+      # DIFFERENT job's log, and someone looking at a red Test check has no
+      # reason to open a green Build. So the fix is to make Test say it.
+      - name: Surface the first real error
+        if: failure()
+        run: |
+          # Deliberately not -e: the job has already failed, and a second red
+          # step for a broken extraction would obscure the thing being extracted.
+          set +e
+
+          OUT=test-output.txt
+          if [ ! -f "$OUT" ]; then
+            echo "No test output captured — the job failed before the suite ran."
+            exit 0
+          fi
+
+          # Extract by BLOCK, not by matching the message. go test writes
+          #     # <import path>
+          #     <file>:<line>[:<col>]: <message>
+          # to stderr (which is why the `2>&1` on the test step is load-bearing).
+          # The four shapes this must catch disagree about the message — the
+          # cover-instrumented build drops the column, and a syntax error comes
+          # out of the cover tool with a timestamp and an absolute path — but
+          # all four sit inside a `# ` block.
+          BLOCKS=$(awk '
+            /^# /                                       { inblock = 1 }
+            inblock && /^(ok |FAIL|\?|=== |--- |PASS$)/ { inblock = 0 }
+            inblock                                     { print }
+          ' "$OUT")
+
+          # A package that fails to LOAD reports [setup failed], not
+          # [build failed], and never cascades — grepping for "build failed"
+          # alone misses it entirely.
+          SETUP=$(grep -F '[setup failed]' "$OUT")
+
+          {
+            echo "## ❌ Test job failed"
+            echo
+            if [ -n "$BLOCKS" ] || [ -n "$SETUP" ]; then
+              NFAIL=$(grep -cE '\[(build|setup) failed\]' "$OUT")
+              echo "**A package did not compile, so its tests never ran.**"
+              echo
+              echo "Packages reporting \`[build failed]\` or \`[setup failed]\`: ${NFAIL:-0}."
+              echo "That count does not locate the problem — under \`-coverpkg=./internal/...\`"
+              echo "one unbuildable package can make *every* package report it, including"
+              echo "packages with no test files at all. This is the error:"
+              echo
+              echo '```'
+              printf '%s\n' "$BLOCKS" "$SETUP" | grep -v '^[[:space:]]*$' | head -40
+              echo '```'
+            else
+              echo "**The module compiled — tests failed.** First failures:"
+              echo
+              echo '```'
+              grep -E '^[[:space:]]*--- FAIL' "$OUT" | head -30
+              echo '```'
+            fi
+            echo
+            echo "Full output: the \`test-output.txt\` artifact on this run."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          exit 0
 
       - name: Upload test output
         uses: actions/upload-artifact@v4
@@ -858,6 +1031,34 @@ jobs:
         run: |
           install -m 0755 /tmp/e2e-bin/${{ env.BINARY_NAME }} /tmp/azimuthal-test
           /tmp/azimuthal-test --help >/dev/null
+
+      # H2, downstream half. `build` proved this binary's embedded bundle
+      # matches the web/dist it compiled from; this proves the binary that
+      # arrived here is that binary. Cheap (one hash of 65 embedded files) and
+      # it runs before Playwright rather than after, so a bundle problem is a
+      # named one-line failure instead of a screenful of unrelated assertions.
+      #
+      # It is deliberately a comparison against `build`'s recorded digest
+      # rather than against web/dist: this job never runs `npm run build` — the
+      # frontend is already inside the binary — so there is no fresh dist here
+      # to compare with, and rebuilding one purely to check it would put ~30s
+      # of npm on the critical path for an assertion `build` already made.
+      - name: Preflight — the binary carries the bundle build published
+        run: |
+          HAVE=$(/tmp/azimuthal-test bundle-hash)
+          WANT="${{ needs.build.outputs.bundle_hash }}"
+          if [ -z "$WANT" ]; then
+            echo "❌ build published no bundle hash — its H2 step did not run"
+            exit 1
+          fi
+          if [ "$HAVE" != "$WANT" ]; then
+            echo "❌ STALE EMBEDDED FRONTEND: this binary is not the one build verified"
+            echo "  build published: $WANT"
+            echo "  binary here:     $HAVE"
+            echo "The artifact this job downloaded is not the artifact build uploaded."
+            exit 1
+          fi
+          echo "✅ embedded bundle matches the one build verified ($HAVE)"
 
       - name: Cache node_modules
         id: node-modules

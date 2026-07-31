@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -1930,8 +1931,7 @@ func handleItemTypeError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, itemtypes.ErrReferenced):
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
 	default:
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
-			fmt.Sprintf("item type operation failed: %v", err))
+		respondUnmapped(w, r, "item type", err)
 	}
 }
 
@@ -2194,8 +2194,7 @@ func handleCustomFieldError(w http.ResponseWriter, r *http.Request, err error) {
 		// what, and how many items are involved.
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
 	default:
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
-			fmt.Sprintf("custom field operation failed: %v", err))
+		respondUnmapped(w, r, "custom field", err)
 	}
 }
 
@@ -2266,7 +2265,36 @@ func handleProjectError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, projects.ErrLabelDuplicate):
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
 	default:
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
-			fmt.Sprintf("project operation failed: %v", err))
+		respondUnmapped(w, r, "project", err)
 	}
+}
+
+// respondUnmapped answers an error that none of the arms above could classify.
+//
+// The error text does not reach the wire. Every arm above passes err.Error()
+// because it has first established which sentinel the error is, and those
+// strings are ours; the default arm has established nothing. What arrives here
+// is whatever the layer below produced — and a Postgres error names the
+// constraint it violated, the column, and sometimes the value. #91 found a
+// unique-constraint name reaching a client through the fmt.Sprintf("%v") this
+// replaces.
+//
+// The client gets a fixed message plus the request id, which it already had:
+// respond.Error puts it in the body and the RequestID middleware in the
+// X-Request-ID header. The full error goes to the server log under that same
+// id, so a user quoting the id is enough for an operator to find the cause.
+// That is the whole trade — the detail moves from the response to the log,
+// rather than being discarded.
+func respondUnmapped(w http.ResponseWriter, r *http.Request, surface string, err error) {
+	// No //nolint:gosec here: G706 (log injection) does not fire on this call —
+	// the message is a compile-time literal and err/request_id are structured
+	// slog attributes rather than a format string. Neighbouring log lines in
+	// spaces/handler.go do carry the directive; this one does not need it, and
+	// nolintlint rejects a directive that suppresses nothing.
+	slog.Error("unmapped handler error",
+		"surface", surface,
+		"error", err,
+		"request_id", respond.RequestIDFromContext(r.Context()),
+	)
+	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, surface+" operation failed")
 }

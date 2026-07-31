@@ -1,30 +1,75 @@
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
-# Binaries for programs and plugins
+# ── A note on anchoring, which this file has been bitten by ────────────────────
+#
+# git's rule: a pattern containing a slash ANYWHERE except at the end is
+# relative to this file's directory. A pattern with no slash — or with only a
+# trailing slash — matches at EVERY depth. So `data/` is not "the data
+# directory", it is "any directory named data, anywhere".
+#
+# That difference is invisible until it costs you a day. A bare `server` here
+# once matched `cmd/server/`, so every new file added under it was skipped
+# silently by `git add -A` — and `git status` says nothing about a path it has
+# been told to ignore. It is `/server` now, and the audit that fixed it went
+# through every other slash-less pattern in this file.
+#
+# The rule this file now follows:
+#
+#   - a pattern that means ONE path gets a leading slash;
+#   - a pattern that is genuinely global (a build-artifact extension, a tool's
+#     cache directory) stays bare AND carries a comment saying why.
+#
+# `TestGitignore_NoUnreviewedBarePatterns` in internal/repohygiene enforces it:
+# a new slash-less pattern fails the suite by name unless it is added to that
+# test's allowlist with a reason. Add the reason, not an exemption.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Binaries for programs and plugins.
+# Bare and global on purpose: a compiled object is never committed, at any depth.
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 
-# Test binary, built with `go test -c`
+# Test binary, built with `go test -c`.
+# Bare and global: `go test -c` writes it into whatever package directory you
+# ran it from, so anchoring would defeat it.
 *.test
 
-# Code coverage profiles and other test artifacts
+# Code coverage profiles and other test artifacts.
+#
+# `*.out` and `*.coverprofile` are bare and global: `go test -coverprofile` and
+# the pprof `-cpuprofile`/`-memprofile` flags write next to wherever they were
+# invoked. Hazard worth knowing, since it is the same class this file's header
+# describes: a golden fixture named `testdata/expected.out` WOULD be silently
+# ignored. There is none today; if you add one, give it a different extension
+# rather than negating here.
+#
+# `coverage.*` and `profile.cov` are anchored: they name specific root
+# artifacts (`make test-coverage` writes coverage.out and coverage.html at the
+# root), and unanchored `coverage.*` matched `docs/coverage.md` — a plain
+# documentation file this repo could reasonably have added at any time.
 *.out
-coverage.*
 *.coverprofile
-profile.cov
+/coverage.*
+/profile.cov
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-# Go workspace file
-go.work
-go.work.sum
+# Go workspace file.
+# Anchored: a go.work is only meaningful at or above the module root, and a
+# file of that name deeper in the tree is not one.
+/go.work
+/go.work.sum
 
-# env file
+# env file.
+# Bare and global on purpose: a `.env` is a secret wherever it appears —
+# web/.env would be exactly as dangerous as the root one. The negations are
+# bare for the same reason, so they keep tracking the committed samples at
+# whatever depth a future one lands.
 .env
 !.env.test
 !.env.example
@@ -32,7 +77,13 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
-bin/
+
+# Build output directory.
+# Anchored: `make build` writes bin/azimuthal and `make e2e-test` writes
+# bin/azimuthal-e2e.exe, both from the repository root. Unanchored it also
+# matched any nested bin/ — a plausible directory name for committed helper
+# scripts.
+/bin/
 
 # Locally built CLI binaries (build outputs of cmd/*; never commit compiled artifacts)
 /migrate
@@ -43,11 +94,16 @@ web/node_modules/
 web/playwright-report/
 web/test-results/
 
-# Local data dirs (RSA key persistence path)
-data/
+# Local data dirs (RSA key persistence path).
+# Anchored: the root `data/` is the key persistence path, and the second line
+# below already names the other one explicitly — which is itself the evidence
+# that root was always the intent. Unanchored, `data/` matched `web/src/data/`,
+# a directory a frontend change could introduce any week.
+/data/
 cmd/server/data/
 
-# Claude Code local settings (never commit)
+# Claude Code local settings (never commit).
+# Bare and global: worktrees and nested checkouts each get their own.
 .claude/
 
 # CI progress tracking (private repo only — never push to public)
@@ -59,6 +115,9 @@ cmd/server/data/
 # The committed CLAUDE.md is assembled only from material that is already
 # public (spec §2 and §10, the Makefile, ci.yml) and carries no secret and no
 # unfixed-vulnerability detail. Keep it that way: it is a public file.
+#
+# The three progress directories are anchored: each names one directory at the
+# root, and none of them is a name that should disappear from a nested path.
 github-actions-progress/.gitleaks.toml
 docs/agent-briefs.md
 docs/github-setup-checklist.md
@@ -71,9 +130,9 @@ scripts/release-private.sh
 scripts/release-public.sh
 scripts/remote-test-host-deploy.sh
 .github/workflows/release-private.yml
-current-agent-progress/
-github-actions-progress/
-release-progress/
+/current-agent-progress/
+/github-actions-progress/
+/release-progress/
 /server
 
 # Local golangci-lint cache (set via GOLANGCI_LINT_CACHE when parallel
@@ -83,4 +142,6 @@ release-progress/
 # per-worktree directory, and `.golangci-cache-<topic>/` did not match the bare
 # form. 4431 cache files reached a commit here before this was widened, because
 # `git add -A` has no opinion about what a directory is for.
+#
+# Bare and global: a worktree anywhere under the checkout gets its own.
 .golangci-cache*/

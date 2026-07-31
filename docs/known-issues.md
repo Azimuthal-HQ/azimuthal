@@ -784,6 +784,19 @@ the underlying error into the client-visible message —
 `fmt.Sprintf("ticket operation failed: %v", err)`. Every other 500 in the API uses a fixed string.
 Any future unmapped repository error will ship the same way.
 
+> **Partially closed (hygiene-gates pass, H5).** The three default arms in
+> `internal/core/api/projects` — `handleProjectError`, `handleItemTypeError` and
+> `handleCustomFieldError` — now answer a fixed message and send the full error to the server log
+> under the caller's request id (`respondUnmapped` in that package's handler.go).
+> `TestUnmappedProjectError_*` and `TestUnmappedSchemaErrors_*` fail if any of them interpolates
+> again, and assert the log side too, so the detail is moved rather than discarded.
+>
+> **Still open, same shape:** `handleTicketError` (`internal/core/api/tickets/handler.go:830`) —
+> the arm this issue was actually filed against — and `internal/core/api/wiki/handler.go:864`.
+> Both remain exactly as described above. Each is the same small change plus its fails-before
+> test; they were left out because they are different packages from that pass's scope, and
+> because the tickets one is entangled with (a) and (c) below.
+
 **c. A ticket can be assigned to a user in ANOTHER organisation.** `tickets.assignee_id` references
 the global `users` table, so the FK is satisfied and the write lands: HTTP 200, and the row now
 names somebody with no membership in the org and no access to the space. The notification enqueuer
@@ -1111,3 +1124,73 @@ on its own: whether any page is already stored this way, and what to do about it
 refusal leaves existing bad rows unrepaired, and a migration that re-roots them is a data change
 somebody has to sign off. That is why it is recorded rather than fixed in a pass scoped to error
 classes.
+
+---
+
+## 28. Four `notifications` handlers interpolate the raw error into the 500 body
+
+**Severity**: Low–Medium (internal disclosure; same mechanism as #23(b), smaller surface)
+**Status**: Open. Found by the hygiene-gates pass (H5) while fixing the same shape in
+`internal/core/api/projects`. Recorded rather than fixed: a different package from that pass's
+scope, and fixing it well means deciding where the shared helper lives (below).
+
+```
+internal/core/api/notifications/handler.go:74   fmt.Sprintf("listing notifications: %v", err)
+internal/core/api/notifications/handler.go:80   fmt.Sprintf("counting unread: %v", err)
+internal/core/api/notifications/handler.go:126  fmt.Sprintf("marking notification read: %v", err)
+internal/core/api/notifications/handler.go:151  fmt.Sprintf("marking all notifications read: %v", err)
+```
+
+Each ships whatever the layer below produced — pgx wording, constraint names, SQLSTATE — to any
+authenticated caller, exactly as the projects arms did before H5.
+
+**Why these were missed until now, which is the part worth keeping.** The obvious repo-wide sweep
+for this defect is a regex over `fmt.Sprintf("…failed…%v", err)` or `"…error…%v"`. None of these
+four literals contains "failed" or "error", so that sweep returns nothing and the sites read as
+clean. Any future audit of this class should match on the *shape* — a `%v`/`%s` of `err` inside a
+`respond.Error(..., CodeInternal, ...)` call — not on the wording.
+
+**Where the fix belongs.** `respondUnmapped` (`internal/core/api/projects/handler.go`) is the
+version H5 wrote, and it is unexported in that package. Closing #23(b) for tickets and wiki plus
+this one for notifications means four more copies unless it is hoisted first. The natural home is
+`internal/core/api/respond` — e.g. `respond.Internal(w, r, err, msg)`, which already owns the
+request id that makes the log/wire split work. CLAUDE.md is explicit that a second implementation
+of a shared surface is a defect, so **hoist before the second caller, not after the fourth.**
+
+---
+
+## 29. `go mod tidy` dirties `go.mod`, and the `lint` gate cannot see it
+
+**Severity**: Low (no runtime effect; a stale dependency graph and a gate that under-reports)
+**Status**: Open. Found by the hygiene-gates pass while checking H1's preconditions. Not fixed —
+`go.mod` is contended by every concurrent track, and the one-line change is not worth a conflict in
+a pass that touches no dependencies.
+
+`.github/workflows/ci.yml`'s `lint` job runs `go mod tidy` and then diffs **only `go.sum`**:
+
+```yaml
+- name: Check go.sum is up to date
+  run: |
+    go mod tidy
+    git diff --exit-code go.sum || (echo "❌ go.sum out of date — run go mod tidy" && exit 1)
+```
+
+On a clean checkout of `main`, `go mod tidy` leaves `go.sum` untouched and changes `go.mod`:
+
+```diff
+-	github.com/spf13/pflag v1.0.10 // indirect
++	github.com/spf13/pflag v1.0.10
+```
+
+`pflag` is a direct dependency in fact — the tree imports it — but `go.mod` still marks it
+indirect, so the file has been out of date for some time and the gate reports green because it
+never looks at `go.mod`.
+
+**What closing it takes.** Run `go mod tidy`, commit the one-line change, and widen the diff to
+`git diff --exit-code go.mod go.sum`. Both halves belong in one commit: widening the check without
+the fix turns the `lint` gate red on every pull request.
+
+**Note for the porcelain gate (H1).** This is why H1 lives in the `build` job rather than `lint`.
+`build` runs `go mod download` and `go mod verify`, neither of which writes; `lint` runs `tidy`,
+which does. Adding H1 to `lint` today would fail on this pre-existing drift rather than on anything
+the pull request did.

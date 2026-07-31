@@ -1,5 +1,12 @@
-# Logs
-logs
+# Anchoring rule: a pattern with no slash matches at every depth below this
+# file, not just beside it. A pattern meaning one path gets a leading slash; a
+# genuinely global one stays bare. Enforced by
+# TestGitignore_NoUnreviewedBarePatterns in internal/repohygiene.
+
+# Logs.
+# /logs is this directory's own log dir — bare, it also matched web/src/logs/.
+# The globs stay bare: a stray log file is disposable wherever it lands.
+/logs
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,11 +14,20 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# node_modules stays bare: nested ones are real, and all of them are disposable.
 node_modules
 dist/*
 !dist/.gitkeep
-dist-ssr
+# The Vite SSR build output, which lands here and nowhere else.
+/dist-ssr
 *.local
+
+# TypeScript incremental-build state. tsconfig.app.json and tsconfig.node.json
+# currently redirect it into node_modules/.tmp/, so it never lands here — but
+# that redirect is one edit away from disappearing, and when it does the file
+# appears at web/ and dirties the porcelain gate (H1). Bare and global: tsc
+# writes it beside whichever tsconfig produced it.
+*.tsbuildinfo
 
 # Editor directories and files
 .vscode/*

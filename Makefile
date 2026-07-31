@@ -298,12 +298,37 @@ regression-test: test-db-up ## Run the full API regression suite against a live 
 
 # ── E2E Tests ──────────────────────────────────────────────────────────────────
 
+# The preflight that stands between a stale bundle and an evening of phantom
+# E2E failures. go:embed reads web/dist at COMPILE time, so a binary built
+# before the frontend serves the older UI without complaining — and both ways
+# it has gone wrong here (built before `npm run build`; left over across a
+# rebase) presented as unrelated assertion failures rather than as a stale
+# bundle.
+#
+# What it compares is the bundle INSIDE the binary against the one on disk,
+# both hashed by the same code (`azimuthal bundle-hash`), which is why it needs
+# no second implementation of "hash a directory" to disagree with.
+#
+# Its honest limit: it proves the binary matches web/dist, not that web/dist
+# matches the source. That freshness comes from the caller — e2e-test rebuilds
+# the frontend immediately before calling this, which is what makes the
+# comparison meaningful. Run standalone against a stale-but-consistent pair, it
+# passes, and it should.
+e2e-preflight: ## Assert the E2E binary's embedded frontend matches web/dist
+	@test -x "$(E2E_BINARY_OUT)" || \
+		(echo "❌ no E2E binary at $(E2E_BINARY_OUT) — run 'make e2e-test', or build it first" && exit 1)
+	@test -f web/dist/index.html || \
+		(echo "❌ no web/dist to compare against — run 'cd web && npm run build'" && exit 1)
+	@"$(E2E_BINARY_OUT)" bundle-hash --verify web/dist
+	@echo "✓ embedded frontend matches web/dist"
+
 e2e-test: ## Run Playwright E2E tests against a live server
 	@echo "→ Starting test database..."
 	@$(MAKE) test-db-up
 	@echo "→ Building binary and frontend..."
 	@cd web && npm ci && npm run build
 	@go build -o $(E2E_BINARY_OUT) ./cmd/server
+	@$(MAKE) e2e-preflight
 	@echo "→ Running Playwright E2E tests..."
 	@export $(ENV_TEST_VARS) && export AZIMUTHAL_BINARY=$(E2E_BINARY_EXPR) && cd web && npx playwright test
 	@echo "✓ E2E tests complete"
@@ -312,7 +337,10 @@ e2e-test: ## Run Playwright E2E tests against a live server
 e2e-report: ## Open the last Playwright HTML report
 	@cd web && npx playwright show-report
 
-e2e-headed: ## Run E2E tests in headed mode (visible browser)
+# e2e-headed rebuilds nothing, which is the point of it — but that also makes it
+# the target most likely to run a binary from an hour ago. The preflight at
+# least catches the case where web/dist has since been rebuilt underneath it.
+e2e-headed: e2e-preflight ## Run E2E tests in headed mode (visible browser)
 	@export $(ENV_TEST_VARS) && export AZIMUTHAL_BINARY=$(E2E_BINARY_EXPR) && cd web && npx playwright test --headed
 
 # ── Housekeeping ──────────────────────────────────────────────

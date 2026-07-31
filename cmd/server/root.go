@@ -26,6 +26,7 @@ func init() {
 	rootCmd.AddCommand(restoreCmd)
 	rootCmd.AddCommand(adminCmd)
 	rootCmd.AddCommand(assessCmd)
+	rootCmd.AddCommand(bundleHashCmd)
 }
 
 // Execute runs the root command. Called from main().
