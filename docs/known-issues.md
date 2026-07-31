@@ -1302,3 +1302,7 @@ running the script. With that, `verify-api` passes end to end.
 replace the `sleep 2` with a poll on `/health` — which the script already knows how to reach, and
 which is exactly the readiness probe `test-db-up` learned to do for postgres for the same class of
 reason.
+
+---
+
+Write-path authorization hardening is tracked privately as a follow-up to the read-path work.
