@@ -1720,3 +1720,116 @@ reference columns of its own row, so `spaces.key` is unreachable from the expres
 references stay served by the `/ticketref` resolver, which is an exact lookup and a better answer
 than a ranked match. Both vectors still carry title `A` and body `B`, so cross-type rank
 comparability is unaffected by the asymmetry.
+
+---
+
+# P-W PR-B — the workflow admin editor and approval surfaces (migration 050)
+
+## 1. Discrepancies found and corrected
+
+### D85 — D72 named the wrong cause, and the wrong cause was the cheap one
+
+D72 recorded that a new project item's default status is not a state in its own workflow, and
+attributed it to **migration 014's column default**. A comment in
+`internal/core/api/workflow_tiers_integration_test.go` repeated the attribution.
+
+Both are wrong. `CreateProjectItem` names `status` in its INSERT column list
+(`internal/db/queries/project_items.sql`), so the `DEFAULT 'open'` is never evaluated by the
+application. The value comes from `internal/core/projects/item.go:114`.
+
+The repository wins and both statements are corrected here. The distinction is load-bearing rather
+than pedantic: D72 offered "a column-default change or a seed change" as the two candidate fixes,
+and the first of those is a **no-op in production** that would silently alter only the raw-SQL test
+fixtures which omit the column. D72 also asserts both candidates "touch live data", when in fact
+one touches none and the other has the largest blast radius of any option considered.
+
+The hole itself is not closed. Its full disposition — three candidate fixes, why two are wrong, and
+why the right one is out of scope for a UI phase — is **known-issues #30**, with a failing-shaped
+test skipped per §2 at `internal/core/api/workflow_d72_ungated_first_transition_test.go`.
+
+One fact D72 does not record and should: the **ticket side is protected only by a name
+coincidence**. Tickets are also created at `"open"`, and the seeded ticket workflow happens to have
+a state called `open`. An administrator creating a custom default ticket workflow with a
+differently-named initial state reopens the same hole, silently.
+
+### D86 — `guard.go` described a TypeScript mirror that did not exist
+
+`internal/core/workflow/guard.go:21` states that the guard vocabulary is "mirrored in TypeScript
+and held equal by `web/src/lib/workflow/guards.test.ts`". Neither the mirror nor the test existed:
+`web/src/lib/workflow/` was not a directory, and grepping `web/src` for `actor_is_assignee`
+returned nothing.
+
+The comment described intent as fact — the same shape as D51's lesson about ADRs describing
+implementations that had not happened. Both files are created in this PR and the comment is now
+true. The test asserts SET equality in both directions and resolves the guard capability list
+through the same `access` constants Go uses, so a capability rename fails the test rather than
+silently producing a picker offering a value `ValidateGuard` refuses.
+
+### D87 — the admin workflow page was mounted outside the admin guard
+
+`web/src/App.tsx` declared `admin/workflows` as a SIBLING of the `AdminLayout` route rather than as
+a child, so React Router matched the more specific literal first and the page never passed through
+`AdminLayout`'s `caller_is_admin` check. It rendered for any authenticated org member.
+
+Nothing caught it. `web/e2e/workflow-admin.spec.ts` is the only thing that visits the URL and it
+signs in as an org admin, for whom both mountings are indistinguishable.
+
+The severity is worth stating precisely rather than inflating: the workflow READ routes are
+deliberately org-member, and every tier MUTATION carries `RequireOrgAdmin` server-side, so this
+disclosed admin *chrome* and never admin *power*. It became load-bearing when this PR added
+mutations to that page.
+
+Corrected, with a fails-before test that keeps a permanent negative control — it renders both
+mountings and asserts the sibling arrangement leaks.
+
+### D88 — the tier deletes did not scope the child to its transition
+
+`DeleteGuard`, `DeletePostFunction` and `DeleteApprover` called `resolveTransition` — which proves
+workflow-in-org and transition-in-workflow — and then deleted by the raw `{guardID}`. Pairing one
+of your own transitions with a foreign child id removed it, **including across organisations**.
+
+Same class as D74 one level down, and reachable from the delete buttons this PR's editor ships.
+The three `DELETE` statements now carry `AND transition_id = $2`, and zero rows maps to the
+existing `ErrNotFound` → 404 path.
+
+## 2. Findings recorded, not repaired
+
+### D89 — nothing notified anybody about an approval
+
+The phase brief stated that PR #86 had wired approval notifications and that this phase should
+"verify, don't rebuild". Verification found none: no enqueuer field, no `With*` builder, no kind
+string and no call site anywhere in `internal/core/workflow`, `internal/core/api/tiergate` or
+`internal/core/api/workflows`. An approver had no way to learn they were needed except by opening
+the item.
+
+Wired in this PR on a maintainer ruling, at exactly two points, onto the existing
+`jobs.NotificationEnqueuer`. Recorded here because the premise correction is the finding — the
+"verify" half of an instruction is what caught it.
+
+### D90 — `ErrApprovalRequired` is declared and never returned
+
+`internal/core/workflow/errors.go` declares `ErrApprovalRequired` with the comment that a caller
+"turns it into the 'requested, pending approval' answer". No code path returns it: `Gate` reports
+a pending approval through `GateResult.Pending` with a nil error, and `Decide` never produces it.
+
+Harmless today and left alone — but a caller keying off that sentinel would wait forever, so it is
+recorded rather than deleted, since deleting an exported symbol is a contract change.
+
+### D91 — approval and application are two transactions, with no compensation
+
+`TierService.Decide` commits the decision row, and the handler then separately calls
+`ApplyTransition`. If the apply fails the caller gets a 500 saying "the approval was recorded but
+the transition could not be applied" — and the approval is now decided, so the one-pending-per-item
+index no longer blocks a fresh request, while the item is still in its source status. There is no
+retry, no compensation, and nothing surfaces the stranded state.
+
+Pre-existing in PR #86 and untouched here. Repairing it means either folding the decision into the
+applier's transaction or adding a reconciliation path, both of which are larger than a UI phase.
+
+### D75 — `is_default` uniqueness, re-confirmed and still not taken
+
+The fence made D74 and D75 in scope "if the editor work touches those seams naturally". D74 did:
+an editor cannot show a transition without listing transitions, and those routes were unscoped.
+D75 does not — the editor configures rules on edges and never asks which workflow is default — so
+it is left exactly as PR #86 recorded it. A partial unique index would close it and could fail on
+existing data, which is a maintainer's call.

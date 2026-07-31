@@ -1194,3 +1194,82 @@ the fix turns the `lint` gate red on every pull request.
 `build` runs `go mod download` and `go mod verify`, neither of which writes; `lint` runs `tidy`,
 which does. Adding H1 to `lint` today would fail on this pre-existing drift rather than on anything
 the pull request did.
+
+---
+
+## 30. A new item's first transition is ungated, and D72 names the wrong cause
+
+**Severity**: Medium (a configured restriction silently does not apply; no disclosure, no data
+loss)
+**Status**: Open. Recorded by P-W PR-B, which was required to dispose of it and chose the ledger
+over a partial close. The failing-shaped test is written and skipped at
+`internal/core/api/workflow_d72_ungated_first_transition_test.go`.
+
+`ItemService.CreateItem` writes `item.Status = "open"`
+(`internal/core/projects/item.go:114`). The seeded project workflow's states are
+`backlog`/`todo`/`in_progress`/`in_review`/`done` (migration 016). So a freshly created item sits
+at a status that names no state, `TierService.Gate` resolves no edge, and — because absence is
+deliberately not refusal — **no guard, approval or post-function applies to its first move**. Every
+subsequent transition is gated normally.
+
+An administrator who configures "nothing leaves the backlog without an assignee" therefore has a
+rule that every item evades exactly once, on the move that matters most.
+
+### The recorded cause is wrong, and the wrongness is load-bearing
+
+`docs/design/spec-repo-reconciliation.md` D72 and a comment in
+`workflow_tiers_integration_test.go` both blamed **migration 014's column default**. They are
+factually wrong: `CreateProjectItem` names `status` in its INSERT column list
+(`internal/db/queries/project_items.sql`), so the `DEFAULT 'open'` is never evaluated by the
+application.
+
+This is not pedantry — it rules out the only fix that looked cheap. Changing the column default
+would alter nothing except raw-SQL test fixtures that omit the column, silently changing test
+setup while fixing nothing in production. Both statements are corrected in P-W PR-B.
+
+### The ticket side is protected only by a coincidence
+
+Tickets are created at `"open"` too, and the seeded TICKET workflow happens to have a state called
+`open`, so their first transition does resolve an edge. That is a name collision, not a design. An
+administrator who creates a custom default ticket workflow whose initial state is called anything
+else reopens the same hole on the ticket side, with nothing to warn them.
+
+### Three fixes were considered; two are wrong
+
+- **Fall back to the workflow's initial state inside `Gate`.** Rejected. It conflates "never
+  transitioned" with "the status names no state for some other reason", which is precisely the case
+  `tier_service.go:246` documents — a state can be renamed out from under an item. It would run the
+  initial edge's validators, approvals *and post-functions* for a move that has nothing to do with
+  them, and post-functions **mutate**, so it applies the wrong rule rather than a stricter one. It
+  also fails a subtest of `TestGate_UntouchedWorkflowIsUnaffected`; making that pass would mean
+  weakening an assertion, which §2 forbids.
+
+- **Use `workflow_state_id IS NULL` as the discriminator.** Rejected, and it is the attractive one:
+  it reuses the exact flag the engine-backed routes already consult. It is broken by D71 — the
+  legacy `/status` route writes `status` alone, so the column stays NULL after arbitrarily many
+  moves, and an item that went `open → todo → in_progress` would still resolve "from = initial" on
+  its fourth move. Making it correct requires the D71 status/state drift repair that PR #86
+  explicitly deferred.
+
+- **Recommended: create items already inside their state machine.** At creation, resolve the space
+  workflow's initial state and write BOTH `status = initial.Name` and `workflow_state_id =
+  initial.ID`. It fixes the cause rather than a symptom, needs no migration, changes no existing
+  row, and closes the ticket side structurally instead of by name coincidence. Where a space has no
+  workflow — a supported live state, since assignment is best-effort — keep `"open"`, which is
+  legitimately "not configured".
+
+### Why the recommended fix was still not taken here
+
+It changes the default status of every new project item across the product. `board.go`'s
+`DefaultColumnNames`, `SprintBoardPage.tsx`'s column list and `ItemDetailPage.tsx`'s
+`ALL_STATUSES` all enumerate the literal `"open"`, and the last of those would render a new item's
+status `<select>` with no matching option — a visible regression no Go test can catch. It also
+needs a `With*` collaborator on both create services, so the harness rules engage.
+
+And it repairs nothing already stored. Every item created before it ships keeps its ungated first
+move, so shipping it inside a feature phase would produce something that reads as a closed hole
+and is not one. The backfill is a data decision that needs a maintainer, not a phase.
+
+**Re-enable condition for the skipped test**: `ItemService.CreateItem` and `TicketService.Create`
+resolve the space workflow's initial state at creation, together with a decision about items
+already sitting at `"open"`.
