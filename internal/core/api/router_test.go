@@ -712,7 +712,7 @@ func (m *mockRelationRepo) TargetIsReadable(_ context.Context, _ uuid.UUID, _ st
 func (m *mockRelationRepo) ListForEntity(_ context.Context, _ uuid.UUID, _ string, _ []uuid.UUID) ([]*projects.Relation, error) {
 	return nil, nil
 }
-func (m *mockRelationRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockRelationRepo) DeleteInSpace(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 type mockLabelRepo struct{}
 
@@ -2629,11 +2629,11 @@ func (m *mockTierStore) CreateApproval(_ context.Context, a workflow.Approval) (
 func (m *mockTierStore) PendingApprovalForEntity(context.Context, workflow.ApprovalEntityType, uuid.UUID) (workflow.Approval, error) {
 	return workflow.Approval{}, workflow.ErrNotFound
 }
-func (m *mockTierStore) GetApproval(context.Context, uuid.UUID) (workflow.Approval, error) {
+func (m *mockTierStore) GetApprovalInSpace(context.Context, uuid.UUID, uuid.UUID) (workflow.Approval, error) {
 	return workflow.Approval{}, workflow.ErrNotFound
 }
 func (m *mockTierStore) DecideApproval(
-	context.Context, uuid.UUID, uuid.UUID, workflow.Decision, *string,
+	context.Context, uuid.UUID, uuid.UUID, uuid.UUID, workflow.Decision, *string,
 ) (workflow.Approval, error) {
 	return workflow.Approval{}, workflow.ErrNotFound
 }

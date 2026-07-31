@@ -317,7 +317,7 @@ func TestApprovals_OnlyOnePendingPerEntity(t *testing.T) {
 
 	// Deciding the first frees the item to request again — the index excludes
 	// decided rows precisely so an item can accumulate history.
-	decided, err := f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined, ptr("not this sprint"))
+	decided, err := f.tier.DecideApproval(ctx, f.spaceID, first.ID, f.userID, workflow.DecisionDeclined, ptr("not this sprint"))
 	require.NoError(t, err)
 	require.False(t, decided.IsPending())
 
@@ -342,15 +342,15 @@ func TestApprovals_ASecondDecisionIsRefused(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionApproved, nil)
+	_, err = f.tier.DecideApproval(ctx, f.spaceID, created.ID, f.userID, workflow.DecisionApproved, nil)
 	require.NoError(t, err)
 
-	_, err = f.tier.DecideApproval(ctx, created.ID, f.userID, workflow.DecisionDeclined, ptr("too late"))
+	_, err = f.tier.DecideApproval(ctx, f.spaceID, created.ID, f.userID, workflow.DecisionDeclined, ptr("too late"))
 	require.ErrorIs(t, err, workflow.ErrApprovalAlreadyDecided,
 		"a decided approval must not be re-decided, in either direction")
 
 	// The first decision stands.
-	got, err := f.tier.GetApproval(ctx, created.ID)
+	got, err := f.tier.GetApprovalInSpace(ctx, f.spaceID, created.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got.Decision)
 	require.Equal(t, workflow.DecisionApproved, *got.Decision)
@@ -379,7 +379,7 @@ func TestDeletingATransition_KeepsItsApprovalRecord(t *testing.T) {
 
 	require.NoError(t, adapters.NewWorkflowAdapter(f.q).DeleteTransition(ctx, f.openToInProgress))
 
-	got, err := f.tier.GetApproval(ctx, created.ID)
+	got, err := f.tier.GetApprovalInSpace(ctx, f.spaceID, created.ID)
 	require.NoError(t, err, "the approval record must outlive the edge it referenced")
 	require.Nil(t, got.TransitionID)
 	require.Equal(t, "open", got.FromStatus, "the captured source status is what a decline restores")
@@ -588,7 +588,7 @@ func TestTierAdapter_ApprovalsForEntityKeepsHistory(t *testing.T) {
 
 	first, err := f.tier.CreateApproval(ctx, request)
 	require.NoError(t, err)
-	_, err = f.tier.DecideApproval(ctx, first.ID, f.userID, workflow.DecisionDeclined, ptr("blocked on release"))
+	_, err = f.tier.DecideApproval(ctx, f.spaceID, first.ID, f.userID, workflow.DecisionDeclined, ptr("blocked on release"))
 	require.NoError(t, err)
 
 	second, err := f.tier.CreateApproval(ctx, request)
@@ -623,7 +623,7 @@ func TestTierAdapter_ApprovalsForEntityKeepsHistory(t *testing.T) {
 // "already decided" — the follow-up read is what tells the two apart.
 func TestTierAdapter_DecidingAMissingApprovalIsNotFound(t *testing.T) {
 	f := setupTiers(t)
-	_, err := f.tier.DecideApproval(context.Background(), uuid.New(), f.userID, workflow.DecisionApproved, nil)
+	_, err := f.tier.DecideApproval(context.Background(), f.spaceID, uuid.New(), f.userID, workflow.DecisionApproved, nil)
 	require.ErrorIs(t, err, workflow.ErrNotFound)
 }
 

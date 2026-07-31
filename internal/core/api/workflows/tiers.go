@@ -711,8 +711,13 @@ func (h *Handler) DecideApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// {spaceID} goes to the service, not just into ApplyTransition below: it is
+	// the only thing that ties the approval to a space. The approver check
+	// cannot, because approvers are configured on an org-wide workflow's
+	// transition — see TierService.Decide.
 	decided, effects, err := h.tierSvc.Decide(r.Context(), workflow.DecideRequest{
 		OrgID:      orgID,
+		SpaceID:    spaceID,
 		ApprovalID: approvalID,
 		ActorID:    claims.UserID,
 		Decision:   decision,

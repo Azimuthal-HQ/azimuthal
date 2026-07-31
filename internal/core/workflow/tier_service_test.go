@@ -96,19 +96,26 @@ func (f *fakeTierStore) PendingApprovalForEntity(_ context.Context, _ ApprovalEn
 	return f.approvals[id], nil
 }
 
-func (f *fakeTierStore) GetApproval(_ context.Context, id uuid.UUID) (Approval, error) {
+// GetApprovalInSpace honours spaceID rather than accepting and ignoring it.
+//
+// A double that took the parameter and still looked up by id alone would
+// satisfy the interface and report success for exactly the cross-space request
+// the real query refuses — the lying-double shape this repository has already
+// shipped once. The integration suite is where the predicate itself is proven;
+// this is what stops the unit tests asserting its opposite.
+func (f *fakeTierStore) GetApprovalInSpace(_ context.Context, spaceID, id uuid.UUID) (Approval, error) {
 	a, ok := f.approvals[id]
-	if !ok {
+	if !ok || a.SpaceID != spaceID {
 		return Approval{}, ErrNotFound
 	}
 	return a, nil
 }
 
 func (f *fakeTierStore) DecideApproval(
-	_ context.Context, id, by uuid.UUID, d Decision, reason *string,
+	_ context.Context, spaceID, id, by uuid.UUID, d Decision, reason *string,
 ) (Approval, error) {
 	a, ok := f.approvals[id]
-	if !ok {
+	if !ok || a.SpaceID != spaceID {
 		return Approval{}, ErrNotFound
 	}
 	if !a.IsPending() {
@@ -408,12 +415,14 @@ func TestDecide_ApprovalCycle(t *testing.T) {
 
 	// A stranger cannot decide. Authority is data, not a role.
 	_, _, err = svc.Decide(context.Background(), DecideRequest{
-		ApprovalID: gated.Pending.ID, ActorID: stranger, Decision: DecisionApproved,
+		SpaceID: gated.Pending.SpaceID, ApprovalID: gated.Pending.ID,
+		ActorID: stranger, Decision: DecisionApproved,
 	})
 	require.ErrorIs(t, err, ErrNotAnApprover)
 
 	decided, effects, err := svc.Decide(context.Background(), DecideRequest{
-		ApprovalID: gated.Pending.ID, ActorID: approver, Decision: DecisionApproved,
+		SpaceID: gated.Pending.SpaceID, ApprovalID: gated.Pending.ID,
+		ActorID: approver, Decision: DecisionApproved,
 	})
 	require.NoError(t, err)
 	require.False(t, decided.IsPending())
@@ -424,7 +433,7 @@ func TestDecide_ApprovalCycle(t *testing.T) {
 	// reason is supplied so the already-decided check is what refuses this,
 	// not the decline-needs-a-reason check that runs before it.
 	_, _, err = svc.Decide(context.Background(), DecideRequest{
-		ApprovalID: gated.Pending.ID, ActorID: approver,
+		SpaceID: gated.Pending.SpaceID, ApprovalID: gated.Pending.ID, ActorID: approver,
 		Decision: DecisionDeclined, Reason: "changed my mind",
 	})
 	require.ErrorIs(t, err, ErrApprovalAlreadyDecided)
@@ -446,7 +455,7 @@ func TestDecide_DeclineAppliesNothing(t *testing.T) {
 	require.NoError(t, err)
 
 	decided, effects, err := svc.Decide(context.Background(), DecideRequest{
-		ApprovalID: gated.Pending.ID, ActorID: approver,
+		SpaceID: gated.Pending.SpaceID, ApprovalID: gated.Pending.ID, ActorID: approver,
 		Decision: DecisionDeclined, Reason: "the release is frozen until Monday",
 	})
 	require.NoError(t, err)
@@ -466,7 +475,7 @@ func TestDecide_DeclineAppliesNothing(t *testing.T) {
 func TestDecide_ADeclineMustSayWhy(t *testing.T) {
 	t.Parallel()
 
-	setup := func(t *testing.T) (*TierService, *fakeTierStore, uuid.UUID, uuid.UUID) {
+	setup := func(t *testing.T) (*TierService, *fakeTierStore, uuid.UUID, Approval) {
 		t.Helper()
 		approver := uuid.New()
 		f, edge := configured()
@@ -475,18 +484,21 @@ func TestDecide_ADeclineMustSayWhy(t *testing.T) {
 		gated, err := svc.Gate(context.Background(), gateReq(uuid.New()))
 		require.NoError(t, err)
 		require.NotNil(t, gated.Pending)
-		return svc, f, approver, gated.Pending.ID
+		// The whole approval, not just its id: Decide is now space-scoped, and a
+		// zero SpaceID would make every subtest below fail as not-found — passing
+		// for the wrong reason rather than exercising the reason clause.
+		return svc, f, approver, *gated.Pending
 	}
 
 	t.Run("an empty reason is refused", func(t *testing.T) {
 		t.Parallel()
-		svc, f, approver, id := setup(t)
+		svc, f, approver, ap := setup(t)
 		_, _, err := svc.Decide(context.Background(), DecideRequest{
-			ApprovalID: id, ActorID: approver, Decision: DecisionDeclined,
+			SpaceID: ap.SpaceID, ApprovalID: ap.ID, ActorID: approver, Decision: DecisionDeclined,
 		})
 		require.ErrorIs(t, err, ErrDeclineReasonRequired)
 
-		stored, getErr := f.GetApproval(context.Background(), id)
+		stored, getErr := f.GetApprovalInSpace(context.Background(), ap.SpaceID, ap.ID)
 		require.NoError(t, getErr)
 		require.True(t, stored.IsPending(),
 			"the refusal must happen before the decision is recorded, or a reasonless decline still lands")
@@ -494,9 +506,10 @@ func TestDecide_ADeclineMustSayWhy(t *testing.T) {
 
 	t.Run("whitespace is not a reason", func(t *testing.T) {
 		t.Parallel()
-		svc, _, approver, id := setup(t)
+		svc, _, approver, ap := setup(t)
 		_, _, err := svc.Decide(context.Background(), DecideRequest{
-			ApprovalID: id, ActorID: approver, Decision: DecisionDeclined, Reason: "   	  ",
+			SpaceID: ap.SpaceID, ApprovalID: ap.ID, ActorID: approver,
+			Decision: DecisionDeclined, Reason: "   	  ",
 		})
 		require.ErrorIs(t, err, ErrDeclineReasonRequired,
 			"spaces render blank, which is the failure the column exists to close")
@@ -504,9 +517,9 @@ func TestDecide_ADeclineMustSayWhy(t *testing.T) {
 
 	t.Run("an approval needs no reason, and stores NULL rather than an empty string", func(t *testing.T) {
 		t.Parallel()
-		svc, _, approver, id := setup(t)
+		svc, _, approver, ap := setup(t)
 		decided, _, err := svc.Decide(context.Background(), DecideRequest{
-			ApprovalID: id, ActorID: approver, Decision: DecisionApproved,
+			SpaceID: ap.SpaceID, ApprovalID: ap.ID, ActorID: approver, Decision: DecisionApproved,
 		})
 		require.NoError(t, err, "the transition itself is the record; an approval needs no justification")
 		require.Nil(t, decided.Reason,
@@ -515,9 +528,9 @@ func TestDecide_ADeclineMustSayWhy(t *testing.T) {
 
 	t.Run("the reason is refused before authority is even considered", func(t *testing.T) {
 		t.Parallel()
-		svc, _, _, id := setup(t)
+		svc, _, _, ap := setup(t)
 		_, _, err := svc.Decide(context.Background(), DecideRequest{
-			ApprovalID: id, ActorID: uuid.New(), Decision: DecisionDeclined,
+			SpaceID: ap.SpaceID, ApprovalID: ap.ID, ActorID: uuid.New(), Decision: DecisionDeclined,
 		})
 		require.ErrorIs(t, err, ErrDeclineReasonRequired,
 			"a stranger must not be asked for a reason they were never entitled to give")
@@ -540,7 +553,8 @@ func TestDecide_TeamApproverUsesTheEffectiveSet(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, err = svc.Decide(context.Background(), DecideRequest{
-		ApprovalID: gated.Pending.ID, ActorID: member, Decision: DecisionApproved,
+		SpaceID: gated.Pending.SpaceID, ApprovalID: gated.Pending.ID,
+		ActorID: member, Decision: DecisionApproved,
 	})
 	require.NoError(t, err)
 }

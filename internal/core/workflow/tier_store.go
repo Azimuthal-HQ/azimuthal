@@ -55,17 +55,22 @@ type TierStore interface {
 	// PendingApprovalForEntity returns the item's outstanding request, or
 	// ErrNotFound.
 	PendingApprovalForEntity(ctx context.Context, entityType ApprovalEntityType, entityID uuid.UUID) (Approval, error)
-	GetApproval(ctx context.Context, id uuid.UUID) (Approval, error)
-	// DecideApproval records a decision on a pending request. A request another
-	// approver has already decided comes back as ErrApprovalAlreadyDecided
-	// rather than being overwritten — the update carries `decided_at IS NULL`,
-	// so the race is settled by the database.
+	// GetApprovalInSpace returns one request, reconciled against the space the
+	// caller's URL named, or ErrNotFound. There is deliberately no unscoped
+	// variant: approver configuration hangs off a transition, a transition
+	// belongs to an org-wide workflow, and so nothing else on the decide path
+	// can tell one space's approvals from another's.
+	GetApprovalInSpace(ctx context.Context, spaceID, id uuid.UUID) (Approval, error)
+	// DecideApproval records a decision on a pending request in spaceID. A
+	// request another approver has already decided comes back as
+	// ErrApprovalAlreadyDecided rather than being overwritten — the update
+	// carries `decided_at IS NULL`, so the race is settled by the database.
 	//
 	// reason is nil when the approver said nothing, which migration 050 permits
 	// alongside a decision but never without one. It is written in the same
 	// statement as the decision; see the query's header for why a follow-up
 	// UPDATE would be wrong.
-	DecideApproval(ctx context.Context, id, decidedBy uuid.UUID, d Decision, reason *string) (Approval, error)
+	DecideApproval(ctx context.Context, spaceID, id, decidedBy uuid.UUID, d Decision, reason *string) (Approval, error)
 	// ApprovalsForEntity returns every request ever made about an item, newest
 	// first, decided and pending alike, reconciled against the space the request
 	// named. An entity in another space yields an empty history rather than

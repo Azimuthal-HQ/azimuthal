@@ -147,12 +147,59 @@ func (q *Queries) CreateSprint(ctx context.Context, arg CreateSprintParams) (Spr
 	return i, err
 }
 
-const deleteEntityRelation = `-- name: DeleteEntityRelation :exec
-DELETE FROM entity_relations WHERE id = $1
+const deleteEntityRelationInSpace = `-- name: DeleteEntityRelationInSpace :exec
+DELETE FROM entity_relations er
+ WHERE er.id = $1
+   AND EXISTS (
+       SELECT 1 FROM tickets t
+        WHERE t.space_id = $2
+          AND t.deleted_at IS NULL
+          AND ((er.from_type = 'ticket' AND t.id = er.from_id)
+            OR (er.to_type = 'ticket' AND t.id = er.to_id))
+       UNION ALL
+       SELECT 1 FROM project_items pi
+        WHERE pi.space_id = $2
+          AND pi.deleted_at IS NULL
+          AND ((er.from_type = 'project_item' AND pi.id = er.from_id)
+            OR (er.to_type = 'project_item' AND pi.id = er.to_id))
+       UNION ALL
+       SELECT 1 FROM pages pg
+        WHERE pg.space_id = $2
+          AND pg.deleted_at IS NULL
+          AND ((er.from_type = 'page' AND pg.id = er.from_id)
+            OR (er.to_type = 'page' AND pg.id = er.to_id))
+   )
 `
 
-func (q *Queries) DeleteEntityRelation(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteEntityRelation, id)
+type DeleteEntityRelationInSpaceParams struct {
+	RelationID uuid.UUID `json:"relation_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
+}
+
+// Remove a relation, but only one the caller's space actually touches.
+//
+// The READ side of this table was reshaped so that no ungated method existed to
+// call by mistake — see RelationRepository's header. The DELETE was left behind
+// taking a bare id, which made it a cross-organisation delete: there are no
+// foreign keys underneath it, because migration 015 dropped from_id/to_id on
+// purpose so that any entity kind could be linked.
+//
+// EITHER endpoint may match, not just from_id. ListEntityRelationsForEntity
+// unions the reverse direction precisely so a "blocks" link is visible to the
+// item it blocks, and a relation a caller can see from one side but delete only
+// from the other would be an affordance that fails for no reason they could
+// infer.
+//
+// It stays :exec, and so still answers 204 whether or not a row matched. That
+// is deliberate, and it is the whole no-oracle story here: a relation in
+// another space and a relation that never existed produce byte-identical
+// responses, because both delete nothing and neither is counted. Answering 404
+// on a miss is the more conventional shape and would introduce exactly the
+// existence signal this predicate exists to remove. It also leaves the route as
+// idempotent as it already was, which known-issues #24 explicitly left to a
+// maintainer rather than something to settle in passing.
+func (q *Queries) DeleteEntityRelationInSpace(ctx context.Context, arg DeleteEntityRelationInSpaceParams) error {
+	_, err := q.db.Exec(ctx, deleteEntityRelationInSpace, arg.RelationID, arg.SpaceID)
 	return err
 }
 

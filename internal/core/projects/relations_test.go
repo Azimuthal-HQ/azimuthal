@@ -20,6 +20,9 @@ type stubRelationRepo struct {
 	stored map[uuid.UUID]*NewRelation
 	// readable is the set of target ids TargetIsReadable answers true for.
 	readable map[uuid.UUID]bool
+	// spaces maps a stored relation to the space that touches it, standing in
+	// for the endpoint join DeleteEntityRelationInSpace does in SQL.
+	spaces map[uuid.UUID]uuid.UUID
 	// listing is returned verbatim by ListForEntity.
 	listing []*Relation
 }
@@ -28,6 +31,7 @@ func newStubRelationRepo() *stubRelationRepo {
 	return &stubRelationRepo{
 		stored:   make(map[uuid.UUID]*NewRelation),
 		readable: make(map[uuid.UUID]bool),
+		spaces:   make(map[uuid.UUID]uuid.UUID),
 	}
 }
 
@@ -44,9 +48,18 @@ func (r *stubRelationRepo) ListForEntity(_ context.Context, _ uuid.UUID, _ strin
 	return r.listing, nil
 }
 
-func (r *stubRelationRepo) Delete(_ context.Context, id uuid.UUID) error {
-	if _, ok := r.stored[id]; !ok {
-		return ErrNotFound
+// DeleteInSpace mirrors DeleteEntityRelationInSpace rather than a convenient
+// map delete: the row goes only if the named space touches it, and the call
+// reports success either way.
+//
+// The predecessor returned ErrNotFound for an unknown id, which the real
+// adapter has never done — the query is :exec and reports no row count — so a
+// test written against it was asserting a contract that existed only in the
+// double. Silence on a miss is now load-bearing: it is what makes a relation in
+// another organisation indistinguishable from one that was never there.
+func (r *stubRelationRepo) DeleteInSpace(_ context.Context, id, spaceID uuid.UUID) error {
+	if r.spaces[id] != spaceID {
+		return nil
 	}
 	delete(r.stored, id)
 	return nil
@@ -185,12 +198,15 @@ func TestRelationService_DeleteRelation(t *testing.T) {
 	svc := NewRelationService(repo)
 	toID := uuid.New()
 	repo.allowTarget(toID)
+	space := uuid.New()
 
 	rel, err := svc.CreateRelation(context.Background(), makeNewRelation(uuid.New(), toID), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.DeleteRelation(context.Background(), rel.ID); err != nil {
+	repo.spaces[rel.ID] = space
+
+	if err := svc.DeleteRelation(context.Background(), rel.ID, space); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(repo.stored) != 0 {
@@ -198,11 +214,46 @@ func TestRelationService_DeleteRelation(t *testing.T) {
 	}
 }
 
-func TestRelationService_DeleteRelation_NotFound(t *testing.T) {
-	svc := NewRelationService(newStubRelationRepo())
-	err := svc.DeleteRelation(context.Background(), uuid.New())
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("expected ErrNotFound, got %v", err)
+// A relation no endpoint of which lives in the space the caller named is not
+// deleted, and the caller cannot tell that from an id that never existed.
+//
+// Both halves matter. Without the first the route is a cross-organisation
+// delete; without the second it is an existence oracle in place of one. The
+// test this replaces asserted ErrNotFound for an unknown id — a contract only
+// the double ever had, since the query is :exec and reports no row count.
+func TestRelationService_DeleteRelation_OtherSpaceIsRefusedIndistinguishably(t *testing.T) {
+	repo := newStubRelationRepo()
+	svc := NewRelationService(repo)
+	toID := uuid.New()
+	repo.allowTarget(toID)
+	owning, caller := uuid.New(), uuid.New()
+
+	rel, err := svc.CreateRelation(context.Background(), makeNewRelation(uuid.New(), toID), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.spaces[rel.ID] = owning
+
+	foreignErr := svc.DeleteRelation(context.Background(), rel.ID, caller)
+	if foreignErr != nil {
+		t.Fatalf("a relation in another space must not error, got %v", foreignErr)
+	}
+	if len(repo.stored) != 1 {
+		t.Errorf("a relation in another space must survive, %d stored", len(repo.stored))
+	}
+
+	absentErr := svc.DeleteRelation(context.Background(), uuid.New(), caller)
+	if !errors.Is(foreignErr, absentErr) || foreignErr != absentErr { //nolint:errorlint // comparing two nils by identity is the point
+		t.Errorf("unreadable and nonexistent must answer identically: %v vs %v", foreignErr, absentErr)
+	}
+
+	// And the same relation through the space that does touch it still works,
+	// or refusing everything would pass the assertions above.
+	if err := svc.DeleteRelation(context.Background(), rel.ID, owning); err != nil {
+		t.Fatalf("the owning space must still delete: %v", err)
+	}
+	if len(repo.stored) != 0 {
+		t.Errorf("expected 0 stored relations after the owning space deleted, got %d", len(repo.stored))
 	}
 }
 

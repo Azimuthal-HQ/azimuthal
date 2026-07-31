@@ -115,8 +115,11 @@ type RelationRepository interface {
 	// directions, with far sides resolved only where readable.
 	ListForEntity(ctx context.Context, entityID uuid.UUID, entityType string, readableSpaceIDs []uuid.UUID) ([]*Relation, error)
 
-	// Delete removes a relation by ID.
-	Delete(ctx context.Context, id uuid.UUID) error
+	// DeleteInSpace removes a relation one of whose endpoints lives in
+	// spaceID. There is deliberately no unscoped Delete: the reads here were
+	// reshaped so that no ungated method survived to be called by mistake, and
+	// the delete taking a bare id was the one that got left behind.
+	DeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error
 }
 
 // RelationService handles cross-tool item linking.
@@ -187,9 +190,19 @@ func (s *RelationService) ListRelations(ctx context.Context, entityID uuid.UUID,
 	return rels, nil
 }
 
-// DeleteRelation removes a relation by ID.
-func (s *RelationService) DeleteRelation(ctx context.Context, id uuid.UUID) error {
-	if err := s.repo.Delete(ctx, id); err != nil {
+// DeleteRelation removes a relation the caller's space touches.
+//
+// spaceID is the space the route named and proved readable. Without it this
+// took a bare relation id and deleted whatever it named — the same gap
+// CreateRelation had on the write side, in a method that looked too small to
+// have one. Neither endpoint is constrained by a foreign key (migration 015),
+// so nothing below this refuses a relation belonging to another organisation.
+//
+// A relation outside the space is not an error: it is simply not deleted, and
+// the caller is told the same thing they would be told about an id that never
+// existed. See the query for why that shape rather than a 404.
+func (s *RelationService) DeleteRelation(ctx context.Context, id, spaceID uuid.UUID) error {
+	if err := s.repo.DeleteInSpace(ctx, id, spaceID); err != nil {
 		return fmt.Errorf("deleting relation: %w", err)
 	}
 	return nil

@@ -87,7 +87,7 @@ func (m *mockRelationRepo) TargetIsReadable(_ context.Context, _ uuid.UUID, _ st
 func (m *mockRelationRepo) ListForEntity(_ context.Context, _ uuid.UUID, _ string, _ []uuid.UUID) ([]*projects.Relation, error) {
 	return nil, nil
 }
-func (m *mockRelationRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockRelationRepo) DeleteInSpace(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 type mockLabelRepo struct{}
 

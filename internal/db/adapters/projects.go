@@ -511,9 +511,16 @@ func (a *RelationAdapter) ListForEntity(ctx context.Context, entityID uuid.UUID,
 	return dbEntityRelationRowsToRelations(rows), nil
 }
 
-// Delete removes a relation by ID.
-func (a *RelationAdapter) Delete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.DeleteEntityRelation(ctx, id); err != nil {
+// DeleteInSpace removes a relation the given space touches, and nothing else.
+//
+// A relation neither of whose endpoints lives in spaceID is left alone and
+// reported as success, which is the same answer an id that never existed gets.
+// See the query for why silence rather than a 404 is the right shape here.
+func (a *RelationAdapter) DeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error {
+	if err := a.q.DeleteEntityRelationInSpace(ctx, generated.DeleteEntityRelationInSpaceParams{
+		RelationID: id,
+		SpaceID:    spaceID,
+	}); err != nil {
 		return fmt.Errorf("relation adapter delete: %w", err)
 	}
 	return nil

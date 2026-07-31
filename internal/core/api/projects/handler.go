@@ -1125,8 +1125,16 @@ func (h *Handler) DeleteRelation(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid relation ID")
 		return
 	}
+	// The route proved {spaceID} readable and {relationID} nothing at all, and
+	// this is the only place the two are reconciled: a relation carries no
+	// space of its own, and neither of its endpoints carries a foreign key.
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 
-	if err := h.relations.DeleteRelation(r.Context(), id); err != nil {
+	if err := h.relations.DeleteRelation(r.Context(), id, spaceID); err != nil {
 		handleProjectError(w, r, err)
 		return
 	}

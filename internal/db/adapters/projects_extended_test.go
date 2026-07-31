@@ -255,8 +255,21 @@ func TestRelationAdapter_CreateListDelete(t *testing.T) {
 	require.True(t, rels[0].FarReadable)
 	require.Equal(t, "Target ticket", *rels[0].FarTitle)
 
-	// Delete.
-	require.NoError(t, relationAdapter.Delete(ctx, relID))
+	// Delete. First a space touching neither endpoint: it gets no row and no
+	// complaint, which is what makes a relation in another organisation
+	// indistinguishable from one that was never there. Without this step the
+	// assertion below would pass just as well against an unscoped delete.
+	unrelated := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
+	require.NoError(t, relationAdapter.DeleteInSpace(ctx, relID, unrelated.ID))
+	survived, err := relationAdapter.ListForEntity(ctx, item.ID, "project_item", readable)
+	require.NoError(t, err)
+	require.Len(t, survived, 1, "a space touching neither endpoint must not delete the relation")
+
+	// spaceB holds the TO side, and deleting from it pins the either-endpoint
+	// rule: the reverse direction is unioned into the listing, so the relation
+	// is visible from there, and an affordance visible from one side but
+	// working only from the other would fail for no reason a user could infer.
+	require.NoError(t, relationAdapter.DeleteInSpace(ctx, relID, spaceB.ID))
 
 	rels3, err := relationAdapter.ListForEntity(ctx, item.ID, "project_item", readable)
 	require.NoError(t, err)

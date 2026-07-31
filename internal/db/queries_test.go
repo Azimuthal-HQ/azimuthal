@@ -340,8 +340,10 @@ func TestItemRelations(t *testing.T) {
 	if len(rels) == 0 {
 		t.Error("expected at least one relation")
 	}
-	if err := q.DeleteEntityRelation(ctx, rel.ID); err != nil {
-		t.Fatalf("DeleteEntityRelation: %v", err)
+	if err := q.DeleteEntityRelationInSpace(ctx, generated.DeleteEntityRelationInSpaceParams{
+		RelationID: rel.ID, SpaceID: space.ID,
+	}); err != nil {
+		t.Fatalf("DeleteEntityRelationInSpace: %v", err)
 	}
 }
 

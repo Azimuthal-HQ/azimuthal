@@ -350,7 +350,12 @@ func (s *TierService) requestApproval(ctx context.Context, req GateRequest, t *T
 
 // DecideRequest is one approver's verdict.
 type DecideRequest struct {
-	OrgID      uuid.UUID
+	OrgID uuid.UUID
+	// SpaceID is the space the caller's URL named, and the only thing that ties
+	// this verdict to a space at all. OrgID resolves the ACTOR's team
+	// memberships; it says nothing about where the approved entity lives. See
+	// Decide.
+	SpaceID    uuid.UUID
 	ApprovalID uuid.UUID
 	ActorID    uuid.UUID
 	Decision   Decision
@@ -381,13 +386,30 @@ type DecideRequest struct {
 // give. Whitespace is not a reason: an approver who submits spaces has said
 // nothing, and storing it would produce a decline that renders blank, which is
 // the failure the column was added to close rather than a lesser version of it.
+//
+// # The space is the authorisation
+//
+// req.SpaceID is not a filter for convenience; it is what makes the rest of
+// this function safe, and it is loaded through rather than compared afterwards.
+// Approvers hang off a TRANSITION, a transition belongs to a workflow, and a
+// workflow is an ORG object every space can assign — so being a configured
+// approver is an org-wide fact by construction. Without the space predicate on
+// the load, an approver legitimately configured for one space could decide, and
+// thereby APPLY, a transition on an entity in another one.
+//
+// It is also why the load comes first. Every branch below it answers with a
+// distinguishable status — 409 for already decided, 409 for a deleted edge, 403
+// for not an approver — so a caller outside the space that reached any of them
+// would learn the approval exists and what state it is in. Reconciling first
+// collapses all of that into the single ErrNotFound the route renders as 404,
+// identically to an id that never existed.
 func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, []Effect, error) {
 	storedReason, err := decisionReason(req.Decision, req.Reason)
 	if err != nil {
 		return Approval{}, nil, err
 	}
 
-	approval, err := s.store.GetApproval(ctx, req.ApprovalID)
+	approval, err := s.store.GetApprovalInSpace(ctx, req.SpaceID, req.ApprovalID)
 	if err != nil {
 		return Approval{}, nil, fmt.Errorf("decide: loading the approval: %w", err)
 	}
@@ -405,7 +427,7 @@ func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, 
 		return Approval{}, nil, err
 	}
 
-	decided, err := s.store.DecideApproval(ctx, req.ApprovalID, req.ActorID, req.Decision, storedReason)
+	decided, err := s.store.DecideApproval(ctx, req.SpaceID, req.ApprovalID, req.ActorID, req.Decision, storedReason)
 	if err != nil {
 		return Approval{}, nil, fmt.Errorf("decide: recording the decision: %w", err)
 	}

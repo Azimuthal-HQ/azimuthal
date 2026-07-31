@@ -275,16 +275,17 @@ func (q *Queries) CreateTransitionPostFunction(ctx context.Context, arg CreateTr
 
 const decideApproval = `-- name: DecideApproval :one
 UPDATE workflow_approvals
-SET decided_by = $2, decided_at = now(), decision = $3, reason = $4
-WHERE id = $1 AND decided_at IS NULL
+SET decided_by = $1, decided_at = now(), decision = $2, reason = $3
+WHERE id = $4 AND space_id = $5 AND decided_at IS NULL
 RETURNING id, transition_id, entity_type, entity_id, space_id, from_state_id, to_state_id, from_status, to_status, requested_by, requested_at, decided_by, decided_at, decision, reason
 `
 
 type DecideApprovalParams struct {
-	ID        uuid.UUID   `json:"id"`
-	DecidedBy pgtype.UUID `json:"decided_by"`
-	Decision  *string     `json:"decision"`
-	Reason    *string     `json:"reason"`
+	DecidedBy  pgtype.UUID `json:"decided_by"`
+	Decision   *string     `json:"decision"`
+	Reason     *string     `json:"reason"`
+	ApprovalID uuid.UUID   `json:"approval_id"`
+	SpaceID    uuid.UUID   `json:"space_id"`
 }
 
 // The WHERE clause carries `decided_at IS NULL`, so a second approver deciding
@@ -298,12 +299,20 @@ type DecideApprovalParams struct {
 // decision first — and a failure between the two would leave a decline standing
 // with no reason, which is exactly the unexplained decline the column exists to
 // prevent.
+//
+// space_id is in the WHERE for the same reason GetApprovalInSpace carries it.
+// The service reads through that query first, so a wrong-space id cannot reach
+// this statement today; the predicate is here so that stays true of the next
+// caller as well. Zero rows for a space mismatch lands in the same arm as zero
+// rows for a concurrent decision, and the arm's follow-up read is scoped too,
+// so it reports not-found rather than already-decided.
 func (q *Queries) DecideApproval(ctx context.Context, arg DecideApprovalParams) (WorkflowApproval, error) {
 	row := q.db.QueryRow(ctx, decideApproval,
-		arg.ID,
 		arg.DecidedBy,
 		arg.Decision,
 		arg.Reason,
+		arg.ApprovalID,
+		arg.SpaceID,
 	)
 	var i WorkflowApproval
 	err := row.Scan(
@@ -392,7 +401,7 @@ func (q *Queries) DeleteTransitionPostFunction(ctx context.Context, arg DeleteTr
 	return result.RowsAffected(), nil
 }
 
-const getApproval = `-- name: GetApproval :one
+const getApprovalInSpace = `-- name: GetApprovalInSpace :one
 SELECT
     a.id, a.transition_id, a.entity_type, a.entity_id, a.space_id, a.from_state_id, a.to_state_id, a.from_status, a.to_status, a.requested_by, a.requested_at, a.decided_by, a.decided_at, a.decision, a.reason,
     COALESCE(r.display_name, '')::text AS requested_by_name,
@@ -400,18 +409,41 @@ SELECT
 FROM workflow_approvals a
 LEFT JOIN users r ON r.id = a.requested_by
 LEFT JOIN users d ON d.id = a.decided_by
-WHERE a.id = $1
+WHERE a.id = $1 AND a.space_id = $2
 `
 
-type GetApprovalRow struct {
+type GetApprovalInSpaceParams struct {
+	ApprovalID uuid.UUID `json:"approval_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
+}
+
+type GetApprovalInSpaceRow struct {
 	WorkflowApproval WorkflowApproval `json:"workflow_approval"`
 	RequestedByName  string           `json:"requested_by_name"`
 	DecidedByName    string           `json:"decided_by_name"`
 }
 
-func (q *Queries) GetApproval(ctx context.Context, id uuid.UUID) (GetApprovalRow, error) {
-	row := q.db.QueryRow(ctx, getApproval, id)
-	var i GetApprovalRow
+// One request, reconciled against the space the caller's URL named.
+//
+// The space predicate is the whole authorisation. ListPendingApprovalsForSpace
+// below already states the rule — "a decision is authorised against the space
+// the request was made in" — and this is the read that has to enforce it,
+// because the decide route's other check structurally cannot. Approvers are
+// configured per TRANSITION; a transition belongs to a workflow, which is an
+// ORG object shared by every space that assigns it. So "is the actor a
+// configured approver" is org-wide by construction and says nothing about which
+// space the approved entity lives in.
+//
+// A miss is a miss: wrong space and no such row both return zero rows, the
+// adapter maps both to ErrNotFound, and the route answers 404 either way. That
+// matters more here than on a plain read, because the branches downstream of
+// this one carry distinguishable statuses — already decided is 409, a deleted
+// edge is 409, not an approver is 403 — so reaching them at all would let a
+// caller outside the space learn that an approval exists and what state it is
+// in.
+func (q *Queries) GetApprovalInSpace(ctx context.Context, arg GetApprovalInSpaceParams) (GetApprovalInSpaceRow, error) {
+	row := q.db.QueryRow(ctx, getApprovalInSpace, arg.ApprovalID, arg.SpaceID)
+	var i GetApprovalInSpaceRow
 	err := row.Scan(
 		&i.WorkflowApproval.ID,
 		&i.WorkflowApproval.TransitionID,
