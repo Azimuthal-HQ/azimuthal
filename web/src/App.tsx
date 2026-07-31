@@ -40,6 +40,14 @@ import { SettingsPage } from './pages/settings/SettingsPage';
 import { WorkflowAdminPage } from './pages/settings/WorkflowAdminPage';
 import { InviteAcceptPage } from './pages/auth/InviteAcceptPage';
 import { SharedEntityPage } from './pages/shared/SharedEntityPage';
+import { RequirePortalSession } from './components/portal/RequirePortalSession';
+import { PortalLayout } from './pages/portal/PortalLayout';
+import { PortalSignInPage } from './pages/portal/PortalSignInPage';
+import { PortalRedeemPage } from './pages/portal/PortalRedeemPage';
+import { PortalRequestsPage } from './pages/portal/PortalRequestsPage';
+import { PortalNewRequestPage } from './pages/portal/PortalNewRequestPage';
+import { PortalRequestDetailPage } from './pages/portal/PortalRequestDetailPage';
+import { PortalNotFoundPage } from './pages/portal/PortalNotFoundPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { PeoplePage } from './pages/admin/PeoplePage';
 import { TeamsAdminPage } from './pages/admin/TeamsAdminPage';
@@ -65,6 +73,34 @@ export function App() {
         path="/shared/:entityType/:entityId"
         element={<RequireAuth><SharedEntityPage /></RequireAuth>}
       />
+      {/* The customer portal (migration 044). OUTSIDE the auth wall and outside
+          the shell, and not merely for layout reasons: an external requester
+          has no users row, no membership and no grant, so RequireAuth would
+          bounce them to /login and AppShell would render a space switcher and
+          module tabs for containers they must never learn exist. Its own
+          PortalLayout supplies the frame and RequirePortalSession the guard,
+          reading the per-portal token rather than the internal one.
+
+          /portal/:portalKey/signin/:linkToken is a CONTRACT WITH THE BACKEND,
+          not a layout choice: internal/core/portal/service.go emails
+          {APP_BASE_URL}/portal/{portalKey}/signin/{rawToken} as a path, no
+          server route matches it, and the SPA handler serves index.html — so
+          this declaration is the only thing that makes an emailed link work.
+
+          The subtree declares its OWN path="*". The shell's catch-all lives
+          inside the shell route, so without this an unknown /portal/... URL
+          would render the internal chrome and redirect a signed-out customer
+          to /login — the zero-context guarantee broken by the router. */}
+      <Route path="/portal/:portalKey" element={<PortalLayout />}>
+        <Route index element={<PortalSignInPage />} />
+        <Route path="signin/:linkToken" element={<PortalRedeemPage />} />
+        <Route element={<RequirePortalSession />}>
+          <Route path="requests" element={<PortalRequestsPage />} />
+          <Route path="requests/new" element={<PortalNewRequestPage />} />
+          <Route path="requests/:reference" element={<PortalRequestDetailPage />} />
+        </Route>
+        <Route path="*" element={<PortalNotFoundPage />} />
+      </Route>
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
         {/* Home: user- and org-scoped pages under the static "Your work" panel */}
         <Route element={<HomeLayout />}>
