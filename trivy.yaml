@@ -34,5 +34,13 @@ format: table  # human-readable in CI logs; CI also captures SARIF
 cache:
   dir: /tmp/trivy-cache
 
-# Skip known false positives — add CVE suppressions to trivy-ignore.yaml when needed.
-# ignore-policy is only activated when trivy-ignore.yaml contains a valid Rego module.
+# Skip known false positives — add CVE suppressions to trivy-ignore.yaml when needed,
+# then uncomment the line below. Both trivy-ignore.yaml and docs/security-scanning.md
+# tell you to "uncomment the ignore-policy line in trivy.yaml"; until now there was no
+# such line to uncomment, commented or otherwise, so the instruction could not be
+# followed as written.
+#
+# Leave it commented while trivy-ignore.yaml holds no active rules: an empty Rego
+# module is a parse error, not a no-op.
+#
+# ignore-policy: trivy-ignore.yaml
