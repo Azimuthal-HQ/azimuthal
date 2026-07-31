@@ -85,10 +85,20 @@ func (r *stubItemRepo) UpdateStatus(_ context.Context, id uuid.UUID, status stri
 	return item, nil
 }
 
-func (r *stubItemRepo) UpdateSprint(_ context.Context, id uuid.UUID, sprintID *uuid.UUID) error {
+// UpdateSprintInSpace honours spaceID, so no test can assert a cross-space
+// write succeeded against a double that never looked.
+//
+// A miss returns nil rather than ErrNotFound, because that is what the real
+// statement does: it is :exec and reports no row count, so an item in another
+// space and an item that never existed both simply write nothing. A double that
+// refused where production is silent would be a lie in the safe-looking
+// direction — tests would pin an error the API cannot actually produce.
+func (r *stubItemRepo) UpdateSprintInSpace(
+	_ context.Context, id, spaceID uuid.UUID, sprintID *uuid.UUID,
+) error {
 	item, ok := r.items[id]
-	if !ok || item.DeletedAt != nil {
-		return ErrNotFound
+	if !ok || item.DeletedAt != nil || item.SpaceID != spaceID {
+		return nil
 	}
 	item.SprintID = sprintID
 	return nil
@@ -397,7 +407,7 @@ func TestItemService_AssignToSprint(t *testing.T) {
 	sprintID := uuid.New()
 
 	created, _ := svc.CreateItem(context.Background(), makeItem(spaceID))
-	if err := svc.AssignToSprint(context.Background(), created.ID, &sprintID); err != nil {
+	if err := svc.AssignToSprint(context.Background(), created.ID, spaceID, &sprintID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

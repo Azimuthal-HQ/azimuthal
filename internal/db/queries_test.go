@@ -366,8 +366,10 @@ func TestLabels(t *testing.T) {
 	if len(labels) == 0 {
 		t.Error("expected at least one label")
 	}
-	if err := q.DeleteLabel(ctx, label.ID); err != nil {
-		t.Fatalf("DeleteLabel: %v", err)
+	if err := q.DeleteLabelInOrg(ctx, generated.DeleteLabelInOrgParams{
+		LabelID: label.ID, OrgID: org.ID,
+	}); err != nil {
+		t.Fatalf("DeleteLabelInOrg: %v", err)
 	}
 }
 
@@ -439,10 +441,10 @@ func TestSprints(t *testing.T) {
 	}
 	defer func() { _ = q.SoftDeleteProjectItem(ctx, item.ID) }()
 	sprintUID := pgtype.UUID{Bytes: sprint.ID, Valid: true}
-	if err := q.UpdateProjectItemSprint(ctx, generated.UpdateProjectItemSprintParams{
-		ID: item.ID, SprintID: sprintUID,
+	if err := q.AssignProjectItemToSprintInSpace(ctx, generated.AssignProjectItemToSprintInSpaceParams{
+		ItemID: item.ID, SpaceID: space.ID, SprintID: sprintUID,
 	}); err != nil {
-		t.Fatalf("UpdateProjectItemSprint: %v", err)
+		t.Fatalf("AssignProjectItemToSprintInSpace: %v", err)
 	}
 	sprintItems, err := q.ListProjectItemsBySprint(ctx, generated.ListProjectItemsBySprintParams{SprintID: sprintUID, SpaceID: space.ID})
 	if err != nil {

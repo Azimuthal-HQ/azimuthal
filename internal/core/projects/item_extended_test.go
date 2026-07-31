@@ -52,7 +52,7 @@ func TestItemService_ListItemsBySprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.AssignToSprint(ctx, item.ID, &sprintID); err != nil {
+	if err := svc.AssignToSprint(ctx, item.ID, spaceID, &sprintID); err != nil {
 		t.Fatal(err)
 	}
 

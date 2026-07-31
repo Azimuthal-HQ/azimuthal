@@ -33,7 +33,7 @@ func (m *mockItemRepo) Update(_ context.Context, _ *projects.Item) error { retur
 func (m *mockItemRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ string) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
 }
-func (m *mockItemRepo) UpdateSprint(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
+func (m *mockItemRepo) UpdateSprintInSpace(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID) error {
 	return projects.ErrNotFound
 }
 func (m *mockItemRepo) SoftDelete(_ context.Context, _ uuid.UUID) error { return nil }
@@ -95,7 +95,7 @@ func (m *mockLabelRepo) Create(_ context.Context, _ *projects.Label) error { ret
 func (m *mockLabelRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*projects.Label, error) {
 	return nil, nil
 }
-func (m *mockLabelRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockLabelRepo) DeleteInOrg(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 // noopShareDeleter satisfies projects.ShareRevokingDeleter for handler tests.
 type noopShareDeleter struct{}
@@ -601,7 +601,9 @@ func TestCreateRelationNoAuth(t *testing.T) {
 
 func TestDeleteRelationSuccess(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "relationID", uuid.New().String())
+	req := withParam(
+		withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "relationID", uuid.New().String()),
+		"spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.DeleteRelation(rr, req)
 	if rr.Code != http.StatusNoContent {
@@ -854,7 +856,9 @@ func TestCreateLabelInvalidBody(t *testing.T) {
 
 func TestDeleteLabelSuccess(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "labelID", uuid.New().String())
+	req := withParam(
+		withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "labelID", uuid.New().String()),
+		"orgID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.DeleteLabel(rr, req)
 	if rr.Code != http.StatusNoContent {

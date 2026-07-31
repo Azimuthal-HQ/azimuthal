@@ -23,7 +23,7 @@ func makeSprintItem(ctx context.Context, t *testing.T, ia *adapters.ItemAdapter,
 		ReporterID: reporterID,
 	}
 	require.NoError(t, ia.Create(ctx, item))
-	require.NoError(t, ia.UpdateSprint(ctx, item.ID, sprintID))
+	require.NoError(t, ia.UpdateSprintInSpace(ctx, item.ID, spaceID, sprintID))
 	return item
 }
 

@@ -596,9 +596,11 @@ func (m *mockItemRepo) UpdateStatus(_ context.Context, id uuid.UUID, status stri
 	return item, nil
 }
 
-func (m *mockItemRepo) UpdateSprint(_ context.Context, id uuid.UUID, sprintID *uuid.UUID) error {
+func (m *mockItemRepo) UpdateSprintInSpace(
+	_ context.Context, id, spaceID uuid.UUID, sprintID *uuid.UUID,
+) error {
 	item, ok := m.items[id]
-	if !ok {
+	if !ok || item.SpaceID != spaceID {
 		return projects.ErrNotFound
 	}
 	item.SprintID = sprintID
@@ -729,7 +731,7 @@ func (m *mockLabelRepo) Create(_ context.Context, l *projects.Label) error {
 func (m *mockLabelRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*projects.Label, error) {
 	return nil, nil
 }
-func (m *mockLabelRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockLabelRepo) DeleteInOrg(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 // mockTagRepo stands in for the tag store in the ROUTING tests, which assert
 // that a path reaches a handler and nothing about what it stores. The real

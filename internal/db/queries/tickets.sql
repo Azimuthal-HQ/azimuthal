@@ -49,9 +49,16 @@ WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
 -- name: UpdateTicketWorkflowState :one
+-- The space predicate is what makes ApplyInput.SpaceID load-bearing. It was
+-- carried all the way into the applier and then never used — the caller's space
+-- reached the audit row and nothing else — so a transition released by an
+-- approval in another space wrote the far entity by bare id. The approval is now
+-- reconciled upstream and cannot arrive here mismatched, so this is the seam
+-- being closed rather than the hole; a miss is zero rows and the transaction
+-- rolls back rather than committing a status the caller had no claim on.
 UPDATE tickets
-SET status = $2, workflow_state_id = $3, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = @status, workflow_state_id = @workflow_state_id, updated_at = now()
+WHERE id = @ticket_id AND space_id = @space_id AND deleted_at IS NULL
 RETURNING *;
 
 -- name: SoftDeleteTicket :exec

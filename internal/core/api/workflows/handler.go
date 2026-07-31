@@ -720,7 +720,8 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 	}
 
 	updated, err := h.q.UpdateTicketWorkflowState(r.Context(), generated.UpdateTicketWorkflowStateParams{
-		ID:              ticketID,
+		TicketID:        ticketID,
+		SpaceID:         spaceID,
 		Status:          targetState.Name,
 		WorkflowStateID: pgtype.UUID{Bytes: req.StateID, Valid: true},
 	})
@@ -841,7 +842,8 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 	}
 
 	updated, err := h.q.UpdateProjectItemWorkflowState(r.Context(), generated.UpdateProjectItemWorkflowStateParams{
-		ID:              itemID,
+		ItemID:          itemID,
+		SpaceID:         spaceID,
 		Status:          targetState.Name,
 		WorkflowStateID: pgtype.UUID{Bytes: req.StateID, Valid: true},
 	})

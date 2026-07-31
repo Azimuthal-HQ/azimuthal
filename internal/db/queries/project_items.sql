@@ -108,15 +108,72 @@ WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
 -- name: UpdateProjectItemWorkflowState :one
+-- The space predicate is what makes ApplyInput.SpaceID load-bearing. It was
+-- carried all the way into the applier and then never used — the caller's space
+-- reached the audit row and nothing else — so a transition released by an
+-- approval in another space wrote the far entity by bare id. The approval is now
+-- reconciled upstream and cannot arrive here mismatched, so this is the seam
+-- being closed rather than the hole; a miss is zero rows and the transaction
+-- rolls back rather than committing a status the caller had no claim on.
 UPDATE project_items
-SET status = $2, workflow_state_id = $3, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = @status, workflow_state_id = @workflow_state_id, updated_at = now()
+WHERE id = @item_id AND space_id = @space_id AND deleted_at IS NULL
 RETURNING *;
 
--- name: UpdateProjectItemSprint :exec
+-- name: AssignProjectItemToSprintInSpace :exec
+-- Move an item into a sprint, both of which must live in the caller's space.
+--
+-- TWO unreconciled ids arrive at this statement and both are closed here, in
+-- ONE atomic UPDATE rather than a lookup followed by a write. The item comes
+-- from the URL on the item route and from the request BODY on the backlog move
+-- pair; the sprint always comes from the body. The predecessor carried neither
+-- predicate, so an editor in one space could re-point the sprint of any project
+-- item in the installation, in any organisation.
+--
+-- Checking the sprint with a separate SELECT would be the same gap in slower
+-- motion: it opens a window in which the sprint moves or is deleted between the
+-- check and the write, and it makes the refusal a second decision some future
+-- caller can skip. Here there is one decision and no window.
+--
+-- The sprint must live in the SAME space as the item, not merely in some space
+-- the caller can read. A sprint is one space's board; an item pointing at
+-- another space's sprint would render on a board it does not belong to and
+-- vanish from its own.
+--
+-- Clearing is ClearProjectItemSprintInSpace, deliberately a separate statement.
+-- Folding it in would need a nullable parameter whose NULL had to short-circuit
+-- the EXISTS, which is the partial-PATCH tri-state confusion in another costume
+-- — and an un-assign has no sprint to validate, so it has no business carrying
+-- the predicate at all.
+--
+-- Both tables are aliased because sqlc's analyser flattens the EXISTS into the
+-- outer scope, where an unqualified `id` is ambiguous against sprints.
+--
+-- :exec, so the route answers as it always has whether or not a row matched. A
+-- foreign item and an absent one stay indistinguishable — as they were before,
+-- except that the write used to LAND in both cases rather than in neither.
+UPDATE project_items pi
+SET sprint_id = @sprint_id, updated_at = now()
+WHERE pi.id = @item_id
+  AND pi.space_id = @space_id
+  AND pi.deleted_at IS NULL
+  AND EXISTS (
+      SELECT 1 FROM sprints s
+       WHERE s.id = @sprint_id
+         AND s.space_id = @space_id
+  );
+
+-- name: ClearProjectItemSprintInSpace :exec
+-- Return an item in this space to the unassigned backlog.
+--
+-- The un-assign half of AssignProjectItemToSprintInSpace, split out because it
+-- names no sprint and so has nothing to reconcile beyond the item itself. Same
+-- space predicate, same silence on a miss.
 UPDATE project_items
-SET sprint_id = $2, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL;
+SET sprint_id = NULL, updated_at = now()
+WHERE id = @item_id
+  AND space_id = @space_id
+  AND deleted_at IS NULL;
 
 -- name: UpdateProjectItemRank :exec
 UPDATE project_items

@@ -97,16 +97,31 @@ func TestItemAdapter_UpdateSprint(t *testing.T) {
 	}
 	require.NoError(t, itemAdapter.Create(ctx, item))
 
-	// Assign to sprint.
-	require.NoError(t, itemAdapter.UpdateSprint(ctx, item.ID, &sprint.ID))
+	// Assign to sprint. First from a space that owns neither the item nor the
+	// sprint: nothing is written and nothing is reported, so a foreign item and
+	// an absent one stay the same answer. Without this the assertion below
+	// would pass against the unscoped predecessor.
+	strangerSpace := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
+	require.NoError(t, itemAdapter.UpdateSprintInSpace(ctx, item.ID, strangerSpace.ID, &sprint.ID))
+	notAssigned, err := itemAdapter.ListBySprint(ctx, space.ID, sprint.ID)
+	require.NoError(t, err)
+	require.Empty(t, notAssigned, "a space owning neither id must not assign the item")
+
+	require.NoError(t, itemAdapter.UpdateSprintInSpace(ctx, item.ID, space.ID, &sprint.ID))
 
 	inSprint, err := itemAdapter.ListBySprint(ctx, space.ID, sprint.ID)
 	require.NoError(t, err)
 	require.Len(t, inSprint, 1)
 	require.Equal(t, item.ID, inSprint[0].ID)
 
-	// Remove from sprint.
-	require.NoError(t, itemAdapter.UpdateSprint(ctx, item.ID, nil))
+	// Remove from sprint. The clearing statement is scoped too, so a stranger
+	// space cannot knock an item off its sprint either.
+	require.NoError(t, itemAdapter.UpdateSprintInSpace(ctx, item.ID, strangerSpace.ID, nil))
+	stillThere, err := itemAdapter.ListBySprint(ctx, space.ID, sprint.ID)
+	require.NoError(t, err)
+	require.Len(t, stillThere, 1, "a stranger space must not clear the sprint")
+
+	require.NoError(t, itemAdapter.UpdateSprintInSpace(ctx, item.ID, space.ID, nil))
 
 	inSprint, err = itemAdapter.ListBySprint(ctx, space.ID, sprint.ID)
 	require.NoError(t, err)

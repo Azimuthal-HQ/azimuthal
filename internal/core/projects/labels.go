@@ -24,8 +24,10 @@ type LabelRepository interface {
 	Create(ctx context.Context, label *Label) error
 	// ListByOrg returns all labels for an organization, ordered by name.
 	ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*Label, error)
-	// Delete removes a label by ID.
-	Delete(ctx context.Context, id uuid.UUID) error
+	// DeleteInOrg removes a label belonging to orgID. There is deliberately no
+	// unscoped variant: the route this serves is open to any org member, so
+	// the organisation is the only boundary the delete has.
+	DeleteInOrg(ctx context.Context, id, orgID uuid.UUID) error
 }
 
 // LabelService handles label management for an organization.
@@ -63,9 +65,18 @@ func (s *LabelService) ListLabels(ctx context.Context, orgID uuid.UUID) ([]*Labe
 	return labels, nil
 }
 
-// DeleteLabel removes a label by ID.
-func (s *LabelService) DeleteLabel(ctx context.Context, id uuid.UUID) error {
-	if err := s.repo.Delete(ctx, id); err != nil {
+// DeleteLabel removes a label belonging to orgID.
+//
+// orgID is the boundary. The route is deliberately open to any org member —
+// labels are shared metadata, not an administered resource — so there is no
+// space and no admin guard above this, and without the org predicate the id
+// alone reached every label in the installation.
+//
+// A label in another organisation is not an error; it is simply not deleted,
+// and the caller is told what they would be told about an id that never
+// existed.
+func (s *LabelService) DeleteLabel(ctx context.Context, id, orgID uuid.UUID) error {
+	if err := s.repo.DeleteInOrg(ctx, id, orgID); err != nil {
 		return fmt.Errorf("deleting label: %w", err)
 	}
 	return nil

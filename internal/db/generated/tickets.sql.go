@@ -556,19 +556,32 @@ func (q *Queries) UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatus
 
 const updateTicketWorkflowState = `-- name: UpdateTicketWorkflowState :one
 UPDATE tickets
-SET status = $2, workflow_state_id = $3, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = $1, workflow_state_id = $2, updated_at = now()
+WHERE id = $3 AND space_id = $4 AND deleted_at IS NULL
 RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
 type UpdateTicketWorkflowStateParams struct {
-	ID              uuid.UUID   `json:"id"`
 	Status          string      `json:"status"`
 	WorkflowStateID pgtype.UUID `json:"workflow_state_id"`
+	TicketID        uuid.UUID   `json:"ticket_id"`
+	SpaceID         uuid.UUID   `json:"space_id"`
 }
 
+// The space predicate is what makes ApplyInput.SpaceID load-bearing. It was
+// carried all the way into the applier and then never used — the caller's space
+// reached the audit row and nothing else — so a transition released by an
+// approval in another space wrote the far entity by bare id. The approval is now
+// reconciled upstream and cannot arrive here mismatched, so this is the seam
+// being closed rather than the hole; a miss is zero rows and the transaction
+// rolls back rather than committing a status the caller had no claim on.
 func (q *Queries) UpdateTicketWorkflowState(ctx context.Context, arg UpdateTicketWorkflowStateParams) (Ticket, error) {
-	row := q.db.QueryRow(ctx, updateTicketWorkflowState, arg.ID, arg.Status, arg.WorkflowStateID)
+	row := q.db.QueryRow(ctx, updateTicketWorkflowState,
+		arg.Status,
+		arg.WorkflowStateID,
+		arg.TicketID,
+		arg.SpaceID,
+	)
 	var i Ticket
 	err := row.Scan(
 		&i.ID,

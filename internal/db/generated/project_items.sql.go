@@ -12,6 +12,84 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const assignProjectItemToSprintInSpace = `-- name: AssignProjectItemToSprintInSpace :exec
+UPDATE project_items pi
+SET sprint_id = $1, updated_at = now()
+WHERE pi.id = $2
+  AND pi.space_id = $3
+  AND pi.deleted_at IS NULL
+  AND EXISTS (
+      SELECT 1 FROM sprints s
+       WHERE s.id = $1
+         AND s.space_id = $3
+  )
+`
+
+type AssignProjectItemToSprintInSpaceParams struct {
+	SprintID pgtype.UUID `json:"sprint_id"`
+	ItemID   uuid.UUID   `json:"item_id"`
+	SpaceID  uuid.UUID   `json:"space_id"`
+}
+
+// Move an item into a sprint, both of which must live in the caller's space.
+//
+// TWO unreconciled ids arrive at this statement and both are closed here, in
+// ONE atomic UPDATE rather than a lookup followed by a write. The item comes
+// from the URL on the item route and from the request BODY on the backlog move
+// pair; the sprint always comes from the body. The predecessor carried neither
+// predicate, so an editor in one space could re-point the sprint of any project
+// item in the installation, in any organisation.
+//
+// Checking the sprint with a separate SELECT would be the same gap in slower
+// motion: it opens a window in which the sprint moves or is deleted between the
+// check and the write, and it makes the refusal a second decision some future
+// caller can skip. Here there is one decision and no window.
+//
+// The sprint must live in the SAME space as the item, not merely in some space
+// the caller can read. A sprint is one space's board; an item pointing at
+// another space's sprint would render on a board it does not belong to and
+// vanish from its own.
+//
+// Clearing is ClearProjectItemSprintInSpace, deliberately a separate statement.
+// Folding it in would need a nullable parameter whose NULL had to short-circuit
+// the EXISTS, which is the partial-PATCH tri-state confusion in another costume
+// — and an un-assign has no sprint to validate, so it has no business carrying
+// the predicate at all.
+//
+// Both tables are aliased because sqlc's analyser flattens the EXISTS into the
+// outer scope, where an unqualified `id` is ambiguous against sprints.
+//
+// :exec, so the route answers as it always has whether or not a row matched. A
+// foreign item and an absent one stay indistinguishable — as they were before,
+// except that the write used to LAND in both cases rather than in neither.
+func (q *Queries) AssignProjectItemToSprintInSpace(ctx context.Context, arg AssignProjectItemToSprintInSpaceParams) error {
+	_, err := q.db.Exec(ctx, assignProjectItemToSprintInSpace, arg.SprintID, arg.ItemID, arg.SpaceID)
+	return err
+}
+
+const clearProjectItemSprintInSpace = `-- name: ClearProjectItemSprintInSpace :exec
+UPDATE project_items
+SET sprint_id = NULL, updated_at = now()
+WHERE id = $1
+  AND space_id = $2
+  AND deleted_at IS NULL
+`
+
+type ClearProjectItemSprintInSpaceParams struct {
+	ItemID  uuid.UUID `json:"item_id"`
+	SpaceID uuid.UUID `json:"space_id"`
+}
+
+// Return an item in this space to the unassigned backlog.
+//
+// The un-assign half of AssignProjectItemToSprintInSpace, split out because it
+// names no sprint and so has nothing to reconcile beyond the item itself. Same
+// space predicate, same silence on a miss.
+func (q *Queries) ClearProjectItemSprintInSpace(ctx context.Context, arg ClearProjectItemSprintInSpaceParams) error {
+	_, err := q.db.Exec(ctx, clearProjectItemSprintInSpace, arg.ItemID, arg.SpaceID)
+	return err
+}
+
 const createProjectItem = `-- name: CreateProjectItem :one
 WITH seq AS (
     INSERT INTO project_item_sequences (space_id, last_number)
@@ -620,22 +698,6 @@ func (q *Queries) UpdateProjectItemRank(ctx context.Context, arg UpdateProjectIt
 	return err
 }
 
-const updateProjectItemSprint = `-- name: UpdateProjectItemSprint :exec
-UPDATE project_items
-SET sprint_id = $2, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
-`
-
-type UpdateProjectItemSprintParams struct {
-	ID       uuid.UUID   `json:"id"`
-	SprintID pgtype.UUID `json:"sprint_id"`
-}
-
-func (q *Queries) UpdateProjectItemSprint(ctx context.Context, arg UpdateProjectItemSprintParams) error {
-	_, err := q.db.Exec(ctx, updateProjectItemSprint, arg.ID, arg.SprintID)
-	return err
-}
-
 const updateProjectItemStatus = `-- name: UpdateProjectItemStatus :one
 UPDATE project_items
 SET status = $2, updated_at = now()
@@ -681,19 +743,32 @@ func (q *Queries) UpdateProjectItemStatus(ctx context.Context, arg UpdateProject
 
 const updateProjectItemWorkflowState = `-- name: UpdateProjectItemWorkflowState :one
 UPDATE project_items
-SET status = $2, workflow_state_id = $3, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = $1, workflow_state_id = $2, updated_at = now()
+WHERE id = $3 AND space_id = $4 AND deleted_at IS NULL
 RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector
 `
 
 type UpdateProjectItemWorkflowStateParams struct {
-	ID              uuid.UUID   `json:"id"`
 	Status          string      `json:"status"`
 	WorkflowStateID pgtype.UUID `json:"workflow_state_id"`
+	ItemID          uuid.UUID   `json:"item_id"`
+	SpaceID         uuid.UUID   `json:"space_id"`
 }
 
+// The space predicate is what makes ApplyInput.SpaceID load-bearing. It was
+// carried all the way into the applier and then never used — the caller's space
+// reached the audit row and nothing else — so a transition released by an
+// approval in another space wrote the far entity by bare id. The approval is now
+// reconciled upstream and cannot arrive here mismatched, so this is the seam
+// being closed rather than the hole; a miss is zero rows and the transaction
+// rolls back rather than committing a status the caller had no claim on.
 func (q *Queries) UpdateProjectItemWorkflowState(ctx context.Context, arg UpdateProjectItemWorkflowStateParams) (ProjectItem, error) {
-	row := q.db.QueryRow(ctx, updateProjectItemWorkflowState, arg.ID, arg.Status, arg.WorkflowStateID)
+	row := q.db.QueryRow(ctx, updateProjectItemWorkflowState,
+		arg.Status,
+		arg.WorkflowStateID,
+		arg.ItemID,
+		arg.SpaceID,
+	)
 	var i ProjectItem
 	err := row.Scan(
 		&i.ID,

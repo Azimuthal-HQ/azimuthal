@@ -853,7 +853,9 @@ func (h *Handler) AssignToSprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.items.AssignToSprint(r.Context(), id, req.SprintID); err != nil {
+	// The capability was asked about {spaceID}; neither {itemID} nor the
+	// sprint id in the body has been reconciled with it yet.
+	if err := h.items.AssignToSprint(r.Context(), id, spaceID, req.SprintID); err != nil {
 		handleProjectError(w, r, err)
 		return
 	}
@@ -1547,7 +1549,9 @@ func (h *Handler) MoveToSprint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.backlog.MoveToSprint(r.Context(), req.ItemID, req.SprintID); err != nil {
+	// Both ids come from the body and neither has been reconciled with
+	// anything; spaceID is what the route actually proved.
+	if err := h.backlog.MoveToSprint(r.Context(), req.ItemID, req.SprintID, spaceID); err != nil {
 		handleProjectError(w, r, err)
 		return
 	}
@@ -1588,7 +1592,8 @@ func (h *Handler) MoveToBacklog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.backlog.MoveToBacklog(r.Context(), req.ItemID); err != nil {
+	// req.ItemID is a body id the route proved nothing about; spaceID is.
+	if err := h.backlog.MoveToBacklog(r.Context(), req.ItemID, spaceID); err != nil {
 		handleProjectError(w, r, err)
 		return
 	}
@@ -1785,8 +1790,16 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid label ID")
 		return
 	}
+	// The route is open to any org member by design — labels are shared
+	// metadata, not an administered resource — so {orgID} is the only boundary
+	// this delete has, and the label id alone did not carry it.
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
 
-	if err := h.labels.DeleteLabel(r.Context(), id); err != nil {
+	if err := h.labels.DeleteLabel(r.Context(), id, orgID); err != nil {
 		handleProjectError(w, r, err)
 		return
 	}

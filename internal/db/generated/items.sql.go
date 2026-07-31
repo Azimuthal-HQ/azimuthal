@@ -203,12 +203,30 @@ func (q *Queries) DeleteEntityRelationInSpace(ctx context.Context, arg DeleteEnt
 	return err
 }
 
-const deleteLabel = `-- name: DeleteLabel :exec
-DELETE FROM labels WHERE id = $1
+const deleteLabelInOrg = `-- name: DeleteLabelInOrg :exec
+DELETE FROM labels WHERE id = $1 AND org_id = $2
 `
 
-func (q *Queries) DeleteLabel(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteLabel, id)
+type DeleteLabelInOrgParams struct {
+	LabelID uuid.UUID `json:"label_id"`
+	OrgID   uuid.UUID `json:"org_id"`
+}
+
+// Delete a label belonging to this organisation, and no other.
+//
+// Labels are org-wide metadata that any member may manage, so the route carries
+// no space and no admin guard — which left the org itself as the only boundary,
+// and the predecessor did not carry it. `WHERE id = $1` meant any authenticated
+// member of any organisation could hard-delete any label row in the
+// installation, and labels have no soft delete to recover from.
+//
+// Its sibling ListLabelsByOrg above has always been org-scoped. This is the
+// same predicate on the write.
+//
+// :exec, so a label in another organisation and a label that never existed are
+// the same 204 and nothing is disclosed either way.
+func (q *Queries) DeleteLabelInOrg(ctx context.Context, arg DeleteLabelInOrgParams) error {
+	_, err := q.db.Exec(ctx, deleteLabelInOrg, arg.LabelID, arg.OrgID)
 	return err
 }
 

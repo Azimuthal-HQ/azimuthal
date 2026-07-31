@@ -4,8 +4,21 @@ INSERT INTO labels (id, org_id, name, color) VALUES ($1, $2, $3, $4) RETURNING *
 -- name: ListLabelsByOrg :many
 SELECT * FROM labels WHERE org_id = $1 ORDER BY name ASC;
 
--- name: DeleteLabel :exec
-DELETE FROM labels WHERE id = $1;
+-- name: DeleteLabelInOrg :exec
+-- Delete a label belonging to this organisation, and no other.
+--
+-- Labels are org-wide metadata that any member may manage, so the route carries
+-- no space and no admin guard — which left the org itself as the only boundary,
+-- and the predecessor did not carry it. `WHERE id = $1` meant any authenticated
+-- member of any organisation could hard-delete any label row in the
+-- installation, and labels have no soft delete to recover from.
+--
+-- Its sibling ListLabelsByOrg above has always been org-scoped. This is the
+-- same predicate on the write.
+--
+-- :exec, so a label in another organisation and a label that never existed are
+-- the same 204 and nothing is disclosed either way.
+DELETE FROM labels WHERE id = @label_id AND org_id = @org_id;
 
 -- name: CreateSprint :one
 INSERT INTO sprints (id, space_id, name, goal, status, starts_at, ends_at, created_by)

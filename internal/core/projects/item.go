@@ -81,8 +81,11 @@ type ItemRepository interface {
 	Update(ctx context.Context, item *Item) error
 	// UpdateStatus changes only the status field.
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*Item, error)
-	// UpdateSprint assigns an item to a sprint (or removes it if sprintID is nil).
-	UpdateSprint(ctx context.Context, id uuid.UUID, sprintID *uuid.UUID) error
+	// UpdateSprintInSpace assigns an item in spaceID to a sprint in the same
+	// space, or removes it from one when sprintID is nil. There is no unscoped
+	// variant: this write is reached from three routes, two of which take the
+	// item id from the request body.
+	UpdateSprintInSpace(ctx context.Context, id, spaceID uuid.UUID, sprintID *uuid.UUID) error
 	// SoftDelete sets deleted_at on an item.
 	SoftDelete(ctx context.Context, id uuid.UUID) error
 	// ListBySpace returns all non-deleted items in a space, ordered by rank.
@@ -204,9 +207,18 @@ func (s *ItemService) UpdateItemStatus(ctx context.Context, id uuid.UUID, status
 	return updated, nil
 }
 
-// AssignToSprint moves an item into a sprint.
-func (s *ItemService) AssignToSprint(ctx context.Context, itemID uuid.UUID, sprintID *uuid.UUID) error {
-	if err := s.repo.UpdateSprint(ctx, itemID, sprintID); err != nil {
+// AssignToSprint moves an item in spaceID into a sprint in the same space, or
+// out of one when sprintID is nil.
+//
+// spaceID is here because the route checks CapEditAnyItem against the {spaceID}
+// in its URL and reconciled it with neither the {itemID} beside it nor the
+// sprint id in the body. Like the ticket assign pair, this route writes without
+// reading the item first, so the predicate in the query is the only thing
+// standing between three ids that have nothing to do with each other.
+func (s *ItemService) AssignToSprint(
+	ctx context.Context, itemID, spaceID uuid.UUID, sprintID *uuid.UUID,
+) error {
+	if err := s.repo.UpdateSprintInSpace(ctx, itemID, spaceID, sprintID); err != nil {
 		return fmt.Errorf("assigning item to sprint: %w", err)
 	}
 	return nil

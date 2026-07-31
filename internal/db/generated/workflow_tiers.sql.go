@@ -18,7 +18,7 @@ UPDATE project_items SET
     due_at      = CASE WHEN $3::boolean   THEN $4::timestamptz ELSE due_at END,
     labels      = CASE WHEN $5::boolean   THEN $6::text[] ELSE labels END,
     updated_at  = now()
-WHERE id = $7 AND deleted_at IS NULL
+WHERE id = $7 AND space_id = $8 AND deleted_at IS NULL
 `
 
 type ApplyProjectItemEffectsParams struct {
@@ -29,8 +29,10 @@ type ApplyProjectItemEffectsParams struct {
 	SetLabels   bool               `json:"set_labels"`
 	Labels      []string           `json:"labels"`
 	ID          uuid.UUID          `json:"id"`
+	SpaceID     uuid.UUID          `json:"space_id"`
 }
 
+// See ApplyTicketEffects.
 func (q *Queries) ApplyProjectItemEffects(ctx context.Context, arg ApplyProjectItemEffectsParams) error {
 	_, err := q.db.Exec(ctx, applyProjectItemEffects,
 		arg.SetAssignee,
@@ -40,6 +42,7 @@ func (q *Queries) ApplyProjectItemEffects(ctx context.Context, arg ApplyProjectI
 		arg.SetLabels,
 		arg.Labels,
 		arg.ID,
+		arg.SpaceID,
 	)
 	return err
 }
@@ -52,7 +55,7 @@ UPDATE tickets SET
     due_at      = CASE WHEN $3::boolean   THEN $4::timestamptz ELSE due_at END,
     labels      = CASE WHEN $5::boolean   THEN $6::text[] ELSE labels END,
     updated_at  = now()
-WHERE id = $7 AND deleted_at IS NULL
+WHERE id = $7 AND space_id = $8 AND deleted_at IS NULL
 `
 
 type ApplyTicketEffectsParams struct {
@@ -63,6 +66,7 @@ type ApplyTicketEffectsParams struct {
 	SetLabels   bool               `json:"set_labels"`
 	Labels      []string           `json:"labels"`
 	ID          uuid.UUID          `json:"id"`
+	SpaceID     uuid.UUID          `json:"space_id"`
 }
 
 // ─── Applying post-function effects ───────────────────────────────────────────
@@ -76,6 +80,10 @@ type ApplyTicketEffectsParams struct {
 // into one nullable parameter is the partial-PATCH tri-state defect that
 // silently wiped every item's due_at in this repository once already. The flag
 // is the same {Set, Value} discipline optionalField encodes in Go.
+// Post-function effects commit with the status write or not at all, so this
+// carries the same space predicate UpdateTicketWorkflowState does. Without it a
+// transition could be refused the status change and still rewrite the far
+// entity's assignee, due date and labels.
 func (q *Queries) ApplyTicketEffects(ctx context.Context, arg ApplyTicketEffectsParams) error {
 	_, err := q.db.Exec(ctx, applyTicketEffects,
 		arg.SetAssignee,
@@ -85,6 +93,7 @@ func (q *Queries) ApplyTicketEffects(ctx context.Context, arg ApplyTicketEffects
 		arg.SetLabels,
 		arg.Labels,
 		arg.ID,
+		arg.SpaceID,
 	)
 	return err
 }

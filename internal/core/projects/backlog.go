@@ -46,22 +46,37 @@ func (s *BacklogService) GetSprintBacklog(ctx context.Context, spaceID, sprintID
 	return items, nil
 }
 
-// MoveToSprint assigns an item to a sprint, removing it from the unassigned backlog.
-func (s *BacklogService) MoveToSprint(ctx context.Context, itemID, sprintID uuid.UUID) error {
-	// Verify the sprint exists.
-	if _, err := s.sprintRepo.GetByID(ctx, sprintID); err != nil {
+// MoveToSprint assigns an item to a sprint, removing it from the unassigned
+// backlog. Both ids come from the request body and both are reconciled against
+// spaceID — the only thing the route proved anything about.
+//
+// The existence check is scoped, and that is a security fix rather than tidying.
+// It used to read the sprint unscoped and map a miss to 404, so a sprint id that
+// existed anywhere in the installation answered 200 and one that existed nowhere
+// answered 404: an existence oracle over every organisation's sprints, readable
+// by any member holding the write floor on any one space. Scoped, both answers
+// are 404.
+//
+// The assignment itself is reconciled again in the UPDATE, so the check is not
+// what makes the write safe — it is what makes the refusal legible. A caller
+// naming a sprint they cannot reach is told so, rather than silently having
+// nothing happen.
+func (s *BacklogService) MoveToSprint(ctx context.Context, itemID, sprintID, spaceID uuid.UUID) error {
+	if _, err := s.sprintRepo.GetByIDInSpace(ctx, spaceID, sprintID); err != nil {
 		return fmt.Errorf("moving item to sprint: %w", err)
 	}
 
-	if err := s.itemRepo.UpdateSprint(ctx, itemID, &sprintID); err != nil {
+	if err := s.itemRepo.UpdateSprintInSpace(ctx, itemID, spaceID, &sprintID); err != nil {
 		return fmt.Errorf("moving item to sprint: %w", err)
 	}
 	return nil
 }
 
-// MoveToBacklog removes an item from its sprint, returning it to the unassigned backlog.
-func (s *BacklogService) MoveToBacklog(ctx context.Context, itemID uuid.UUID) error {
-	if err := s.itemRepo.UpdateSprint(ctx, itemID, nil); err != nil {
+// MoveToBacklog removes an item in spaceID from its sprint, returning it to the
+// unassigned backlog. The item id comes from the request body and was
+// previously written by bare id.
+func (s *BacklogService) MoveToBacklog(ctx context.Context, itemID, spaceID uuid.UUID) error {
+	if err := s.itemRepo.UpdateSprintInSpace(ctx, itemID, spaceID, nil); err != nil {
 		return fmt.Errorf("moving item to backlog: %w", err)
 	}
 	return nil

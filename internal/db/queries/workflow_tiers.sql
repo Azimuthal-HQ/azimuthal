@@ -269,20 +269,25 @@ SELECT * FROM workflows WHERE id = $1 AND org_id = $2;
 -- is the same {Set, Value} discipline optionalField encodes in Go.
 
 -- name: ApplyTicketEffects :exec
+-- Post-function effects commit with the status write or not at all, so this
+-- carries the same space predicate UpdateTicketWorkflowState does. Without it a
+-- transition could be refused the status change and still rewrite the far
+-- entity's assignee, due date and labels.
 UPDATE tickets SET
     assignee_id = CASE WHEN @set_assignee::boolean THEN sqlc.narg(assignee_id)::uuid ELSE assignee_id END,
     due_at      = CASE WHEN @set_due_at::boolean   THEN sqlc.narg(due_at)::timestamptz ELSE due_at END,
     labels      = CASE WHEN @set_labels::boolean   THEN @labels::text[] ELSE labels END,
     updated_at  = now()
-WHERE id = @id AND deleted_at IS NULL;
+WHERE id = @id AND space_id = @space_id AND deleted_at IS NULL;
 
 -- name: ApplyProjectItemEffects :exec
+-- See ApplyTicketEffects.
 UPDATE project_items SET
     assignee_id = CASE WHEN @set_assignee::boolean THEN sqlc.narg(assignee_id)::uuid ELSE assignee_id END,
     due_at      = CASE WHEN @set_due_at::boolean   THEN sqlc.narg(due_at)::timestamptz ELSE due_at END,
     labels      = CASE WHEN @set_labels::boolean   THEN @labels::text[] ELSE labels END,
     updated_at  = now()
-WHERE id = @id AND deleted_at IS NULL;
+WHERE id = @id AND space_id = @space_id AND deleted_at IS NULL;
 
 -- ─── Approval notification recipients ─────────────────────────────────────────
 
