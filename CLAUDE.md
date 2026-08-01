@@ -24,6 +24,7 @@ checked into this repository. Everything else here is traceable to a file you ca
 | Where the spec and the repository have disagreed | [`docs/design/spec-repo-reconciliation.md`](docs/design/spec-repo-reconciliation.md) |
 | Open defects and their status | [`docs/known-issues.md`](docs/known-issues.md) |
 | How the scanners work and how suppression is governed | [`docs/security-scanning.md`](docs/security-scanning.md) |
+| How to cite code from a document | §6 below — symbol and file, never `file:line` |
 
 **Before building anything shared** — a picker, an error path, a confirmation count, a route
 guard, a transactional write with an audit trail — check `shared-surfaces.md`. A second
@@ -41,7 +42,13 @@ contains). Assertions are never weakened. Blast-radius review on every PR. No bl
 DRAFT unless all three gates exit 0.
 
 **Repository.** Migration numbering is immutable once shipped. Agents never create or edit the
-roadmap. No agent-name file suffixes. (On git operations, see the flagged conflict in §4.)
+roadmap. No agent-name file suffixes.
+
+**Git operations.** Agents work on their own branch — commit, push, rebase, and
+`--force-with-lease` on a branch nobody has based work on. Four things are never an agent's to do:
+never commit or push to `main`; never create or move a tag; never merge a PR, including their own;
+never force-push a **shared** branch. §4 carries the detail; specification §10 is the boundary.
+*(This read "see the flagged conflict in §4" until 2026-08-01, when the maintainer settled it.)*
 
 **Architecture.**
 
@@ -71,13 +78,22 @@ Azimuthal is Apache 2.0, fully featured for every user, with no enterprise tier 
 Specification §2 governs the whole project and overrides any instruction that would reduce
 coverage, weaken an assertion, or defer test work to a later PR. The short version:
 
-**Real PostgreSQL only.** Via `internal/testutil.NewTestDB(t)`, which creates an isolated
-per-test schema and applies all migrations into it. **Never mock the database** — mocks hide
+**Real PostgreSQL only.** Via `internal/testutil.NewTestDB(t)`, which hands each test its own
+PostgreSQL *database*, cloned with `CREATE DATABASE ... TEMPLATE` from a template that already has
+every migration applied. Migrations run once, to build the template, not on every call — the
+template's name embeds a SHA-256 fingerprint of the migration set, so it cannot go stale. (This
+file said "per-test schema … applies all migrations into it" until the reconciliation pass; that
+is the design this replaced, described in the package comment at the top of
+`internal/testutil/db.go`. The `Schema` field on `TestDB` survives, always `"public"`, only because
+tests build a `search_path` from it.)
+**Never mock the database** — mocks hide
 constraint violations and casing bugs, both of which shipped in v0.1.x. Any test that touches
 persistence uses a real database.
 
 > Spec §2.8 states this as "No mocks exist, none will be added." The rule stands; the factual
-> half does not. Roughly thirty hand-written `mock*` fakes exist in Go handler and service tests
+> half does not. **40** hand-written `mock*` types exist in Go handler and service tests, plus 91
+> `vi.mock` calls across 51 frontend test files (counts re-measured 2026-07-31; this said "roughly
+> thirty")
 > (`internal/core/api/router_test.go`, `internal/core/api/auth/handler_test.go` and others), plus
 > `vi.mock` in the frontend suite. They stub repository *interfaces*, not the database — the real
 > database coverage lives in the `*_integration_test.go` files alongside them. This gap between
@@ -98,7 +114,17 @@ own test is incomplete, even with green CI.
 
 **Skip discipline.** Removing a feature means removing its tests, not skipping them. A skip is
 permitted only with all three of: a `SKIP:` comment naming the blocker, a referenced GitHub issue
-number, and a stated re-enable condition. CI fails on any skip lacking these.
+number, and a stated re-enable condition. A skip lacking these is a failing review.
+
+> **Correction, 2026-07-31.** This sentence read "CI fails on any skip lacking these." It does
+> not: nothing in `.github/workflows/ci.yml` inspects skips, and eleven unmarked `t.Skip` calls
+> pass every gate today — mostly environment guards, but
+> `internal/core/api/harness_wiring_test.go` is not — `t.Skip("portal surface is not mounted in
+> this harness")`. Exactly one skip in the tree carries
+> the marker. The rule stands and is enforced by review; the claim that a gate enforces it was
+> false, and telling an agent a gate will catch it is the worst state to leave this in. The
+> identical sentence in the specification (§2.4) is §2 text and is **not** edited here — whether
+> to build the enforcement or narrow the sentence is a maintainer decision, catalogued as D97.
 
 **The negative-test question.** For every check you add, ask: *would this test still pass if the
 check were deleted?* If yes, it asserts nothing. A test that cannot fail is worse than no test,
@@ -131,8 +157,17 @@ org-level (`set_visibility` holds no space role at all), the persona that must b
 
 **Test debt is not permitted.** No PR merges with "tests to follow." There is no follow-up PR.
 
-Coverage floor is **80%**, rising to 85% at the end of P5. Coverage is a floor, not a goal — §2.5
+Coverage floor is **80%** — the `Enforce minimum coverage (80%)` step in
+`.github/workflows/ci.yml`. Coverage is a floor, not a goal — §2.5
 case 23 (constant authorisation queries) is worth more than five percentage points.
+
+> **Overdue, flagged 2026-07-31.** Spec §2.8 and P5's Definition of Done both schedule a raise to
+> **85% at the end of P5**. P5 merged (#88/#89) and P6 merged after it, and the raise never
+> landed — CI still enforces 80, and the comment beside that step ("Rises to 85 at the end of P5,
+> per the same section") still
+> describes the raise in the future tense. This is a lapsed commitment, not a wrong number: 80 is
+> what is enforced. Raising it needs a CI-parity measurement first (the coverage job's own
+> invocation, including `-p 1`), because an unmeasured flip fails every PR. Catalogued as D98.
 
 The permission matrix (§2.5, 23 cases) and the per-endpoint matrix (§2.6) are mandatory for any
 PR touching teams, grants, shares, visibility, or any read path. A missing case is a failing
@@ -150,7 +185,7 @@ make lint
 make test-live       # Go integration tests against real postgres
 make verify-api      # API smoke checks
 make e2e-test        # Playwright
-cd web && npm run type-check && npm run test:unit   # frontend gates — now required in CI
+cd web && npm run type-check && npm run lint && npm run test:unit   # all three are CI gates
 make docs-check      # the OpenAPI spec is regenerated and diffed
 make test-db-down    # NOTE: this DELETES the test data — see below
 ```
@@ -196,9 +231,15 @@ for postgres on `:5433` and MinIO on `:9001`), an `npm ci && npm run build` of t
 built server binary, and Playwright's browsers already installed. **Verify all of that before
 starting a phase that has to run E2E** — discovering it at the gate is how a phase loses an evening.
 
-The port is env-gated. `web/playwright.config.ts` reads **`E2E_PORT`** (default `8082`) in three
-places — `use.baseURL`, the `webServer` `/health` readiness probe, and the spawned server's
-`APP_PORT` — so overriding that one variable moves the whole harness when `8082` is contended.
+The port is env-gated. `web/playwright.config.ts` reads **`E2E_PORT`** (default `8082`) in four
+places — `use.baseURL`, the `webServer` `/health` readiness probe, the spawned server's
+`APP_PORT`, and **`APP_BASE_URL`**, which the server interpolates into every emailed link — so
+overriding that one variable moves the whole harness when `8082` is contended. The fourth is not
+cosmetic and the config says so: without it a captured portal magic link points at `8080`, and if
+a real dev server is answering there the test navigates somewhere else entirely and passes for
+the wrong reason. Note also that `use.baseURL` prefers **`BASE_URL`** when it is set, and CI sets
+it explicitly (`BASE_URL: http://localhost:8082`, in the `e2e` job of
+`.github/workflows/ci.yml`), so a harness setting both must keep them agreed.
 Note that `.env.test` sets `APP_PORT=8081`; `webServer.env` overrides it, so the E2E server binds
 the `E2E_PORT` value rather than the `.env.test` one.
 
@@ -206,8 +247,10 @@ the `E2E_PORT` value rather than the `.env.test` one.
 the opposite, and which way round it is changes what you do. Playwright builds the spawned server's
 environment as `{...DEFAULT_ENVIRONMENT_VARIABLES, ...process.env, ...webServer.env}`
 (`web/node_modules/playwright/lib/plugins/webServerPlugin.js`, v1.59.1), so the parent process's
-whole environment reaches the server and the seven entries in `webServer.env` merely *override*
-part of it.
+whole environment reaches the server and the entries in `webServer.env` merely *override* part of
+it. (There are nine of them today. The count was "seven" here until 2026-07-31; it is dropped
+rather than incremented, because the paragraph's argument does not depend on it and the number
+has already drifted once.)
 
 Two consequences, pointing opposite ways. A new `AZIMUTHAL_*` setting **does** reach an E2E server
 without being added to that list, so there is nothing to do when one is added — the older note here
@@ -232,11 +275,23 @@ reverse. Check `golangci-lint --version` against the pin before trusting or acti
 
 Two more worth knowing. CI's coverage run passes `-p 1` (no parallel packages) because the tests
 share one database — no Makefile target sets it, so if you reproduce a CI coverage figure locally
-you must pass it yourself. And `make verify-api` needs `.env.test`.
+you must pass it yourself. And `make verify-api` needs `.env.test` — **but its target does not load
+it.** Unlike `test-db-up`, `test-live`, `test-live-verbose`, `test-live-coverage`,
+`regression-test` and `e2e-test`, the `verify-api` target carries no `export $(ENV_TEST_VARS)`
+(`Makefile:206-210`). With nothing exported, `scripts/verify-api.sh:31-37` falls back to the
+**dev** database on `:5432`, storage on `:9000`, bucket `azimuthal`, `APP_ENV=development` — so if
+a dev stack happens to be up (`build/docker-compose.dev.yml` serves exactly those credentials) the
+suite passes against the wrong database instead of failing, and with no dev stack it dies at
+server start. Export the values yourself:
+
+```bash
+export $(grep -v '^#' .env.test | grep -v '^$' | xargs) && make verify-api
+```
 
 ### The frontend gates run in CI
 
-`npm run type-check` and `npm run test:unit` are required CI gates (the `Frontend` job). They were
+`npm run type-check`, `npm run lint` and `npm run test:unit` are required CI gates (the `Frontend`
+job in `.github/workflows/ci.yml`, as the `Type-check`, `Lint` and `Unit tests` steps). They were
 local-only until the integrity pass, and with them every drift guard written as a vitest test —
 `web/src/lib/no-direct-fetch.test.ts`, `web/src/lib/codex/schema.test.ts` and
 `web/src/components/codex/extensions/extensions.test.ts`. The last two fail in both directions on
@@ -254,11 +309,15 @@ Two of the rules catch real defects rather than style. P5 tripped
 and `react-refresh/only-export-components` by putting the gadget body components in the same file
 as the registry that looks them up. Both were fixed rather than exempted.
 
-*Superseded:* `npm run lint` is **not** a gate. eslint reports 46 errors on `main` — mostly
+*Superseded, and stated in the past tense so it cannot be skim-read as current:* `npm run lint`
+**was** not a gate. eslint reported **48** errors on `main` across 33 files — mostly
 `react-refresh/only-export-components` and `react-hooks/set-state-in-effect` — so gating on it
-today would fail every pull request, and the alternative is a baseline file, which is an exemption
-ledger. The inventory and what closing it would take are in `docs/known-issues.md`. Do not add a
-baseline; do not add `--max-warnings` slack. Fix the findings or leave the gate off.
+then would have failed every pull request, and the alternative was a baseline file, which is an
+exemption ledger. (This paragraph said "46" until 2026-07-31. 46 was the figure recorded when the
+inventory was taken; the closing pass measured 48, and `docs/known-issues.md:461` already carries
+that correction, and the comment above the `frontend` job in `.github/workflows/ci.yml` says 48
+too — "eslint did not pass on main — 48 errors".) The inventory and what closing it
+took are in `docs/known-issues.md` #17. Do not add a baseline; do not add `--max-warnings` slack.
 
 `make docs-check` is a gate too, and now actually checks: the CI job used to grep the committed
 YAML for four structural markers and two path names, and would have passed a spec that had lost
@@ -313,25 +372,25 @@ The working agreement every phase has operated under since P0:
   shared by concurrent sessions, and uncommitted work is not safe from another session's
   housekeeping.
 
-> ### ⚠ Flagged conflict — not resolved here
+> ### ✅ Resolved 2026-08-01 — the §10 conflict is closed
 >
-> Specification §10 states: *"Agents perform **no git operations** — no commits, pushes, tags, or
-> branch changes."*
+> This block used to flag a standing contradiction: specification §10 read *"Agents perform **no
+> git operations** — no commits, pushes, tags, or branch changes"*, while every phase from P0
+> onward branched, committed, pushed and opened its own PR under the envelope above. The
+> disposition was "the specification wins, the conflict is flagged" — followed immediately by an
+> instruction to do the forbidden thing and note it in the PR body.
 >
-> That is not what has happened since P1. Every phase from P0 onward has branched, committed,
-> pushed and opened its own PR, and phase prompts have instructed exactly that. The envelope above
-> describes real practice; §10 forbids it.
+> **The maintainer settled it: §10 is narrowed to the four hazards it was protecting** — never
+> `main`, never a tag, never a merge, never a force-push of a shared branch. The envelope above is
+> now what §10 says, not what it tolerates.
 >
-> **The specification wins and the conflict is flagged rather than reconciled.** (§0's stated
-> rule is about *older* documents, so it does not cover this case directly; the disposition is the
-> same, and §10 is a non-negotiable either way.) This file does not overrule §10 or amend it. A
-> maintainer should decide which is authoritative — most likely by narrowing §10 to what it was
-> plainly protecting (no pushes to `main`, no tags, no self-merges, no history rewriting) rather
-> than a blanket prohibition that no phase has followed.
+> The reason was recorded as stated, and it was not convenience: a specification should state the
+> rule that actually governs, and a stated non-negotiable everyone knowingly works around teaches
+> that any rule in the document can be worked around with a footnote. This closes **D33** and
+> **D106**.
 >
-> Until then: follow the narrow rules — never `main`, never force-push, never self-merge, never
-> tag — and note in your PR body that you performed git operations under a standing instruction
-> that conflicts with §10.
+> **§10 is the boundary; this section is the operative detail.** Where the two appear to disagree,
+> §10 wins and this file is the defect. **PR bodies no longer need the conflict note.**
 
 ---
 
@@ -349,9 +408,66 @@ The standing instruction from P1.5, still in force:
 Two facts this project keeps relearning:
 
 **Read `migrations/` before choosing a migration number.** Never trust a table in a document. The
-specification's migration table has been wrong twice, both times because a phase that was not in
-the plan took numbers first.
+specification's migration table has been wrong **six** times — D2, D52, D56, D76, and twice more —
+usually because a phase that was not in the plan took numbers first, and once because a pass
+corrected the table's *rows* and left the prose around it saying something else. Re-check the
+number against `main` when you **open** the PR, not when you plan the phase: a pre-assigned number
+expires the moment a higher one merges first, and goose then refuses the database **at boot**
+(D73, D81).
 
 **Verify constraint and index names against the database, not against the migration that you
 think created them.** PostgreSQL auto-generates names, and it does not rename a table's indexes
 when the table is renamed. Both facts have already produced defects here.
+
+---
+
+## 6. How documentation cites code
+
+**Cite a symbol and a file. Never `file:line`.**
+
+> `ItemService.CreateItem` in `internal/core/projects/item.go`
+>
+> not `internal/core/projects/item.go:131`
+
+A line number is the one form of evidence that goes stale on **every** merge — including merges
+that change nothing about the claim it supports. A symbol moves only when someone renames or
+deletes it, which is the same event that invalidates the claim anyway, so a stale symbol reference
+is a real signal and a stale line number is noise.
+
+This is not a style preference. It is the most-repeated defect in this repository's documentation:
+`shared-surfaces.md`'s route-accounting count drifted four times, the §4 migration table six, and
+the reconciliation pass that produced this section shipped two line-number *corrections*
+(`comments/handler.go` 264→354 and `item.go` 114→131) that were **both wrong again by the time the
+PR merged**, moved by one unrelated security PR landing in between. A correction with a shelf life
+of one merge is not a correction.
+
+**Where a line genuinely needs pinning, quote the line's text alongside it,** so a reader who finds
+the number rotted can grep for the content:
+
+> `.github/workflows/ci.yml` — `if (( $(echo "$COVERAGE < 80" | bc -l) )); then`
+
+**Two carve-outs, both narrow.**
+
+- **Migrations are immutable once shipped** (§10), so `migrations/026_entity_shares.sql:8-13` is
+  genuinely stable and a line range there is fine.
+- **Quoting a stale citation you are correcting** — "this said `item.go:114`" — is quoting, not
+  citing. Leave it as written or the correction stops making sense.
+
+When you correct a citation, **convert it to symbol form rather than renumbering it.** Renumbering
+buys one merge.
+
+**The same failure mode, in numbers.** A count in prose rots exactly like a line number, and for
+the same reason: it is measured once and then merged past. Ask which of two things the figure is
+doing.
+
+**If the figure is the claim** — D45 is a claim about how many hand-written mocks exist; the
+route-accounting table is a claim about how many routes are accounted for — keep it, and back it
+with a test that fails when it drifts. `TestReadPathSweep_EveryRouteAccounted` is the pattern: it
+walks the fully wired router, never a hand-maintained list, and fails bidirectionally, so the table
+cannot silently disagree with reality. A figure guarded that way is evidence. A figure nobody
+re-measures is a rumour with a decimal point.
+
+**If the figure is incidental support for a claim that stands without it** — "the §4 envelope is
+what governed, and here is how many PRs prove it" — cut it. The claim is stronger without a number
+that expires. The §10 amendment note in the specification shipped with such a count, and it was
+stale by one merge before it landed.

@@ -75,13 +75,23 @@ where a fourth pattern would most easily creep in.
 export function friendlyErrorMessage(err: unknown, fallback: string): string
 ```
 
-Messages behind `VALIDATION_ERROR`, `CONFLICT` and `GONE` are written for humans on the server and
-pass through. **Everything else** — malformed-request internals, server errors, network failures —
-collapses to the caller's `fallback`, which must say what failed in the user's terms.
+Messages behind `VALIDATION_ERROR`, `CONFLICT`, `GONE` and `INVALID_TRANSITION` are written for
+humans on the server and pass through. **Everything else** — malformed-request internals, server
+errors, network failures — collapses to the caller's `fallback`, which must say what failed in the
+user's terms.
 
 (`GONE` is currently inert: the backend has no `CodeGone`, and every `410` site — expired invites,
 expired shares — responds with code `CONFLICT`. Harmless, but do not assume a `GONE` code exists
 on the wire because this list names it.)
+
+(`INVALID_TRANSITION` is the opposite case, and was missing from this list until 2026-07-31. It is
+genuinely on the wire: `respond.CodeInvalidTransition` is emitted with a 409 from two handlers,
+`projects` and `tickets`. It joined the pass-through list with the workflow admin surface, because
+it is the state machine explaining its own refusal — "cannot move from Closed to In Progress" —
+and collapsing that into the caller's fallback told the user only that *something* failed, on the
+one screen where the reason is the point. Note the tier guards themselves answer 422
+`VALIDATION_ERROR` rather than this code. The JSDoc above `friendlyErrorMessage` still names only
+three codes and is ledgered for correction.)
 
 > **The rule: no raw backend string ever reaches a user.** This is not a style preference; it is a
 > regression the E2E suite actively hunts.
@@ -193,6 +203,7 @@ Every route carries **exactly one** guard class:
 | `public` | Unauthenticated by design. A reason is required in the table. |
 | `user-scoped` | `RequireAuth`; data filtered by caller identity. |
 | `org-member` | `RequireAuth` + `ResolveAccess`; 404 for non-members. |
+| `org-read` | org-member; a member-visible read of org-wide metadata (item types, tags, custom-field definitions) that is not a space-scoped resource. |
 | `org-admin` | org-member + `RequireOrgAdmin` on the mutation. |
 | `org-admin-404` | org-member + `RequireOrgAdmin404`. The P2.5 administration surface: non-admins get **404, never 403**, because the surface's existence is itself privileged. |
 | `space-read` | org-member + `RequireSpaceInOrg` + `RequireSpaceReadable` (404). |
@@ -200,6 +211,13 @@ Every route carries **exactly one** guard class:
 | `space-cap` | space-read + handler-enforced capability (`manage_space`, `manage_grants`). |
 | `share-manage` | org-member; the handler resolves the shared entity to its space and enforces `manage_shares` there — read check first, so an unreadable space 404s and a readable-but-uncapable space 403s. Org-scoped because a share names an entity, not a `{spaceID}` in the URL. |
 | `share-read` | org-member + `ResolveShares`. Authorised by an active, unexpired, unrevoked share whose audience includes the caller — **not** by space access. The one family that reaches content without space-readability, by design (ADR-0008). 404 for both "no such entity" and "not shared with you", so it leaks neither existence nor shared-ness. |
+| `portal-session` | **Not** org-member: the caller is an external requester outside the capability model entirely, so `access.Can` is never consulted. `RequirePortalSession` (audience-verified token plus a live `session_generation`) plus queries scoped to the requester's own rows. The only route family reachable from the public internet by someone with no account. |
+
+*`org-read` and `portal-session` were added to this table on 2026-07-31; the vocabulary the sweep
+enforces has twelve classes and this table listed ten. `portal-session` was absent from the whole
+document, not just the table. Note the same two are missing from the doc comment above
+`guardClasses` in `route_accounting_test.go`, which is very likely where this table was copied
+from — that in-code copy is the more load-bearing of the two and is ledgered for correction.*
 
 **The enforcing test:** `TestReadPathSweep_EveryRouteAccounted`. It walks the fully wired chi
 router — never a hand-maintained list — and fails **bidirectionally**: on any route present in the
@@ -220,12 +238,30 @@ Note what the test does and does not do: it proves every route is **classified**
 route's middleware chain matches the class it claims. The classification is a human assertion the
 test keeps honest by refusing to let you skip it.
 
-A second test, `TestReadPathSweep_GuardClassMatchesMiddleware`, *does* read the real chain — but it
-compares chain against claim for **`org-admin` and `org-admin-404` only**. A row claiming
-`space-read`, `space-write`, `space-cap`, `org-member`, `org-read`, `share-manage` or `share-read`
-is accepted on the strength of the row alone, and its middleware is never inspected. So for every
-class but the two admin ones, the guard is proved by an explicit permission-matrix test or it is
-not proved at all. `views_endpoint_matrix_integration_test.go` (P4) is the pattern to copy.
+A second test, `TestReadPathSweep_GuardClassMatchesMiddleware`, *does* read the real chain — but
+only for **three** classes *(this said two until 2026-07-31)*.
+
+- **`org-admin-404`** and **`portal-session`** are checked in **both** directions: a row claiming
+  the class whose chain lacks the guard fails, and a chain carrying the guard under any other
+  claim fails.
+- **`org-admin`** is checked in **one** direction only — a row claiming it without
+  `RequireOrgAdmin` fails, but nothing catches a chain carrying `RequireOrgAdmin` under a weaker
+  claim. (The two cannot alias: `carries` matches `"."+guard+"."`, which is what keeps
+  `RequireOrgAdmin` from matching `RequireOrgAdmin404` frames.)
+
+Two subtrees additionally carry a **prefix rule**, reached through the chain rather than the row,
+so an honest-looking row cannot satisfy it. Every route under
+`/orgs/{orgID}/users|invites|grants|audit-log/` must carry `RequireOrgAdmin404` unless listed in
+`deliberateNonAdminRoutes` with a reason; every route under `/portal/{portalKey}/my/` must carry
+`RequirePortalSession` unless listed in `deliberatePublicPortalRoutes` with a reason. That second
+map is **deliberately empty** — a new public portal route belongs outside `/my/`, not inside it
+with an exemption.
+
+Every other class — `space-read`, `space-write`, `space-cap`, `org-member`, `org-read`,
+`share-manage`, `share-read`, and also `public` and `user-scoped` — is accepted on the strength of
+the row alone, and its middleware is never inspected. For those, the guard is proved by an
+explicit permission-matrix test or it is not proved at all.
+`views_endpoint_matrix_integration_test.go` (P4) is the pattern to copy.
 
 > **The sweep and the dark-harness test had a seam between them, and P4 closed it.** Both walk the
 > router built by `newTestServerOn`. `TestHarness_NoDarkDependencies` deliberately *skips* a nil

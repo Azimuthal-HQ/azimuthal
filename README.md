@@ -6,26 +6,36 @@ A fully open-source, self-hostable alternative to the Atlassian suite (Jira, Con
 
 ## Features
 
-- **Service Desk** — ticket lifecycle, email ingestion, kanban boards
-- **Wiki** — page tree, markdown rendering, version history, conflict detection
-- **Project Tracking** — backlog, sprints, roadmap, cross-tool linking
+- **Service Desk** — ticket lifecycle, queues, kanban boards
+- **Wiki** — page tree, rich-text editing, version history, diff and restore
+- **Project Tracking** — backlog, sprints, roadmap, typed item relations
 - **Unified Frontend** — React + TypeScript SPA embedded in the Go binary, dark mode by default
-- **SSO** — SAML/OIDC single sign-on
 - **RBAC** — role-based access control
 - **Audit Log** — append-only event logging
+
+### Not yet shipped
+
+Listed here because earlier versions of this file listed them as features. Neither is reachable
+today, and this section is the honest place for them until they are.
+
+- **SSO (SAML/OIDC)** — `internal/core/sso` is an interface plus a no-op returning
+  `ErrNotConfigured`. It is not wired into the router.
+- **Email ingestion** — the RFC 2822 parser and `CreateFromEmail` exist and are tested, but there
+  is no IMAP client, POP client, inbound webhook or mail-drop poller, so nothing reaches them.
+  Outbound mail (invites, portal sign-in links) does work.
 
 ## What works today
 
 - **Single binary** — `make build` produces one binary with the frontend embedded. Run `./azimuthal serve` and visit http://localhost:8080
 - **Docker Compose self-hosting** — `docker compose -f build/docker-compose.yml up -d` runs the full stack (app + PostgreSQL + MinIO)
-- **Backup and restore** — `azimuthal backup --output backup.tar.gz` creates a full archive; `azimuthal restore --input backup.tar.gz` restores it
+- **Backup and restore** — `azimuthal backup --output backup.tar.gz` creates a full archive; `azimuthal restore --input backup.tar.gz` restores it. **Run these from a host that has the PostgreSQL client tools on `PATH`** — both shell out to `pg_dump`/`psql`, and the shipped container image is `distroless/static`, which carries neither. See [docs/self-hosting.md](docs/self-hosting.md)
 - **Admin CLI** — `azimuthal admin create-user` and `azimuthal admin reset-password` for user management
 - **Dark mode by default** — steel blue and silver design system with light mode opt-in via settings
 - **Service Desk** — ticket list, ticket detail, kanban board with drag-and-drop
 - **Wiki** — page tree with collapsible navigation, markdown rendering
 - **Project Tracking** — backlog view, sprint board with drag-and-drop
 - **Unified navigation** — top nav with space switcher, context-sensitive sidebar, consistent design across all modules
-- **REST API** — full CRUD for tickets, wiki pages, projects, sprints, labels, and spaces
+- **REST API** — CRUD endpoints for tickets, wiki pages, project items, sprints, labels, and spaces (labels have no update endpoint and sprints no delete endpoint)
 
 ## Self-Hosting
 
@@ -57,7 +67,7 @@ See [docs/self-hosting.md](docs/self-hosting.md) for the full guide including en
 
 ### Prerequisites
 
-- Go 1.23+
+- Go 1.26+ (`go.mod` requires 1.26.0; CI and the release image build with 1.26.5)
 - Node.js 20+ (for building the frontend)
 - PostgreSQL 15+
 - MinIO or S3-compatible storage (for file attachments)
@@ -94,6 +104,7 @@ azimuthal serve                          Start the HTTP server
 azimuthal backup --output file.tar.gz    Create a full backup
 azimuthal restore --input file.tar.gz    Restore from backup
 azimuthal assess                         Assess a Jira/Confluence export for migration (read-only)
+azimuthal bundle-hash                    Print the SHA-256 of the embedded frontend (--verify to compare)
 azimuthal admin create-user              Create a new user
 azimuthal admin reset-password           Reset a user's password
 azimuthal admin verify-split             Verify items_archive counts against tickets + project_items
@@ -168,7 +179,7 @@ generate.
 | Variable | Default | Description |
 |---|---|---|
 | `SMTP_HOST` | `localhost` | SMTP relay host. The default exists for a local dev relay, so "configured" for email delivery means an operator set it *explicitly*. |
-| `SMTP_PORT` | `1025` | SMTP relay port. (The Docker Compose deployment defaults this to `25` instead — see `docs/self-hosting.md`.) |
+| `SMTP_PORT` | `1025` | SMTP relay port. |
 | `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. |
 
 ### Operations
@@ -200,20 +211,39 @@ generate.
 ## Project Structure
 
 ```
-cmd/server/        — single binary entrypoint (serves API + embedded frontend)
+cmd/server/        — single binary entrypoint (serves API + embedded frontend, plus the CLI above)
+cmd/migrate/       — standalone migration runner (honours MIGRATIONS_DIR)
 internal/core/     — all application logic
   api/             — HTTP handlers and router (chi)
+  access/          — the capability model and permission resolution (ADR-0007)
   auth/            — authentication, JWT, sessions
-  sso/             — SAML/OIDC single sign-on
   audit/           — append-only audit log
   rbac/            — role-based access control
-  tickets/         — service desk module
-  wiki/            — wiki/docs module
-  projects/        — project tracking module
+  teams/           — teams and membership
+  spaces/          — spaces, the scope unit (ADR-0006)
+  tickets/         — Beacon, the service desk module
+  wiki/            — Codex, the wiki module
+  projects/        — Vector, the project tracking module
+  workflow/        — workflow states, transition guards, approvals (ADR-0011)
+  views/           — saved views and Beacon queues (ADR-0009)
+  dashboards/      — dashboards and the gadget registry (ADR-0009)
+  search/          — cross-module full-text search
+  portal/          — the customer portal (external requesters)
+  attachments/     — file attachments
+  customfields/    — custom field definitions and values
+  itemtypes/       — Vector item types
+  tags/            — Codex tags
+  invites/         — org invitations
+  people/          — the org directory
+  email/           — outbound SMTP
   storage/         — object storage interface
-internal/db/       — database migrations and sqlc queries
+  sso/             — placeholder interface; no SAML/OIDC implementation (see "Not yet shipped")
+internal/db/       — sqlc queries, generated code and adapters
+internal/assess/   — read-only Jira/Confluence export assessor (the `assess` command)
+internal/bundle/   — frontend bundle hashing (the `bundle-hash` command)
 internal/config/   — configuration loading
-internal/jobs/     — background workers
+internal/jobs/     — background workers (River)
+internal/testutil/ — the test-database harness
 web/               — React + TypeScript frontend (Vite, Tailwind, shadcn/ui)
 migrations/        — goose SQL migration files
 build/             — Dockerfile and docker-compose files

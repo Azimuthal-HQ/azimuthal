@@ -1,6 +1,9 @@
 # ADR-0009 — Saved views and dashboards
 
-**Status:** Accepted — implementation planned for P4 (saved views) and P5 (dashboards).
+**Status:** Accepted — saved views implemented in P4 (migration 038, PRs #79/#81); dashboards
+implemented in P5 (migration 048, PRs #88/#89). All four degradation rules below are implemented,
+server-computed and rendered. *(Status corrected 2026-07-31: it still read "implementation planned
+for P4 … and P5" after both had shipped. Only this line changed; the extracted body is unchanged.)*
 **Origin:** Written as part of `docs/design/v0.3-ia-spec.md` §3; extracted verbatim into this
 file in the post-P3 documentation pass. The text below is unchanged.
 

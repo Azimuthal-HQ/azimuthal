@@ -353,16 +353,30 @@ Two label mechanisms exist in parallel and are not linked:
    color/grouping support. Accessible at `GET /orgs/{orgID}/labels`. Not
    joined to items.
 
-**Impact**: Labels created in the admin UI (`/labels`) have no effect on items.
-Items display label text from the array; color metadata is never shown.
-There is no way to query "all items with label X" efficiently.
+**Impact** *(corrected 2026-07-31 — the gap is LARGER than this said)*: nothing consumes the
+`labels` table. This entry said "labels created in the admin UI have no effect on items", which
+implies an admin UI exists. **There is none.** `/{module}/{spaceId}/labels` — a per-space Vector
+route, not an admin URL — renders a branded "Label management is coming soon" empty state and
+nothing else: no form, no list, no mutation (`web/src/pages/vector/LabelsPage.tsx`, whose own doc
+comment says "Label management is not built yet" and cites this issue). There is no labels page
+under `web/src/pages/admin/` at all. On the client side both label functions are orphans —
+`fetchLabels` is reached only by `useLabels`, which has zero component consumers, and
+`createLabel` is exported and called by nothing in `web/src` or `web/e2e`. The three backend
+routes do exist and are accounted for.
+
+So: items display label text from the `TEXT[]` array; the table's colour metadata is never shown
+because nothing ever writes a row to it; and there is no way to query "all items with label X"
+efficiently. Anyone scoping the fix from the old wording would have budgeted for a join-table
+migration and missed that the entire creation surface has to be built too.
 
 **Root cause**: The design was split across two PRs during Phase 0/1 with
 conflicting approaches. Neither was backed out before shipping.
 
-**Proper fix**: Migrate the array columns to a join table referencing the `labels` table.
+**Proper fix**: two halves, not one. (1) Migrate the array columns to a join table referencing the
+`labels` table. (2) Build the surface that would use it — a real admin page, an item-side picker,
+and a `labels` field in the saved-view filter vocabulary, which today has none.
 
-**Still open.** No `item_labels` join table exists in migrations 001-028. Note that the "Items
+**Still open.** No `item_labels` join table exists in migrations 001-050. Note that the "Items
 Table Split" this entry defers to has partly already happened — migration 014 created `tickets`
 and `project_items` — so the scheduling assumption below is stale and is a maintainer's call, not
 a documented plan.
@@ -711,9 +725,10 @@ if err != nil {
 
 A scan of every non-test `audit.Event{...}` literal found exactly two that set no `OrgID` at all:
 
-- `internal/core/api/comments/handler.go:264` — `EventTypeCommentCreated`. **Every comment ever
-  posted is absent from the audit log.**
-- `internal/core/api/auth/handler.go:153` — `EventTypeLoginFailed`. Arguably intentional (the
+- `CreateComment` in `internal/core/api/comments/handler.go` — the file's sole `audit.Event{`
+  literal, logging `EventTypeCommentCreated`. **Every comment ever posted is absent from the audit
+  log.**
+- `Login` in `internal/core/api/auth/handler.go` — `EventTypeLoginFailed`. Arguably intentional (the
   event fires pre-authentication, so there may be no org to name), but it is a real gap in the
   failed-login trail and it is a gap by accident rather than by decision.
 
@@ -1240,8 +1255,8 @@ loss)
 over a partial close. The failing-shaped test is written and skipped at
 `internal/core/api/workflow_d72_ungated_first_transition_test.go`.
 
-`ItemService.CreateItem` writes `item.Status = "open"`
-(`internal/core/projects/item.go:114`). The seeded project workflow's states are
+`ItemService.CreateItem` in `internal/core/projects/item.go` writes `item.Status = "open"`
+unconditionally — the only occurrence of that literal in the file. The seeded project workflow's states are
 `backlog`/`todo`/`in_progress`/`in_review`/`done` (migration 016). So a freshly created item sits
 at a status that names no state, `TierService.Gate` resolves no edge, and — because absence is
 deliberately not refusal — **no guard, approval or post-function applies to its first move**. Every

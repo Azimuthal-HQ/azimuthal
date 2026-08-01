@@ -56,3 +56,33 @@ Written `can(ctx, CapReadItems, spaceID)`. Never `role == "viewer"`.
 **Administrative authority in v0.3.** Team creation, reparenting, and deletion are org admin
 only. Space creation is org admin or a `lead` of the owning team. Changing `owner_team_id`
 requires `manage_space`.
+
+---
+
+## Correction — 2026-07-31 (spec/repo reconciliation)
+
+**The model as built carries a thirteenth capability, `set_visibility`, which the table above does
+not name.** It postdates the verbatim extraction, so the body is left unchanged and the gap is
+recorded here instead.
+
+No space role holds it — not even `space_admin`. It governs a space's visibility, both a later
+change and a non-default value chosen at creation, and it is granted only by the org-admin bypass
+this table's last row already describes. `internal/core/access/capability.go` states the reasoning
+where it is declared: visibility changes what the whole organisation sees, which is an org-level
+concern rather than a space-level one.
+
+It is structurally distinct, not merely an extra row. Because there is no space to check against
+at creation time, it is asked through **`CanOrgWide`** in `internal/core/access/resolver.go`, not
+`Can`, and the
+codebase carries a second map (`orgLevelCaps`) plus a build-time test —
+`TestCapabilityConstants_AreExhaustivelyPartitioned` — asserting that the two maps exhaustively
+partition the constant set, so a capability added to neither fails closed.
+
+Space *creation* authority is unchanged by this note; `set_visibility` governs only the visibility
+value. One practical consequence for testing, already recorded in `CLAUDE.md` §2: the persona who
+must be refused in a `set_visibility` test is a **team lead**, not a viewer, because a viewer is
+refused upstream and proves nothing about the gate.
+
+This ADR is the only human-authored statement of the capability model — specification §3 is now a
+pointer to this directory — so the omission left the model undocumented outside the generated
+OpenAPI. Catalogued as D102.
