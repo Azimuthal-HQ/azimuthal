@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -17,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/config"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 )
 
 var backupOutput string
@@ -45,7 +47,8 @@ type backupManifest struct {
 }
 
 // runBackup creates a full backup archive at the path specified by --output.
-func runBackup(_ *cobra.Command, _ []string) error {
+func runBackup(cmd *cobra.Command, _ []string) error {
+	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -109,11 +112,27 @@ func runBackup(_ *cobra.Command, _ []string) error {
 }
 
 // dumpPostgres runs pg_dump and returns the SQL dump bytes and the postgres version.
+//
+// The version probe's error is returned rather than discarded. It used to be
+// `versionOut, _ :=`, so a missing or failing psql wrote an empty
+// PostgresVersion into the manifest and said nothing — and since restore reads
+// that field back to tell the operator which server the dump came from, an
+// empty one silently removes the only provenance the archive carries. Failing
+// here is also the honest answer for a second reason: restore forks psql, so a
+// backup taken where psql is unavailable is a backup that cannot be restored
+// by this tool. Better to learn that at 2 AM on the cron than during recovery.
 func dumpPostgres(databaseURL string) ([]byte, string, error) {
-	// Get postgres version
-	versionCmd := exec.Command("psql", databaseURL, "-t", "-c", "SELECT version();") // #nosec G204,G702 -- trusted config value
-	versionOut, _ := versionCmd.Output()
-	pgVersion := string(versionOut)
+	// Get postgres version. -t drops the header, -A the column padding.
+	versionCmd := exec.Command("psql", "-v", "ON_ERROR_STOP=1", "-t", "-A", "-c", "SELECT version();", databaseURL) // #nosec G204,G702 -- trusted config value
+	versionOut, err := versionCmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, "", fmt.Errorf("probing postgres version: %s", strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, "", fmt.Errorf("probing postgres version: %w", err)
+	}
+	pgVersion := strings.TrimSpace(string(versionOut))
 
 	// Run pg_dump
 	cmd := exec.Command("pg_dump", "--no-owner", "--no-acl", "--clean", "--if-exists", databaseURL) // #nosec G204,G702 -- trusted config value
@@ -131,9 +150,10 @@ func dumpPostgres(databaseURL string) ([]byte, string, error) {
 
 // backupObjectStorage copies all objects from the configured bucket into the tar archive.
 func backupObjectStorage(tw *tar.Writer, cfg *config.Config, manifest *backupManifest) (int, error) {
-	client, err := minio.New(cfg.StorageEndpoint, &minio.Options{
+	endpoint, useSSL := storage.NormalizeEndpoint(cfg.StorageEndpoint, cfg.StorageUseSSL)
+	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.StorageAccessKey, cfg.StorageSecretKey, ""),
-		Secure: cfg.StorageUseSSL,
+		Secure: useSSL,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("connecting to object storage: %w", err)

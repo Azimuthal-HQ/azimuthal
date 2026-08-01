@@ -45,7 +45,8 @@ func newLogger(w io.Writer) (*slog.Logger, *slog.LevelVar) {
 
 // runServe loads config, connects to the DB, runs migrations, and starts the
 // HTTP server with graceful shutdown.
-func runServe(_ *cobra.Command, _ []string) error {
+func runServe(cmd *cobra.Command, _ []string) error {
+	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 	logger, logLevel := newLogger(os.Stdout)
 	slog.SetDefault(logger)
 

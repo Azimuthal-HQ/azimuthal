@@ -2185,6 +2185,28 @@ in-process dump; add `-v ON_ERROR_STOP=1` and stop discarding psql's output; nor
 the whole section, and `docs/upgrade.md`'s rollback no longer routes through the app container. Do
 not close this by deleting the backup documentation.
 
+> **CLOSED 2026-08-01 in PR #103.** All three parts are fixed, and the ⚠ block in `docs/self-hosting.md` is
+> deleted rather than softened.
+>
+> - **The image carries the client.** `build/Dockerfile` gained a `pgclient` stage that copies
+>   `pg_dump` and `psql` plus their shared-library closure from `postgres:16-bookworm` onto
+>   `gcr.io/distroless/base-debian12:nonroot`. The ops-variant option was not taken: a second
+>   image would leave the documented `docker compose exec app` recipes still broken.
+>   `build/Dockerfile.ci` — which is what CI actually scans and boots — carries a byte-identical
+>   stage, and `TestDockerfiles_PgClientStageIsIdentical` fails when the two drift.
+> - **Restore fails loud.** `restorePostgres` in `cmd/server/restore.go` passes
+>   `-v ON_ERROR_STOP=1`, captures both streams, and attaches psql's diagnostics to the returned
+>   error. `TestRestorePostgres_PartialRestoreIsAFailure` fails with the flag removed.
+> - **`STORAGE_ENDPOINT` is normalised.** The rule moved to `NormalizeEndpoint` in
+>   `internal/core/storage/endpoint.go`; the serve, backup and restore paths all call it.
+>
+> Two things this uncovered that the entry did not anticipate. The version probe in
+> `dumpPostgres` now returns its error instead of discarding it, and `validateManifest` prints
+> the recorded server version back — previously nothing read the field. And the entry's phrase
+> "discards its output" was half right: `restorePostgres` discarded *stdout* while streaming
+> stderr to the terminal, so the failure was visible to a human watching but invisible to the
+> exit code and absent from the returned error.
+
 ### D140 — "`AZIMUTHAL_INVITE_DELIVERY=email` requires `SMTP_FROM`; startup fails otherwise" — the SMTP_FROM half can never fire
 
 `docs/self-hosting.md`, `.env.example` and `README.md` all state it. The `SMTP_HOST` half is enforced

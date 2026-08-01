@@ -63,7 +63,8 @@ var verifySplitCmd = &cobra.Command{
 	RunE:  runVerifySplit,
 }
 
-func runVerifySplit(_ *cobra.Command, _ []string) error {
+func runVerifySplit(cmd *cobra.Command, _ []string) error {
+	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -240,7 +241,8 @@ func isUniqueViolation(err error) bool {
 }
 
 // runCreateUser connects to the database and creates a user, organization, and membership.
-func runCreateUser(_ *cobra.Command, _ []string) error {
+func runCreateUser(cmd *cobra.Command, _ []string) error {
+	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -341,7 +343,8 @@ func init() {
 }
 
 // runResetPassword looks up a user by email and updates their password hash.
-func runResetPassword(_ *cobra.Command, _ []string) error {
+func runResetPassword(cmd *cobra.Command, _ []string) error {
+	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)

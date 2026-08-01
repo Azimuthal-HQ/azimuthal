@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/config"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/storage"
 )
 
 var restoreInput string
@@ -41,7 +42,28 @@ func init() {
 }
 
 // runRestore reads a backup archive and restores the database and object storage.
-func runRestore(_ *cobra.Command, _ []string) error {
+//
+// # Why every RunE in this binary starts by silencing usage
+//
+// cobra prints the command's full usage block after any error a RunE returns.
+// For this command that buried "the database is in an indeterminate state"
+// under forty lines of flag documentation, at the one moment an operator most
+// needs to read it — and docs/self-hosting.md now tells them to read it.
+//
+// It is set HERE, inside the RunE, rather than as a SilenceUsage field on the
+// command or on the root, and the difference is not stylistic. Flag parsing
+// happens before RunE runs, so a mistyped `--inptu` still gets the usage block,
+// which is exactly when usage helps; only failures from the command's own body
+// suppress it. The field form cannot make that distinction — it silences both.
+//
+// Applied uniformly to all eight RunEs, including `assess` and `bundle-hash`,
+// which previously used the field form and so behaved differently from the
+// other six. Two guards keep it that way:
+// TestCommands_EveryRunESilencesUsage walks the AST so a ninth command cannot
+// forget, and TestCommands_SilenceUsageOnRuntimeFailure asserts the behaviour
+// through cobra in both directions.
+func runRestore(cmd *cobra.Command, _ []string) error {
+	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -120,6 +142,12 @@ func validateManifest(entries map[string][]byte) (*backupManifest, error) {
 
 	fmt.Printf("  Azimuthal version: %s\n", manifest.AzimuthalVersion)
 	fmt.Printf("  Backup timestamp:  %s\n", manifest.BackupTimestamp.Format("2006-01-02 15:04:05 UTC"))
+	// Provenance the operator needs before restoring: a dump taken from a
+	// newer server than the one being restored into will fail part-way.
+	// Nothing read this field back before, which made recording it theatre.
+	if manifest.PostgresVersion != "" {
+		fmt.Printf("  Source postgres:   %s\n", manifest.PostgresVersion)
+	}
 	fmt.Printf("  Files in archive:  %d\n", len(manifest.Files))
 
 	for _, f := range manifest.Files {
@@ -165,14 +193,36 @@ func restoreStorage(cfg *config.Config, entries map[string][]byte) error {
 
 // restorePostgres runs the SQL dump through psql to restore the database.
 // Uses --clean and --if-exists in the dump, making this idempotent.
+//
+// -v ON_ERROR_STOP=1 is load-bearing and must not be removed. Without it psql
+// reports the exit status of its *last* statement and keeps going after a
+// failure, so a dump whose statements all failed still exits 0 — and this
+// function returned nil, and restoreDatabase printed "  Database restored."
+// over an empty database. An operator only discovers that on the day they are
+// recovering from an incident. A partial restore is a failure, not a success.
+//
+// psql's diagnostics are captured rather than streamed so they can be attached
+// to the returned error: the caller aborts the whole restore on error, and
+// "exit status 3" on its own does not say which statement failed. Stdout is
+// captured for the same reason — it used to go to io.Discard, which threw away
+// the NOTICE/ERROR context that says what went wrong.
 func restorePostgres(databaseURL string, dump []byte) error {
-	cmd := exec.Command("psql", databaseURL) // #nosec G204,G702 -- trusted config value
+	cmd := exec.Command("psql", "-v", "ON_ERROR_STOP=1", databaseURL) // #nosec G204,G702 -- trusted config value
 	cmd.Stdin = bytes.NewReader(dump)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = os.Stderr
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("psql restore failed: %w", err)
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		if detail == "" {
+			return fmt.Errorf("psql restore failed: %w", err)
+		}
+		return fmt.Errorf("psql restore failed: %w: %s", err, detail)
 	}
 	return nil
 }
@@ -180,9 +230,10 @@ func restorePostgres(databaseURL string, dump []byte) error {
 // restoreObjectStorage uploads all storage/* entries back to the configured bucket.
 // Uses PutObject which overwrites existing keys, making this idempotent.
 func restoreObjectStorage(cfg *config.Config, entries map[string][]byte) (int, error) {
-	client, err := minio.New(cfg.StorageEndpoint, &minio.Options{
+	endpoint, useSSL := storage.NormalizeEndpoint(cfg.StorageEndpoint, cfg.StorageUseSSL)
+	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.StorageAccessKey, cfg.StorageSecretKey, ""),
-		Secure: cfg.StorageUseSSL,
+		Secure: useSSL,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("connecting to object storage: %w", err)

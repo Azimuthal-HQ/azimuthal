@@ -53,8 +53,11 @@ the frontend serves the older bundle without complaint.
   azimuthal bundle-hash                    # the embedded bundle
   azimuthal bundle-hash --dir web/dist     # a bundle on disk
   azimuthal bundle-hash --verify web/dist  # compare the two`,
-	SilenceUsage: true,
+	// SilenceUsage is set inside the RunE below rather than as a field here, so
+	// a mistyped flag still gets usage while a runtime failure does not. See
+	// runRestore for the rationale.
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 		embedded, err := embeddedBundle()
 		if err != nil {
 			return err

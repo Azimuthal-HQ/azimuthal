@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
@@ -170,8 +173,10 @@ func TestBackupRestore_FixturesAreReadable(t *testing.T) {
 // pg_dump's whole-database scope does not collide with any other test's
 // schema.
 //
-// Skipped automatically when pg_dump/psql are not on PATH or when
-// DATABASE_URL is not set. Otherwise drives the chain end-to-end:
+// Gated by requirePostgresClientTools, which skips locally and FAILS in CI —
+// it carried its own inline copy of those three checks, which was both
+// duplication and a second place for the CI hard-fail to rot away. Drives the
+// chain end-to-end:
 //
 //  1. Create source DB, run migrations, insert one of each entity (org,
 //     user, space, ticket-style item, page, comment).
@@ -180,16 +185,7 @@ func TestBackupRestore_FixturesAreReadable(t *testing.T) {
 //  4. Re-query each entity from the target and assert non-timestamp
 //     equality.
 func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
-	if _, err := exec.LookPath("pg_dump"); err != nil {
-		t.Skip("pg_dump not on PATH — skipping postgres round-trip")
-	}
-	if _, err := exec.LookPath("psql"); err != nil {
-		t.Skip("psql not on PATH — skipping postgres round-trip")
-	}
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL not set — skipping postgres round-trip")
-	}
+	dsn := requirePostgresClientTools(t)
 
 	ctx := context.Background()
 
@@ -197,35 +193,10 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	require.NoError(t, err, "connecting with admin DSN")
 	defer adminPool.Close()
 
-	// Use UUIDs (without dashes) for DB names so concurrent runs of this
-	// test never collide.
-	suffix := uuid.New().String()[:8]
-	srcDBName := "azim_brt_src_" + suffix
-	dstDBName := "azim_brt_dst_" + suffix
-
-	createDB := func(name string) {
-		// `name` is generated locally from a UUID; identifiers cannot be
-		// parameterised in CREATE/DROP DATABASE so a local-format string
-		// is the only way to spell this. Trusted input.
-		_, execErr := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %q", name))
-		require.NoError(t, execErr, "creating database %q", name)
-	}
-	dropDB := func(name string) {
-		// Disconnect any other sessions before dropping; ignore errors here.
-		_, _ = adminPool.Exec(ctx,
-			fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, name))
-		_, _ = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %q", name))
-	}
-
-	createDB(srcDBName)
-	t.Cleanup(func() { dropDB(srcDBName) })
-	createDB(dstDBName)
-	t.Cleanup(func() { dropDB(dstDBName) })
-
-	srcDSN, err := dsnWithDatabase(dsn, srcDBName)
-	require.NoError(t, err)
-	dstDSN, err := dsnWithDatabase(dsn, dstDBName)
-	require.NoError(t, err)
+	// Two fresh databases, so pg_dump's whole-database scope cannot collide
+	// with any other test's schema.
+	srcDSN := newScratchDatabase(ctx, t, adminPool, dsn, "azim_brt_src_")
+	dstDSN := newScratchDatabase(ctx, t, adminPool, dsn, "azim_brt_dst_")
 
 	// 1. Migrate the source DB and seed one of each entity.
 	srcPool, err := pgxpool.New(ctx, srcDSN)
@@ -302,6 +273,239 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	require.Len(t, itemComments, 1, "exactly one comment expected on the item")
 	require.Equal(t, seed.comment.ID, itemComments[0].ID)
 	require.Equal(t, seed.comment.Body, itemComments[0].Body)
+}
+
+// requirePostgresClientTools gates the tests that fork pg_dump/psql, and
+// returns the admin DSN.
+//
+// **In CI an unmet precondition is fatal, not a skip.** Off CI it stays a skip,
+// because a developer box legitimately may not have the client tools.
+//
+// The distinction matters more than it looks.
+// TestRestorePostgres_PartialRestoreIsAFailure is the only gate anywhere on the
+// more dangerous half of D105 — a restore that half-applies and reports
+// success. CI's `test` job runs on ubuntu-latest and merely *relies on* the
+// runner image happening to ship psql; nothing asserts it. If a future runner
+// image drops it, every test here would skip, the fail-loud property would lose
+// all coverage, and CI would still report every gate green. That is the exact
+// shape of the defect this file exists to close — a gate that appears to cover
+// something and does not — one level down.
+//
+// `CI` is the right variable precisely because it is not ours: GitHub Actions
+// sets it on every runner, so the hard-fail cannot be lost by editing a
+// workflow. Verified when this was written: exactly one `go test` invocation
+// exists across .github/workflows, in the `test` job, and that job sets
+// DATABASE_URL at job level — so none of the three conditions below can fire
+// spuriously in CI today.
+//
+// Note what this does NOT cover: docker-e2e proves the happy path inside the
+// shipped image, and now also proves a bad dump is refused there. These remain
+// the unit-level half.
+func requirePostgresClientTools(t *testing.T) string {
+	t.Helper()
+
+	// In CI every one of these is guaranteed, so treat an unmet precondition as
+	// the infrastructure regression it is rather than quietly dropping coverage.
+	unmet := func(format string, args ...any) {
+		t.Helper()
+		if os.Getenv("CI") != "" {
+			t.Fatalf("CI precondition not met: "+format+
+				"\nThis is a hard failure in CI on purpose: skipping here would silently "+
+				"drop the only coverage of the fail-loud restore behaviour (D105) while "+
+				"every gate still reported green.", args...)
+		}
+		t.Skipf(format+" — skipping locally; this is fatal in CI", args...)
+	}
+
+	if _, err := exec.LookPath("pg_dump"); err != nil {
+		unmet("pg_dump is not on PATH")
+	}
+	if _, err := exec.LookPath("psql"); err != nil {
+		unmet("psql is not on PATH")
+	}
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		unmet("DATABASE_URL is not set")
+	}
+	return dsn
+}
+
+// newScratchDatabase creates an empty database and registers its teardown.
+func newScratchDatabase(ctx context.Context, t *testing.T, adminPool *pgxpool.Pool, adminDSN, prefix string) string {
+	t.Helper()
+	name := prefix + uuid.New().String()[:8]
+
+	// Identifiers cannot be parameterised in CREATE/DROP DATABASE; `name` is
+	// generated locally from a UUID, so this is trusted input.
+	_, err := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %q", name))
+	require.NoError(t, err, "creating database %q", name)
+
+	t.Cleanup(func() {
+		_, _ = adminPool.Exec(ctx,
+			fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, name))
+		_, _ = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %q", name))
+	})
+
+	dsn, err := dsnWithDatabase(adminDSN, name)
+	require.NoError(t, err)
+	return dsn
+}
+
+// captureStdout swaps os.Stdout for a pipe and returns everything the callback
+// printed. restoreDatabase reports progress with fmt.Println, and the defect
+// under test is a *printed* claim ("  Database restored.") that contradicts
+// what happened, so asserting on the returned error alone would not catch it.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+
+	require.NoError(t, w.Close())
+	os.Stdout = orig
+	return <-done
+}
+
+// TestRestorePostgres_PartialRestoreIsAFailure is the regression test for the
+// more dangerous half of D105.
+//
+// Before the fix, restorePostgres ran `psql <dsn>` with no -v ON_ERROR_STOP=1
+// and cmd.Stdout = io.Discard. psql reports the status of its LAST statement
+// and keeps going past failures, so a dump whose statements failed still exited
+// 0, restorePostgres returned nil, and restoreDatabase printed
+// "  Database restored." over a database that had not been restored. An
+// operator only discovers that while recovering from an incident.
+//
+// Verified in both directions: with -v ON_ERROR_STOP=1 removed from
+// restorePostgres, this test fails on the `require.Error` below — psql exits 0
+// and the success line is printed.
+func TestRestorePostgres_PartialRestoreIsAFailure(t *testing.T) {
+	dsn := requirePostgresClientTools(t)
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, dsn)
+	require.NoError(t, err)
+	defer adminPool.Close()
+
+	targetDSN := newScratchDatabase(ctx, t, adminPool, dsn, "azim_failloud_")
+
+	// A dump that starts well and then fails. The first statement succeeds, so
+	// this is specifically the *partial* case: the database is left in a state
+	// that is neither the old one nor the intended new one.
+	badDump := []byte(`
+CREATE TABLE survivors (id integer PRIMARY KEY);
+INSERT INTO survivors (id) VALUES (1);
+INSERT INTO no_such_table (id) VALUES (2);
+INSERT INTO survivors (id) VALUES (3);
+`)
+
+	cfg := &config.Config{DatabaseURL: targetDSN}
+	entries := map[string][]byte{"database.sql": badDump}
+
+	var restoreErr error
+	out := captureStdout(t, func() {
+		restoreErr = restoreDatabase(cfg, entries)
+	})
+
+	require.Error(t, restoreErr,
+		"a dump containing a failing statement must make restore fail; "+
+			"exiting 0 here is how an operator ends up with an empty database and a success message")
+	require.Contains(t, restoreErr.Error(), "no_such_table",
+		"the error must name the statement that failed — %q on its own does not tell an "+
+			"operator what went wrong", restoreErr.Error())
+	require.NotContains(t, out, "Database restored",
+		"a failed restore must not print the success line; stdout was:\n%s", out)
+}
+
+// TestRestorePostgres_SucceedsOnAGoodDump is the positive control for the test
+// above. Without it, restorePostgres could be changed to return an error
+// unconditionally and the fail-loud test would still pass.
+func TestRestorePostgres_SucceedsOnAGoodDump(t *testing.T) {
+	dsn := requirePostgresClientTools(t)
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, dsn)
+	require.NoError(t, err)
+	defer adminPool.Close()
+
+	targetDSN := newScratchDatabase(ctx, t, adminPool, dsn, "azim_goodrestore_")
+
+	goodDump := []byte(`
+CREATE TABLE survivors (id integer PRIMARY KEY);
+INSERT INTO survivors (id) VALUES (1);
+INSERT INTO survivors (id) VALUES (3);
+`)
+
+	cfg := &config.Config{DatabaseURL: targetDSN}
+	entries := map[string][]byte{"database.sql": goodDump}
+
+	var restoreErr error
+	out := captureStdout(t, func() {
+		restoreErr = restoreDatabase(cfg, entries)
+	})
+
+	require.NoError(t, restoreErr, "a clean dump must restore without error")
+	require.Contains(t, out, "Database restored", "a successful restore must say so")
+
+	// And the rows are actually there — the success line must correspond to
+	// something real.
+	targetPool, err := pgxpool.New(ctx, targetDSN)
+	require.NoError(t, err)
+	defer targetPool.Close()
+
+	var count int
+	require.NoError(t, targetPool.QueryRow(ctx, "SELECT count(*) FROM survivors").Scan(&count))
+	require.Equal(t, 2, count, "both inserted rows must be present after restore")
+}
+
+// TestDumpPostgres_ReportsVersionProbeFailure covers the swallowed probe.
+//
+// dumpPostgres used to assign `versionOut, _ :=`, so a failing psql produced an
+// empty PostgresVersion in the manifest and no error — recording a blank value
+// nothing could act on. Pointed at a database that does not exist, the probe
+// must now fail the backup rather than silently produce a version-less archive.
+func TestDumpPostgres_ReportsVersionProbeFailure(t *testing.T) {
+	dsn := requirePostgresClientTools(t)
+
+	missingDSN, err := dsnWithDatabase(dsn, "azim_definitely_absent_"+uuid.New().String()[:8])
+	require.NoError(t, err)
+
+	_, version, err := dumpPostgres(missingDSN)
+	require.Error(t, err, "a failing version probe must be reported, not discarded")
+	require.Empty(t, version)
+	require.Contains(t, err.Error(), "probing postgres version",
+		"the error must say which step failed; got %q", err.Error())
+}
+
+// TestDumpPostgres_RecordsAVersion is the positive control: the probe must
+// actually populate the manifest field against a working database, or the
+// test above would pass with the probe hard-wired to fail.
+func TestDumpPostgres_RecordsAVersion(t *testing.T) {
+	dsn := requirePostgresClientTools(t)
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, dsn)
+	require.NoError(t, err)
+	defer adminPool.Close()
+
+	srcDSN := newScratchDatabase(ctx, t, adminPool, dsn, "azim_versionprobe_")
+
+	_, version, err := dumpPostgres(srcDSN)
+	require.NoError(t, err)
+	require.Contains(t, version, "PostgreSQL",
+		"the manifest's postgres_version must carry the server's version string, got %q", version)
+	require.Equal(t, strings.TrimSpace(version), version,
+		"the version string must be trimmed — it is printed back to the operator on restore")
 }
 
 // seedFixtures captures the rows seedRoundTripFixtures inserted so the
