@@ -455,3 +455,19 @@ the number rotted can grep for the content:
 
 When you correct a citation, **convert it to symbol form rather than renumbering it.** Renumbering
 buys one merge.
+
+**The same failure mode, in numbers.** A count in prose rots exactly like a line number, and for
+the same reason: it is measured once and then merged past. Ask which of two things the figure is
+doing.
+
+**If the figure is the claim** — D45 is a claim about how many hand-written mocks exist; the
+route-accounting table is a claim about how many routes are accounted for — keep it, and back it
+with a test that fails when it drifts. `TestReadPathSweep_EveryRouteAccounted` is the pattern: it
+walks the fully wired router, never a hand-maintained list, and fails bidirectionally, so the table
+cannot silently disagree with reality. A figure guarded that way is evidence. A figure nobody
+re-measures is a rumour with a decimal point.
+
+**If the figure is incidental support for a claim that stands without it** — "the §4 envelope is
+what governed, and here is how many PRs prove it" — cut it. The claim is stronger without a number
+that expires. The §10 amendment note in the specification shipped with such a count, and it was
+stale by one merge before it landed.

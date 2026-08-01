@@ -2586,6 +2586,29 @@ not carelessness, it is the format.
 - **Quoting a stale citation you are correcting** — "this said `item.go:114`" — is quoting, not
   citing, and must stay as written or the correction stops making sense.
 
+**Extended in review to cover counts.** A count in prose rots exactly like a line number, and for
+the same reason — measured once, then merged past. But "don't cite volatile figures" would be the
+wrong rule, because it sweeps up figures that are load-bearing. §6 draws the line by asking what
+the figure is *doing*:
+
+- **The figure is the claim** — D45 is about how many mocks exist; the route-accounting table is
+  about how many routes are accounted for. Keep it, and back it with a test that fails when it
+  drifts. `TestReadPathSweep_EveryRouteAccounted` is the pattern: it walks the fully wired router
+  rather than a hand-maintained list and fails bidirectionally, so the table cannot silently
+  disagree with reality. A figure guarded that way is evidence; a figure nobody re-measures is a
+  rumour with a decimal point.
+- **The figure is incidental support** for a claim that stands without it — "the §4 envelope is
+  what governed, and here is how many PRs prove it". Cut it; the claim is stronger without a number
+  that expires.
+
+The occasion for the extension was this PR shipping the §10 amendment note with "52 squash-merged
+PRs reached `main`". It was 53 by the time it landed, moved by #101, and would have been 54 after
+this PR — a fact stale by one merge inside the note explaining why stale facts are corrosive. Both
+copies are now count-free. The four counts this pass *kept* — 47 migrations, 217 route-accounting
+rows, 40 Go mock types, 26 `internal/core` packages — were re-verified after the rebase and are all
+of the first kind. Two of them already carry a "this should be a test" note (D143 for the gosec
+census, and the route count, which has drifted four times).
+
 **Scope applied here.** All 24 `file:line` citations this pass introduced were converted, not only
 the four the review flagged — minting a convention and shipping 24 violations of it in the same PR
 would be the D106 failure mode one order of magnitude smaller. **Pre-existing ledger entries were
