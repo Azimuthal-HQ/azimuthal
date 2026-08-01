@@ -24,6 +24,7 @@ checked into this repository. Everything else here is traceable to a file you ca
 | Where the spec and the repository have disagreed | [`docs/design/spec-repo-reconciliation.md`](docs/design/spec-repo-reconciliation.md) |
 | Open defects and their status | [`docs/known-issues.md`](docs/known-issues.md) |
 | How the scanners work and how suppression is governed | [`docs/security-scanning.md`](docs/security-scanning.md) |
+| How to cite code from a document | §6 below — symbol and file, never `file:line` |
 
 **Before building anything shared** — a picker, an error path, a confirmation count, a route
 guard, a transactional write with an audit trail — check `shared-surfaces.md`. A second
@@ -41,7 +42,13 @@ contains). Assertions are never weakened. Blast-radius review on every PR. No bl
 DRAFT unless all three gates exit 0.
 
 **Repository.** Migration numbering is immutable once shipped. Agents never create or edit the
-roadmap. No agent-name file suffixes. (On git operations, see the flagged conflict in §4.)
+roadmap. No agent-name file suffixes.
+
+**Git operations.** Agents work on their own branch — commit, push, rebase, and
+`--force-with-lease` on a branch nobody has based work on. Four things are never an agent's to do:
+never commit or push to `main`; never create or move a tag; never merge a PR, including their own;
+never force-push a **shared** branch. §4 carries the detail; specification §10 is the boundary.
+*(This read "see the flagged conflict in §4" until 2026-08-01, when the maintainer settled it.)*
 
 **Architecture.**
 
@@ -76,8 +83,9 @@ PostgreSQL *database*, cloned with `CREATE DATABASE ... TEMPLATE` from a templat
 every migration applied. Migrations run once, to build the template, not on every call — the
 template's name embeds a SHA-256 fingerprint of the migration set, so it cannot go stale. (This
 file said "per-test schema … applies all migrations into it" until the reconciliation pass; that
-is the design this replaced, described at `internal/testutil/db.go:13`. The `Schema` field
-survives, always `"public"`, only because tests build a `search_path` from it — `db.go:116`.)
+is the design this replaced, described in the package comment at the top of
+`internal/testutil/db.go`. The `Schema` field on `TestDB` survives, always `"public"`, only because
+tests build a `search_path` from it.)
 **Never mock the database** — mocks hide
 constraint violations and casing bugs, both of which shipped in v0.1.x. Any test that touches
 persistence uses a real database.
@@ -111,7 +119,8 @@ number, and a stated re-enable condition. A skip lacking these is a failing revi
 > **Correction, 2026-07-31.** This sentence read "CI fails on any skip lacking these." It does
 > not: nothing in `.github/workflows/ci.yml` inspects skips, and eleven unmarked `t.Skip` calls
 > pass every gate today — mostly environment guards, but
-> `internal/core/api/harness_wiring_test.go:311` is not one. Exactly one skip in the tree carries
+> `internal/core/api/harness_wiring_test.go` is not — `t.Skip("portal surface is not mounted in
+> this harness")`. Exactly one skip in the tree carries
 > the marker. The rule stands and is enforced by review; the claim that a gate enforces it was
 > false, and telling an agent a gate will catch it is the worst state to leave this in. The
 > identical sentence in the specification (§2.4) is §2 text and is **not** edited here — whether
@@ -148,12 +157,14 @@ org-level (`set_visibility` holds no space role at all), the persona that must b
 
 **Test debt is not permitted.** No PR merges with "tests to follow." There is no follow-up PR.
 
-Coverage floor is **80%** (`.github/workflows/ci.yml:589`). Coverage is a floor, not a goal — §2.5
+Coverage floor is **80%** — the `Enforce minimum coverage (80%)` step in
+`.github/workflows/ci.yml`. Coverage is a floor, not a goal — §2.5
 case 23 (constant authorisation queries) is worth more than five percentage points.
 
 > **Overdue, flagged 2026-07-31.** Spec §2.8 and P5's Definition of Done both schedule a raise to
 > **85% at the end of P5**. P5 merged (#88/#89) and P6 merged after it, and the raise never
-> landed — CI still enforces 80, and the comment beside the check at `ci.yml:586-588` still
+> landed — CI still enforces 80, and the comment beside that step ("Rises to 85 at the end of P5,
+> per the same section") still
 > describes the raise in the future tense. This is a lapsed commitment, not a wrong number: 80 is
 > what is enforced. Raising it needs a CI-parity measurement first (the coverage job's own
 > invocation, including `-p 1`), because an unmeasured flip fails every PR. Catalogued as D98.
@@ -227,7 +238,8 @@ overriding that one variable moves the whole harness when `8082` is contended. T
 cosmetic and the config says so: without it a captured portal magic link points at `8080`, and if
 a real dev server is answering there the test navigates somewhere else entirely and passes for
 the wrong reason. Note also that `use.baseURL` prefers **`BASE_URL`** when it is set, and CI sets
-it explicitly (`.github/workflows/ci.yml:1001`), so a harness setting both must keep them agreed.
+it explicitly (`BASE_URL: http://localhost:8082`, in the `e2e` job of
+`.github/workflows/ci.yml`), so a harness setting both must keep them agreed.
 Note that `.env.test` sets `APP_PORT=8081`; `webServer.env` overrides it, so the E2E server binds
 the `E2E_PORT` value rather than the `.env.test` one.
 
@@ -279,7 +291,7 @@ export $(grep -v '^#' .env.test | grep -v '^$' | xargs) && make verify-api
 ### The frontend gates run in CI
 
 `npm run type-check`, `npm run lint` and `npm run test:unit` are required CI gates (the `Frontend`
-job — `.github/workflows/ci.yml:690`, `:695`, `:698`). They were
+job in `.github/workflows/ci.yml`, as the `Type-check`, `Lint` and `Unit tests` steps). They were
 local-only until the integrity pass, and with them every drift guard written as a vitest test —
 `web/src/lib/no-direct-fetch.test.ts`, `web/src/lib/codex/schema.test.ts` and
 `web/src/components/codex/extensions/extensions.test.ts`. The last two fail in both directions on
@@ -303,7 +315,8 @@ as the registry that looks them up. Both were fixed rather than exempted.
 then would have failed every pull request, and the alternative was a baseline file, which is an
 exemption ledger. (This paragraph said "46" until 2026-07-31. 46 was the figure recorded when the
 inventory was taken; the closing pass measured 48, and `docs/known-issues.md:461` already carries
-that correction. `.github/workflows/ci.yml:652` also says 48.) The inventory and what closing it
+that correction, and the comment above the `frontend` job in `.github/workflows/ci.yml` says 48
+too — "eslint did not pass on main — 48 errors".) The inventory and what closing it
 took are in `docs/known-issues.md` #17. Do not add a baseline; do not add `--max-warnings` slack.
 
 `make docs-check` is a gate too, and now actually checks: the CI job used to grep the committed
@@ -359,25 +372,25 @@ The working agreement every phase has operated under since P0:
   shared by concurrent sessions, and uncommitted work is not safe from another session's
   housekeeping.
 
-> ### ⚠ Flagged conflict — not resolved here
+> ### ✅ Resolved 2026-08-01 — the §10 conflict is closed
 >
-> Specification §10 states: *"Agents perform **no git operations** — no commits, pushes, tags, or
-> branch changes."*
+> This block used to flag a standing contradiction: specification §10 read *"Agents perform **no
+> git operations** — no commits, pushes, tags, or branch changes"*, while every phase from P0
+> onward branched, committed, pushed and opened its own PR under the envelope above. The
+> disposition was "the specification wins, the conflict is flagged" — followed immediately by an
+> instruction to do the forbidden thing and note it in the PR body.
 >
-> That is not what has happened since P1. Every phase from P0 onward has branched, committed,
-> pushed and opened its own PR, and phase prompts have instructed exactly that. The envelope above
-> describes real practice; §10 forbids it.
+> **The maintainer settled it: §10 is narrowed to the four hazards it was protecting** — never
+> `main`, never a tag, never a merge, never a force-push of a shared branch. The envelope above is
+> now what §10 says, not what it tolerates.
 >
-> **The specification wins and the conflict is flagged rather than reconciled.** (§0's stated
-> rule is about *older* documents, so it does not cover this case directly; the disposition is the
-> same, and §10 is a non-negotiable either way.) This file does not overrule §10 or amend it. A
-> maintainer should decide which is authoritative — most likely by narrowing §10 to what it was
-> plainly protecting (no pushes to `main`, no tags, no self-merges, no history rewriting) rather
-> than a blanket prohibition that no phase has followed.
+> The reason was recorded as stated, and it was not convenience: a specification should state the
+> rule that actually governs, and a stated non-negotiable everyone knowingly works around teaches
+> that any rule in the document can be worked around with a footnote. This closes **D33** and
+> **D106**.
 >
-> Until then: follow the narrow rules — never `main`, never force-push, never self-merge, never
-> tag — and note in your PR body that you performed git operations under a standing instruction
-> that conflicts with §10.
+> **§10 is the boundary; this section is the operative detail.** Where the two appear to disagree,
+> §10 wins and this file is the defect. **PR bodies no longer need the conflict note.**
 
 ---
 
@@ -395,9 +408,50 @@ The standing instruction from P1.5, still in force:
 Two facts this project keeps relearning:
 
 **Read `migrations/` before choosing a migration number.** Never trust a table in a document. The
-specification's migration table has been wrong twice, both times because a phase that was not in
-the plan took numbers first.
+specification's migration table has been wrong **six** times — D2, D52, D56, D76, and twice more —
+usually because a phase that was not in the plan took numbers first, and once because a pass
+corrected the table's *rows* and left the prose around it saying something else. Re-check the
+number against `main` when you **open** the PR, not when you plan the phase: a pre-assigned number
+expires the moment a higher one merges first, and goose then refuses the database **at boot**
+(D73, D81).
 
 **Verify constraint and index names against the database, not against the migration that you
 think created them.** PostgreSQL auto-generates names, and it does not rename a table's indexes
 when the table is renamed. Both facts have already produced defects here.
+
+---
+
+## 6. How documentation cites code
+
+**Cite a symbol and a file. Never `file:line`.**
+
+> `ItemService.CreateItem` in `internal/core/projects/item.go`
+>
+> not `internal/core/projects/item.go:131`
+
+A line number is the one form of evidence that goes stale on **every** merge — including merges
+that change nothing about the claim it supports. A symbol moves only when someone renames or
+deletes it, which is the same event that invalidates the claim anyway, so a stale symbol reference
+is a real signal and a stale line number is noise.
+
+This is not a style preference. It is the most-repeated defect in this repository's documentation:
+`shared-surfaces.md`'s route-accounting count drifted four times, the §4 migration table six, and
+the reconciliation pass that produced this section shipped two line-number *corrections*
+(`comments/handler.go` 264→354 and `item.go` 114→131) that were **both wrong again by the time the
+PR merged**, moved by one unrelated security PR landing in between. A correction with a shelf life
+of one merge is not a correction.
+
+**Where a line genuinely needs pinning, quote the line's text alongside it,** so a reader who finds
+the number rotted can grep for the content:
+
+> `.github/workflows/ci.yml` — `if (( $(echo "$COVERAGE < 80" | bc -l) )); then`
+
+**Two carve-outs, both narrow.**
+
+- **Migrations are immutable once shipped** (§10), so `migrations/026_entity_shares.sql:8-13` is
+  genuinely stable and a line range there is fine.
+- **Quoting a stale citation you are correcting** — "this said `item.go:114`" — is quoting, not
+  citing. Leave it as written or the correction stops making sense.
+
+When you correct a citation, **convert it to symbol form rather than renumbering it.** Renumbering
+buys one merge.

@@ -1903,10 +1903,30 @@ mapping as an open problem; it is not (§6). *Verify, don't assume, applies to t
 
 ## 1. The decision this pass exists to surface — spec §10 versus `CLAUDE.md` §4
 
-### D106 — "Agents perform no git operations" versus the autonomy envelope that has governed every phase — **MAINTAINER DECISION, NOT RESOLVED**
+### D106 — "Agents perform no git operations" versus the autonomy envelope that has governed every phase — **SETTLED 2026-08-01: §10 NARROWED**
 
-This has been flagged by five separate agents across the wave, and by `CLAUDE.md` §4 itself. It is
-recorded here as a decision the maintainer owes, and deliberately **not** settled.
+> **Resolution.** The maintainer ruled Option B. Specification §10's blanket prohibition is
+> **narrowed in this PR** to the four hazards it was protecting: never commit or push to `main`,
+> never create or move a tag, never merge a PR including your own, never force-push a **shared**
+> branch. Agents commit, push, rebase and `--force-with-lease` on their own branch as a matter of
+> stated rule, not tolerated practice. `CLAUDE.md` §4 is the operative detail and §10 is the
+> boundary; where they appear to disagree, §10 wins.
+>
+> **The reason is recorded as stated, not as convenience.** The specification is narrowed because
+> it should state the rule that actually governs. A stated non-negotiable that everyone knowingly
+> works around is corrosive — it teaches every reader that a rule in the document can be
+> disregarded provided you write a sentence about it, and it spends the authority of every other
+> non-negotiable alongside it. That is why this was settled rather than annotated for a third time.
+>
+> **This closes D33 as well**, which reached the same conclusion once before and left it open.
+> `CLAUDE.md` §4's ⚠ flagged-conflict block is replaced with the resolution, and **PR bodies no
+> longer carry the conflict note.**
+>
+> The analysis below is left as written — it is the record of why, and of the state that made it
+> necessary.
+
+This was flagged by five separate agents across the wave, and by `CLAUDE.md` §4 itself. It was
+recorded here as a decision the maintainer owed, and was **not** settled by this pass unilaterally.
 
 **What the specification says.** §10 "Non-negotiables", prefaced "These override any instruction
 in a task prompt":
@@ -1945,23 +1965,23 @@ sentence in place to something like:
 > force-push a shared branch. `--force-with-lease` on an agent's own unmerged feature branch is
 > permitted, so that the linear-history requirement is satisfiable.
 
-**Recommendation: Option B.** It is the envelope that has actually governed the wave and worked; it
-has already been amended once by maintainer instruction, which is evidence the narrow rules are the
-ones anyone actually intends; and it makes §10 satisfiable alongside the linear-history
-requirement, which the blanket wording does not — rebasing onto `main` and updating your branch is
-a "branch change", so the absolute reading forbids the workflow the rest of the document requires.
-Closing it this way would also close **D33**, which reached this same point once already.
+**Recommendation: Option B.** *(Adopted — see the resolution above.)* It is the envelope that has
+actually governed the wave and worked; it has already been amended once by maintainer instruction,
+which is evidence the narrow rules are the ones anyone actually intends; and it makes §10
+satisfiable alongside the linear-history requirement, which the blanket wording does not — rebasing
+onto `main` and updating your branch is a "branch change", so the absolute reading forbids the
+workflow the rest of the document requires. Closing it this way would also close **D33**, which
+reached this same point once already.
 
 **But this is the maintainer's call, and Option A is real.** It is a coherent position with a real
 argument behind it — an agent with commit access is a different risk surface from an agent that
 emits patches — and nothing in this pass is evidence against it. What is not tenable is the third
 state we are in now: a non-negotiable that every phase knowingly breaks with a footnote.
 
-**Until it is ruled on**, the standing practice is unchanged: follow the narrow rules — never
-`main`, never a shared force-push, never self-merge, never tag — and note in each PR body that git
-operations were performed under a standing instruction that conflicts with §10. **This PR does so.**
-
-*Nothing in the specification was edited for this item. §10 is §10.*
+*The paragraph that stood here said: "Until it is ruled on, the standing practice is unchanged —
+follow the narrow rules and note in each PR body that git operations were performed under a
+standing instruction that conflicts with §10." It was ruled on before this PR merged. The narrow
+rules are now the stated rule, and the PR-body note is retired.*
 
 ---
 
@@ -2013,9 +2033,9 @@ comment, an issue number and a re-enable condition, and that **CI fails on any s
 Nothing in CI inspects skips: the Test job runs a plain `go test` and gates only on exit status and
 the coverage floor; there is no grep, no skip-audit script, and no Go test walking the tree.
 **Eleven unmarked `t.Skip` calls pass every gate today.** Most are environment guards, but
-`internal/core/api/harness_wiring_test.go:311` — `t.Skip("portal surface is not mounted in this
-harness")` — is not: no marker, no issue, no re-enable condition, and green. Exactly one skip in the
-tree carries the marker.
+`internal/core/api/harness_wiring_test.go` is not — `t.Skip("portal surface is not mounted in this
+harness")`: no marker, no issue, no re-enable condition, and green. Exactly one skip in the tree
+carries the marker.
 
 **Recommendation: do both halves, in this order.** (1) Correct the claim now — done in `CLAUDE.md`,
 which reads "A skip lacking these is a failing review", because telling an agent a gate will catch
@@ -2406,11 +2426,18 @@ Grouped by file. Each was verified against a code line and re-verified adversari
   scoping the fix from the old wording would have budgeted a join-table migration and missed that the
   whole creation surface must be built too. The Proper fix now names both halves, and the
   verification bound moved from "migrations 001-028" to 001-050 (the claim survives the widening).
-- **D136 / D137 — two citations pointing ninety and seventeen lines off.** §21 cited
-  `comments/handler.go:264` for the un-orged `comment.created` event; it is at `:354`. §30 cited
-  `projects/item.go:114` for the hardcoded status; it is at `:131`. Both substantive findings were
-  re-derived independently and both still hold — §21's "exactly two un-orged audit events" claim was
-  re-run across all 34 non-test `audit.Event{}` literals and confirmed.
+- **D136 / D137 — two stale citations, and the reason they are now converted rather than
+  renumbered.** §21 cited `comments/handler.go:264` for the un-orged `comment.created` event; §30
+  cited `projects/item.go:114` for the hardcoded status. Both were wrong by roughly ninety and
+  seventeen lines. Both substantive findings were re-derived independently and both still hold —
+  §21's "exactly two un-orged audit events" claim was re-run across all 34 non-test `audit.Event{}`
+  literals and confirmed.
+
+  **The first draft of this pass renumbered them, to `:354` and `:131`. Both were wrong again
+  before the PR merged**, moved to `:377` and `:135` by #101 landing in between — a correction with
+  a shelf life of one merge. They now cite symbols: `CreateComment` in
+  `internal/core/api/comments/handler.go` (the file's sole `audit.Event{` literal) and
+  `ItemService.CreateItem` in `internal/core/projects/item.go`. That is **D148**, below.
 
 ### The operational documents
 
@@ -2522,17 +2549,61 @@ guessing, exactly as a pre-assigned migration number is (D73, D81). **Read the t
 you write an entry, not the number your brief gave you.** If a brief and this ledger disagree, this
 ledger wins and the brief's numbers are noise.
 
-**Next free D-number: D148.** (D92–D147 are taken by this section, including the `-code` suffixed
+**Next free D-number: D149.** (D92–D148 are taken by this section, including the `-code` suffixed
 companions in §3, which are deliberately suffixed rather than separately numbered because each is the
 in-code twin of a numbered documentation entry.)
 
 ---
 
+## 6a. D148 — documentation cites a symbol and a file, never `file:line`
+
+**Minted 2026-08-01, on the maintainer's instruction, and recorded here because this pass is the
+evidence for it.** The rule now lives in `CLAUDE.md` §6:
+
+> Cite `ItemService.CreateItem` in `internal/core/projects/item.go` — never
+> `internal/core/projects/item.go:131`. Where a line genuinely needs pinning, quote the line's text
+> alongside it so a reader can grep when the number rots. When you correct a citation, **convert it
+> to symbol form rather than renumbering it** — renumbering buys one merge.
+
+**Why this is a rule and not a preference.** A line number is the one form of evidence that goes
+stale on *every* merge, including merges that change nothing about the claim it supports. A symbol
+moves only when someone renames or deletes it — the same event that invalidates the claim anyway —
+so a stale symbol reference is a real signal and a stale line number is noise.
+
+**This pass is the proof.** D136 and D137 were themselves line-number corrections: `:264` → `:354`
+and `:114` → `:131`. Between this branch being pushed and the PR merging, **#101 landed and moved
+both again** — to `:377` and `:135` — along with `content_tx.go` `:309` → `:315`. Three of the four
+citations under review were wrong a second time, and two of the three *were the corrections*. A
+correction with a shelf life of one merge is not a correction. Set against the wider record —
+`shared-surfaces.md`'s route count drifted four times, the §4 migration table six — the pattern is
+not carelessness, it is the format.
+
+**Two carve-outs, both narrow and both deliberate.**
+
+- **Migrations are immutable once shipped** (§10), so a line range into `migrations/*.sql` is
+  genuinely stable and is kept. Those are the only line citations this pass left in place on
+  purpose.
+- **Quoting a stale citation you are correcting** — "this said `item.go:114`" — is quoting, not
+  citing, and must stay as written or the correction stops making sense.
+
+**Scope applied here.** All 24 `file:line` citations this pass introduced were converted, not only
+the four the review flagged — minting a convention and shipping 24 violations of it in the same PR
+would be the D106 failure mode one order of magnitude smaller. **Pre-existing ledger entries were
+deliberately not retro-converted**: D85's citation of `item.go:114`, for instance, is another
+phase's historical record and was accurate when written. The convention is forward-looking, and
+converting a past entry would edit a record rather than fix a document.
+
+---
+
 ## 7. What this pass deliberately did not touch
 
-- **Specification §2 and §10.** Non-negotiable text. Three findings land on them — D97 (skip
-  enforcement), D118 (no mocks), D98 (the coverage floor) — and all three are recorded rather than
-  edited. D106 is the whole of §1.
+- **Specification §2.** Non-negotiable text. Three findings land on it — D97 (skip enforcement),
+  D118 (no mocks), D98 (the coverage floor) — and all three are recorded rather than edited.
+- **Specification §10 — with one exception, on the maintainer's ruling.** §10 was untouched when
+  this pass was written. The maintainer then settled **D106** and lifted the fence for that one
+  section, so §10's git-operations paragraph *is* edited here. Everything else in §10 is untouched,
+  and the fence stands for the next pass: a reconciliation pass does not amend a non-negotiable
+  without a ruling.
 - **The roadmap.** The phase→version headings in §9 are stale and were left stale (D104). `CLAUDE.md`
   §1 forbids an agent editing the roadmap, and §9's own text forbids renumbering in a reconciliation
   pass.

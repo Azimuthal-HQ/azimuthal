@@ -53,22 +53,24 @@ match, not a recursive walk.
 ## Correction — 2026-07-31 (spec/repo reconciliation)
 
 **No nightly sweeper was built, and the repository deliberately decided against one.** Rule 10's
-first sentence is implemented exactly — revoke-on-delete and revoke-on-move both run inside the
-entity mutation's own transaction (`internal/db/adapters/content_tx.go:309` and `:162-165`). Its
-second sentence describes machinery that does not exist: no periodic job of any kind is
-registered, the River client declares two workers and no `PeriodicJobs`
-(`internal/jobs/queue.go:44-53`), and there is no ticker or cron anywhere in `internal/` or `cmd/`.
+first sentence is implemented exactly — `ContentTxAdapter` in `internal/db/adapters/content_tx.go`
+calls `RevokeSharesByEntity` inside the entity delete's own transaction, and `revokeSubtreeSharesTx`
+does the same for the move path. Its second sentence describes machinery that does not exist: no
+periodic job of any kind is registered — `NewQueue` in `internal/jobs/queue.go` declares two
+workers, `EmailWorker` and `NotificationWorker`, and no `PeriodicJobs` — and there is no ticker or
+cron anywhere in `internal/` or `cmd/`.
 
 There is no orphan class for a sweeper to collect. Share rows are never hard-deleted — revocation
 stamps `revoked_at` — and expiry is evaluated inside the resolution query, so a share past
-`expires_at` stops granting access on the very next request. The reasoning is recorded at
-`migrations/026_entity_shares.sql:8-13`, which states it in terms: "with no sweeper involved."
+`expires_at` stops granting access on the very next request. The reasoning is recorded in the
+header comment of `migrations/026_entity_shares.sql`, which states it in terms: "with no sweeper
+involved."
 
 Two things make this unarguable rather than a judgement call. **Rule 8, five lines above, already
 says the opposite** — expiry denies "without waiting for a sweeper". And there is a passing test
-named for the absence: `TestShare14_ExpiredDeniesWithoutSweeper`
-(`internal/core/api/entity_shares_integration_test.go:190`), whose comment reads "with NO sweeper
-having run".
+named for the absence: `TestShare14_ExpiredDeniesWithoutSweeper` in
+`internal/core/api/entity_shares_integration_test.go`, whose comment reads "with NO sweeper having
+run".
 
 **The rule this ADR sets is honoured in full and is regression-tested.** Only the backstop clause
 is wrong, and it describes a mechanism, not an obligation. Catalogued as D99.

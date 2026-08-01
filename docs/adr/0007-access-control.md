@@ -72,7 +72,8 @@ where it is declared: visibility changes what the whole organisation sees, which
 concern rather than a space-level one.
 
 It is structurally distinct, not merely an extra row. Because there is no space to check against
-at creation time, it is asked through **`CanOrgWide`**, not `Can` (`resolver.go:186`), and the
+at creation time, it is asked through **`CanOrgWide`** in `internal/core/access/resolver.go`, not
+`Can`, and the
 codebase carries a second map (`orgLevelCaps`) plus a build-time test —
 `TestCapabilityConstants_AreExhaustivelyPartitioned` — asserting that the two maps exhaustively
 partition the constant set, so a capability added to neither fails closed.

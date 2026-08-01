@@ -725,9 +725,10 @@ if err != nil {
 
 A scan of every non-test `audit.Event{...}` literal found exactly two that set no `OrgID` at all:
 
-- `internal/core/api/comments/handler.go:354` — `EventTypeCommentCreated`. **Every comment ever
-  posted is absent from the audit log.**
-- `internal/core/api/auth/handler.go:153` — `EventTypeLoginFailed`. Arguably intentional (the
+- `CreateComment` in `internal/core/api/comments/handler.go` — the file's sole `audit.Event{`
+  literal, logging `EventTypeCommentCreated`. **Every comment ever posted is absent from the audit
+  log.**
+- `Login` in `internal/core/api/auth/handler.go` — `EventTypeLoginFailed`. Arguably intentional (the
   event fires pre-authentication, so there may be no org to name), but it is a real gap in the
   failed-login trail and it is a gap by accident rather than by decision.
 
@@ -1254,8 +1255,8 @@ loss)
 over a partial close. The failing-shaped test is written and skipped at
 `internal/core/api/workflow_d72_ungated_first_transition_test.go`.
 
-`ItemService.CreateItem` writes `item.Status = "open"`
-(`internal/core/projects/item.go:131`). The seeded project workflow's states are
+`ItemService.CreateItem` in `internal/core/projects/item.go` writes `item.Status = "open"`
+unconditionally — the only occurrence of that literal in the file. The seeded project workflow's states are
 `backlog`/`todo`/`in_progress`/`in_review`/`done` (migration 016). So a freshly created item sits
 at a status that names no state, `TierService.Gate` resolves no edge, and — because absence is
 deliberately not refusal — **no guard, approval or post-function applies to its first move**. Every

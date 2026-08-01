@@ -172,12 +172,15 @@ in opposite directions.**
 
 A polymorphic typed link table exists and has since the first item migration. `item_relations` was
 created by `migrations/004_items.sql:29-37`, with a kind CHECK naming exactly `blocks`,
-`is_blocked_by`, `duplicates`, `relates_to` and `wiki_link` (`:33`). Migration 015 added
-`from_type`/`to_type` over `('ticket','project_item','page')`, dropped the item-only foreign keys
-and renamed it **`entity_relations`**. It is live end to end: `internal/core/projects/relations.go`
-(create, list, delete, plus `GetBlockers`/`GetBlocking`), three routes at
-`internal/core/api/projects/handler.go:124-126`, three API hooks, and a Relations panel on the
-Vector item detail page that lists, creates and deletes.
+`is_blocked_by`, `duplicates`, `relates_to` and `wiki_link` (`:33` — migrations are immutable, so
+these line numbers are stable). Migration 015 added `from_type`/`to_type` over
+`('ticket','project_item','page')`, dropped the item-only foreign keys and renamed it
+**`entity_relations`**. It is live end to end: `RelationService` in
+`internal/core/projects/relations.go` (create, list, delete, plus `GetBlockers`/`GetBlocking`); the
+three routes `ListRelations`, `CreateRelation` and `DeleteRelation` registered in `Routes` on
+`internal/core/api/projects/handler.go`; three API hooks (`useRelations`, `useCreateRelation`,
+`useDeleteRelation`); and a Relations panel on the Vector item detail page that lists, creates and
+deletes.
 
 Conversely `project_items.parent_id` — the alternative this ADR offers as the thing that *does*
 exist — is the one that is unreachable. The column is real and is plumbed at the repository layer,
@@ -188,7 +191,7 @@ creates.
 **The deferral itself may well stand** — cycle safety and scope are real reasons. What must stop
 is citing the absence of a link table as the reason. Two code comments repeat the same false
 statement and are recorded for correction in the same class:
-`internal/core/workflow/postfunction.go:39-42` and
+the `PostTransitionLinked` disposition comment in `internal/core/workflow/postfunction.go`, and
 `migrations/046_workflow_transition_guards.sql:204-208` (046 is shipped, so the widening migration
 that eventually lands this action should carry the correction rather than editing it in place).
 

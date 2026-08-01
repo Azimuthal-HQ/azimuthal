@@ -100,7 +100,8 @@ exercises only blocks leaves the two positions most easily lost unguarded.
 > out.** Saved views (ADR-0009, migration 038) read Beacon and Vector only: the module enum has
 > exactly two values and the validator refuses anything else, with the exclusion stated as a
 > decision — "Codex is deliberately absent: pages are found through P6 search, which owns the page
-> read path and its cascade share semantics" (`internal/core/views/filter.go:158-160`).
+> read path and its cascade share semantics" — the comment above the `Module` constants in
+> `internal/core/views/filter.go`.
 > Content-by-label and page-properties reports are *page* queries, so under the shipped design
 > they cannot map onto saved views at all. **Where these macros should map is therefore reopened,
 > not settled** — a live conflict between two accepted decisions, weighed on a cascade-share
