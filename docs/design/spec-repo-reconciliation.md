@@ -2160,6 +2160,109 @@ own invocation, including `-p 1`, because the tests share one database and an un
 every PR. If the measurement lands below 85, this is a coverage PR, not a one-line threshold change,
 and **it must not be closed by lowering the target.**
 
+**Measured 2026-08-01 — the raise is deferred, and the decision is the maintainer's.** The
+measurement this entry asks for has been taken, at CI parity, on `3e888636` (`v0.4.0`), against a
+freshly reset database, alone:
+
+```
+go test -p 1 -count=1 -coverprofile=coverage.out -covermode=atomic \
+        -coverpkg=./internal/... -timeout=900s ./...
+```
+
+**84.7615% — 15,085 of 17,797 statements.** Zero failures, zero skips beyond the five
+`requirePostgresClientTools` gates in `cmd/server`, which skip off CI by design and are `package
+main` (outside this `-coverpkg` denominator). `-race` was omitted: it needs cgo and a C compiler,
+which the Windows box has not got, and it does not move the statement percentage.
+
+`go tool cover -func | tail -1` prints that as `84.8`, and the gate compares `84.8 < 85`, so
+**flipping the floor to 85 fails CI today.**
+
+That is not an inference from a local run. **CI measured the same figure on this very branch**, in
+the `Test` job of Actions run `30706459987`, on GitHub's own runner and *with* `-race`:
+
+```
+Total coverage: 84.8%
+✅ Coverage 84.8% meets minimum
+```
+
+It passed because the step it ran was still `Enforce minimum coverage (80%)` at the time — the
+floor has since been ratcheted to 84, see below. Rename that step to **85** — which is all the
+raise does — and the same `84.8` fails the same comparison. The local and CI figures agreeing also
+settles the `-race` question: it does not move the statement percentage.
+
+The predecessor's branch measured 84.96% (14,018 of
+16,500) on 2026-07-30 and passed only because `-func` rounded it to `85.0`. That rounding no longer
+covers it. #100, #101, #103 and #104 merged in between: the denominator grew by 1,297 statements
+and the numerator by 1,067 — the same denominator-outruns-numerator arithmetic this entry's
+follow-up predicted, run four more times.
+
+The gap is **43 statements** to a true 85, or 34 to clear the `84.95` rounding. Those statements
+are in other phases' newly merged code, so closing them is coverage-shaped work by construction —
+which §2.8 and the gate's own comment forbid. The raise commit was therefore **dropped** rather
+than shipped red; it is recoverable as `587132ac` (pre-rebase) or `5fac8bcc` (rebased), and it is
+a three-file, ~22-line diff.
+
+**This defers the raise; it does not lower the target.** §2.8 and P5's Definition of Done are
+untouched and still say 85. This entry stays **open**. The release-timing argument that once
+favoured haste is gone — `v0.4.0` is cut at `3e888636`, so nothing waits on the answer.
+
+**Maintainer ruling, 2026-08-01 — (a) defer, and ratchet the floor.** Two readings were put up.
+Reading **(a)**, treat D98 as the coverage PR it says it is and fund a pass over the phases that
+diluted the ratio before flipping, is taken. Reading **(b)**, flip to 85 and carry a red gate until
+that pass lands, is **struck rather than weighed**: a red required check blocks every PR including
+security fixes, and it teaches everyone on the project to read red as the normal state. That is not
+the stricter option, it is the broken one. It is recorded here so it is not re-proposed as a live
+alternative.
+
+A third option was taken that neither reading covered. **The floor is ratcheted from 80 to 84** —
+`Enforce minimum coverage (84%)` in `.github/workflows/ci.yml` — set half a point below the
+measured figure. The diagnosis above is that the gap opened *silently*: the suite sat at 84.7–85.0
+for a month while the gate asked for 80, so 4.76 points of decay were available with no signal at
+all, and that is what let P5's raise pass on a rounding and then stop clearing the bar unnoticed.
+Raising the target does not fix that. The floor does.
+
+Measured on the branch head rather than on `main`, because CI scores the branch:
+**84.7727% — 15,087 of 17,797 statements**, zero failures. (Two statements above the `3e888636`
+figure, and not noise: the surviving test in this PR reaches `lockReparentTarget`'s `pgx.ErrNoRows`
+arm, which no test in the tree had executed — that block reads `1 0` in the earlier profile and
+`1 1` in this one.)
+
+Headroom at 84 is roughly **146 statements**, not 137, because the gate compares a *rounded*
+figure: `go tool cover -func | tail -1` prints one decimal, so a floor of 84 trips at a true
+**83.95**, not 83.99. That is the same rounding that let 84.96 pass an 85 gate, now working in the
+gate's favour. Ordinary work will not spend 146 statements; a large phase landing at low coverage
+can, and should be interrupted when it does.
+
+**84 is a ratchet, not a settlement.** The target stays 85, §2.8's *second* half is unchanged, and
+this entry stays open. The constraint this entry set still holds and is not evaded: D98 must not be
+closed by lowering the target, and raising the floor is not lowering the target.
+
+> **Resolved on the maintainer's ruling — §2.8's gate figure is corrected 80 → 84 in this PR.**
+>
+> This was raised as *"flagged, not resolved,"* and the flag's reasoning is kept rather than
+> deleted, because it is the record of why the edit was permissible. §2.8 read "Coverage gate is
+> 80%, rising to 85% at the end of P5." Ratcheting CI to 84 made the first half understate the
+> gate. Correcting it *strengthens* the assertion, so it is not the §2.3 problem that kept the
+> second half untouched — but it is still §2 text, and `CLAUDE.md` §5 sends a §2 change to the
+> maintainer rather than to the phase. The drift was benign in direction: an agent trusting the
+> spec would aim at 80 and be surprised by CI rather than ship a defect.
+>
+> **The ruling was to fix it here rather than carry it, and the reason is not severity.** This PR
+> is what made §2.8 false. Before the ratchet the sentence was correct; after it, the specification
+> contradicts the pipeline in the one document a new agent reads first. Shipping a knowingly-false
+> spec sentence because the direction is benign is the move **D106** was settled to stop — a stated
+> rule left wrong provided someone writes a paragraph about it. The paragraph is not the fix.
+>
+> Only the gate figure moved. *"Rising to 85% at the end of P5"* is untouched: it is §2.3-fenced,
+> it is this entry's subject, and this entry stays **open**. P5's Definition of Done ("Coverage gate
+> raised to 85%") is likewise untouched.
+>
+> **Carried to the 0.5.0 hardening wave (W4):** a `docs-check` rule that reads the floor out of
+> `.github/workflows/ci.yml` and out of §2.8 and fails when they disagree. Under **D148** a figure
+> that *is* the claim must be backed by a test that fails when it drifts, and this one is not —
+> which is exactly how it drifted. New tooling does not belong on a branch that is otherwise ready;
+> it joins the citation-guard-for-Go-source item already queued there.
+
 ### D105 — backup cannot run where every document says to run it, and restore reports success on a partial recovery
 
 `azimuthal backup` forks `pg_dump` and `psql`; `azimuthal restore` forks `psql`. The shipped image is

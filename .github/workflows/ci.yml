@@ -583,15 +583,41 @@ jobs:
           path: test-output.txt
           retention-days: 3
 
-      # 80 matches the spec's stated gate (v0.3 IA spec §2.8) — the pipeline
-      # enforced 70 while the spec said 80; P1.5 aligned them. Rises to 85 at
-      # the end of P5, per the same section.
-      - name: Enforce minimum coverage (80%)
+      # 84 is a RATCHET, not the target. v0.3 IA spec §2.8 tracks this figure and
+      # says the gate is 84, rising to 85 at the end of P5 — and 85 is still what
+      # this project owes itself. That is D98, and it stays open. But the suite
+      # measured 84.7–85.0 for a month while the gate sat at 80, which left 4.76
+      # points of decay available with no signal at all. That is how P5's raise
+      # came to pass on a rounding and then quietly stop clearing the bar: the
+      # number moved and nothing said so. The floor is what fixes that, not the
+      # target. If you change the number here, change §2.8 in the same commit.
+      #
+      # So the floor tracks the measurement. Measured 84.7727% (15,087 of 17,797
+      # statements) with this job's own invocation — `-p 1`,
+      # `-coverpkg=./internal/...`, fresh database — and set half a point below.
+      #
+      # MIND THE ROUNDING. `go tool cover -func | tail -1` prints one decimal, so
+      # the comparison below is against a rounded figure: a floor of 84 does not
+      # trip at 83.99, it trips when the printed value falls below 84 — a TRUE
+      # 83.95. That is the same rounding that let an 84.96 pass an 85 gate, now
+      # working in the gate's favour instead of against it. Headroom is roughly
+      # 146 statements, which a large phase landing at low coverage can still
+      # spend. It is meant to interrupt when that happens.
+      #
+      # Raising this to 85 is D98's job and needs a coverage pass first, not a
+      # bigger number here. And it stays a FLOOR, not a goal: §2.5 case 23 is
+      # worth more than five percentage points, and a test written to move this
+      # number rather than to catch a defect is worth less than nothing, because
+      # it reads as coverage.
+      #
+      # Reproducing the figure locally needs `-p 1` passed by hand; no Makefile
+      # target sets it, so `make test-live-coverage` reports something else.
+      - name: Enforce minimum coverage (84%)
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
-            echo "❌ Coverage ${COVERAGE}% is below the 80% floor"
+          if (( $(echo "$COVERAGE < 84" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below the 84% floor"
             exit 1
           fi
           echo "✅ Coverage ${COVERAGE}% meets minimum"
