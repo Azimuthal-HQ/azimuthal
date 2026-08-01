@@ -34,7 +34,7 @@ const (
 
 func readDockerfile(t *testing.T, path string) string {
 	t.Helper()
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // G304 — path is one of this file's two package constants, both repo-relative
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
 	}
