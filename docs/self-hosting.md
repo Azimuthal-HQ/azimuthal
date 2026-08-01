@@ -169,30 +169,25 @@ goose -dir migrations postgres "$DATABASE_URL" up
 > and test overlays do publish ports; they are not the file this guide deploys.) Migrations run
 > automatically at startup, so the goose recipe is a fallback, not a required step. *Noted
 > 2026-07-31.*
+>
+> This note's scope has **not** widened to Backup and Restore, and no longer needs to: those
+> commands run inside the `app` container and reach `db:5432` and `storage:9000` on the Compose
+> network, so they need no published port and no host-side client. Earlier revisions of this guide
+> told you to add a `ports:` mapping to the `db` service in order to back up. You do not need to,
+> and adding one exposes your database to the host. *Narrowed 2026-08-01.*
 
 ## Backup and Restore
 
-> ### ⚠ These commands do not work inside the container today
->
-> **Do not rely on the recipes in this section until this warning is removed.** `azimuthal backup`
-> shells out to `pg_dump` and `psql`, and `azimuthal restore` shells out to `psql`. The shipped
-> image is `gcr.io/distroless/static:nonroot`, whose final stage contains the Go binary and no
-> shell, no coreutils and no PostgreSQL client. Every `docker compose exec app /azimuthal backup`
-> below therefore fails at the fork — including the nightly cron, which has never produced a file.
-> An operator following this section believes they have backups and has none.
->
-> **Until it is fixed, run the binary from a host that has the PostgreSQL 16 client tools on
-> `PATH`**, pointing `DATABASE_URL` at the database. Note that the bundled Compose file does not
-> publish the database port (see the note under Migrations), so you must add a `ports:` mapping to
-> the `db` service, or run the tool on the Compose network.
->
-> A second, independent defect compounds it: `restore` runs `psql` without
-> `-v ON_ERROR_STOP=1` and discards its output, so a dump whose statements failed still exits 0
-> and prints "Database restored." Fixing the first without the second would produce backups that
-> restore wrongly and say they worked.
->
-> Both are ledgered as **D105** in `docs/design/spec-repo-reconciliation.md` as code follow-ups.
-> This is a documentation pass and does not fix them.
+Both commands run **inside the application container**, which carries the PostgreSQL client
+tools for exactly this purpose. Nothing here needs a published database port, a client
+installed on the host, or any step outside Compose.
+
+> **The bundled client is PostgreSQL 16, and that is a floor, not a coincidence.** `pg_dump`
+> refuses to dump a server newer than itself, so the client's major version must be **greater
+> than or equal to** the server's. `build/docker-compose.yml` runs `postgres:16-alpine`, so the
+> two match. If you point this deployment at an external PostgreSQL 17 or newer, the bundled
+> client cannot back it up — take the dump with a client of at least that major version instead.
+> `TestDockerfiles_ClientMajorMeetsServer` fails the build if the bundled pair ever drifts apart.
 
 ### Creating a Backup
 
@@ -204,7 +199,11 @@ docker cp "$(docker compose ps -q app)":/tmp/backup.tar.gz ./backup-$(date +%Y-%
 The backup archive contains:
 - PostgreSQL database dump
 - All object storage files
-- A `manifest.json` with version, timestamp, and file inventory
+- A `manifest.json` with the Azimuthal version, the timestamp, the source PostgreSQL server's
+  version, and the file inventory
+
+Copy the archive off the host. A backup that only exists inside the container is lost with the
+container.
 
 ### Restoring from Backup
 
@@ -213,7 +212,16 @@ docker cp ./backup-2026-04-04.tar.gz "$(docker compose ps -q app)":/tmp/backup.t
 docker compose exec app /azimuthal restore --input /tmp/backup.tar.gz
 ```
 
-Restore is idempotent and safe to run multiple times.
+Restore prints the archive's manifest — including which PostgreSQL server the dump came from —
+before it changes anything, so you can check you are restoring what you think you are.
+
+Restore is idempotent and safe to run multiple times: the dump is taken with `--clean
+--if-exists`, and object storage is rewritten with overwriting puts.
+
+**A restore that fails part-way exits non-zero and says why.** It does not report success over a
+partial recovery. If the command reports an error, treat the database as being in an
+indeterminate state and restore again from a known-good archive rather than assuming the failure
+was cosmetic.
 
 ### Automated Backups
 
@@ -223,6 +231,11 @@ Set up a cron job to run backups on a schedule:
 # Daily backup at 2 AM
 0 2 * * * cd /path/to/azimuthal && docker compose exec -T app /azimuthal backup --output /tmp/backup.tar.gz && docker cp "$(docker compose ps -q app)":/tmp/backup.tar.gz /backups/azimuthal-$(date +\%Y-\%m-\%d).tar.gz
 ```
+
+The `&&` chain means a failed backup produces no file rather than an empty or half-written one.
+Cron mails the output of a failing run to the crontab's owner — check that the mailbox is one
+somebody reads, or redirect the output somewhere you monitor. **Verify the first run produced a
+file**; a backup schedule nobody has ever seen produce output is not a backup schedule.
 
 ## User Administration
 

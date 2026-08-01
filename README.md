@@ -28,7 +28,7 @@ today, and this section is the honest place for them until they are.
 
 - **Single binary** — `make build` produces one binary with the frontend embedded. Run `./azimuthal serve` and visit http://localhost:8080
 - **Docker Compose self-hosting** — `docker compose -f build/docker-compose.yml up -d` runs the full stack (app + PostgreSQL + MinIO)
-- **Backup and restore** — `azimuthal backup --output backup.tar.gz` creates a full archive; `azimuthal restore --input backup.tar.gz` restores it. **Run these from a host that has the PostgreSQL client tools on `PATH`** — both shell out to `pg_dump`/`psql`, and the shipped container image is `distroless/static`, which carries neither. See [docs/self-hosting.md](docs/self-hosting.md)
+- **Backup and restore** — `azimuthal backup --output backup.tar.gz` creates a full archive; `azimuthal restore --input backup.tar.gz` restores it. Both run inside the container (`docker compose exec app /azimuthal backup ...`): the image ships the PostgreSQL 16 client tools they shell out to. A restore that fails part-way exits non-zero rather than reporting success over a partial recovery. See [docs/self-hosting.md](docs/self-hosting.md)
 - **Admin CLI** — `azimuthal admin create-user` and `azimuthal admin reset-password` for user management
 - **Dark mode by default** — steel blue and silver design system with light mode opt-in via settings
 - **Service Desk** — ticket list, ticket detail, kanban board with drag-and-drop

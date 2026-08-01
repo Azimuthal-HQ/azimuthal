@@ -264,12 +264,30 @@ dependencies (Go modules embedded in the binary) for known CVEs.
 
 trivy checks:
 
-- OS package CVEs (base image: `gcr.io/distroless/static:nonroot`)
+- OS package CVEs (base image: `gcr.io/distroless/base-debian12:nonroot`)
+- The PostgreSQL client libraries copied into the image — see the note below
 - Go binary CVEs (extracted from the embedded Go module graph)
 - Dockerfile misconfigurations (running as root, exposed sensitive ports, etc.)
 - Secrets accidentally embedded in container layers
 
 **Configuration:** `trivy.yaml` in the repo root.
+
+> **Why the image declares packages it did not install.** `azimuthal backup` and
+> `azimuthal restore` fork `pg_dump` and `psql`, so the final image copies those binaries and
+> their shared-library closure out of `postgres:16-bookworm` (`build/Dockerfile`, the `pgclient`
+> stage). Trivy inventories a distroless image by reading `/var/lib/dpkg/status.d`, and files
+> copied in as bare libraries carry no package metadata — so without help they would be
+> **invisible to this scan**, including `libpq`, `krb5`, `gnutls` and `openldap`, all of which
+> have CVE histories. The `pgclient` stage therefore emits a `status.d` entry for each library's
+> owning package, taking the version from the source image's own dpkg database, so the scan's
+> package inventory covers the copied libraries as well as the base's own. A library whose owning
+> package cannot be identified fails the build rather than shipping unscanned.
+>
+> Two consequences worth knowing. These libraries are patched by rebuilding the image, not by
+> updating a manifest — a CVE in `libpq` is fixed when `postgres:16-bookworm` publishes a fixed
+> build and the image is rebuilt. And the base's own copies are never overwritten: the stage
+> skips any library the base already provides, so `libc6` and `libssl3` keep the base's versions
+> and the metadata Trivy reads stays true to what is on disk.
 
 **What fails the build:**
 Any **HIGH** or **CRITICAL** severity CVE with an available fix fails the build.

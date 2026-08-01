@@ -89,11 +89,19 @@ tar -xzOf backup-pre-upgrade.tar.gz database.sql \
 backup step has ever produced (`azimuthal backup` only ever writes a gzip-compressed tar). It
 failed with "No such file or directory" at the worst possible moment, mid-rollback.*
 
-> The `/azimuthal restore` alternative that used to follow **cannot run in the shipped image** —
-> it forks `psql`, and the app image is distroless. See the warning at the top of
-> "Backup and Restore" in [self-hosting.md](self-hosting.md); that fix is ledgered as D105. The
-> `tar`-and-pipe form above works today because it runs `psql` in the **db** container, not the
-> app one.
+Alternatively, restore the whole archive — database *and* object storage — with the app
+container's own command. The image now ships the PostgreSQL client tools, so this works inside
+the container and, unlike the `tar`-and-pipe form above, also restores attachments:
+
+```bash
+docker compose up -d          # the app container must be running to exec into it
+docker cp backup-pre-upgrade.tar.gz "$(docker compose ps -q app)":/tmp/restore.tar.gz
+docker compose exec app /azimuthal restore --input /tmp/restore.tar.gz
+```
+
+Both forms abort on the first failing statement (`-v ON_ERROR_STOP=1`) rather than reporting
+success over a partial restore. If either exits non-zero, do not proceed — the database is in an
+indeterminate state.
 
 ### 4. Start the old version
 

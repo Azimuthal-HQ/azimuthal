@@ -924,14 +924,23 @@ jobs:
           echo "Daemon needed waiting — sleeping 30s for bridge networking to settle..."
           sleep 30
 
-      # Dockerfile.ci only needs distroless (GCR, no rate limit) — no Docker Hub pulls.
-      - name: Pull distroless base image (with retry)
+      # Dockerfile.ci needs distroless (GCR, no rate limit) AND postgres:16-bookworm
+      # (Docker Hub): the final image copies pg_dump and psql out of the latter,
+      # because `azimuthal backup` and `azimuthal restore` fork them. That
+      # reintroduces the Docker Hub dependency this job was originally built to
+      # avoid, so the new pull goes through the same 10-attempt retry loop the
+      # other jobs use rather than relying on `docker build`'s implicit pull,
+      # which has no retry at all.
+      - name: Pull container images (with retry)
         run: |
-          for attempt in $(seq 1 10); do
-            docker pull gcr.io/distroless/static:nonroot && echo "✅ Pulled distroless" && break
-            echo "Pull attempt $attempt/10 failed, retrying in 30s..."
-            sleep 30
-            [ "$attempt" = "10" ] && echo "❌ Failed to pull distroless after 10 attempts" && exit 1
+          for img in gcr.io/distroless/base-debian12:nonroot postgres:16-bookworm; do
+            echo "=== Pulling $img ==="
+            for attempt in $(seq 1 10); do
+              docker pull "$img" && echo "✅ Pulled $img" && break
+              echo "Pull attempt $attempt/10 failed, retrying in 30s..."
+              sleep 30
+              [ "$attempt" = "10" ] && echo "❌ Failed to pull $img after 10 attempts" && exit 1
+            done
           done
 
       - name: Build Docker image
@@ -1332,9 +1341,14 @@ jobs:
 
       # Dockerfile.ci only needs distroless (GCR) + postgres (Docker Hub).
       # golang/node no longer needed — the binary comes from the build job.
+      #
+      # postgres:16-bookworm is a THIRD image, distinct from the -alpine one
+      # above and not interchangeable with it: the sidecar server is Alpine,
+      # but the client binaries copied into the shipped image must be
+      # glibc-linked to run on distroless/base-debian12. Alpine's are musl.
       - name: Pull container images (with retry)
         run: |
-          for img in postgres:16-alpine gcr.io/distroless/static:nonroot; do
+          for img in postgres:16-alpine postgres:16-bookworm gcr.io/distroless/base-debian12:nonroot; do
             echo "=== Pulling $img ==="
             for attempt in $(seq 1 10); do
               docker pull "$img" && echo "✅ Pulled $img" && break
@@ -1369,6 +1383,29 @@ jobs:
             -t ${{ env.BINARY_NAME }}:boot-${{ github.sha }} \
             -f build/Dockerfile.ci \
             .
+
+      # The shipped image can actually take a backup.
+      #
+      # `azimuthal backup` forks pg_dump and `azimuthal restore` forks psql. On
+      # the previous distroless/static base neither binary existed, so both
+      # commands failed at the fork — and nothing caught it, because no gate ran
+      # them. docs/self-hosting.md prescribed them anyway, including a nightly
+      # cron that had therefore never produced a file (D105).
+      #
+      # The names are deliberately BARE, not absolute paths. The Go code calls
+      # exec.Command("pg_dump", ...), which resolves through exec.LookPath
+      # against $PATH — so an absolute-path check would pass on an image where
+      # the binaries are present but unreachable to the code that needs them.
+      # This is also the loader check: a missed shared library surfaces here as
+      # "error while loading shared libraries", which is the failure mode of
+      # copying binaries between images with mismatched libc.
+      - name: The image carries working postgres client tools
+        run: |
+          docker run --rm --entrypoint pg_dump \
+            ${{ env.BINARY_NAME }}:boot-${{ github.sha }} --version
+          docker run --rm --entrypoint psql \
+            ${{ env.BINARY_NAME }}:boot-${{ github.sha }} --version
+          echo "✅ pg_dump and psql resolve on PATH and execute"
 
       - name: Run image and wait for /health
         run: |
@@ -1411,12 +1448,45 @@ jobs:
             || (echo "❌ /health Content-Type is $CT, expected application/json"; exit 1)
           echo "✅ /health returns application/json"
 
+      # The documented recipe, run as documented, inside the shipped image.
+      #
+      # STORAGE_ENDPOINT is blanked for this exec only: this job runs no MinIO,
+      # and an empty endpoint is the supported "no object store" case, which
+      # both commands skip explicitly. The database half is what is under test.
+      #
+      # `timeout` guards the job: neither command should block, but this job has
+      # no timeout-minutes of its own, so a hang would burn the whole runner
+      # allowance rather than failing.
+      - name: The documented backup and restore commands work inside the image
+        run: |
+          timeout 120 docker exec -e STORAGE_ENDPOINT= azimuthal-boot \
+            /azimuthal backup --output /tmp/ci-backup.tar.gz
+          echo "✅ backup exited 0"
+
+          # The image has no shell or coreutils, so the archive is inspected out
+          # here rather than in the container.
+          docker cp azimuthal-boot:/tmp/ci-backup.tar.gz ./ci-backup.tar.gz
+          [ -s ./ci-backup.tar.gz ] || (echo "❌ backup produced an empty file"; exit 1)
+          tar -tzf ./ci-backup.tar.gz | tee /dev/stderr | grep -qx 'database.sql' \
+            || (echo "❌ archive has no database.sql"; exit 1)
+          tar -tzf ./ci-backup.tar.gz | grep -qx 'manifest.json' \
+            || (echo "❌ archive has no manifest.json"; exit 1)
+          echo "✅ archive contains a database dump and a manifest"
+
+          # Restore the archive back over the live database. With
+          # -v ON_ERROR_STOP=1 this exits non-zero if any statement fails, so a
+          # partial restore fails the job instead of reporting success (D105).
+          timeout 120 docker exec -e STORAGE_ENDPOINT= azimuthal-boot \
+            /azimuthal restore --input /tmp/ci-backup.tar.gz
+          echo "✅ restore exited 0"
+
       - name: Tear down image
         if: always()
         run: |
           docker stop azimuthal-boot || true
           docker rm azimuthal-boot || true
           docker rmi ${{ env.BINARY_NAME }}:boot-${{ github.sha }} || true
+          rm -f ./ci-backup.tar.gz || true
 
 
   # ─────────────────────────────────────────────────────────────
