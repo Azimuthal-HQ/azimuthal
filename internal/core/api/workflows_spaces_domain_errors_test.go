@@ -412,7 +412,11 @@ func TestWfSpaceDomain_TicketTransition_WorkflowWithNoInitialStateIsRefused(t *t
 
 	wsnegRequireError(t, ts.post(t, fmt.Sprintf("%s/tickets/%s/workflow-state", spaceBase, ticketID),
 		map[string]any{"state_id": target}, true),
-		http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get initial state")
+		// 422 with a sentence, not a 500. The workflow is misconfigured — it
+		// declares no starting state — and that is something an administrator can
+		// act on, so the refusal says so instead of reporting a server fault.
+		http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+		"this space's workflow declares no starting state, so no transition can be checked against it; an administrator must set one")
 
 	r := ts.get(t, fmt.Sprintf("%s/tickets/%s", spaceBase, ticketID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
@@ -436,11 +440,15 @@ func TestWfSpaceDomain_ItemTransition_WorkflowWithNoInitialStateIsRefused(t *tes
 
 	wsnegRequireError(t, ts.post(t, fmt.Sprintf("%s/projects/items/%s/workflow-state", spaceBase, itemID),
 		map[string]any{"state_id": target}, true),
-		http.StatusInternalServerError, "INTERNAL_ERROR", "failed to get initial state")
+		// 422 with a sentence, not a 500. The workflow is misconfigured — it
+		// declares no starting state — and that is something an administrator can
+		// act on, so the refusal says so instead of reporting a server fault.
+		http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+		"this space's workflow declares no starting state, so no transition can be checked against it; an administrator must set one")
 
 	r := ts.get(t, fmt.Sprintf("%s/projects/items/%s", spaceBase, itemID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
-	require.Equal(t, "open", decodeJSONMap(t, r.Body)["status"],
+	require.Equal(t, "backlog", decodeJSONMap(t, r.Body)["status"], // born in the project workflow's initial state (D72)
 		"an item whose workflow has no initial state must not have moved")
 }
 

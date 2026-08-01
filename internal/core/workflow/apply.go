@@ -23,6 +23,17 @@ type ApplyInput struct {
 	// operating in a space whose workflow does not name the status.
 	ToStateID *uuid.UUID
 
+	// ExpectFromStatus is the status the entity must still be in for this write
+	// to land — the compare-and-swap half of the statement.
+	//
+	// It is REQUIRED, not optional, and there is deliberately no "write
+	// unconditionally" escape. Every caller reached this point by reading the
+	// entity and deciding about what it read, so every caller knows the value;
+	// an escape would exist only for a caller that had stopped knowing, which is
+	// exactly the caller that must not write. A mismatch is zero rows and the
+	// transaction rolls back — see ErrTransitionRaced.
+	ExpectFromStatus string
+
 	// TransitionID is the edge traversed, for the audit trail. Nil when the
 	// tiers did not apply.
 	TransitionID *uuid.UUID
@@ -64,5 +75,56 @@ type TransitionApplier interface {
 	// ApplyTransition writes the status, the effects and the audit row in one
 	// transaction. Any failure rolls back all three, and the returned error
 	// names what failed.
+	//
+	// Returns ErrTransitionRaced when the entity is no longer in
+	// in.ExpectFromStatus.
 	ApplyTransition(ctx context.Context, in ApplyInput) error
+}
+
+// ApprovalApplier commits an approver's verdict and the transition that verdict
+// releases in ONE transaction.
+//
+// # Why this is a second seam and not two calls
+//
+// It replaces a sequence — record the decision, then apply the transition —
+// that had no compensation between its halves (D91). The failure it produced is
+// specific and unrecoverable by the user: the approval is marked approved, the
+// entity never moves, and the request is no longer pending, so nothing can
+// decide it again. The route's own error message admitted it, in the words "the
+// approval was recorded but the transition could not be applied". That branch
+// does not exist any more, because the outcome it described cannot happen.
+//
+// The second failure the sequence had was quieter. An approval captures the
+// status the entity was in when the request was made, and is decided whenever an
+// approver gets to it. Applying the captured target unconditionally overwrites
+// whatever the entity became in between — a blind write of stale data over
+// fresh, with an audit row asserting a transition from a status the entity had
+// already left. ApplyInput.ExpectFromStatus is the compare-and-swap that refuses
+// it, and it refuses inside the transaction, so the verdict rolls back with the
+// write and the approval is still pending for somebody to decide against the
+// entity's real state.
+type ApprovalApplier interface {
+	// DecideAndApply records the verdict and, on an approval, applies the
+	// transition it releases. Either both land or neither does.
+	//
+	// Returns ErrApprovalAlreadyDecided when another approver got there first,
+	// and ErrTransitionRaced when the entity left the status the approval
+	// captured.
+	DecideAndApply(ctx context.Context, in DecideAndApplyInput) (Approval, error)
+}
+
+// DecideAndApplyInput is one verdict together with the transition it releases.
+type DecideAndApplyInput struct {
+	SpaceID    uuid.UUID
+	ApprovalID uuid.UUID
+	ActorID    uuid.UUID
+	Decision   Decision
+	// Reason is nil when the approver said nothing, which migration 050 permits
+	// alongside a decision but never without one.
+	Reason *string
+
+	// Apply is the transition to commit with the verdict, and is nil on a
+	// decline — a declined request moves nothing, so there is nothing to apply
+	// and the record of the decline is the whole outcome.
+	Apply *ApplyInput
 }

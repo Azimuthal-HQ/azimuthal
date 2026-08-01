@@ -34,8 +34,16 @@ type Ticket struct {
 	DueAt       *time.Time `json:"due_at"`
 	ResolvedAt  *time.Time `json:"resolved_at"`
 	Rank        string     `json:"rank"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	// WorkflowStateID is where the ticket sits in its space's workflow.
+	//
+	// It is the SECOND of the three ways the chokepoint places an entity, and
+	// the only one that survives a state being RENAMED — a rename rewrites the
+	// state row and never the status text on tickets. Nil for a ticket that has
+	// never been placed in a state machine, which before migration 051 was very
+	// nearly all of them (D71).
+	WorkflowStateID *uuid.UUID `json:"workflow_state_id"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // TicketRepository defines the data access contract for tickets.
@@ -95,6 +103,17 @@ type CreateTicketParams struct {
 	AssigneeID  *uuid.UUID
 	Labels      []string
 	DueAt       *time.Time
+
+	// Status and WorkflowStateID place the new ticket in its space's workflow.
+	//
+	// Both empty means the space has no workflow to be placed in, and Create
+	// falls back to StatusOpen — the value it always wrote. A caller that
+	// supplies them has resolved the space workflow's initial state; see
+	// tiergate.Gate.InitialPosition. Nothing on the wire reaches these: the
+	// create handler resolves them from the workflow, and createTicketRequest
+	// has no status field.
+	Status          Status
+	WorkflowStateID *uuid.UUID
 }
 
 // ShareRevokingDeleter is the transactional seam for ticket deletion: the
@@ -133,13 +152,22 @@ func (s *TicketService) Create(ctx context.Context, params CreateTicketParams) (
 		return nil, fmt.Errorf("creating ticket: %w", ErrInvalidPriority)
 	}
 
+	// StatusOpen is the fallback, not the rule. It stays the value for a space
+	// with no workflow to place the ticket in, and where a workflow does govern
+	// the caller has resolved its initial state — which is usually spelled
+	// "open" and, for an administrator's own workflow, may not be (D85).
+	status := params.Status
+	if status == "" {
+		status = StatusOpen
+	}
+
 	now := time.Now().UTC()
 	t := &Ticket{
 		ID:          uuid.New(),
 		SpaceID:     params.SpaceID,
 		Title:       params.Title,
 		Description: params.Description,
-		Status:      StatusOpen,
+		Status:      status,
 		Priority:    params.Priority,
 		// The agent create path still REQUIRES a reporter — ErrReporterRequired
 		// above is unchanged. Only the read model widened, so that a ticket
@@ -147,11 +175,12 @@ func (s *TicketService) Create(ctx context.Context, params CreateTicketParams) (
 		// carry a requester instead. See the Ticket doc comment.
 		ReporterID: &params.ReporterID,
 		AssigneeID: params.AssigneeID,
-		Labels:     params.Labels,
-		DueAt:      params.DueAt,
-		Rank:       "",
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		Labels:          params.Labels,
+		DueAt:           params.DueAt,
+		Rank:            "",
+		WorkflowStateID: params.WorkflowStateID,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 
 	if err := s.repo.Create(ctx, t); err != nil {

@@ -103,28 +103,29 @@ sp AS (
 )
 INSERT INTO project_items (id, space_id, org_id, parent_id, number, item_key, kind,
                            title, description, status, priority, reporter_id,
-                           assignee_id, sprint_id, labels, due_at, rank)
+                           assignee_id, sprint_id, labels, due_at, rank, workflow_state_id)
 SELECT $1, $2, sp.org_id, $3, seq.last_number, sp.key || '-' || seq.last_number,
-       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 FROM seq, sp
 RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector
 `
 
 type CreateProjectItemParams struct {
-	ID          uuid.UUID          `json:"id"`
-	SpaceID     uuid.UUID          `json:"space_id"`
-	ParentID    pgtype.UUID        `json:"parent_id"`
-	Kind        string             `json:"kind"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Status      string             `json:"status"`
-	Priority    string             `json:"priority"`
-	ReporterID  uuid.UUID          `json:"reporter_id"`
-	AssigneeID  pgtype.UUID        `json:"assignee_id"`
-	SprintID    pgtype.UUID        `json:"sprint_id"`
-	Labels      []string           `json:"labels"`
-	DueAt       pgtype.Timestamptz `json:"due_at"`
-	Rank        string             `json:"rank"`
+	ID              uuid.UUID          `json:"id"`
+	SpaceID         uuid.UUID          `json:"space_id"`
+	ParentID        pgtype.UUID        `json:"parent_id"`
+	Kind            string             `json:"kind"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Status          string             `json:"status"`
+	Priority        string             `json:"priority"`
+	ReporterID      uuid.UUID          `json:"reporter_id"`
+	AssigneeID      pgtype.UUID        `json:"assignee_id"`
+	SprintID        pgtype.UUID        `json:"sprint_id"`
+	Labels          []string           `json:"labels"`
+	DueAt           pgtype.Timestamptz `json:"due_at"`
+	Rank            string             `json:"rank"`
+	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
 }
 
 // Assigns number and item_key atomically. The data-modifying seq CTE bumps the
@@ -133,6 +134,16 @@ type CreateProjectItemParams struct {
 // the space's org_id and key for the item_key (<SPACE_KEY>-<n>). Because it is a
 // single statement, the counter bump and the item insert commit or roll back
 // together — a failed insert leaves no gap.
+//
+// workflow_state_id is written AT CREATION. It was absent from this column list
+// and the column has no DEFAULT, so every item was born NULL — and unlike the
+// ticket side there was not even a name coincidence to save it: items were born
+// at the literal "open" while the seeded project workflow's states are
+// backlog/todo/in_progress/in_review/done. So a new item's status named no
+// state, its first transition resolved no edge, and nothing an administrator
+// configured on the initial edge applied to it (D72, known-issues #30).
+//
+// NULL is still accepted and means the space has no workflow.
 func (q *Queries) CreateProjectItem(ctx context.Context, arg CreateProjectItemParams) (ProjectItem, error) {
 	row := q.db.QueryRow(ctx, createProjectItem,
 		arg.ID,
@@ -149,6 +160,7 @@ func (q *Queries) CreateProjectItem(ctx context.Context, arg CreateProjectItemPa
 		arg.Labels,
 		arg.DueAt,
 		arg.Rank,
+		arg.WorkflowStateID,
 	)
 	var i ProjectItem
 	err := row.Scan(
@@ -762,6 +774,7 @@ const updateProjectItemWorkflowState = `-- name: UpdateProjectItemWorkflowState 
 UPDATE project_items
 SET status = $1, workflow_state_id = $2, updated_at = now()
 WHERE id = $3 AND space_id = $4 AND deleted_at IS NULL
+  AND status = $5
 RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector
 `
 
@@ -770,6 +783,7 @@ type UpdateProjectItemWorkflowStateParams struct {
 	WorkflowStateID pgtype.UUID `json:"workflow_state_id"`
 	ItemID          uuid.UUID   `json:"item_id"`
 	SpaceID         uuid.UUID   `json:"space_id"`
+	ExpectStatus    string      `json:"expect_status"`
 }
 
 // The space predicate is what makes ApplyInput.SpaceID load-bearing. It was
@@ -779,12 +793,17 @@ type UpdateProjectItemWorkflowStateParams struct {
 // reconciled upstream and cannot arrive here mismatched, so this is the seam
 // being closed rather than the hole; a miss is zero rows and the transaction
 // rolls back rather than committing a status the caller had no claim on.
+//
+// `status = @expect_status` is the compare-and-swap; see the ticket twin in
+// tickets.sql for what it protects (D91) and why zero rows is a conflict rather
+// than a miss.
 func (q *Queries) UpdateProjectItemWorkflowState(ctx context.Context, arg UpdateProjectItemWorkflowStateParams) (ProjectItem, error) {
 	row := q.db.QueryRow(ctx, updateProjectItemWorkflowState,
 		arg.Status,
 		arg.WorkflowStateID,
 		arg.ItemID,
 		arg.SpaceID,
+		arg.ExpectStatus,
 	)
 	var i ProjectItem
 	err := row.Scan(

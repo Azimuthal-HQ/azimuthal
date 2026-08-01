@@ -43,6 +43,11 @@ func (a *TicketAdapter) Create(ctx context.Context, t *tickets.Ticket) error {
 		Labels:      coalesceLabels(t.Labels),
 		DueAt:       pgTimestampPtr(t.DueAt),
 		Rank:        t.Rank,
+		// Written at creation so the ticket starts INSIDE its state machine.
+		// Omitting this field would compile and produce a NULL — the missing
+		// struct-literal field is a zero value, not an error — which is exactly
+		// how the column came to mean nothing (D71).
+		WorkflowStateID: pgUUID(t.WorkflowStateID),
 	})
 	if err != nil {
 		return fmt.Errorf("ticket adapter create: %w", err)
@@ -222,8 +227,13 @@ func dbTicketToTicket(t generated.Ticket) *tickets.Ticket {
 		DueAt:       goTimePtr(t.DueAt),
 		ResolvedAt:  goTimePtr(t.ResolvedAt),
 		Rank:        t.Rank,
-		CreatedAt:   goTime(t.CreatedAt),
-		UpdatedAt:   goTime(t.UpdatedAt),
+		// Populated on every read, not only on the transition path: the
+		// chokepoint needs it to place a ticket whose state has been renamed,
+		// and a field set by some reads and not others is precisely the shape
+		// that has a gate deciding against a zero value.
+		WorkflowStateID: goUUIDPtr(t.WorkflowStateID),
+		CreatedAt:       goTime(t.CreatedAt),
+		UpdatedAt:       goTime(t.UpdatedAt),
 	}
 }
 

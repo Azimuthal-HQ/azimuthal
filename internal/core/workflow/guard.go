@@ -195,18 +195,25 @@ type EntitySnapshot struct {
 	Labels      []string
 }
 
-// Refusal explains why a guard was not satisfied.
+// Refusal explains why a transition was refused.
 //
 // ADR-0011's case for tier 1 rests on inspectability — "they are fully
 // inspectable — the engine can always explain why a transition was refused" —
-// so a refusal names the guard that produced it rather than collapsing to a
+// so a refusal names the check that produced it rather than collapsing to a
 // flat error. Reason is written for a person and is safe to show: it names
 // configuration, never another user's data.
+//
+// Check is what a caller branches on; GuardID, Class and Kind are populated
+// only when Check is CheckGuard, because the structural checks are properties
+// of the workflow graph rather than of any configured guard. Branching on the
+// Reason string is never correct — it is prose for a person and is expected to
+// be reworded.
 type Refusal struct {
-	GuardID uuid.UUID  `json:"guard_id"`
-	Class   GuardClass `json:"guard_class"`
-	Kind    GuardKind  `json:"kind"`
-	Reason  string     `json:"reason"`
+	Check   RefusalCheck `json:"check"`
+	GuardID uuid.UUID    `json:"guard_id"`
+	Class   GuardClass   `json:"guard_class"`
+	Kind    GuardKind    `json:"kind"`
+	Reason  string       `json:"reason"`
 }
 
 // Error makes a Refusal usable as an error at call sites that only need the
@@ -307,7 +314,7 @@ func evalFieldRequired(g Guard, entity EntitySnapshot) *Refusal {
 }
 
 func (g Guard) refuse(reason string) *Refusal {
-	return &Refusal{GuardID: g.ID, Class: g.Class, Kind: g.Kind, Reason: reason}
+	return &Refusal{Check: CheckGuard, GuardID: g.ID, Class: g.Class, Kind: g.Kind, Reason: reason}
 }
 
 // fieldPresent reports whether the required field carries a value.

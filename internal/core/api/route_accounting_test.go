@@ -330,6 +330,17 @@ var routeAccounting = map[string]string{
 	// the requester a blocked item and then nothing at all.
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/approvals": "space-read",
 
+	// The transitions this entity may be offered, with ADR-0011 conditions
+	// applied. space-read even though the subtree carries the write floor:
+	// RequireWriteFloor returns early for GET before it parses {spaceID}.
+	//
+	// It is the route that makes a condition mean anything — the filter existed
+	// with no HTTP caller, so a configured condition hid a transition from
+	// nobody — and it is deliberately NOT built on the gate, which WRITES the
+	// pending approval row and notifies its approvers. A picker built on that
+	// would file an approval request every time a page loaded.
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/transitions": "space-read",
+
 	// Entity shares — management (P3, ADR-0008). Org-scoped; the handler
 	// resolves the shared entity's space and enforces manage_shares there.
 	"GET /api/v1/orgs/{orgID}/shares/":             "share-manage: list an entity's shares + cascade page count; manage_shares on the entity's space in-handler",

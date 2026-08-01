@@ -36,7 +36,7 @@ func TestApproverRecipients_TeamExpansionUsesTheEffectiveSet(t *testing.T) {
 	// though no direct membership row is modelled here.
 	f.teamMembers[team] = []uuid.UUID{viaAncestor}
 
-	got, err := NewTierService(f).ApproverRecipients(context.Background(), uuid.New(), edge)
+	got, err := NewTierService(f, &fakeApplier{store: f}).ApproverRecipients(context.Background(), uuid.New(), edge)
 	require.NoError(t, err)
 	require.Equal(t, []uuid.UUID{viaAncestor}, got)
 }
@@ -55,7 +55,7 @@ func TestApproverRecipients_DeduplicatesAcrossSubjects(t *testing.T) {
 	}
 	f.teamMembers[team] = []uuid.UUID{person, other}
 
-	got, err := NewTierService(f).ApproverRecipients(context.Background(), uuid.New(), edge)
+	got, err := NewTierService(f, &fakeApplier{store: f}).ApproverRecipients(context.Background(), uuid.New(), edge)
 	require.NoError(t, err)
 	require.Len(t, got, 2, "being named twice is not a reason to be alerted twice")
 	require.Contains(t, got, person)
@@ -76,7 +76,7 @@ func TestApproverRecipients_UnknownSubjectTypeContributesNobody(t *testing.T) {
 		{TransitionID: edge, SubjectType: ApproverSubjectType("role"), SubjectID: uuid.New()},
 	}
 
-	got, err := NewTierService(f).ApproverRecipients(context.Background(), uuid.New(), edge)
+	got, err := NewTierService(f, &fakeApplier{store: f}).ApproverRecipients(context.Background(), uuid.New(), edge)
 	require.NoError(t, err)
 	require.Empty(t, got)
 }
@@ -94,7 +94,7 @@ func TestMarkDecidable_AgreesWithTheDecideRoute(t *testing.T) {
 	f, edge := configured()
 	f.approvers[edge] = []Approver{{TransitionID: edge, SubjectType: ApproverUser, SubjectID: approver}}
 
-	svc := NewTierService(f)
+	svc := NewTierService(f, &fakeApplier{store: f})
 	gated, err := svc.Gate(context.Background(), gateReq(uuid.New()))
 	require.NoError(t, err)
 	require.NotNil(t, gated.Pending)
@@ -115,7 +115,7 @@ func TestMarkDecidable_AgreesWithTheDecideRoute(t *testing.T) {
 	// SpaceID is the approval's own, so the request reaches the authority
 	// check. Left zero it would be refused as not-found first and the assertion
 	// below would pass without the approver logic ever having run.
-	_, _, err = svc.Decide(context.Background(), DecideRequest{
+	_, err = svc.Decide(context.Background(), DecideRequest{
 		OrgID: orgID, SpaceID: gated.Pending.SpaceID, ApprovalID: gated.Pending.ID,
 		ActorID: stranger, Decision: DecisionApproved,
 	})
@@ -133,7 +133,7 @@ func TestMarkDecidable_ADeletedEdgeIsDecidableByNobodyAndStillListed(t *testing.
 
 	orphan := Approval{ID: uuid.New(), TransitionID: nil, FromStatus: "open", ToStatus: "closed"}
 
-	got, err := NewTierService(newFakeStore()).
+	got, err := NewTierService(newFakeStore(), &fakeApplier{}).
 		MarkDecidable(context.Background(), uuid.New(), uuid.New(), []Approval{orphan})
 	require.NoError(t, err)
 	require.Len(t, got, 1, "a stuck request must stay visible to the person who made it")

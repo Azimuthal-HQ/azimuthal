@@ -91,8 +91,24 @@ type TierStore interface {
 	// an ordinary state: statuses are free text and can be renamed out from
 	// under an item.
 	StateByName(ctx context.Context, workflowID uuid.UUID, name string) (*State, error)
+	// StateByID returns one state of this workflow, or ErrNotFound.
+	//
+	// It is scoped to workflowID rather than resolving a bare id: an entity's
+	// stored workflow_state_id can point into a workflow the space no longer
+	// uses (nothing rewrites it when a space is reassigned), and resolving that
+	// state would place the entity in a graph whose edges do not apply to it.
+	StateByID(ctx context.Context, workflowID, stateID uuid.UUID) (*State, error)
+	// InitialState returns the workflow's starting state, or ErrNotFound.
+	//
+	// Migration 016's partial unique index allows at most one, and does not
+	// require one — so ErrNotFound is a real answer for a workflow an
+	// administrator built without marking a start.
+	InitialState(ctx context.Context, workflowID uuid.UUID) (*State, error)
 	// TransitionBetween returns the edge between two states, or ErrNotFound.
 	TransitionBetween(ctx context.Context, workflowID, fromStateID, toStateID uuid.UUID) (*Transition, error)
+	// TransitionsFrom returns every edge leaving a state. It is the candidate
+	// set OfferedTransitions filters by condition.
+	TransitionsFrom(ctx context.Context, workflowID, fromStateID uuid.UUID) ([]*Transition, error)
 	// EffectiveTeamIDs is the actor's ADR-0007 effective team set, delegating to
 	// the effective_team_ids() schema function so a guard and a space grant can
 	// never disagree about who is in a team.

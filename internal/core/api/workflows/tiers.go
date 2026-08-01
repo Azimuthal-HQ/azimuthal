@@ -85,6 +85,11 @@ func (h *Handler) registerTierSpaceRoutes(r chi.Router) {
 	r.Get("/approvals", h.ListPendingApprovals)
 	r.Post("/approvals/{approvalID}/decide", h.DecideApproval)
 	r.Get("/entities/{entityType}/{entityID}/approvals", h.ListEntityApprovals)
+	// The route that makes ADR-0011 conditions mean something. Until it
+	// existed, "a condition determines whether a transition is OFFERED" had no
+	// offerer: the filter was written, unit-tested and unreachable, so a
+	// configured condition hid a transition from nobody. See ListAvailableTransitions.
+	r.Get("/entities/{entityType}/{entityID}/transitions", h.ListAvailableTransitions)
 }
 
 // ─── Request bodies ───────────────────────────────────────────────────────────
@@ -633,6 +638,158 @@ func (h *Handler) ListEntityApprovals(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, approvals)
 }
 
+// ListAvailableTransitions reports which status changes this entity may be offered.
+//
+// # Why this route exists
+//
+// ADR-0011 gives a condition one job — decide "whether a transition is offered"
+// — and until this route there was nothing that offered. The filter existed on
+// the service with no HTTP route and no production caller, so an administrator
+// could configure a condition, have it schema-validated, see it in the admin UI
+// with a badge reading "hides", and have it hide nothing from anyone. Both the
+// ADR's own Correction and the reconciliation ledger record that the fix is
+// two-part: offer only legal moves AND refuse illegal ones on the mutation
+// route. This is the first part; TierService.Gate is the second, and neither is
+// sufficient alone.
+//
+// # It is a read, and it stays a read
+//
+// It is served from TierService.OfferedTransitions rather than from the gate.
+// Evaluate WRITES — it creates the pending approval row and notifies the
+// approvers — so building a picker on it would file an approval request every
+// time a page loaded.
+//
+// # It reports conditions, never validators
+//
+// A condition hides; a validator explains. Filtering by validator here would
+// tell the caller which preconditions are currently unmet on an entity, one
+// disappearing option at a time, which is the enumeration the split exists to
+// prevent. A move whose validator fails is offered and then refused with a
+// reason, which is ADR-0011's design rather than a compromise with it.
+//
+// @Summary      List available transitions
+// @Description  The status changes this entity may be offered, with ADR-0011 conditions applied.
+// @Tags         workflows
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID       path      string  true  "Organization ID"
+// @Param        spaceID     path      string  true  "Space ID"
+// @Param        entityType  path      string  true  "ticket or item"
+// @Param        entityID    path      string  true  "Entity ID"
+// @Success      200  {object}  workflow.Offering         "The offered transitions"
+// @Failure      400  {object}  api.SwaggerErrorResponse  "Validation error"
+// @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404  {object}  api.SwaggerErrorResponse  "Not found"
+// @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/transitions [get]
+func (h *Handler) ListAvailableTransitions(w http.ResponseWriter, r *http.Request) {
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
+		return
+	}
+	if h.tiers == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow tier evaluation is not configured on this server")
+		return
+	}
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return
+	}
+	orgID, err := uuid.Parse(claims.OrgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return
+	}
+
+	entityType, err := workflow.ParseApprovalEntityType(chi.URLParam(r, "entityType"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+		return
+	}
+	entityID, err := uuid.Parse(chi.URLParam(r, "entityID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid entity ID")
+		return
+	}
+
+	// Reconciled against {spaceID}, exactly as the mutation route is: the URL
+	// authorises a space and the entity id arrives unchecked, so reading an
+	// entity by bare id here would report another space's workflow position.
+	req, ok := h.entityGateRequest(w, r, orgID, spaceID, claims.UserID, entityType, entityID)
+	if !ok {
+		return
+	}
+
+	offering, err := h.tiers.Offer(r.Context(), req)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"failed to list the available transitions")
+		return
+	}
+	respond.JSON(w, http.StatusOK, offering)
+}
+
+// entityGateRequest reads the entity in its space and describes it to the
+// chokepoint in the same terms the mutation route uses.
+//
+// TargetStatus is deliberately empty: this is the read path, and there is no
+// proposed target. OfferedTransitions never consults it.
+func (h *Handler) entityGateRequest(
+	w http.ResponseWriter, r *http.Request,
+	orgID, spaceID, actorID uuid.UUID, entityType workflow.ApprovalEntityType, entityID uuid.UUID,
+) (tiergate.Request, bool) {
+	req := tiergate.Request{
+		OrgID: orgID, SpaceID: spaceID,
+		EntityType: entityType, EntityID: entityID, ActorID: actorID,
+	}
+
+	switch entityType {
+	case workflow.ApprovalEntityTicket:
+		t, err := h.q.GetTicketInSpace(r.Context(), generated.GetTicketInSpaceParams{
+			TicketID: entityID, SpaceID: spaceID,
+		})
+		if err != nil {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "ticket not found")
+			return tiergate.Request{}, false
+		}
+		req.CurrentStatus = t.Status
+		req.CurrentStateID = goUUIDPtr(t.WorkflowStateID)
+		req.Entity = workflow.EntitySnapshot{
+			AssigneeID:  goUUIDPtr(t.AssigneeID),
+			DueAt:       goTimePtr(t.DueAt),
+			Description: t.Description,
+			Labels:      t.Labels,
+		}
+	case workflow.ApprovalEntityItem:
+		i, err := h.q.GetProjectItemInSpace(r.Context(), generated.GetProjectItemInSpaceParams{
+			ItemID: entityID, SpaceID: spaceID,
+		})
+		if err != nil {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "item not found")
+			return tiergate.Request{}, false
+		}
+		req.CurrentStatus = i.Status
+		req.CurrentStateID = goUUIDPtr(i.WorkflowStateID)
+		req.Entity = workflow.EntitySnapshot{
+			AssigneeID:  goUUIDPtr(i.AssigneeID),
+			DueAt:       goTimePtr(i.DueAt),
+			Description: i.Description,
+			Labels:      i.Labels,
+		}
+	default:
+		// Unreachable while ParseApprovalEntityType is the only way in, and kept
+		// so a third entity kind added to that vocabulary without a case here
+		// fails loudly rather than reporting an empty offering for everything.
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
+			"this entity kind has no workflow transitions")
+		return tiergate.Request{}, false
+	}
+	return req, true
+}
+
 // markDecidable fills CanDecide for the calling user, answering the request
 // itself on failure and reporting whether the caller may continue.
 func (h *Handler) markDecidable(
@@ -715,7 +872,15 @@ func (h *Handler) DecideApproval(w http.ResponseWriter, r *http.Request) {
 	// the only thing that ties the approval to a space. The approver check
 	// cannot, because approvers are configured on an org-wide workflow's
 	// transition — see TierService.Decide.
-	decided, effects, err := h.tierSvc.Decide(r.Context(), workflow.DecideRequest{
+	// One call, one transaction. The verdict and the transition it releases
+	// commit together or not at all — see workflow.TierService.Decide.
+	//
+	// There is deliberately no "the approval was recorded but the transition
+	// could not be applied" branch here any more. That message was an accurate
+	// description of a state this route could produce and nobody could recover
+	// from: approved, unmoved, and no longer pending. It is not a message worth
+	// improving, because the state is no longer reachable.
+	decided, err := h.tierSvc.Decide(r.Context(), workflow.DecideRequest{
 		OrgID:      orgID,
 		SpaceID:    spaceID,
 		ApprovalID: approvalID,
@@ -728,30 +893,9 @@ func (h *Handler) DecideApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A decline records the verdict and applies nothing: the item never moved.
-	if decision != workflow.DecisionApproved {
-		h.logApprovalDecision(r, decided)
-		respond.JSON(w, http.StatusOK, decided)
-		return
-	}
-
-	if err := h.applier.ApplyTransition(r.Context(), workflow.ApplyInput{
-		EntityType:   decided.EntityType,
-		EntityID:     decided.EntityID,
-		OrgID:        orgID,
-		SpaceID:      spaceID,
-		ActorID:      claims.UserID,
-		ToStatus:     decided.ToStatus,
-		ToStateID:    decided.ToStateID,
-		TransitionID: decided.TransitionID,
-		ApprovalID:   &decided.ID,
-		Effects:      effects,
-	}); err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
-			"the approval was recorded but the transition could not be applied")
-		return
-	}
 	h.logApprovalDecision(r, decided)
+	// A decline is notified too: the requester is holding an item that did not
+	// move, and the reason is the only thing that tells them what would move it.
 	h.notifyDecision(r, decided)
 	respond.JSON(w, http.StatusOK, decided)
 }
@@ -845,6 +989,14 @@ func respondDecideError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, workflow.ErrInvalidTransition):
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict,
 			"the transition this approval was requested for no longer exists")
+	case errors.Is(err, workflow.ErrTransitionRaced):
+		// The item left the status this approval captured, so applying the
+		// verdict would have written stale data over fresh. Nothing was
+		// recorded — including the decision, which rolled back with it — so the
+		// approval is still pending and can be decided against what the item
+		// actually is now.
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict,
+			"this item has changed since the approval was requested, so the decision was not recorded; review it again")
 	case errors.Is(err, workflow.ErrPostFunctionUnknown), errors.Is(err, workflow.ErrPostFunctionMalformed):
 		respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation,
 			"this transition is configured with an action this server cannot perform, so it was not applied")

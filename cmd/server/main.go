@@ -232,17 +232,17 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 	authenticator := auth.NewAuthenticator(jwtSvc, sessionSvc, userAdapter)
 	membershipResolver := adapters.NewMembershipAdapter(queries)
 	workflowAdapter := adapters.NewWorkflowAdapter(queries)
-	workflowEngine := workflow.NewDBEngine(workflowAdapter)
 
 	// ADR-0011 workflow tiers. tierGate is the single chokepoint every status
-	// route enters; transitionTx is Convention B, used only by transitions that
-	// carry post-functions. Both are passed to every handler that can change a
-	// status — a route that skipped them would be the bypass the chokepoint
-	// exists to close.
+	// route enters; transitionTx writes the status, its workflow state, its
+	// effects and its audit row in one transaction, and commits an approver's
+	// verdict alongside the transition it releases. Both are passed to every
+	// handler that can change a status — a route that skipped them would be the
+	// bypass the chokepoint exists to close.
 	tierStore := adapters.NewWorkflowTierAdapter(queries)
-	tierSvc := workflow.NewTierService(tierStore)
-	tierGate := tiergate.New(tierSvc, tierStore, notifEnqueuer)
 	transitionTx := adapters.NewWorkflowTransitionTxAdapter(pool)
+	tierSvc := workflow.NewTierService(tierStore, transitionTx)
+	tierGate := tiergate.New(tierSvc, tierStore, notifEnqueuer)
 	orgProvisioner := adapters.NewOrgProvisionerAdapterWithWorkflows(queries, workflowAdapter)
 
 	// The content-transaction adapter carries the ADR-0008 share invariants:
@@ -441,7 +441,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		NotificationHandler: notificationsapi.NewHandler(queries, accessResolver),
-		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
+		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		ShareHandler:        shareHandler,

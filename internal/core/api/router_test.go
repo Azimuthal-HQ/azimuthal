@@ -814,7 +814,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	// unconfigured space must do.
 	ticketHandler := ticketsapi.NewHandler(ticketSvc).
 		WithWorkflowTiers(
-			tiergate.New(workflow.NewTierService(&mockTierStore{}), &mockWorkflowResolver{}, jobs.NoopNotificationEnqueuer{}),
+			tiergate.New(workflow.NewTierService(&mockTierStore{}, &mockTransitionApplier{}), &mockWorkflowResolver{}, jobs.NoopNotificationEnqueuer{}),
 			&mockTransitionApplier{},
 		)
 	tagSvc := tags.NewService(&mockTagRepo{})
@@ -831,7 +831,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		WithItemTypes(itemTypeSvc).
 		WithCustomFields(customFieldSvc).
 		WithWorkflowTiers(
-			tiergate.New(workflow.NewTierService(&mockTierStore{}), &mockWorkflowResolver{}, jobs.NoopNotificationEnqueuer{}),
+			tiergate.New(workflow.NewTierService(&mockTierStore{}, &mockTransitionApplier{}), &mockWorkflowResolver{}, jobs.NoopNotificationEnqueuer{}),
 			&mockTransitionApplier{},
 		)
 	// spaces handler needs generated.Queries which needs a real DB, skip for now
@@ -2661,6 +2661,15 @@ func (m *mockTierStore) StateByName(context.Context, uuid.UUID, string) (*workfl
 func (m *mockTierStore) TransitionBetween(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*workflow.Transition, error) {
 	return nil, workflow.ErrNotFound
 }
+func (m *mockTierStore) StateByID(context.Context, uuid.UUID, uuid.UUID) (*workflow.State, error) {
+	return nil, workflow.ErrNotFound
+}
+func (m *mockTierStore) InitialState(context.Context, uuid.UUID) (*workflow.State, error) {
+	return nil, workflow.ErrNotFound
+}
+func (m *mockTierStore) TransitionsFrom(context.Context, uuid.UUID, uuid.UUID) ([]*workflow.Transition, error) {
+	return nil, nil
+}
 func (m *mockTierStore) EffectiveTeamIDs(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil
 }
@@ -2669,10 +2678,21 @@ func (m *mockTierStore) EffectiveTeamMemberIDs(context.Context, uuid.UUID, uuid.
 }
 
 // mockTransitionApplier fails loudly if called. This harness has no workflow, so
-// no transition can carry post-functions, and a call here would mean the gate
-// resolved an edge it should not have been able to see.
+// no transition can resolve an edge, and a call here would mean the gate saw one
+// it should not have been able to see.
 type mockTransitionApplier struct{}
 
 func (m *mockTransitionApplier) ApplyTransition(context.Context, workflow.ApplyInput) error {
-	return errors.New("mockTransitionApplier: the tier gate resolved effects in a harness with no workflow")
+	return errors.New("mockTransitionApplier: the tier gate resolved an edge in a harness with no workflow")
+}
+
+// DecideAndApply fails the same way and for the same reason: with no workflow
+// there is no approval to decide. Returning a zero Approval and a nil error
+// would let a test assert a verdict was recorded when nothing had been — the
+// lying-double shape this repository has already shipped once.
+func (m *mockTransitionApplier) DecideAndApply(
+	context.Context, workflow.DecideAndApplyInput,
+) (workflow.Approval, error) {
+	return workflow.Approval{}, errors.New(
+		"mockTransitionApplier: an approval was decided in a harness with no workflow")
 }

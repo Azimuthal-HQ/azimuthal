@@ -49,9 +49,13 @@ type Item struct {
 	DueAt       *time.Time `json:"due_at"`
 	ResolvedAt  *time.Time `json:"resolved_at"`
 	Rank        string     `json:"rank"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	// WorkflowStateID is where the item sits in its space's workflow. See the
+	// ticket twin in internal/core/tickets/ticket.go for why the column is read
+	// alongside the status text rather than instead of it.
+	WorkflowStateID *uuid.UUID `json:"workflow_state_id"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	DeletedAt       *time.Time `json:"deleted_at,omitempty"`
 }
 
 // ItemRepository defines the data access contract for project items.
@@ -125,14 +129,32 @@ func NewItemService(repo ItemRepository, tx ShareRevokingDeleter) *ItemService {
 	return &ItemService{repo: repo, tx: tx}
 }
 
+// DefaultStatus is where an item starts when its space has no workflow to
+// start it anywhere.
+//
+// It is the value this service wrote unconditionally, and it stays the value for
+// a space with no workflow — a codex space, or one whose best-effort workflow
+// assignment failed. Where a workflow DOES govern, the caller resolves that
+// workflow's initial state and sets Status and WorkflowStateID before calling;
+// see tiergate.Gate.InitialPosition and D72.
+const DefaultStatus = "open"
+
 // CreateItem validates and persists a new project item.
+//
+// Status is honoured when the caller set one and defaults otherwise. It used to
+// be overwritten unconditionally, which is what made an item's own workflow
+// unable to place it at birth. The caller cannot use this to smuggle a
+// user-supplied status: the create handler builds the Item itself and never
+// copies status off the request body — CreateItemRequest has no status field.
 func (s *ItemService) CreateItem(ctx context.Context, item *Item) (*Item, error) {
 	if err := validateItem(item); err != nil {
 		return nil, fmt.Errorf("creating item: %w", err)
 	}
 
 	item.ID = uuid.New()
-	item.Status = "open"
+	if item.Status == "" {
+		item.Status = DefaultStatus
+	}
 	now := time.Now().UTC()
 	item.CreatedAt = now
 	item.UpdatedAt = now

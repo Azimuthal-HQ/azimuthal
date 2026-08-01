@@ -119,7 +119,6 @@ type TestDB struct {
 }
 
 // NewTestDB creates a fresh isolated database for a single test.
-// It skips the test if DATABASE_URL is not set.
 // The database is automatically dropped when the test completes.
 //
 // Usage:
@@ -128,12 +127,35 @@ type TestDB struct {
 //	    db := testutil.NewTestDB(t)
 //	    // db.Pool is ready to use against a fully migrated, empty database
 //	}
+//
+// # A missing DATABASE_URL skips locally and FAILS in CI
+//
+// Without a database this cannot do its job, and the honest local answer is to
+// skip: a contributor running `go test ./...` before `make test-db-up` wants to
+// be told, not buried.
+//
+// In CI that same skip is the most dangerous thing in the repository. Every
+// test that touches persistence enters here, so one unset variable turns the
+// entire integration suite — every authorisation check, every fail-closed
+// workflow proof — into a silent no-op, and the pipeline reports green for a
+// build that verified nothing. A skipped test and an absent test are the same
+// artifact.
+//
+// So the precondition is a hard failure whenever CI is set. The platform sets
+// that variable itself and it cannot be lost by editing a workflow file, which
+// is the property the check depends on. Pattern taken from
+// requirePostgresClientTools in cmd/server/backup_restore_test.go, not the
+// function: that one lives in package main and is about client binaries.
 func NewTestDB(t *testing.T) *TestDB {
 	t.Helper()
 
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		t.Skip("DATABASE_URL not set — skipping integration test. Run 'make test-db-up' first.")
+		const msg = "DATABASE_URL not set — integration tests need a database. Run 'make test-db-up' first."
+		if os.Getenv("CI") != "" {
+			t.Fatal(msg + " In CI this is a failure, never a skip: a skipped integration suite reports green.")
+		}
+		t.Skip(msg)
 	}
 
 	h, err := sharedHarness(dsn)
