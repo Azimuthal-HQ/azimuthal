@@ -1938,8 +1938,8 @@ in a task prompt":
 **What has actually happened.** `CLAUDE.md` §4 sets out an autonomy envelope — "Work on your own
 branch, named for the work. Open your own PR", bounded by "Never push to `main`. Never merge your
 own PR", never force-push a shared branch, never tag. Every phase since P0 has worked that way:
-**52 of the commits on `main` are squash-merged PRs**, and the phase prompts instructed exactly
-this. The envelope has itself been amended once under a maintainer instruction — on 2026-07-28
+**every PR that has reached `main` has done so under this envelope**, and the phase prompts
+instructed exactly this. The envelope has itself been amended once under a maintainer instruction — on 2026-07-28
 during P4 PR-A, to permit `--force-with-lease` on an agent's own unmerged branch, because the
 previous absolute wording made a requested rebase impossible to complete without breaking a stated
 rule. So the envelope is not an informal drift; it is a working agreement that has been
