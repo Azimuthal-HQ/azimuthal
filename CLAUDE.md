@@ -157,9 +157,16 @@ org-level (`set_visibility` holds no space role at all), the persona that must b
 
 **Test debt is not permitted.** No PR merges with "tests to follow." There is no follow-up PR.
 
-Coverage floor is **80%** — the `Enforce minimum coverage (80%)` step in
+Coverage floor is **84%** — the `Enforce minimum coverage (84%)` step in
 `.github/workflows/ci.yml`. Coverage is a floor, not a goal — §2.5
 case 23 (constant authorisation queries) is worth more than five percentage points.
+
+84 is a **ratchet set half a point under the measured figure**, not the target. The target is
+still 85 — §2.8, and P5's Definition of Done — still unmet, and still **D98**. The floor sat at 80
+until 2026-08-01 while the suite actually measured 84.7–85.0, so nearly five points of decay were
+available with nothing to announce them; that is precisely how the 85 raise came to pass on a
+rounding and then stop clearing the bar in silence. Note the gate compares a **rounded** figure:
+84 trips at a true 83.95, not at 83.99.
 
 > **Overdue, flagged 2026-07-31.** Spec §2.8 and P5's Definition of Done both schedule a raise to
 > **85% at the end of P5**. P5 merged (#88/#89) and P6 merged after it, and the raise never
@@ -456,7 +463,7 @@ of one merge is not a correction.
 **Where a line genuinely needs pinning, quote the line's text alongside it,** so a reader who finds
 the number rotted can grep for the content:
 
-> `.github/workflows/ci.yml` — `if (( $(echo "$COVERAGE < 80" | bc -l) )); then`
+> `.github/workflows/ci.yml` — `if (( $(echo "$COVERAGE < 84" | bc -l) )); then`
 
 **Two carve-outs, both narrow.**
 

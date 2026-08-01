@@ -2185,9 +2185,10 @@ Total coverage: 84.8%
 ✅ Coverage 84.8% meets minimum
 ```
 
-It passes because the step it ran is still `Enforce minimum coverage (80%)`. Rename that step to
-85 — which is all the raise does — and the same `84.8` fails the same comparison. The local and CI
-figures agreeing also settles the `-race` question: it does not move the statement percentage.
+It passed because the step it ran was still `Enforce minimum coverage (80%)` at the time — the
+floor has since been ratcheted to 84, see below. Rename that step to **85** — which is all the
+raise does — and the same `84.8` fails the same comparison. The local and CI figures agreeing also
+settles the `-race` question: it does not move the statement percentage.
 
 The predecessor's branch measured 84.96% (14,018 of
 16,500) on 2026-07-30 and passed only because `-func` rounded it to `85.0`. That rounding no longer
@@ -2202,11 +2203,47 @@ than shipped red; it is recoverable as `587132ac` (pre-rebase) or `5fac8bcc` (re
 a three-file, ~22-line diff.
 
 **This defers the raise; it does not lower the target.** §2.8 and P5's Definition of Done are
-untouched and still say 85. Two readings remain live and the choice between them is the
-maintainer's: (a) treat D98 as a coverage PR and fund a pass over #100/#101/#103/#104 before
-flipping; or (b) flip anyway and accept a red gate until that pass lands. This entry stays **open**.
-The release-timing argument that once favoured haste is gone — `v0.4.0` is cut at `3e888636`, so
-nothing waits on the answer.
+untouched and still say 85. This entry stays **open**. The release-timing argument that once
+favoured haste is gone — `v0.4.0` is cut at `3e888636`, so nothing waits on the answer.
+
+**Maintainer ruling, 2026-08-01 — (a) defer, and ratchet the floor.** Two readings were put up.
+Reading **(a)**, treat D98 as the coverage PR it says it is and fund a pass over the phases that
+diluted the ratio before flipping, is taken. Reading **(b)**, flip to 85 and carry a red gate until
+that pass lands, is **struck rather than weighed**: a red required check blocks every PR including
+security fixes, and it teaches everyone on the project to read red as the normal state. That is not
+the stricter option, it is the broken one. It is recorded here so it is not re-proposed as a live
+alternative.
+
+A third option was taken that neither reading covered. **The floor is ratcheted from 80 to 84** —
+`Enforce minimum coverage (84%)` in `.github/workflows/ci.yml` — set half a point below the
+measured figure. The diagnosis above is that the gap opened *silently*: the suite sat at 84.7–85.0
+for a month while the gate asked for 80, so 4.76 points of decay were available with no signal at
+all, and that is what let P5's raise pass on a rounding and then stop clearing the bar unnoticed.
+Raising the target does not fix that. The floor does.
+
+Measured on the branch head rather than on `main`, because CI scores the branch:
+**84.7727% — 15,087 of 17,797 statements**, zero failures. (Two statements above the `3e888636`
+figure, and not noise: the surviving test in this PR reaches `lockReparentTarget`'s `pgx.ErrNoRows`
+arm, which no test in the tree had executed — that block reads `1 0` in the earlier profile and
+`1 1` in this one.)
+
+Headroom at 84 is roughly **146 statements**, not 137, because the gate compares a *rounded*
+figure: `go tool cover -func | tail -1` prints one decimal, so a floor of 84 trips at a true
+**83.95**, not 83.99. That is the same rounding that let 84.96 pass an 85 gate, now working in the
+gate's favour. Ordinary work will not spend 146 statements; a large phase landing at low coverage
+can, and should be interrupted when it does.
+
+**84 is a ratchet, not a settlement.** The target stays 85, §2.8 is unchanged, and this entry stays
+open. The constraint this entry set still holds and is not evaded: D98 must not be closed by
+lowering the target, and raising the floor is not lowering the target.
+
+> **Flagged, not resolved — §2.8's own gate figure is now stale in the other direction.** §2.8
+> reads "Coverage gate is 80%, rising to 85% at the end of P5." CI now enforces 84, so the first
+> half understates the gate. Correcting 80 → 84 there would *strengthen* rather than weaken the
+> assertion, so it is not the §2.3 problem that kept the second half untouched — but it is still
+> §2 text, and `CLAUDE.md` §5 sends a change to §2 to the maintainer rather than to the phase. The
+> drift is benign in direction: an agent trusting the spec aims at 80 and is surprised by CI rather
+> than shipping a defect. Maintainer's call.
 
 ### D105 — backup cannot run where every document says to run it, and restore reports success on a partial recovery
 
