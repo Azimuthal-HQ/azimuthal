@@ -65,7 +65,7 @@ type mockContentTx struct{}
 func (m *mockContentTx) MovePageTx(_ context.Context, _ wiki.MovePageInput) (wiki.MovePageTxResult, error) {
 	return wiki.MovePageTxResult{}, nil
 }
-func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, _, _ uuid.UUID) (int64, error) {
+func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) (int64, error) {
 	return 0, nil
 }
 

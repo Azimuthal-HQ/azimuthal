@@ -81,10 +81,14 @@ type ItemRepository interface {
 	Update(ctx context.Context, item *Item) error
 	// UpdateStatus changes only the status field.
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string) (*Item, error)
-	// UpdateSprint assigns an item to a sprint (or removes it if sprintID is nil).
-	UpdateSprint(ctx context.Context, id uuid.UUID, sprintID *uuid.UUID) error
-	// SoftDelete sets deleted_at on an item.
-	SoftDelete(ctx context.Context, id uuid.UUID) error
+	// UpdateSprintInSpace assigns an item in spaceID to a sprint in the same
+	// space, or removes it from one when sprintID is nil. There is no unscoped
+	// variant: this write is reached from three routes, two of which take the
+	// item id from the request body.
+	UpdateSprintInSpace(ctx context.Context, id, spaceID uuid.UUID, sprintID *uuid.UUID) error
+	// SoftDeleteInSpace sets deleted_at on an item in spaceID. There is no
+	// unscoped variant: an id alone reaches every item in the installation.
+	SoftDeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error
 	// ListBySpace returns all non-deleted items in a space, ordered by rank.
 	ListBySpace(ctx context.Context, spaceID uuid.UUID) ([]*Item, error)
 	// ListByStatus returns items filtered by status within a space.
@@ -105,7 +109,7 @@ type ItemRepository interface {
 // roll back together (ADR-0008 rule 10), with the share.revoked audit rows
 // in the same transaction.
 type ShareRevokingDeleter interface {
-	DeleteItemAndRevokeShares(ctx context.Context, itemID, actorID uuid.UUID) error
+	DeleteItemAndRevokeShares(ctx context.Context, itemID, spaceID, actorID uuid.UUID) error
 }
 
 // ItemService handles project item management.
@@ -204,9 +208,18 @@ func (s *ItemService) UpdateItemStatus(ctx context.Context, id uuid.UUID, status
 	return updated, nil
 }
 
-// AssignToSprint moves an item into a sprint.
-func (s *ItemService) AssignToSprint(ctx context.Context, itemID uuid.UUID, sprintID *uuid.UUID) error {
-	if err := s.repo.UpdateSprint(ctx, itemID, sprintID); err != nil {
+// AssignToSprint moves an item in spaceID into a sprint in the same space, or
+// out of one when sprintID is nil.
+//
+// spaceID is here because the route checks CapEditAnyItem against the {spaceID}
+// in its URL and reconciled it with neither the {itemID} beside it nor the
+// sprint id in the body. Like the ticket assign pair, this route writes without
+// reading the item first, so the predicate in the query is the only thing
+// standing between three ids that have nothing to do with each other.
+func (s *ItemService) AssignToSprint(
+	ctx context.Context, itemID, spaceID uuid.UUID, sprintID *uuid.UUID,
+) error {
+	if err := s.repo.UpdateSprintInSpace(ctx, itemID, spaceID, sprintID); err != nil {
 		return fmt.Errorf("assigning item to sprint: %w", err)
 	}
 	return nil
@@ -214,8 +227,13 @@ func (s *ItemService) AssignToSprint(ctx context.Context, itemID uuid.UUID, spri
 
 // DeleteItem soft-deletes a project item and revokes its entity shares in
 // the same transaction. actorID attributes the share.revoked audit rows.
-func (s *ItemService) DeleteItem(ctx context.Context, id, actorID uuid.UUID) error {
-	if err := s.tx.DeleteItemAndRevokeShares(ctx, id, actorID); err != nil {
+//
+// spaceID reaches the transaction rather than stopping at the route. The
+// handler above reconciles the entity before calling this, but that refusal
+// lived in a handler and the deleter took an id alone — so the guarantee was a
+// convention the next caller inherits nothing of. It is now in the statement.
+func (s *ItemService) DeleteItem(ctx context.Context, id, spaceID, actorID uuid.UUID) error {
+	if err := s.tx.DeleteItemAndRevokeShares(ctx, id, spaceID, actorID); err != nil {
 		return fmt.Errorf("deleting item: %w", err)
 	}
 	return nil

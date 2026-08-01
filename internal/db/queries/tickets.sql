@@ -49,13 +49,32 @@ WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
 -- name: UpdateTicketWorkflowState :one
+-- The space predicate is what makes ApplyInput.SpaceID load-bearing. It was
+-- carried all the way into the applier and then never used — the caller's space
+-- reached the audit row and nothing else — so a transition released by an
+-- approval in another space wrote the far entity by bare id. The approval is now
+-- reconciled upstream and cannot arrive here mismatched, so this is the seam
+-- being closed rather than the hole; a miss is zero rows and the transaction
+-- rolls back rather than committing a status the caller had no claim on.
 UPDATE tickets
-SET status = $2, workflow_state_id = $3, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = @status, workflow_state_id = @workflow_state_id, updated_at = now()
+WHERE id = @ticket_id AND space_id = @space_id AND deleted_at IS NULL
 RETURNING *;
 
--- name: SoftDeleteTicket :exec
-UPDATE tickets SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL;
+-- name: SoftDeleteTicketInSpace :exec
+-- Scoped to the space, not just the id.
+--
+-- The route above this is reconciled, but it is the only thing that was: the
+-- transactional deleter took an entity id alone, so the refusal lived in a
+-- handler rather than in the write. That is the shape this whole class is made
+-- of — a convention the next caller (a bulk operation, a job, a new route)
+-- inherits nothing of. The delete handler's own comment said as much: "a
+-- {entity} outside {spaceID} has to be refused here or nowhere."
+--
+-- :exec, so a mismatch deletes nothing and says nothing, exactly as an id that
+-- named nothing already did.
+UPDATE tickets SET deleted_at = now()
+WHERE id = @ticket_id AND space_id = @space_id AND deleted_at IS NULL;
 
 -- name: SearchTickets :many
 SELECT * FROM tickets
@@ -106,3 +125,31 @@ WHERE t.deleted_at IS NULL
 ORDER BY COALESCE(t.assignee_id = sqlc.arg(caller_id)::uuid, false) DESC,
          t.updated_at DESC
 LIMIT 20;
+
+-- name: UserIsMemberOfSpaceOrg :one
+-- Is this user a member of the organisation that owns this space?
+--
+-- The assignment write needs it and had nothing like it. tickets.assignee_id
+-- references the GLOBAL users table, so a uuid naming any user in the
+-- installation satisfies the foreign key and the write lands 200 — the ticket
+-- then names somebody with no membership in the org and no access to the space,
+-- and the notification enqueuer carries the ticket's TITLE to them
+-- (known-issues #23c).
+--
+-- Membership is resolved THROUGH the space rather than taken from the caller's
+-- token. The org that matters is the one owning the ticket, not the one the
+-- actor is logged into, and on this route those are already proven to be the
+-- same by RequireSpaceInOrg — but only the URL's ids were ever compared, so
+-- deriving it here keeps the check true of the entity rather than of the
+-- request.
+--
+-- Single bool over an EXISTS, for the same reason EntityRelationTargetIsReadable
+-- is: "no such user" and "a user in another org" must not be two answers a
+-- caller could tell apart.
+SELECT EXISTS (
+    SELECT 1
+      FROM spaces s
+      JOIN memberships m ON m.org_id = s.org_id
+     WHERE s.id = @space_id
+       AND m.user_id = @user_id
+) AS is_member;

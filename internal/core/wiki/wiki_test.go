@@ -139,7 +139,7 @@ func (m *mockStore) MovePageTx(_ context.Context, in wiki.MovePageInput) (wiki.M
 
 // DeletePageAndRevokeShares implements the ContentTxStore delete seam in
 // memory.
-func (m *mockStore) DeletePageAndRevokeShares(_ context.Context, pageID, _ uuid.UUID) (int64, error) {
+func (m *mockStore) DeletePageAndRevokeShares(_ context.Context, pageID, _, _ uuid.UUID) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.pages, pageID)
@@ -470,7 +470,7 @@ func TestDeletePage(t *testing.T) {
 
 	page := createTestPage(t, svc, spaceID, authorID, "To Delete", "gone", nil)
 
-	if err := svc.DeletePage(ctx, page.ID, authorID); err != nil {
+	if err := svc.DeletePage(ctx, page.ID, spaceID, authorID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

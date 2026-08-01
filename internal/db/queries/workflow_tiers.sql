@@ -129,7 +129,25 @@ RETURNING *;
 SELECT * FROM workflow_approvals
 WHERE entity_type = $1 AND entity_id = $2 AND decided_at IS NULL;
 
--- name: GetApproval :one
+-- name: GetApprovalInSpace :one
+-- One request, reconciled against the space the caller's URL named.
+--
+-- The space predicate is the whole authorisation. ListPendingApprovalsForSpace
+-- below already states the rule — "a decision is authorised against the space
+-- the request was made in" — and this is the read that has to enforce it,
+-- because the decide route's other check structurally cannot. Approvers are
+-- configured per TRANSITION; a transition belongs to a workflow, which is an
+-- ORG object shared by every space that assigns it. So "is the actor a
+-- configured approver" is org-wide by construction and says nothing about which
+-- space the approved entity lives in.
+--
+-- A miss is a miss: wrong space and no such row both return zero rows, the
+-- adapter maps both to ErrNotFound, and the route answers 404 either way. That
+-- matters more here than on a plain read, because the branches downstream of
+-- this one carry distinguishable statuses — already decided is 409, a deleted
+-- edge is 409, not an approver is 403 — so reaching them at all would let a
+-- caller outside the space learn that an approval exists and what state it is
+-- in.
 SELECT
     sqlc.embed(a),
     COALESCE(r.display_name, '')::text AS requested_by_name,
@@ -137,7 +155,7 @@ SELECT
 FROM workflow_approvals a
 LEFT JOIN users r ON r.id = a.requested_by
 LEFT JOIN users d ON d.id = a.decided_by
-WHERE a.id = $1;
+WHERE a.id = @approval_id AND a.space_id = @space_id;
 
 -- name: DecideApproval :one
 -- The WHERE clause carries `decided_at IS NULL`, so a second approver deciding
@@ -151,9 +169,16 @@ WHERE a.id = $1;
 -- decision first — and a failure between the two would leave a decline standing
 -- with no reason, which is exactly the unexplained decline the column exists to
 -- prevent.
+--
+-- space_id is in the WHERE for the same reason GetApprovalInSpace carries it.
+-- The service reads through that query first, so a wrong-space id cannot reach
+-- this statement today; the predicate is here so that stays true of the next
+-- caller as well. Zero rows for a space mismatch lands in the same arm as zero
+-- rows for a concurrent decision, and the arm's follow-up read is scoped too,
+-- so it reports not-found rather than already-decided.
 UPDATE workflow_approvals
-SET decided_by = $2, decided_at = now(), decision = $3, reason = $4
-WHERE id = $1 AND decided_at IS NULL
+SET decided_by = @decided_by, decided_at = now(), decision = @decision, reason = @reason
+WHERE id = @approval_id AND space_id = @space_id AND decided_at IS NULL
 RETURNING *;
 
 -- name: ListPendingApprovalsForSpace :many
@@ -244,20 +269,25 @@ SELECT * FROM workflows WHERE id = $1 AND org_id = $2;
 -- is the same {Set, Value} discipline optionalField encodes in Go.
 
 -- name: ApplyTicketEffects :exec
+-- Post-function effects commit with the status write or not at all, so this
+-- carries the same space predicate UpdateTicketWorkflowState does. Without it a
+-- transition could be refused the status change and still rewrite the far
+-- entity's assignee, due date and labels.
 UPDATE tickets SET
     assignee_id = CASE WHEN @set_assignee::boolean THEN sqlc.narg(assignee_id)::uuid ELSE assignee_id END,
     due_at      = CASE WHEN @set_due_at::boolean   THEN sqlc.narg(due_at)::timestamptz ELSE due_at END,
     labels      = CASE WHEN @set_labels::boolean   THEN @labels::text[] ELSE labels END,
     updated_at  = now()
-WHERE id = @id AND deleted_at IS NULL;
+WHERE id = @id AND space_id = @space_id AND deleted_at IS NULL;
 
 -- name: ApplyProjectItemEffects :exec
+-- See ApplyTicketEffects.
 UPDATE project_items SET
     assignee_id = CASE WHEN @set_assignee::boolean THEN sqlc.narg(assignee_id)::uuid ELSE assignee_id END,
     due_at      = CASE WHEN @set_due_at::boolean   THEN sqlc.narg(due_at)::timestamptz ELSE due_at END,
     labels      = CASE WHEN @set_labels::boolean   THEN @labels::text[] ELSE labels END,
     updated_at  = now()
-WHERE id = @id AND deleted_at IS NULL;
+WHERE id = @id AND space_id = @space_id AND deleted_at IS NULL;
 
 -- ─── Approval notification recipients ─────────────────────────────────────────
 

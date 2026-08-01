@@ -28,6 +28,17 @@ var (
 	// ErrAlreadyAssigned is returned when re-assigning to the current assignee.
 	ErrAlreadyAssigned = errors.New("ticket is already assigned to this user")
 
+	// ErrAssigneeNotOrgMember refuses an assignee who does not belong to the
+	// organisation owning the ticket.
+	//
+	// The obligation is not new: the grants surface already enforces it
+	// (access.ErrSubjectNotOrgMember) and so does the share audience
+	// (ErrShareAudienceTeamNotFound). Assignment was the one referential write
+	// that skipped it, because tickets.assignee_id references the global users
+	// table and so the foreign key was satisfied by any user in the
+	// installation. The wording follows the grants sentence deliberately.
+	ErrAssigneeNotOrgMember = errors.New("assignee is not a member of this organisation")
+
 	// ErrEmailParseFailure is returned when an inbound email cannot be parsed
 	// into a valid ticket.
 	ErrEmailParseFailure = errors.New("failed to parse inbound email")

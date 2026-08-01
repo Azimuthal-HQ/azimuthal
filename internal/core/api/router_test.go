@@ -182,7 +182,7 @@ func (m *mockTicketRepo) UpdateStatus(_ context.Context, id uuid.UUID, status ti
 	return t, nil
 }
 
-func (m *mockTicketRepo) Delete(_ context.Context, id uuid.UUID) error {
+func (m *mockTicketRepo) DeleteInSpace(_ context.Context, id, _ uuid.UUID) error {
 	delete(m.tickets, id)
 	return nil
 }
@@ -209,6 +209,13 @@ func (m *mockTicketRepo) ListByStatus(_ context.Context, spaceID uuid.UUID, stat
 
 func (m *mockTicketRepo) ListByAssignee(_ context.Context, _ uuid.UUID, _ uuid.UUID) ([]*tickets.Ticket, error) {
 	return nil, nil
+}
+
+// Every user is an org member here: these doubles predate the assignee check
+// and none of their tests is about it. The refusal is exercised in
+// internal/core/tickets and against real PostgreSQL.
+func (m *mockTicketRepo) UserIsMemberOfSpaceOrg(_ context.Context, _, _ uuid.UUID) (bool, error) {
+	return true, nil
 }
 
 func (m *mockTicketRepo) Search(_ context.Context, _ uuid.UUID, _ string, _ int32) ([]*tickets.Ticket, error) {
@@ -416,7 +423,7 @@ func (m *mockContentTx) MovePageTx(_ context.Context, in wiki.MovePageInput) (wi
 	return wiki.MovePageTxResult{CrossSpace: crossSpace}, nil
 }
 
-func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, pageID, _ uuid.UUID) (int64, error) {
+func (m *mockContentTx) DeletePageAndRevokeShares(_ context.Context, pageID, _, _ uuid.UUID) (int64, error) {
 	delete(m.pages.pages, pageID)
 	return 0, nil
 }
@@ -454,10 +461,10 @@ func (m *mockContentTx) UpdatePageContentTx(_ context.Context, in wiki.UpdatePag
 // projects.ShareRevokingDeleter with no-ops for the router wiring tests.
 type mockShareDeleter struct{}
 
-func (m *mockShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (m *mockShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
-func (m *mockShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (m *mockShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
 
@@ -596,16 +603,18 @@ func (m *mockItemRepo) UpdateStatus(_ context.Context, id uuid.UUID, status stri
 	return item, nil
 }
 
-func (m *mockItemRepo) UpdateSprint(_ context.Context, id uuid.UUID, sprintID *uuid.UUID) error {
+func (m *mockItemRepo) UpdateSprintInSpace(
+	_ context.Context, id, spaceID uuid.UUID, sprintID *uuid.UUID,
+) error {
 	item, ok := m.items[id]
-	if !ok {
+	if !ok || item.SpaceID != spaceID {
 		return projects.ErrNotFound
 	}
 	item.SprintID = sprintID
 	return nil
 }
 
-func (m *mockItemRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
+func (m *mockItemRepo) SoftDeleteInSpace(_ context.Context, id, _ uuid.UUID) error {
 	delete(m.items, id)
 	return nil
 }
@@ -712,7 +721,7 @@ func (m *mockRelationRepo) TargetIsReadable(_ context.Context, _ uuid.UUID, _ st
 func (m *mockRelationRepo) ListForEntity(_ context.Context, _ uuid.UUID, _ string, _ []uuid.UUID) ([]*projects.Relation, error) {
 	return nil, nil
 }
-func (m *mockRelationRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockRelationRepo) DeleteInSpace(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 type mockLabelRepo struct{}
 
@@ -729,7 +738,7 @@ func (m *mockLabelRepo) Create(_ context.Context, l *projects.Label) error {
 func (m *mockLabelRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*projects.Label, error) {
 	return nil, nil
 }
-func (m *mockLabelRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockLabelRepo) DeleteInOrg(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 // mockTagRepo stands in for the tag store in the ROUTING tests, which assert
 // that a path reaches a handler and nothing about what it stores. The real
@@ -2629,11 +2638,11 @@ func (m *mockTierStore) CreateApproval(_ context.Context, a workflow.Approval) (
 func (m *mockTierStore) PendingApprovalForEntity(context.Context, workflow.ApprovalEntityType, uuid.UUID) (workflow.Approval, error) {
 	return workflow.Approval{}, workflow.ErrNotFound
 }
-func (m *mockTierStore) GetApproval(context.Context, uuid.UUID) (workflow.Approval, error) {
+func (m *mockTierStore) GetApprovalInSpace(context.Context, uuid.UUID, uuid.UUID) (workflow.Approval, error) {
 	return workflow.Approval{}, workflow.ErrNotFound
 }
 func (m *mockTierStore) DecideApproval(
-	context.Context, uuid.UUID, uuid.UUID, workflow.Decision, *string,
+	context.Context, uuid.UUID, uuid.UUID, uuid.UUID, workflow.Decision, *string,
 ) (workflow.Approval, error) {
 	return workflow.Approval{}, workflow.ErrNotFound
 }

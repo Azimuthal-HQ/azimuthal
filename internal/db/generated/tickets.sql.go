@@ -364,12 +364,29 @@ func (q *Queries) SearchTickets(ctx context.Context, arg SearchTicketsParams) ([
 	return items, nil
 }
 
-const softDeleteTicket = `-- name: SoftDeleteTicket :exec
-UPDATE tickets SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL
+const softDeleteTicketInSpace = `-- name: SoftDeleteTicketInSpace :exec
+UPDATE tickets SET deleted_at = now()
+WHERE id = $1 AND space_id = $2 AND deleted_at IS NULL
 `
 
-func (q *Queries) SoftDeleteTicket(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, softDeleteTicket, id)
+type SoftDeleteTicketInSpaceParams struct {
+	TicketID uuid.UUID `json:"ticket_id"`
+	SpaceID  uuid.UUID `json:"space_id"`
+}
+
+// Scoped to the space, not just the id.
+//
+// The route above this is reconciled, but it is the only thing that was: the
+// transactional deleter took an entity id alone, so the refusal lived in a
+// handler rather than in the write. That is the shape this whole class is made
+// of — a convention the next caller (a bulk operation, a job, a new route)
+// inherits nothing of. The delete handler's own comment said as much: "a
+// {entity} outside {spaceID} has to be refused here or nowhere."
+//
+// :exec, so a mismatch deletes nothing and says nothing, exactly as an id that
+// named nothing already did.
+func (q *Queries) SoftDeleteTicketInSpace(ctx context.Context, arg SoftDeleteTicketInSpaceParams) error {
+	_, err := q.db.Exec(ctx, softDeleteTicketInSpace, arg.TicketID, arg.SpaceID)
 	return err
 }
 
@@ -556,19 +573,32 @@ func (q *Queries) UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatus
 
 const updateTicketWorkflowState = `-- name: UpdateTicketWorkflowState :one
 UPDATE tickets
-SET status = $2, workflow_state_id = $3, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = $1, workflow_state_id = $2, updated_at = now()
+WHERE id = $3 AND space_id = $4 AND deleted_at IS NULL
 RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
 type UpdateTicketWorkflowStateParams struct {
-	ID              uuid.UUID   `json:"id"`
 	Status          string      `json:"status"`
 	WorkflowStateID pgtype.UUID `json:"workflow_state_id"`
+	TicketID        uuid.UUID   `json:"ticket_id"`
+	SpaceID         uuid.UUID   `json:"space_id"`
 }
 
+// The space predicate is what makes ApplyInput.SpaceID load-bearing. It was
+// carried all the way into the applier and then never used — the caller's space
+// reached the audit row and nothing else — so a transition released by an
+// approval in another space wrote the far entity by bare id. The approval is now
+// reconciled upstream and cannot arrive here mismatched, so this is the seam
+// being closed rather than the hole; a miss is zero rows and the transaction
+// rolls back rather than committing a status the caller had no claim on.
 func (q *Queries) UpdateTicketWorkflowState(ctx context.Context, arg UpdateTicketWorkflowStateParams) (Ticket, error) {
-	row := q.db.QueryRow(ctx, updateTicketWorkflowState, arg.ID, arg.Status, arg.WorkflowStateID)
+	row := q.db.QueryRow(ctx, updateTicketWorkflowState,
+		arg.Status,
+		arg.WorkflowStateID,
+		arg.TicketID,
+		arg.SpaceID,
+	)
 	var i Ticket
 	err := row.Scan(
 		&i.ID,
@@ -592,4 +622,45 @@ func (q *Queries) UpdateTicketWorkflowState(ctx context.Context, arg UpdateTicke
 		&i.SearchVector,
 	)
 	return i, err
+}
+
+const userIsMemberOfSpaceOrg = `-- name: UserIsMemberOfSpaceOrg :one
+SELECT EXISTS (
+    SELECT 1
+      FROM spaces s
+      JOIN memberships m ON m.org_id = s.org_id
+     WHERE s.id = $1
+       AND m.user_id = $2
+) AS is_member
+`
+
+type UserIsMemberOfSpaceOrgParams struct {
+	SpaceID uuid.UUID `json:"space_id"`
+	UserID  uuid.UUID `json:"user_id"`
+}
+
+// Is this user a member of the organisation that owns this space?
+//
+// The assignment write needs it and had nothing like it. tickets.assignee_id
+// references the GLOBAL users table, so a uuid naming any user in the
+// installation satisfies the foreign key and the write lands 200 — the ticket
+// then names somebody with no membership in the org and no access to the space,
+// and the notification enqueuer carries the ticket's TITLE to them
+// (known-issues #23c).
+//
+// Membership is resolved THROUGH the space rather than taken from the caller's
+// token. The org that matters is the one owning the ticket, not the one the
+// actor is logged into, and on this route those are already proven to be the
+// same by RequireSpaceInOrg — but only the URL's ids were ever compared, so
+// deriving it here keeps the check true of the entity rather than of the
+// request.
+//
+// Single bool over an EXISTS, for the same reason EntityRelationTargetIsReadable
+// is: "no such user" and "a user in another org" must not be two answers a
+// caller could tell apart.
+func (q *Queries) UserIsMemberOfSpaceOrg(ctx context.Context, arg UserIsMemberOfSpaceOrgParams) (bool, error) {
+	row := q.db.QueryRow(ctx, userIsMemberOfSpaceOrg, arg.SpaceID, arg.UserID)
+	var is_member bool
+	err := row.Scan(&is_member)
+	return is_member, err
 }

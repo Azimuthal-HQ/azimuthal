@@ -15,7 +15,7 @@ import (
 // transaction (covered by integration tests against a real database).
 type noopShareDeleter struct{}
 
-func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
 
@@ -25,18 +25,34 @@ func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid
 // same-transaction revocation is covered by integration tests.
 type repoShareDeleter struct{ repo *mockRepo }
 
-func (d repoShareDeleter) DeleteTicketAndRevokeShares(ctx context.Context, id, _ uuid.UUID) error {
-	return d.repo.Delete(ctx, id)
+func (d repoShareDeleter) DeleteTicketAndRevokeShares(ctx context.Context, id, spaceID, _ uuid.UUID) error {
+	return d.repo.DeleteInSpace(ctx, id, spaceID)
 }
 
 // --- Mock repository ---
 
 type mockRepo struct {
 	tickets map[uuid.UUID]*Ticket
+	// outsiders are user ids UserIsMemberOfSpaceOrg answers false for.
+	//
+	// The default is membership, so every test written before the assignee check
+	// existed still exercises the path it was written for. A test that wants the
+	// refusal names its outsider explicitly, which is the only way this double
+	// can report one — it cannot decide membership for itself, so the predicate
+	// proper is proven in the integration suite and this only keeps the unit
+	// tests from contradicting it.
+	outsiders map[uuid.UUID]bool
 }
 
 func newMockRepo() *mockRepo {
-	return &mockRepo{tickets: make(map[uuid.UUID]*Ticket)}
+	return &mockRepo{
+		tickets:   make(map[uuid.UUID]*Ticket),
+		outsiders: make(map[uuid.UUID]bool),
+	}
+}
+
+func (m *mockRepo) UserIsMemberOfSpaceOrg(_ context.Context, _, userID uuid.UUID) (bool, error) {
+	return !m.outsiders[userID], nil
 }
 
 func (m *mockRepo) Create(_ context.Context, t *Ticket) error {
@@ -86,8 +102,9 @@ func (m *mockRepo) UpdateStatus(_ context.Context, id uuid.UUID, status Status) 
 	return t, nil
 }
 
-func (m *mockRepo) Delete(_ context.Context, id uuid.UUID) error {
-	if _, ok := m.tickets[id]; !ok {
+func (m *mockRepo) DeleteInSpace(_ context.Context, id, spaceID uuid.UUID) error {
+	t, ok := m.tickets[id]
+	if !ok || t.SpaceID != spaceID {
 		return ErrNotFound
 	}
 	delete(m.tickets, id)
@@ -373,7 +390,7 @@ func TestDeleteTicket(t *testing.T) {
 	reporterID := uuid.New()
 	ticket := createTestTicket(t, svc, spaceID, reporterID)
 
-	err := svc.Delete(context.Background(), ticket.ID, reporterID)
+	err := svc.Delete(context.Background(), ticket.ID, spaceID, reporterID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

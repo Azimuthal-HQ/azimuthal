@@ -147,21 +147,86 @@ func (q *Queries) CreateSprint(ctx context.Context, arg CreateSprintParams) (Spr
 	return i, err
 }
 
-const deleteEntityRelation = `-- name: DeleteEntityRelation :exec
-DELETE FROM entity_relations WHERE id = $1
+const deleteEntityRelationInSpace = `-- name: DeleteEntityRelationInSpace :exec
+DELETE FROM entity_relations er
+ WHERE er.id = $1
+   AND EXISTS (
+       SELECT 1 FROM tickets t
+        WHERE t.space_id = $2
+          AND t.deleted_at IS NULL
+          AND ((er.from_type = 'ticket' AND t.id = er.from_id)
+            OR (er.to_type = 'ticket' AND t.id = er.to_id))
+       UNION ALL
+       SELECT 1 FROM project_items pi
+        WHERE pi.space_id = $2
+          AND pi.deleted_at IS NULL
+          AND ((er.from_type = 'project_item' AND pi.id = er.from_id)
+            OR (er.to_type = 'project_item' AND pi.id = er.to_id))
+       UNION ALL
+       SELECT 1 FROM pages pg
+        WHERE pg.space_id = $2
+          AND pg.deleted_at IS NULL
+          AND ((er.from_type = 'page' AND pg.id = er.from_id)
+            OR (er.to_type = 'page' AND pg.id = er.to_id))
+   )
 `
 
-func (q *Queries) DeleteEntityRelation(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteEntityRelation, id)
+type DeleteEntityRelationInSpaceParams struct {
+	RelationID uuid.UUID `json:"relation_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
+}
+
+// Remove a relation, but only one the caller's space actually touches.
+//
+// The READ side of this table was reshaped so that no ungated method existed to
+// call by mistake — see RelationRepository's header. The DELETE was left behind
+// taking a bare id, which made it a cross-organisation delete: there are no
+// foreign keys underneath it, because migration 015 dropped from_id/to_id on
+// purpose so that any entity kind could be linked.
+//
+// EITHER endpoint may match, not just from_id. ListEntityRelationsForEntity
+// unions the reverse direction precisely so a "blocks" link is visible to the
+// item it blocks, and a relation a caller can see from one side but delete only
+// from the other would be an affordance that fails for no reason they could
+// infer.
+//
+// It stays :exec, and so still answers 204 whether or not a row matched. That
+// is deliberate, and it is the whole no-oracle story here: a relation in
+// another space and a relation that never existed produce byte-identical
+// responses, because both delete nothing and neither is counted. Answering 404
+// on a miss is the more conventional shape and would introduce exactly the
+// existence signal this predicate exists to remove. It also leaves the route as
+// idempotent as it already was, which known-issues #24 explicitly left to a
+// maintainer rather than something to settle in passing.
+func (q *Queries) DeleteEntityRelationInSpace(ctx context.Context, arg DeleteEntityRelationInSpaceParams) error {
+	_, err := q.db.Exec(ctx, deleteEntityRelationInSpace, arg.RelationID, arg.SpaceID)
 	return err
 }
 
-const deleteLabel = `-- name: DeleteLabel :exec
-DELETE FROM labels WHERE id = $1
+const deleteLabelInOrg = `-- name: DeleteLabelInOrg :exec
+DELETE FROM labels WHERE id = $1 AND org_id = $2
 `
 
-func (q *Queries) DeleteLabel(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteLabel, id)
+type DeleteLabelInOrgParams struct {
+	LabelID uuid.UUID `json:"label_id"`
+	OrgID   uuid.UUID `json:"org_id"`
+}
+
+// Delete a label belonging to this organisation, and no other.
+//
+// Labels are org-wide metadata that any member may manage, so the route carries
+// no space and no admin guard — which left the org itself as the only boundary,
+// and the predecessor did not carry it. `WHERE id = $1` meant any authenticated
+// member of any organisation could hard-delete any label row in the
+// installation, and labels have no soft delete to recover from.
+//
+// Its sibling ListLabelsByOrg above has always been org-scoped. This is the
+// same predicate on the write.
+//
+// :exec, so a label in another organisation and a label that never existed are
+// the same 204 and nothing is disclosed either way.
+func (q *Queries) DeleteLabelInOrg(ctx context.Context, arg DeleteLabelInOrgParams) error {
+	_, err := q.db.Exec(ctx, deleteLabelInOrg, arg.LabelID, arg.OrgID)
 	return err
 }
 

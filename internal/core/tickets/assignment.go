@@ -33,6 +33,23 @@ func (s *TicketService) Assign(ctx context.Context, ticketID, spaceID uuid.UUID,
 		return nil, fmt.Errorf("assigning ticket: %w", err)
 	}
 
+	// The assignee is a THIRD id, and until now nothing looked at it at all.
+	// assignee_id references the global users table, so any user in the
+	// installation satisfied the foreign key: the write landed 200, the ticket
+	// named somebody with no membership in the org and no access to the space,
+	// and the notification below carried the ticket's title to them.
+	//
+	// The check runs before ErrAlreadyAssigned so that a foreign assignee is
+	// refused as a foreign assignee, rather than being told the ticket is
+	// already theirs when it happens to be.
+	member, err := s.repo.UserIsMemberOfSpaceOrg(ctx, spaceID, assigneeID)
+	if err != nil {
+		return nil, fmt.Errorf("assigning ticket: %w", err)
+	}
+	if !member {
+		return nil, ErrAssigneeNotOrgMember
+	}
+
 	if t.AssigneeID != nil && *t.AssigneeID == assigneeID {
 		return nil, ErrAlreadyAssigned
 	}

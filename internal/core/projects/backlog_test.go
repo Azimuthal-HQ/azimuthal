@@ -25,7 +25,7 @@ func TestBacklogService_GetBacklog(t *testing.T) {
 		t.Fatal(err)
 	}
 	sprinted, _ := itemSvc.CreateItem(context.Background(), makeItem(spaceID))
-	if err := itemSvc.AssignToSprint(context.Background(), sprinted.ID, &sprintID); err != nil {
+	if err := itemSvc.AssignToSprint(context.Background(), sprinted.ID, spaceID, &sprintID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -49,10 +49,10 @@ func TestBacklogService_GetSprintBacklog(t *testing.T) {
 
 	item1, _ := itemSvc.CreateItem(context.Background(), makeItem(spaceID))
 	item2, _ := itemSvc.CreateItem(context.Background(), makeItem(spaceID))
-	if err := itemSvc.AssignToSprint(context.Background(), item1.ID, &sprintID); err != nil {
+	if err := itemSvc.AssignToSprint(context.Background(), item1.ID, spaceID, &sprintID); err != nil {
 		t.Fatal(err)
 	}
-	if err := itemSvc.AssignToSprint(context.Background(), item2.ID, &sprintID); err != nil {
+	if err := itemSvc.AssignToSprint(context.Background(), item2.ID, spaceID, &sprintID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,7 +76,7 @@ func TestBacklogService_MoveToSprint(t *testing.T) {
 	sprint, _ := sprintSvc.CreateSprint(context.Background(), makeSprint(spaceID))
 	item, _ := itemSvc.CreateItem(context.Background(), makeItem(spaceID))
 
-	if err := backlogSvc.MoveToSprint(context.Background(), item.ID, sprint.ID); err != nil {
+	if err := backlogSvc.MoveToSprint(context.Background(), item.ID, sprint.ID, spaceID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -92,11 +92,56 @@ func TestBacklogService_MoveToSprint_SprintNotFound(t *testing.T) {
 	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
 	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
 
-	item, _ := itemSvc.CreateItem(context.Background(), makeItem(uuid.New()))
+	spaceID := uuid.New()
+	item, _ := itemSvc.CreateItem(context.Background(), makeItem(spaceID))
 
-	err := backlogSvc.MoveToSprint(context.Background(), item.ID, uuid.New())
+	err := backlogSvc.MoveToSprint(context.Background(), item.ID, uuid.New(), spaceID)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// A sprint in another space answers exactly as a sprint that does not exist.
+//
+// The lookup used to be unscoped, so a real foreign sprint id returned 200 and
+// an unreal one returned 404 — an existence oracle over every organisation's
+// sprints, readable by anyone holding the write floor on any single space. Both
+// halves are asserted here because either alone would pass on a broken build:
+// the 404 alone passes if the route refuses everything, and the success case
+// alone passes if it refuses nothing.
+func TestBacklogService_MoveToSprint_OtherSpaceSprintIsIndistinguishable(t *testing.T) {
+	itemRepo := newStubItemRepo()
+	sprintRepo := newStubSprintRepo()
+	sprintSvc := NewSprintService(sprintRepo)
+	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
+	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
+
+	callerSpace, otherSpace := uuid.New(), uuid.New()
+	foreign, _ := sprintSvc.CreateSprint(context.Background(), makeSprint(otherSpace))
+	item, _ := itemSvc.CreateItem(context.Background(), makeItem(callerSpace))
+
+	foreignErr := backlogSvc.MoveToSprint(context.Background(), item.ID, foreign.ID, callerSpace)
+	if !errors.Is(foreignErr, ErrNotFound) {
+		t.Errorf("another space's sprint must be ErrNotFound, got %v", foreignErr)
+	}
+	absentErr := backlogSvc.MoveToSprint(context.Background(), item.ID, uuid.New(), callerSpace)
+	if !errors.Is(absentErr, ErrNotFound) {
+		t.Errorf("a nonexistent sprint must be ErrNotFound, got %v", absentErr)
+	}
+
+	if got, _ := itemSvc.GetItem(context.Background(), item.ID); got.SprintID != nil {
+		t.Error("a refused move must not have written the sprint")
+	}
+
+	// The caller's own sprint still moves the item, or a service that refused
+	// everything would satisfy both assertions above.
+	own, _ := sprintSvc.CreateSprint(context.Background(), makeSprint(callerSpace))
+	if err := backlogSvc.MoveToSprint(context.Background(), item.ID, own.ID, callerSpace); err != nil {
+		t.Fatalf("the caller's own sprint must still work: %v", err)
+	}
+	got, _ := itemSvc.GetItem(context.Background(), item.ID)
+	if got.SprintID == nil || *got.SprintID != own.ID {
+		t.Error("the item should be in the caller's own sprint")
 	}
 }
 
@@ -111,10 +156,20 @@ func TestBacklogService_MoveToBacklog(t *testing.T) {
 	sprint, _ := sprintSvc.CreateSprint(context.Background(), makeSprint(spaceID))
 	item, _ := itemSvc.CreateItem(context.Background(), makeItem(spaceID))
 
-	if err := backlogSvc.MoveToSprint(context.Background(), item.ID, sprint.ID); err != nil {
+	if err := backlogSvc.MoveToSprint(context.Background(), item.ID, sprint.ID, spaceID); err != nil {
 		t.Fatal(err)
 	}
-	if err := backlogSvc.MoveToBacklog(context.Background(), item.ID); err != nil {
+
+	// Another space cannot knock the item off its sprint. The item id arrives
+	// in the request BODY here, so nothing upstream has reconciled it at all.
+	if err := backlogSvc.MoveToBacklog(context.Background(), item.ID, uuid.New()); err != nil {
+		t.Fatalf("a foreign space must not error: %v", err)
+	}
+	if still, _ := itemSvc.GetItem(context.Background(), item.ID); still.SprintID == nil {
+		t.Error("a foreign space must not have cleared the sprint")
+	}
+
+	if err := backlogSvc.MoveToBacklog(context.Background(), item.ID, spaceID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

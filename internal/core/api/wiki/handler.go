@@ -380,7 +380,7 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 	}
 	// Delete-and-revoke-shares run in one transaction (ADR-0008 rule 10);
 	// the share.revoked audit rows are written inside it, attributed here.
-	if err := h.svc.DeletePage(r.Context(), id, actorID); err != nil {
+	if err := h.svc.DeletePage(r.Context(), id, spaceID, actorID); err != nil {
 		handleWikiError(w, r, err)
 		return
 	}

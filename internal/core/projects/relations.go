@@ -115,8 +115,11 @@ type RelationRepository interface {
 	// directions, with far sides resolved only where readable.
 	ListForEntity(ctx context.Context, entityID uuid.UUID, entityType string, readableSpaceIDs []uuid.UUID) ([]*Relation, error)
 
-	// Delete removes a relation by ID.
-	Delete(ctx context.Context, id uuid.UUID) error
+	// DeleteInSpace removes a relation one of whose endpoints lives in
+	// spaceID. There is deliberately no unscoped Delete: the reads here were
+	// reshaped so that no ungated method survived to be called by mistake, and
+	// the delete taking a bare id was the one that got left behind.
+	DeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error
 }
 
 // RelationService handles cross-tool item linking.
@@ -143,9 +146,30 @@ func NewRelationService(repo RelationRepository) *RelationService {
 // which the API maps to 404. They are the same error value because the
 // repository gives this function a single bool: there is no branch here that
 // could drift into reporting them differently.
-func (s *RelationService) CreateRelation(ctx context.Context, rel *NewRelation, readableSpaceIDs []uuid.UUID) (*Relation, error) {
+func (s *RelationService) CreateRelation(
+	ctx context.Context, rel *NewRelation, spaceID uuid.UUID, readableSpaceIDs []uuid.UUID,
+) (*Relation, error) {
 	if err := validateNewRelation(rel); err != nil {
 		return nil, fmt.Errorf("creating relation: %w", err)
+	}
+
+	// The NEAR side first. It is the {itemID} in the URL, and the middleware
+	// authorised {spaceID} beside it without ever reconciling the two — so the
+	// far side was resolved carefully while the entity the relation hangs off
+	// was taken on trust. A contributor in one space could attach a relation to
+	// an item in another, and it renders in that item's own panel through the
+	// reciprocal-direction union.
+	//
+	// It is checked against the URL's space alone, not the caller's whole
+	// readable set: this is the space they claimed to be acting in, and a wider
+	// set would let read access somewhere else authorise a write here. The far
+	// side keeps the readable set, because linking ACROSS spaces is the feature.
+	near, err := s.repo.TargetIsReadable(ctx, rel.FromID, rel.FromType, []uuid.UUID{spaceID})
+	if err != nil {
+		return nil, fmt.Errorf("creating relation: %w", err)
+	}
+	if !near {
+		return nil, fmt.Errorf("creating relation: %w", ErrNotFound)
 	}
 
 	readable, err := s.repo.TargetIsReadable(ctx, rel.ToID, rel.ToType, readableSpaceIDs)
@@ -187,9 +211,19 @@ func (s *RelationService) ListRelations(ctx context.Context, entityID uuid.UUID,
 	return rels, nil
 }
 
-// DeleteRelation removes a relation by ID.
-func (s *RelationService) DeleteRelation(ctx context.Context, id uuid.UUID) error {
-	if err := s.repo.Delete(ctx, id); err != nil {
+// DeleteRelation removes a relation the caller's space touches.
+//
+// spaceID is the space the route named and proved readable. Without it this
+// took a bare relation id and deleted whatever it named — the same gap
+// CreateRelation had on the write side, in a method that looked too small to
+// have one. Neither endpoint is constrained by a foreign key (migration 015),
+// so nothing below this refuses a relation belonging to another organisation.
+//
+// A relation outside the space is not an error: it is simply not deleted, and
+// the caller is told the same thing they would be told about an id that never
+// existed. See the query for why that shape rather than a 404.
+func (s *RelationService) DeleteRelation(ctx context.Context, id, spaceID uuid.UUID) error {
+	if err := s.repo.DeleteInSpace(ctx, id, spaceID); err != nil {
 		return fmt.Errorf("deleting relation: %w", err)
 	}
 	return nil

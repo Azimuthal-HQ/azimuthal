@@ -287,7 +287,7 @@ func TestCreateProjectItem_SoftDelete(t *testing.T) {
 	err := adapter.Create(context.Background(), item)
 	require.NoError(t, err)
 
-	err = adapter.SoftDelete(context.Background(), item.ID)
+	err = adapter.SoftDeleteInSpace(context.Background(), item.ID, space.ID)
 	require.NoError(t, err)
 
 	// Verify deleted_at is set in the database.
@@ -529,9 +529,17 @@ func TestLabelAdapter_CreateAndList(t *testing.T) {
 	require.Equal(t, "bug", labels[0].Name)
 	require.Equal(t, "#ff0000", labels[0].Color)
 
-	// Delete.
-	err = adapter.Delete(context.Background(), label.ID)
+	// Delete. Another organisation's attempt is silently a no-op — the label
+	// survives and no error is raised, so a foreign id and an absent one are
+	// the same answer. Without this step the assertion below would pass just as
+	// well against an unscoped delete.
+	otherOrg := testutil.CreateTestOrg(t, db.Pool)
+	require.NoError(t, adapter.DeleteInOrg(context.Background(), label.ID, otherOrg.ID))
+	labels, err = adapter.ListByOrg(context.Background(), org.ID)
 	require.NoError(t, err)
+	require.Len(t, labels, 1, "another organisation must not delete this label")
+
+	require.NoError(t, adapter.DeleteInOrg(context.Background(), label.ID, org.ID))
 
 	labels, err = adapter.ListByOrg(context.Background(), org.ID)
 	require.NoError(t, err)

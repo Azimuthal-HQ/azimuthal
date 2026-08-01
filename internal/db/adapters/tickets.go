@@ -121,9 +121,11 @@ func (a *TicketAdapter) UpdateStatus(ctx context.Context, id uuid.UUID, status t
 	return dbTicketToTicket(row), nil
 }
 
-// Delete soft-deletes a ticket.
-func (a *TicketAdapter) Delete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.SoftDeleteTicket(ctx, id); err != nil {
+// DeleteInSpace soft-deletes a ticket in spaceID.
+func (a *TicketAdapter) DeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error {
+	if err := a.q.SoftDeleteTicketInSpace(ctx, generated.SoftDeleteTicketInSpaceParams{
+		TicketID: id, SpaceID: spaceID,
+	}); err != nil {
 		return fmt.Errorf("ticket adapter delete: %w", err)
 	}
 	return nil
@@ -239,4 +241,18 @@ func coalesceLabels(labels []string) []string {
 		return []string{}
 	}
 	return labels
+}
+
+// UserIsMemberOfSpaceOrg reports whether a user belongs to the organisation
+// owning spaceID. See the query for why membership is resolved through the
+// space rather than taken from the caller's token.
+func (a *TicketAdapter) UserIsMemberOfSpaceOrg(ctx context.Context, spaceID, userID uuid.UUID) (bool, error) {
+	ok, err := a.q.UserIsMemberOfSpaceOrg(ctx, generated.UserIsMemberOfSpaceOrgParams{
+		SpaceID: spaceID,
+		UserID:  userID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("ticket adapter check assignee org membership: %w", err)
+	}
+	return ok, nil
 }

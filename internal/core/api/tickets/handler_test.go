@@ -62,7 +62,7 @@ func (m *mockTicketRepo) UpdateStatus(_ context.Context, id uuid.UUID, status ti
 	return t, nil
 }
 
-func (m *mockTicketRepo) Delete(_ context.Context, id uuid.UUID) error {
+func (m *mockTicketRepo) DeleteInSpace(_ context.Context, id, _ uuid.UUID) error {
 	delete(m.tickets, id)
 	return nil
 }
@@ -79,6 +79,13 @@ func (m *mockTicketRepo) ListByAssignee(_ context.Context, _ uuid.UUID, _ uuid.U
 	return nil, nil
 }
 
+// Every user is an org member here: these doubles predate the assignee check
+// and none of their tests is about it. The refusal is exercised in
+// internal/core/tickets and against real PostgreSQL.
+func (m *mockTicketRepo) UserIsMemberOfSpaceOrg(_ context.Context, _, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 func (m *mockTicketRepo) Search(_ context.Context, _ uuid.UUID, _ string, _ int32) ([]*tickets.Ticket, error) {
 	return nil, nil
 }
@@ -86,7 +93,7 @@ func (m *mockTicketRepo) Search(_ context.Context, _ uuid.UUID, _ string, _ int3
 // noopShareDeleter satisfies tickets.ShareRevokingDeleter for handler tests.
 type noopShareDeleter struct{}
 
-func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
 

@@ -64,7 +64,9 @@ type TicketRepository interface {
 	// UpdateStatus changes only the ticket status. Returns the updated ticket.
 	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (*Ticket, error)
 	// Delete soft-deletes a ticket.
-	Delete(ctx context.Context, id uuid.UUID) error
+	// DeleteInSpace soft-deletes a ticket in spaceID. There is no unscoped
+	// variant: an id alone reaches every ticket in the installation.
+	DeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error
 	// ListBySpace returns all tickets in a space.
 	ListBySpace(ctx context.Context, spaceID uuid.UUID) ([]*Ticket, error)
 	// ListByStatus returns tickets in a space filtered by status.
@@ -73,6 +75,14 @@ type TicketRepository interface {
 	ListByAssignee(ctx context.Context, spaceID uuid.UUID, assigneeID uuid.UUID) ([]*Ticket, error)
 	// Search performs full-text search within a space.
 	Search(ctx context.Context, spaceID uuid.UUID, query string, limit int32) ([]*Ticket, error)
+	// UserIsMemberOfSpaceOrg reports whether a user belongs to the organisation
+	// that owns spaceID.
+	//
+	// One bool, so "no such user" and "a user in another organisation" cannot
+	// become two answers a caller could tell apart. Membership is resolved
+	// through the SPACE rather than read from the actor's token, so the check is
+	// about the entity being written rather than about who is asking.
+	UserIsMemberOfSpaceOrg(ctx context.Context, spaceID, userID uuid.UUID) (bool, error)
 }
 
 // CreateTicketParams holds the parameters for creating a new ticket.
@@ -92,7 +102,7 @@ type CreateTicketParams struct {
 // roll back together (ADR-0008 rule 10), with the share.revoked audit rows
 // in the same transaction.
 type ShareRevokingDeleter interface {
-	DeleteTicketAndRevokeShares(ctx context.Context, ticketID, actorID uuid.UUID) error
+	DeleteTicketAndRevokeShares(ctx context.Context, ticketID, spaceID, actorID uuid.UUID) error
 }
 
 // TicketService handles service desk ticket lifecycle operations.
@@ -195,8 +205,13 @@ func (s *TicketService) Update(ctx context.Context, t *Ticket) error {
 
 // Delete soft-deletes a ticket and revokes its entity shares in the same
 // transaction. actorID attributes the share.revoked audit rows.
-func (s *TicketService) Delete(ctx context.Context, id, actorID uuid.UUID) error {
-	if err := s.tx.DeleteTicketAndRevokeShares(ctx, id, actorID); err != nil {
+//
+// spaceID reaches the transaction rather than stopping at the route. The
+// handler above reconciles the entity before calling this, but that refusal
+// lived in a handler and the deleter took an id alone — so the guarantee was a
+// convention the next caller inherits nothing of. It is now in the statement.
+func (s *TicketService) Delete(ctx context.Context, id, spaceID, actorID uuid.UUID) error {
+	if err := s.tx.DeleteTicketAndRevokeShares(ctx, id, spaceID, actorID); err != nil {
 		return fmt.Errorf("deleting ticket: %w", err)
 	}
 	return nil

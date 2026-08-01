@@ -33,10 +33,10 @@ func (m *mockItemRepo) Update(_ context.Context, _ *projects.Item) error { retur
 func (m *mockItemRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ string) (*projects.Item, error) {
 	return nil, projects.ErrNotFound
 }
-func (m *mockItemRepo) UpdateSprint(_ context.Context, _ uuid.UUID, _ *uuid.UUID) error {
+func (m *mockItemRepo) UpdateSprintInSpace(_ context.Context, _, _ uuid.UUID, _ *uuid.UUID) error {
 	return projects.ErrNotFound
 }
-func (m *mockItemRepo) SoftDelete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockItemRepo) SoftDeleteInSpace(_ context.Context, _, _ uuid.UUID) error { return nil }
 func (m *mockItemRepo) ListBySpace(_ context.Context, _ uuid.UUID) ([]*projects.Item, error) {
 	return nil, nil
 }
@@ -87,7 +87,7 @@ func (m *mockRelationRepo) TargetIsReadable(_ context.Context, _ uuid.UUID, _ st
 func (m *mockRelationRepo) ListForEntity(_ context.Context, _ uuid.UUID, _ string, _ []uuid.UUID) ([]*projects.Relation, error) {
 	return nil, nil
 }
-func (m *mockRelationRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockRelationRepo) DeleteInSpace(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 type mockLabelRepo struct{}
 
@@ -95,12 +95,12 @@ func (m *mockLabelRepo) Create(_ context.Context, _ *projects.Label) error { ret
 func (m *mockLabelRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*projects.Label, error) {
 	return nil, nil
 }
-func (m *mockLabelRepo) Delete(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockLabelRepo) DeleteInOrg(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 // noopShareDeleter satisfies projects.ShareRevokingDeleter for handler tests.
 type noopShareDeleter struct{}
 
-func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
 
@@ -601,7 +601,9 @@ func TestCreateRelationNoAuth(t *testing.T) {
 
 func TestDeleteRelationSuccess(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "relationID", uuid.New().String())
+	req := withParam(
+		withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "relationID", uuid.New().String()),
+		"spaceID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.DeleteRelation(rr, req)
 	if rr.Code != http.StatusNoContent {
@@ -854,7 +856,9 @@ func TestCreateLabelInvalidBody(t *testing.T) {
 
 func TestDeleteLabelSuccess(t *testing.T) {
 	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "labelID", uuid.New().String())
+	req := withParam(
+		withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "labelID", uuid.New().String()),
+		"orgID", uuid.New().String())
 	rr := httptest.NewRecorder()
 	h.DeleteLabel(rr, req)
 	if rr.Code != http.StatusNoContent {

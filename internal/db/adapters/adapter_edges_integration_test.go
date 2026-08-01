@@ -1307,14 +1307,14 @@ func TestAdapterNeg_DeleteTicketAndItem_RevokeSharesAndAudit(t *testing.T) {
 	keptShare := edgeCreateShare(t, q, org.ID, beacon.ID, "ticket", keptTicket, nil, false, user.ID)
 	itemShare := edgeCreateShare(t, q, org.ID, vector.ID, "project_item", item, &team, false, user.ID)
 
-	require.NoError(t, a.DeleteTicketAndRevokeShares(ctx, ticket, user.ID))
+	require.NoError(t, a.DeleteTicketAndRevokeShares(ctx, ticket, beacon.ID, user.ID))
 	require.Equal(t, 1, edgeScalarCount(t, db.Pool,
 		`SELECT count(*) FROM tickets WHERE id = $1 AND deleted_at IS NOT NULL`, ticket),
 		"the ticket is soft-deleted")
 	require.False(t, edgeShareIsActive(t, db.Pool, ticketShare))
 	require.True(t, edgeShareIsActive(t, db.Pool, keptShare), "another entity's share must survive")
 
-	require.NoError(t, a.DeleteItemAndRevokeShares(ctx, item, user.ID))
+	require.NoError(t, a.DeleteItemAndRevokeShares(ctx, item, vector.ID, user.ID))
 	require.Equal(t, 1, edgeScalarCount(t, db.Pool,
 		`SELECT count(*) FROM project_items WHERE id = $1 AND deleted_at IS NOT NULL`, item),
 		"the project item is soft-deleted")
@@ -1542,7 +1542,15 @@ func TestAdapterNeg_ItemLookups_AreOrgScopedAndHideSoftDeletedRows(t *testing.T)
 	_, err = a.GetByID(ctx, uuid.New())
 	require.ErrorIs(t, err, projects.ErrNotFound)
 
-	require.NoError(t, a.SoftDelete(ctx, item.ID))
+	// A space that does not own the item deletes nothing, so the assertions
+	// below cannot pass against an unscoped statement.
+	strangerSpace := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "vector")
+	require.NoError(t, a.SoftDeleteInSpace(ctx, item.ID, strangerSpace.ID))
+	stillThere, err := a.GetByID(ctx, item.ID)
+	require.NoError(t, err, "a stranger space must not soft-delete the item")
+	require.Equal(t, item.ID, stillThere.ID)
+
+	require.NoError(t, a.SoftDeleteInSpace(ctx, item.ID, space.ID))
 	_, err = a.GetByID(ctx, item.ID)
 	require.ErrorIs(t, err, projects.ErrNotFound, "a soft-deleted item must read as absent by id")
 	_, err = a.GetByOrgKey(ctx, org.ID, item.ItemKey)

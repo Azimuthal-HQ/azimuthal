@@ -112,8 +112,12 @@ func TestMarkDecidable_AgreesWithTheDecideRoute(t *testing.T) {
 	// And the claim is not merely cosmetic: the route refuses exactly the
 	// person MarkDecidable said it would. A CanDecide computed from anything
 	// else would let these two drift.
+	// SpaceID is the approval's own, so the request reaches the authority
+	// check. Left zero it would be refused as not-found first and the assertion
+	// below would pass without the approver logic ever having run.
 	_, _, err = svc.Decide(context.Background(), DecideRequest{
-		OrgID: orgID, ApprovalID: gated.Pending.ID, ActorID: stranger, Decision: DecisionApproved,
+		OrgID: orgID, SpaceID: gated.Pending.SpaceID, ApprovalID: gated.Pending.ID,
+		ActorID: stranger, Decision: DecisionApproved,
 	})
 	require.ErrorIs(t, err, ErrNotAnApprover)
 }

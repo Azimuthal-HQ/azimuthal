@@ -147,10 +147,30 @@ func (a *ItemAdapter) UpdateStatus(ctx context.Context, id uuid.UUID, status str
 	return dbProjectItemToItem(row), nil
 }
 
-// UpdateSprint assigns an item to a sprint (or removes it if sprintID is nil).
-func (a *ItemAdapter) UpdateSprint(ctx context.Context, id uuid.UUID, sprintID *uuid.UUID) error {
-	if err := a.q.UpdateProjectItemSprint(ctx, generated.UpdateProjectItemSprintParams{
-		ID:       id,
+// UpdateSprintInSpace assigns an item in spaceID to a sprint in the same
+// space, or removes it from one when sprintID is nil.
+//
+// An item outside spaceID, or a sprint outside it, updates nothing and reports
+// success — see the query for why both ids are reconciled there rather than by
+// a pair of lookups here.
+// A nil sprintID takes the clearing statement, which names no sprint and so
+// has none to reconcile. The two are separate queries rather than one with a
+// nullable parameter; see the query headers.
+func (a *ItemAdapter) UpdateSprintInSpace(
+	ctx context.Context, id, spaceID uuid.UUID, sprintID *uuid.UUID,
+) error {
+	if sprintID == nil {
+		if err := a.q.ClearProjectItemSprintInSpace(ctx, generated.ClearProjectItemSprintInSpaceParams{
+			ItemID:  id,
+			SpaceID: spaceID,
+		}); err != nil {
+			return fmt.Errorf("item adapter clear sprint: %w", err)
+		}
+		return nil
+	}
+	if err := a.q.AssignProjectItemToSprintInSpace(ctx, generated.AssignProjectItemToSprintInSpaceParams{
+		ItemID:   id,
+		SpaceID:  spaceID,
 		SprintID: pgUUID(sprintID),
 	}); err != nil {
 		return fmt.Errorf("item adapter update sprint: %w", err)
@@ -158,9 +178,11 @@ func (a *ItemAdapter) UpdateSprint(ctx context.Context, id uuid.UUID, sprintID *
 	return nil
 }
 
-// SoftDelete sets deleted_at on an item.
-func (a *ItemAdapter) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.SoftDeleteProjectItem(ctx, id); err != nil {
+// SoftDeleteInSpace sets deleted_at on an item in spaceID.
+func (a *ItemAdapter) SoftDeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error {
+	if err := a.q.SoftDeleteProjectItemInSpace(ctx, generated.SoftDeleteProjectItemInSpaceParams{
+		ItemID: id, SpaceID: spaceID,
+	}); err != nil {
 		return fmt.Errorf("item adapter soft delete: %w", err)
 	}
 	return nil
@@ -511,9 +533,16 @@ func (a *RelationAdapter) ListForEntity(ctx context.Context, entityID uuid.UUID,
 	return dbEntityRelationRowsToRelations(rows), nil
 }
 
-// Delete removes a relation by ID.
-func (a *RelationAdapter) Delete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.DeleteEntityRelation(ctx, id); err != nil {
+// DeleteInSpace removes a relation the given space touches, and nothing else.
+//
+// A relation neither of whose endpoints lives in spaceID is left alone and
+// reported as success, which is the same answer an id that never existed gets.
+// See the query for why silence rather than a 404 is the right shape here.
+func (a *RelationAdapter) DeleteInSpace(ctx context.Context, id, spaceID uuid.UUID) error {
+	if err := a.q.DeleteEntityRelationInSpace(ctx, generated.DeleteEntityRelationInSpaceParams{
+		RelationID: id,
+		SpaceID:    spaceID,
+	}); err != nil {
 		return fmt.Errorf("relation adapter delete: %w", err)
 	}
 	return nil
@@ -605,9 +634,15 @@ func (a *LabelAdapter) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*proje
 	return result, nil
 }
 
-// Delete removes a label by ID.
-func (a *LabelAdapter) Delete(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.DeleteLabel(ctx, id); err != nil {
+// DeleteInOrg removes a label belonging to orgID.
+//
+// A label in another organisation is left alone and reported as success, which
+// is the same answer an id that never existed gets.
+func (a *LabelAdapter) DeleteInOrg(ctx context.Context, id, orgID uuid.UUID) error {
+	if err := a.q.DeleteLabelInOrg(ctx, generated.DeleteLabelInOrgParams{
+		LabelID: id,
+		OrgID:   orgID,
+	}); err != nil {
 		return fmt.Errorf("label adapter delete: %w", err)
 	}
 	return nil

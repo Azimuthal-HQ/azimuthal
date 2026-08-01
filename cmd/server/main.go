@@ -440,7 +440,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
-		NotificationHandler: notificationsapi.NewHandler(queries),
+		NotificationHandler: notificationsapi.NewHandler(queries, accessResolver),
 		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter, workflowEngine).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),

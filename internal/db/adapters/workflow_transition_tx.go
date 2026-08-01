@@ -70,13 +70,15 @@ func (a *WorkflowTransitionTxAdapter) writeStatus(ctx context.Context, qtx *gene
 	switch in.EntityType {
 	case workflow.ApprovalEntityTicket:
 		if _, err := qtx.UpdateTicketWorkflowState(ctx, generated.UpdateTicketWorkflowStateParams{
-			ID: in.EntityID, Status: in.ToStatus, WorkflowStateID: stateID,
+			TicketID: in.EntityID, SpaceID: in.SpaceID,
+			Status: in.ToStatus, WorkflowStateID: stateID,
 		}); err != nil {
 			return fmt.Errorf("apply transition: writing ticket status: %w", err)
 		}
 	case workflow.ApprovalEntityItem:
 		if _, err := qtx.UpdateProjectItemWorkflowState(ctx, generated.UpdateProjectItemWorkflowStateParams{
-			ID: in.EntityID, Status: in.ToStatus, WorkflowStateID: stateID,
+			ItemID: in.EntityID, SpaceID: in.SpaceID,
+			Status: in.ToStatus, WorkflowStateID: stateID,
 		}); err != nil {
 			return fmt.Errorf("apply transition: writing item status: %w", err)
 		}
@@ -110,7 +112,7 @@ func (a *WorkflowTransitionTxAdapter) writeEffects(ctx context.Context, qtx *gen
 			SetAssignee: setAssignee, AssigneeID: assignee,
 			SetDueAt: setDueAt, DueAt: dueAt,
 			SetLabels: setLabels, Labels: labels,
-			ID: in.EntityID,
+			ID: in.EntityID, SpaceID: in.SpaceID,
 		}); err != nil {
 			return fmt.Errorf("apply transition: applying ticket post-functions: %w", err)
 		}
@@ -119,7 +121,7 @@ func (a *WorkflowTransitionTxAdapter) writeEffects(ctx context.Context, qtx *gen
 			SetAssignee: setAssignee, AssigneeID: assignee,
 			SetDueAt: setDueAt, DueAt: dueAt,
 			SetLabels: setLabels, Labels: labels,
-			ID: in.EntityID,
+			ID: in.EntityID, SpaceID: in.SpaceID,
 		}); err != nil {
 			return fmt.Errorf("apply transition: applying item post-functions: %w", err)
 		}

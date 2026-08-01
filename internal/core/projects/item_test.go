@@ -13,7 +13,7 @@ import (
 // (covered by integration tests against a real database).
 type noopShareDeleter struct{}
 
-func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.UUID) error {
+func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _, _ uuid.UUID) error {
 	return nil
 }
 
@@ -22,8 +22,8 @@ func (noopShareDeleter) DeleteItemAndRevokeShares(_ context.Context, _, _ uuid.U
 // real same-transaction share revocation is covered by integration tests.
 type repoShareDeleter struct{ repo *stubItemRepo }
 
-func (d repoShareDeleter) DeleteItemAndRevokeShares(ctx context.Context, id, _ uuid.UUID) error {
-	return d.repo.SoftDelete(ctx, id)
+func (d repoShareDeleter) DeleteItemAndRevokeShares(ctx context.Context, id, spaceID, _ uuid.UUID) error {
+	return d.repo.SoftDeleteInSpace(ctx, id, spaceID)
 }
 
 // stubItemRepo is an in-memory ItemRepository for testing.
@@ -85,18 +85,28 @@ func (r *stubItemRepo) UpdateStatus(_ context.Context, id uuid.UUID, status stri
 	return item, nil
 }
 
-func (r *stubItemRepo) UpdateSprint(_ context.Context, id uuid.UUID, sprintID *uuid.UUID) error {
+// UpdateSprintInSpace honours spaceID, so no test can assert a cross-space
+// write succeeded against a double that never looked.
+//
+// A miss returns nil rather than ErrNotFound, because that is what the real
+// statement does: it is :exec and reports no row count, so an item in another
+// space and an item that never existed both simply write nothing. A double that
+// refused where production is silent would be a lie in the safe-looking
+// direction — tests would pin an error the API cannot actually produce.
+func (r *stubItemRepo) UpdateSprintInSpace(
+	_ context.Context, id, spaceID uuid.UUID, sprintID *uuid.UUID,
+) error {
 	item, ok := r.items[id]
-	if !ok || item.DeletedAt != nil {
-		return ErrNotFound
+	if !ok || item.DeletedAt != nil || item.SpaceID != spaceID {
+		return nil
 	}
 	item.SprintID = sprintID
 	return nil
 }
 
-func (r *stubItemRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
+func (r *stubItemRepo) SoftDeleteInSpace(_ context.Context, id, spaceID uuid.UUID) error {
 	item, ok := r.items[id]
-	if !ok {
+	if !ok || item.SpaceID != spaceID {
 		return ErrNotFound
 	}
 	now := timeNowUTC()
@@ -333,9 +343,10 @@ func TestItemService_UpdateItemStatus(t *testing.T) {
 func TestItemService_DeleteItem(t *testing.T) {
 	repo := newStubItemRepo()
 	svc := NewItemService(repo, repoShareDeleter{repo})
-	created, _ := svc.CreateItem(context.Background(), makeItem(uuid.New()))
+	space := uuid.New()
+	created, _ := svc.CreateItem(context.Background(), makeItem(space))
 
-	if err := svc.DeleteItem(context.Background(), created.ID, uuid.New()); err != nil {
+	if err := svc.DeleteItem(context.Background(), created.ID, space, uuid.New()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	_, err := svc.GetItem(context.Background(), created.ID)
@@ -397,7 +408,7 @@ func TestItemService_AssignToSprint(t *testing.T) {
 	sprintID := uuid.New()
 
 	created, _ := svc.CreateItem(context.Background(), makeItem(spaceID))
-	if err := svc.AssignToSprint(context.Background(), created.ID, &sprintID); err != nil {
+	if err := svc.AssignToSprint(context.Background(), created.ID, spaceID, &sprintID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

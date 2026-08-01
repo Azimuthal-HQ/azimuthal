@@ -91,3 +91,30 @@ UPDATE comments SET body = $2, updated_at = now() WHERE id = $1 AND deleted_at I
 
 -- name: SoftDeleteComment :exec
 UPDATE comments SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: CommentBelongsToEntity :one
+-- Is this comment a reply target on this exact entity?
+--
+-- parent_id arrives in the REQUEST BODY and reached the INSERT unchecked. Its
+-- only constraint is migration 006's `parent_id UUID REFERENCES comments (id)`,
+-- a bare foreign key to the whole table — nothing ties a reply to the thread it
+-- claims to be part of, to the entity, to the space, or to the organisation.
+--
+-- Two things follow, and the second is the one that makes this a disclosure
+-- rather than a data-integrity nit. A parent naming no comment violates the
+-- foreign key and answers 500; a parent naming a real comment ANYWHERE in the
+-- installation answers 201. That difference is an existence oracle over every
+-- comment id in every organisation. Reconciling the parent against the entity
+-- collapses both to one refusal.
+--
+-- entity_type and entity_id rather than a space: comments carry no space column
+-- of their own, and the entity has already been reconciled against the caller's
+-- space by the time this runs — so agreeing with the entity is exactly as
+-- strong as agreeing with the space, and needs no second join.
+SELECT EXISTS (
+    SELECT 1 FROM comments
+     WHERE id = @comment_id
+       AND entity_type = @entity_type::text
+       AND entity_id = @entity_id
+       AND deleted_at IS NULL
+) AS belongs;

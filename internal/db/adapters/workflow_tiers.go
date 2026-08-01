@@ -331,10 +331,19 @@ func (a *WorkflowTierAdapter) PendingApprovalForEntity(
 	return rowToApproval(row), nil
 }
 
-// GetApproval returns one request with its requester and decider names
-// resolved.
-func (a *WorkflowTierAdapter) GetApproval(ctx context.Context, id uuid.UUID) (workflow.Approval, error) {
-	row, err := a.q.GetApproval(ctx, id)
+// GetApprovalInSpace returns one request with its requester and decider names
+// resolved, reconciled against the space the caller named.
+//
+// An approval in another space is reported as ErrNotFound, which is the same
+// answer an id that never existed gets. See the query's header for why the
+// decide path cannot be authorised any other way.
+func (a *WorkflowTierAdapter) GetApprovalInSpace(
+	ctx context.Context, spaceID, id uuid.UUID,
+) (workflow.Approval, error) {
+	row, err := a.q.GetApprovalInSpace(ctx, generated.GetApprovalInSpaceParams{
+		ApprovalID: id,
+		SpaceID:    spaceID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return workflow.Approval{}, workflow.ErrNotFound
 	}
@@ -347,7 +356,7 @@ func (a *WorkflowTierAdapter) GetApproval(ctx context.Context, id uuid.UUID) (wo
 	return ap, nil
 }
 
-// DecideApproval records a decision on a pending request.
+// DecideApproval records a decision on a pending request in spaceID.
 //
 // The UPDATE carries `decided_at IS NULL`, so a second approver deciding
 // concurrently updates zero rows. Zero rows is then disambiguated by a
@@ -355,19 +364,25 @@ func (a *WorkflowTierAdapter) GetApproval(ctx context.Context, id uuid.UUID) (wo
 // RevokeEntityShare distinguishes ErrShareAlreadyRevoked from ErrShareNotFound.
 // Guessing instead would report "already decided" for an id that was never
 // real.
+//
+// The follow-up read is scoped to the SAME space as the UPDATE. Were it not,
+// the disambiguation would itself become the oracle the space predicate exists
+// to close: a wrong-space id would miss the UPDATE, hit an unscoped read, and
+// come back as ErrApprovalAlreadyDecided — telling the caller the row is real.
 func (a *WorkflowTierAdapter) DecideApproval(
-	ctx context.Context, id, decidedBy uuid.UUID, d workflow.Decision, reason *string,
+	ctx context.Context, spaceID, id, decidedBy uuid.UUID, d workflow.Decision, reason *string,
 ) (workflow.Approval, error) {
 	decision := string(d)
 	row, err := a.q.DecideApproval(ctx, generated.DecideApprovalParams{
-		ID:        id,
-		DecidedBy: pgUUID(&decidedBy),
-		Decision:  &decision,
-		Reason:    reason,
+		ApprovalID: id,
+		SpaceID:    spaceID,
+		DecidedBy:  pgUUID(&decidedBy),
+		Decision:   &decision,
+		Reason:     reason,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		if _, getErr := a.q.GetApproval(ctx, id); getErr != nil {
-			if errors.Is(getErr, pgx.ErrNoRows) {
+		if _, getErr := a.GetApprovalInSpace(ctx, spaceID, id); getErr != nil {
+			if errors.Is(getErr, workflow.ErrNotFound) {
 				return workflow.Approval{}, workflow.ErrNotFound
 			}
 			return workflow.Approval{}, fmt.Errorf("workflow tier adapter decide approval: %w", getErr)

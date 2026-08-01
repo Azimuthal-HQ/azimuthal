@@ -34,7 +34,14 @@ func TestTicketAdapter_Delete(t *testing.T) {
 	_, err := adapter.GetByID(ctx, tkt.ID)
 	require.NoError(t, err)
 
-	require.NoError(t, adapter.Delete(ctx, tkt.ID))
+	// A space that does not own the ticket deletes nothing and says nothing,
+	// so the assertion below cannot pass against an unscoped statement.
+	strangerSpace := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
+	require.NoError(t, adapter.DeleteInSpace(ctx, tkt.ID, strangerSpace.ID))
+	_, err = adapter.GetByID(ctx, tkt.ID)
+	require.NoError(t, err, "a stranger space must not delete the ticket")
+
+	require.NoError(t, adapter.DeleteInSpace(ctx, tkt.ID, space.ID))
 
 	// After soft delete, GetByID should fail.
 	_, err = adapter.GetByID(ctx, tkt.ID)

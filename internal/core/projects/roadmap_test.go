@@ -160,7 +160,7 @@ func TestRoadmapService_GetSprintRoadmap(t *testing.T) {
 	created, _ := sprintSvc.CreateSprint(context.Background(), sprint)
 
 	item, _ := itemSvc.CreateItem(context.Background(), makeItem(spaceID))
-	if err := itemSvc.AssignToSprint(context.Background(), item.ID, &created.ID); err != nil {
+	if err := itemSvc.AssignToSprint(context.Background(), item.ID, spaceID, &created.ID); err != nil {
 		t.Fatal(err)
 	}
 

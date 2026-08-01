@@ -2,13 +2,14 @@
 package notifications
 
 import (
-	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -17,11 +18,19 @@ import (
 // Handler holds the dependencies for notification HTTP handlers.
 type Handler struct {
 	queries *generated.Queries
+	// resolver supplies the caller's readable space set at render time.
+	//
+	// It is a constructor argument rather than a With* option on purpose. A
+	// nil optional collaborator is exactly the dark-harness shape this
+	// repository already got caught by: the tests would still pass and every
+	// notification would render, which here means rendering titles nobody
+	// checked. Required, so the compiler makes every wiring supply it.
+	resolver *access.Resolver
 }
 
 // NewHandler creates a notification Handler.
-func NewHandler(queries *generated.Queries) *Handler {
-	return &Handler{queries: queries}
+func NewHandler(queries *generated.Queries, resolver *access.Resolver) *Handler {
+	return &Handler{queries: queries, resolver: resolver}
 }
 
 // Routes returns a chi.Router with all notification endpoints mounted.
@@ -71,19 +80,20 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) { //nolint:cyclop
 		Offset: offset,
 	})
 	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, fmt.Sprintf("listing notifications: %v", err))
+		respondUnmapped(w, r, "listing notifications", err)
 		return
 	}
 
 	unread, err := h.queries.CountUnreadNotifications(r.Context(), claims.UserID)
 	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, fmt.Sprintf("counting unread: %v", err))
+		respondUnmapped(w, r, "counting unread", err)
 		return
 	}
 
 	items := make([]notificationResponse, 0, len(rows))
+	visible := h.visibleSpaces(r, claims)
 	for _, n := range rows {
-		items = append(items, toResponse(n))
+		items = append(items, toResponse(n, visible))
 	}
 
 	respond.JSON(w, http.StatusOK, listNotificationsResponse{
@@ -123,7 +133,7 @@ func (h *Handler) MarkRead(w http.ResponseWriter, r *http.Request) {
 		ID:     id,
 		UserID: claims.UserID,
 	}); err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, fmt.Sprintf("marking notification read: %v", err))
+		respondUnmapped(w, r, "marking notification read", err)
 		return
 	}
 
@@ -148,7 +158,7 @@ func (h *Handler) ReadAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.queries.MarkAllNotificationsRead(r.Context(), claims.UserID); err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, fmt.Sprintf("marking all notifications read: %v", err))
+		respondUnmapped(w, r, "marking all notifications read", err)
 		return
 	}
 
@@ -165,6 +175,48 @@ type notificationResponse struct {
 	EntitySpaceID *uuid.UUID `json:"entity_space_id,omitempty"`
 	IsRead        bool       `json:"is_read"`
 	CreatedAt     string     `json:"created_at"`
+	// Redacted marks a row whose entity the caller may no longer read. The row
+	// survives so the unread count and mark-read keep working; what it named
+	// does not.
+	Redacted bool `json:"redacted,omitempty"`
+}
+
+// visibleSpaces is the caller's readable space set for one request.
+//
+// A nil map redacts every space-scoped row. That is the fail-closed direction
+// and it is deliberate: the alternative on a resolution failure is to render
+// titles nobody has checked, which is the defect this closes.
+type visibleSpaces map[uuid.UUID]bool
+
+// visibleSpaces resolves the caller's readable set.
+//
+// The notification routes are user-scoped and mount OUTSIDE /orgs/{orgID}, so
+// ResolveAccess never ran and there is no resolution on the context — the org
+// comes from the caller's own claims instead. Resolving per request rather than
+// caching is what makes revocation immediate, which is the whole point here:
+// the title was captured when the actor could see the entity, and nothing since
+// asked whether they still can.
+func (h *Handler) visibleSpaces(r *http.Request, claims *auth.Claims) visibleSpaces {
+	if h.resolver == nil {
+		return nil
+	}
+	orgID, err := uuid.Parse(claims.OrgID)
+	if err != nil {
+		return nil
+	}
+	res, err := h.resolver.Resolve(r.Context(), orgID, claims.UserID)
+	if err != nil {
+		// Includes ErrNotOrgMember. Fail closed rather than 500: the bell is a
+		// peripheral surface and an unreadable title is a better outcome than
+		// an error page, but an UNCHECKED title is not.
+		return nil
+	}
+	ids := res.ReadableSpaceIDs()
+	visible := make(visibleSpaces, len(ids))
+	for _, id := range ids {
+		visible[id] = true
+	}
+	return visible
 }
 
 type listNotificationsResponse struct {
@@ -172,7 +224,34 @@ type listNotificationsResponse struct {
 	UnreadCount   int64                  `json:"unread_count"`
 }
 
-func toResponse(n generated.Notification) notificationResponse {
+// toResponse renders one row, redacting what the caller may no longer read.
+//
+// The gate is HERE, in the one function every notification passes through,
+// rather than in List — a second listing route added later cannot render an
+// ungated row without changing this signature.
+//
+// migration 030 argued that denormalising entity_space_id "creates no
+// permission oracle" because clicking navigates to the space-scoped detail
+// page, which enforces authz. That is true of the LINK and was never true of
+// the TITLE: the title is stored on the notification at enqueue time and was
+// rendered from there unconditionally, so a grant revoked afterwards did not
+// retract it.
+//
+// A row with no entity_space_id is NOT redacted. Those are the legacy rows
+// migration 030 left unbackfilled and the org-level notifications that never
+// named a space; blanking them would destroy the bell's history to close a gap
+// they never had.
+func toResponse(n generated.Notification, visible visibleSpaces) notificationResponse {
+	if n.EntitySpaceID.Valid && !visible[uuid.UUID(n.EntitySpaceID.Bytes)] {
+		return notificationResponse{
+			ID:        n.ID,
+			Kind:      n.Kind,
+			Title:     "A notification you no longer have access to",
+			IsRead:    n.IsRead,
+			CreatedAt: n.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+			Redacted:  true,
+		}
+	}
 	r := notificationResponse{
 		ID:         n.ID,
 		Kind:       n.Kind,
@@ -191,4 +270,26 @@ func toResponse(n generated.Notification) notificationResponse {
 		r.EntitySpaceID = &sid
 	}
 	return r
+}
+
+// respondUnmapped answers an internal failure without putting the error on the
+// wire.
+//
+// All four notification 500s interpolated the underlying error into the
+// client's message (known-issues #28), which is the same shape the hygiene pass
+// closed on the project surfaces and this branch closed on tickets. A Postgres
+// error names the table and the constraint it violated; none of that is the
+// caller's business, and on this surface it would be handed to every
+// authenticated user rather than only to one holding a capability.
+//
+// op names which call failed, for the log only. The client gets a fixed
+// sentence and the request id it already had.
+func respondUnmapped(w http.ResponseWriter, r *http.Request, op string, err error) {
+	slog.Error("unmapped handler error",
+		"surface", "notifications",
+		"op", op,
+		"error", err,
+		"request_id", respond.RequestIDFromContext(r.Context()),
+	)
+	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "notification operation failed")
 }
