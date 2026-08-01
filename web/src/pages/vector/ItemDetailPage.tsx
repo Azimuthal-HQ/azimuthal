@@ -24,7 +24,9 @@ import {
   type StatusOutcome,
 } from '../../components/workflow/statusOutcome';
 import { Markdown } from '../../components/Markdown';
+import { statusOptionsFor, statusOptionLabel } from '../../lib/workflow/statusOptions';
 import {
+  useAvailableTransitions,
   useProjectItem,
   useUpdateProjectItem,
   useTransitionProjectItemStatus,
@@ -57,7 +59,19 @@ const STATUS_LABEL: Record<string, string> = {
   open: 'Open', todo: 'To Do', in_progress: 'In Progress', in_review: 'In Review', done: 'Done', closed: 'Closed',
 };
 
-const ALL_STATUSES = ['open', 'in_progress', 'in_review', 'done', 'closed'];
+/**
+ * The picker's vocabulary for a space with NO workflow assigned.
+ *
+ * It is a fallback now, not the list. Where a workflow governs, the options come
+ * from the server's offering — which is the only thing that can know which moves
+ * this actor may take from this item's current state, because ADR-0011
+ * conditions are evaluated against both.
+ *
+ * Kept because a space genuinely can have no workflow (a best-effort assignment
+ * that failed, or one deleted out from under the space), and in that case the
+ * server enforces nothing and this list is as good as it ever was.
+ */
+const FALLBACK_STATUSES = ['open', 'in_progress', 'in_review', 'done', 'closed'];
 
 const sideSelectClass = cn(
   'h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
@@ -92,6 +106,11 @@ export function ItemDetailPage() {
   const { data: item, isLoading, error, refetch: refetchItem } = useProjectItem(spaceId, itemId);
   const updateMutation = useUpdateProjectItem(spaceId, itemId);
   const statusMutation = useTransitionProjectItemStatus(spaceId, itemId);
+  // The moves this actor may be offered for this item, with ADR-0011 conditions
+  // applied. The server refuses an illegal move regardless of what is offered —
+  // this only stops the picker showing doors that do not open.
+  const { data: transitions, refetch: refetchTransitions } =
+    useAvailableTransitions(spaceId, 'item', itemId);
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
   const { data: members } = useMembers(orgId, spaceId);
@@ -140,6 +159,10 @@ export function ItemDetailPage() {
 
   const backlogPath = `/vector/${spaceId}/backlog`;
 
+  // Always includes the item's CURRENT status, which the workflow never offers
+  // (no state has an edge to itself) and a <select> renders blank without.
+  const statusOptions = statusOptionsFor(item?.status ?? '', transitions, FALLBACK_STATUSES);
+
   // See TicketDetailPage: three outcomes, one of which (202 pending approval)
   // is not an error and so resolved as a false success.
   async function handleStatusChange(newStatus: string) {
@@ -150,6 +173,10 @@ export function ItemDetailPage() {
     );
     setStatusOutcome(outcome);
     refetchItem();
+    // The offered set depends on where the item now IS, so it goes stale on
+    // every outcome — including a refusal, which can mean an administrator
+    // changed the workflow under this page.
+    refetchTransitions();
   }
 
   async function handleAssigneeChange(assigneeId: string) {
@@ -485,8 +512,10 @@ export function ItemDetailPage() {
                 onChange={(e) => handleStatusChange(e.target.value)}
                 className={sideSelectClass}
               >
-                {ALL_STATUSES.map((s) => (
-                  <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+                {statusOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {statusOptionLabel(o, STATUS_LABEL[o.value] ?? o.value)}
+                  </option>
                 ))}
               </select>
               {statusOutcomeMessage(statusOutcome) && (
