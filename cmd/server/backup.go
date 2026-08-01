@@ -47,7 +47,8 @@ type backupManifest struct {
 }
 
 // runBackup creates a full backup archive at the path specified by --output.
-func runBackup(_ *cobra.Command, _ []string) error {
+func runBackup(cmd *cobra.Command, _ []string) error {
+	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)

@@ -42,7 +42,28 @@ func init() {
 }
 
 // runRestore reads a backup archive and restores the database and object storage.
-func runRestore(_ *cobra.Command, _ []string) error {
+//
+// # Why every RunE in this binary starts by silencing usage
+//
+// cobra prints the command's full usage block after any error a RunE returns.
+// For this command that buried "the database is in an indeterminate state"
+// under forty lines of flag documentation, at the one moment an operator most
+// needs to read it — and docs/self-hosting.md now tells them to read it.
+//
+// It is set HERE, inside the RunE, rather than as a SilenceUsage field on the
+// command or on the root, and the difference is not stylistic. Flag parsing
+// happens before RunE runs, so a mistyped `--inptu` still gets the usage block,
+// which is exactly when usage helps; only failures from the command's own body
+// suppress it. The field form cannot make that distinction — it silences both.
+//
+// Applied uniformly to all eight RunEs, including `assess` and `bundle-hash`,
+// which previously used the field form and so behaved differently from the
+// other six. Two guards keep it that way:
+// TestCommands_EveryRunESilencesUsage walks the AST so a ninth command cannot
+// forget, and TestCommands_SilenceUsageOnRuntimeFailure asserts the behaviour
+// through cobra in both directions.
+func runRestore(cmd *cobra.Command, _ []string) error {
+	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)

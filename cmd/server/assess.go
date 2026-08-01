@@ -50,8 +50,11 @@ Examples:
   azimuthal assess --confluence ./DOCS-space-export.zip
   azimuthal assess --jira ./jira.zip --confluence ./docs.zip --output report.md
   azimuthal assess --jira ./jira.zip --json`,
-	RunE:         runAssess,
-	SilenceUsage: true,
+	// SilenceUsage is deliberately NOT a field here. It is set inside runAssess
+	// instead, so it takes effect only once flag parsing has succeeded: a
+	// mistyped flag still gets usage, a runtime failure does not. Uniform
+	// across every command in this binary — see runRestore for the rationale.
+	RunE: runAssess,
 }
 
 func init() {
@@ -62,6 +65,7 @@ func init() {
 }
 
 func runAssess(cmd *cobra.Command, _ []string) error {
+	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 	res, err := assess.Run(assess.Input{
 		JiraPath:       assessJira,
 		ConfluencePath: assessConfluence,
