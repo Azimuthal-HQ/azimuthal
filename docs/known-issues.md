@@ -83,10 +83,16 @@ The domain services (auth, tickets, projects) define repository interfaces using
 
 The 60% floor this entry describes no longer exists. P1.5 raised the CI gate from 70 to the 80
 the specification requires, and P3 merged at 80.2%. The gate is the "Enforce minimum coverage
-(80%)" step in `.github/workflows/ci.yml`, run with `-coverpkg=./internal/...` and `-p 1`. It
-rises to 85% at the end of P5 per spec section 2.8. The detail below is retained only as a record
-of where the v0.1.x line started; `internal/db` and `cmd/server` are now exercised by the
-integration suites.
+(80%)" step in `.github/workflows/ci.yml`, run with `-coverpkg=./internal/...` and `-p 1`. The
+detail below is retained only as a record of where the v0.1.x line started; `internal/db` and
+`cmd/server` are now exercised by the integration suites.
+
+Spec section 2.8 schedules a rise to 85% at the end of P5. **That sentence read "It rises to 85%
+at the end of P5" here until 2026-08-01, in the future tense, which had stopped being true: P5
+merged as #88/#89 and the flip never shipped.** It is still outstanding, tracked as **D98** in
+`docs/design/spec-repo-reconciliation.md`. Re-measured at CI parity on `3e888636` (`v0.4.0`):
+**84.7615%, 15,085 of 17,797 statements** — below 85, so the flip is deferred pending a coverage
+pass rather than closed by moving the target.
 
 <details><summary>Original entry</summary>
 

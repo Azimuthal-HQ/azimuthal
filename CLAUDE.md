@@ -168,6 +168,18 @@ case 23 (constant authorisation queries) is worth more than five percentage poin
 > describes the raise in the future tense. This is a lapsed commitment, not a wrong number: 80 is
 > what is enforced. Raising it needs a CI-parity measurement first (the coverage job's own
 > invocation, including `-p 1`), because an unmeasured flip fails every PR. Catalogued as D98.
+>
+> **Re-measured 2026-08-01, on `3e888636` (`v0.4.0`): 84.7615% — 15,085 of 17,797 statements.**
+> `go tool cover -func` reports that as `84.8`, and the gate's own comparison is
+> `$(echo "$COVERAGE < 85" | bc -l)` — so **flipping the floor to 85 today fails CI.** CI measured
+> `Total coverage: 84.8%` itself on that branch, so this is measured on the runner rather than
+> inferred from a local box. The
+> measurement that D98 asks for has now been taken and it does not clear the bar. The raise is
+> therefore deferred rather than lowered: 85 stays the target in §2.8 and in P5's Definition of
+> Done, both untouched. What moved is the denominator — 16,500 statements when P5 measured
+> 84.96%, 17,797 now — so the honest close is a coverage pass over the phases that diluted the
+> ratio, not a threshold flip. Closing the 43-statement gap by writing tests against the code
+> #100, #101, #103 and #104 merged, purely to move the number, is the thing this section forbids.
 
 The permission matrix (§2.5, 23 cases) and the per-endpoint matrix (§2.6) are mandatory for any
 PR touching teams, grants, shares, visibility, or any read path. A missing case is a failing

@@ -2160,6 +2160,54 @@ own invocation, including `-p 1`, because the tests share one database and an un
 every PR. If the measurement lands below 85, this is a coverage PR, not a one-line threshold change,
 and **it must not be closed by lowering the target.**
 
+**Measured 2026-08-01 — the raise is deferred, and the decision is the maintainer's.** The
+measurement this entry asks for has been taken, at CI parity, on `3e888636` (`v0.4.0`), against a
+freshly reset database, alone:
+
+```
+go test -p 1 -count=1 -coverprofile=coverage.out -covermode=atomic \
+        -coverpkg=./internal/... -timeout=900s ./...
+```
+
+**84.7615% — 15,085 of 17,797 statements.** Zero failures, zero skips beyond the five
+`requirePostgresClientTools` gates in `cmd/server`, which skip off CI by design and are `package
+main` (outside this `-coverpkg` denominator). `-race` was omitted: it needs cgo and a C compiler,
+which the Windows box has not got, and it does not move the statement percentage.
+
+`go tool cover -func | tail -1` prints that as `84.8`, and the gate compares `84.8 < 85`, so
+**flipping the floor to 85 fails CI today.**
+
+That is not an inference from a local run. **CI measured the same figure on this very branch**, in
+the `Test` job of Actions run `30706459987`, on GitHub's own runner and *with* `-race`:
+
+```
+Total coverage: 84.8%
+✅ Coverage 84.8% meets minimum
+```
+
+It passes because the step it ran is still `Enforce minimum coverage (80%)`. Rename that step to
+85 — which is all the raise does — and the same `84.8` fails the same comparison. The local and CI
+figures agreeing also settles the `-race` question: it does not move the statement percentage.
+
+The predecessor's branch measured 84.96% (14,018 of
+16,500) on 2026-07-30 and passed only because `-func` rounded it to `85.0`. That rounding no longer
+covers it. #100, #101, #103 and #104 merged in between: the denominator grew by 1,297 statements
+and the numerator by 1,067 — the same denominator-outruns-numerator arithmetic this entry's
+follow-up predicted, run four more times.
+
+The gap is **43 statements** to a true 85, or 34 to clear the `84.95` rounding. Those statements
+are in other phases' newly merged code, so closing them is coverage-shaped work by construction —
+which §2.8 and the gate's own comment forbid. The raise commit was therefore **dropped** rather
+than shipped red; it is recoverable as `587132ac` (pre-rebase) or `5fac8bcc` (rebased), and it is
+a three-file, ~22-line diff.
+
+**This defers the raise; it does not lower the target.** §2.8 and P5's Definition of Done are
+untouched and still say 85. Two readings remain live and the choice between them is the
+maintainer's: (a) treat D98 as a coverage PR and fund a pass over #100/#101/#103/#104 before
+flipping; or (b) flip anyway and accept a red gate until that pass lands. This entry stays **open**.
+The release-timing argument that once favoured haste is gone — `v0.4.0` is cut at `3e888636`, so
+nothing waits on the answer.
+
 ### D105 — backup cannot run where every document says to run it, and restore reports success on a partial recovery
 
 `azimuthal backup` forks `pg_dump` and `psql`; `azimuthal restore` forks `psql`. The shipped image is
