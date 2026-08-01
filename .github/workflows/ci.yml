@@ -191,7 +191,7 @@ jobs:
         run: go mod verify
 
       # The one binary every downstream job uses. CGO_ENABLED=0 + GOOS=linux so
-      # it runs unchanged inside gcr.io/distroless/static, and -trimpath
+      # it runs unchanged inside gcr.io/distroless/base-debian12, and -trimpath
       # -ldflags="-s -w" to match what build/Dockerfile.ci expects. web/dist was
       # built above, so go:embed picks up the real bundle.
       - name: Build server binary
@@ -1466,11 +1466,28 @@ jobs:
           # The image has no shell or coreutils, so the archive is inspected out
           # here rather than in the container.
           docker cp azimuthal-boot:/tmp/ci-backup.tar.gz ./ci-backup.tar.gz
-          [ -s ./ci-backup.tar.gz ] || (echo "❌ backup produced an empty file"; exit 1)
-          tar -tzf ./ci-backup.tar.gz | tee /dev/stderr | grep -qx 'database.sql' \
-            || (echo "❌ archive has no database.sql"; exit 1)
-          tar -tzf ./ci-backup.tar.gz | grep -qx 'manifest.json' \
-            || (echo "❌ archive has no manifest.json"; exit 1)
+          if [ ! -s ./ci-backup.tar.gz ]; then
+            echo "❌ backup produced an empty file"
+            exit 1
+          fi
+
+          # The listing is captured ONCE and matched with here-strings rather
+          # than piped into `grep -q`. This step runs under `set -o pipefail`,
+          # and `grep -q` exits at the first match, which SIGPIPEs the writer —
+          # so `tar ... | grep -q` reports a failed pipeline exactly when the
+          # match succeeds. It is a race on how fast the writer finishes, which
+          # a two-entry archive usually wins; that makes it a latent flake that
+          # passes until it doesn't.
+          MEMBERS=$(tar -tzf ./ci-backup.tar.gz)
+          echo "$MEMBERS"
+          if ! grep -qx 'database.sql' <<< "$MEMBERS"; then
+            echo "❌ archive has no database.sql"
+            exit 1
+          fi
+          if ! grep -qx 'manifest.json' <<< "$MEMBERS"; then
+            echo "❌ archive has no manifest.json"
+            exit 1
+          fi
           echo "✅ archive contains a database dump and a manifest"
 
           # Restore the archive back over the live database. With
@@ -1480,13 +1497,69 @@ jobs:
             /azimuthal restore --input /tmp/ci-backup.tar.gz
           echo "✅ restore exited 0"
 
+      # A restore that half-applies must FAIL, in the shipped image.
+      #
+      # This is the more dangerous half of D105 and the half a happy-path check
+      # cannot see: before the fix, psql ran without -v ON_ERROR_STOP=1, so a
+      # dump whose statements failed still exited 0 and printed
+      # "  Database restored." over a database that had not been restored.
+      #
+      # The Go-level guard (TestRestorePostgres_PartialRestoreIsAFailure) covers
+      # the same property, but only where pg_dump and psql are on PATH — which
+      # is exactly the assumption that was false in the shipped container. This
+      # step proves it in the artifact.
+      - name: A partially-failing restore is refused inside the image
+        run: |
+          # Reuse the good archive from the previous step and append one
+          # statement that cannot succeed. Members are named explicitly rather
+          # than using `-C dir .`, which would prefix every entry with "./" —
+          # readArchive keys on the tar header name, so the manifest check would
+          # fail first and the test would pass for the wrong reason.
+          mkdir -p bad-archive
+          tar -xzf ./ci-backup.tar.gz -C bad-archive
+          echo "INSERT INTO a_table_that_does_not_exist VALUES (1);" >> bad-archive/database.sql
+          tar -czf ./ci-bad-backup.tar.gz -C bad-archive database.sql manifest.json
+
+          docker cp ./ci-bad-backup.tar.gz azimuthal-boot:/tmp/ci-bad-backup.tar.gz
+
+          set +e
+          OUT=$(timeout 120 docker exec -e STORAGE_ENDPOINT= azimuthal-boot \
+            /azimuthal restore --input /tmp/ci-bad-backup.tar.gz 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUT"
+          echo "--- exit code: $CODE ---"
+
+          # All three, because any one alone can pass for the wrong reason: a
+          # non-zero exit could come from an unrelated failure, and the success
+          # line is the specific thing an operator would have believed.
+          #
+          # Written as explicit `if`s rather than `grep -q ... && (exit 1)`.
+          # This step runs under `set -e -o pipefail`, where a bare `A && B`
+          # takes its status from a failing A — which is the PASSING case for a
+          # negative check, so that form reads backwards and breaks outright if
+          # it ever becomes the final statement.
+          if [ "$CODE" -eq 0 ]; then
+            echo "❌ a dump with a failing statement exited 0 — this is D105"
+            exit 1
+          fi
+          if ! grep -q "a_table_that_does_not_exist" <<< "$OUT"; then
+            echo "❌ restore failed, but not for the reason under test"
+            exit 1
+          fi
+          if grep -q "Database restored" <<< "$OUT"; then
+            echo "❌ a failed restore printed the success line"
+            exit 1
+          fi
+          echo "✅ partial restore refused: non-zero exit, error names the bad statement, no success line"
+
       - name: Tear down image
         if: always()
         run: |
           docker stop azimuthal-boot || true
           docker rm azimuthal-boot || true
           docker rmi ${{ env.BINARY_NAME }}:boot-${{ github.sha }} || true
-          rm -f ./ci-backup.tar.gz || true
+          rm -rf ./ci-backup.tar.gz ./ci-bad-backup.tar.gz ./bad-archive || true
 
 
   # ─────────────────────────────────────────────────────────────

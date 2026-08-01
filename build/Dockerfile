@@ -159,7 +159,7 @@ RUN set -eu; \
 # base-debian12, not static: pg_dump and psql are dynamically linked and need
 # a libc. KEEP THIS STAGE IN LOCKSTEP WITH build/Dockerfile.ci — that is a
 # second, independent base declaration, and it is the one CI scans and boots.
-# TestDockerfiles_FinalStagesAgree fails when the two drift.
+# TestDockerfiles_FinalBaseAgrees fails when the two drift.
 FROM gcr.io/distroless/base-debian12:nonroot
 USER nonroot:nonroot
 COPY --from=builder --chown=nonroot:nonroot /azimuthal /azimuthal

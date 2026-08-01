@@ -11,8 +11,8 @@
 # both build THIS file, not build/Dockerfile. A base change made only there
 # would leave CI scanning and boot-testing an image that is not the one that
 # ships, with both jobs green. The stage below is byte-identical to
-# build/Dockerfile's, and TestDockerfiles_FinalStagesAgree fails when they
-# drift.
+# build/Dockerfile's, and TestDockerfiles_PgClientStageIsIdentical fails when
+# they drift.
 
 # >>> BEGIN SHARED PGCLIENT STAGE — byte-identical in build/Dockerfile.ci >>>
 FROM postgres:16-bookworm AS pgclient

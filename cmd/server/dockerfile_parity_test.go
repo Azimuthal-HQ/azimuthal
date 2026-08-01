@@ -132,6 +132,52 @@ func TestDockerfiles_ShipPostgresClient(t *testing.T) {
 	}
 }
 
+// citedGuardPattern finds test names the Dockerfiles cite at the reader. The
+// TestDockerfiles_ prefix is the scope on purpose: by convention those live in
+// this file, so this file's own source is the authority on whether they exist.
+var citedGuardPattern = regexp.MustCompile(`TestDockerfiles_\w+`)
+
+// TestDockerfiles_CitedGuardsExist checks that every guard the two Dockerfiles
+// name is a real test in this file.
+//
+// This is the gap that let a dead citation sit in the two files whose entire
+// purpose is keeping a claim and reality in sync: the parity guards compare the
+// Dockerfiles against each other, and nothing compared them against the test
+// names they invoke as reassurance. Both files cited
+// "TestDockerfiles_FinalStagesAgree", which has never existed — a reader
+// checking the claim finds nothing, and the comment reads as authority it does
+// not have. Same obligation as CLAUDE.md §6/D148: a citation is only worth
+// making if something fails when it stops being true.
+func TestDockerfiles_CitedGuardsExist(t *testing.T) {
+	// This file's own source is the list of tests that exist.
+	self, err := os.ReadFile("dockerfile_parity_test.go")
+	if err != nil {
+		t.Fatalf("reading this test's own source: %v", err)
+	}
+
+	total := 0
+	for _, path := range []string{shippedDockerfile, ciDockerfile} {
+		cited := citedGuardPattern.FindAllString(readDockerfile(t, path), -1)
+		total += len(cited)
+
+		for _, name := range cited {
+			if !strings.Contains(string(self), "func "+name+"(") {
+				t.Errorf("%s cites %s, which is not a test in dockerfile_parity_test.go. "+
+					"Either the guard was renamed and the comment was not, or the comment "+
+					"describes a guard nobody wrote — both leave the file asserting something "+
+					"no test enforces.", path, name)
+			}
+		}
+	}
+
+	// Without this the guard passes vacuously the moment the citations are
+	// deleted, which is the failure mode it exists to prevent.
+	if total == 0 {
+		t.Error("neither Dockerfile cites a TestDockerfiles_* guard. The comments explaining " +
+			"why the two files must agree are load-bearing; if they were removed, restore them.")
+	}
+}
+
 // debianCodenames maps the Debian release codename a postgres tag is built on
 // to the numbered distroless base that carries the matching glibc.
 var debianCodenames = map[string]string{

@@ -173,8 +173,10 @@ func TestBackupRestore_FixturesAreReadable(t *testing.T) {
 // pg_dump's whole-database scope does not collide with any other test's
 // schema.
 //
-// Skipped automatically when pg_dump/psql are not on PATH or when
-// DATABASE_URL is not set. Otherwise drives the chain end-to-end:
+// Gated by requirePostgresClientTools, which skips locally and FAILS in CI —
+// it carried its own inline copy of those three checks, which was both
+// duplication and a second place for the CI hard-fail to rot away. Drives the
+// chain end-to-end:
 //
 //  1. Create source DB, run migrations, insert one of each entity (org,
 //     user, space, ticket-style item, page, comment).
@@ -183,16 +185,7 @@ func TestBackupRestore_FixturesAreReadable(t *testing.T) {
 //  4. Re-query each entity from the target and assert non-timestamp
 //     equality.
 func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
-	if _, err := exec.LookPath("pg_dump"); err != nil {
-		t.Skip("pg_dump not on PATH — skipping postgres round-trip")
-	}
-	if _, err := exec.LookPath("psql"); err != nil {
-		t.Skip("psql not on PATH — skipping postgres round-trip")
-	}
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		t.Skip("DATABASE_URL not set — skipping postgres round-trip")
-	}
+	dsn := requirePostgresClientTools(t)
 
 	ctx := context.Background()
 
@@ -200,35 +193,10 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	require.NoError(t, err, "connecting with admin DSN")
 	defer adminPool.Close()
 
-	// Use UUIDs (without dashes) for DB names so concurrent runs of this
-	// test never collide.
-	suffix := uuid.New().String()[:8]
-	srcDBName := "azim_brt_src_" + suffix
-	dstDBName := "azim_brt_dst_" + suffix
-
-	createDB := func(name string) {
-		// `name` is generated locally from a UUID; identifiers cannot be
-		// parameterised in CREATE/DROP DATABASE so a local-format string
-		// is the only way to spell this. Trusted input.
-		_, execErr := adminPool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %q", name))
-		require.NoError(t, execErr, "creating database %q", name)
-	}
-	dropDB := func(name string) {
-		// Disconnect any other sessions before dropping; ignore errors here.
-		_, _ = adminPool.Exec(ctx,
-			fmt.Sprintf(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s' AND pid <> pg_backend_pid()`, name))
-		_, _ = adminPool.Exec(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %q", name))
-	}
-
-	createDB(srcDBName)
-	t.Cleanup(func() { dropDB(srcDBName) })
-	createDB(dstDBName)
-	t.Cleanup(func() { dropDB(dstDBName) })
-
-	srcDSN, err := dsnWithDatabase(dsn, srcDBName)
-	require.NoError(t, err)
-	dstDSN, err := dsnWithDatabase(dsn, dstDBName)
-	require.NoError(t, err)
+	// Two fresh databases, so pg_dump's whole-database scope cannot collide
+	// with any other test's schema.
+	srcDSN := newScratchDatabase(ctx, t, adminPool, dsn, "azim_brt_src_")
+	dstDSN := newScratchDatabase(ctx, t, adminPool, dsn, "azim_brt_dst_")
 
 	// 1. Migrate the source DB and seed one of each entity.
 	srcPool, err := pgxpool.New(ctx, srcDSN)
@@ -307,26 +275,57 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 	require.Equal(t, seed.comment.Body, itemComments[0].Body)
 }
 
-// requirePostgresClientTools gates the tests that fork pg_dump/psql.
+// requirePostgresClientTools gates the tests that fork pg_dump/psql, and
+// returns the admin DSN.
 //
-// Read this skip for what it is: on a developer box without the client tools
-// it hides the tests, and until this PR the shipped CONTAINER was such a box —
-// so the round-trip test below proved the Go code works *given* the binaries,
-// which is precisely the assumption that failed in production. The tools now
-// ship in the image (build/Dockerfile), and the in-image proof lives in CI's
-// docker-e2e job, which runs the real commands inside the real artifact.
-// These tests are the unit-level half; they are not the whole proof.
+// **In CI an unmet precondition is fatal, not a skip.** Off CI it stays a skip,
+// because a developer box legitimately may not have the client tools.
+//
+// The distinction matters more than it looks.
+// TestRestorePostgres_PartialRestoreIsAFailure is the only gate anywhere on the
+// more dangerous half of D105 — a restore that half-applies and reports
+// success. CI's `test` job runs on ubuntu-latest and merely *relies on* the
+// runner image happening to ship psql; nothing asserts it. If a future runner
+// image drops it, every test here would skip, the fail-loud property would lose
+// all coverage, and CI would still report every gate green. That is the exact
+// shape of the defect this file exists to close — a gate that appears to cover
+// something and does not — one level down.
+//
+// `CI` is the right variable precisely because it is not ours: GitHub Actions
+// sets it on every runner, so the hard-fail cannot be lost by editing a
+// workflow. Verified when this was written: exactly one `go test` invocation
+// exists across .github/workflows, in the `test` job, and that job sets
+// DATABASE_URL at job level — so none of the three conditions below can fire
+// spuriously in CI today.
+//
+// Note what this does NOT cover: docker-e2e proves the happy path inside the
+// shipped image, and now also proves a bad dump is refused there. These remain
+// the unit-level half.
 func requirePostgresClientTools(t *testing.T) string {
 	t.Helper()
+
+	// In CI every one of these is guaranteed, so treat an unmet precondition as
+	// the infrastructure regression it is rather than quietly dropping coverage.
+	unmet := func(format string, args ...any) {
+		t.Helper()
+		if os.Getenv("CI") != "" {
+			t.Fatalf("CI precondition not met: "+format+
+				"\nThis is a hard failure in CI on purpose: skipping here would silently "+
+				"drop the only coverage of the fail-loud restore behaviour (D105) while "+
+				"every gate still reported green.", args...)
+		}
+		t.Skipf(format+" — skipping locally; this is fatal in CI", args...)
+	}
+
 	if _, err := exec.LookPath("pg_dump"); err != nil {
-		t.Skip("pg_dump not on PATH — skipping; in-image coverage is CI's docker-e2e job")
+		unmet("pg_dump is not on PATH")
 	}
 	if _, err := exec.LookPath("psql"); err != nil {
-		t.Skip("psql not on PATH — skipping; in-image coverage is CI's docker-e2e job")
+		unmet("psql is not on PATH")
 	}
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		t.Skip("DATABASE_URL not set — skipping")
+		unmet("DATABASE_URL is not set")
 	}
 	return dsn
 }
