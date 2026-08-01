@@ -132,24 +132,42 @@ func (s *TierService) Gate(ctx context.Context, req GateRequest) (TransitionDeci
 		return TransitionDecision{NoWorkflow: true}, nil
 	}
 
+	d, transition, err := s.resolveMove(ctx, req)
+	if err != nil || d.Refused != nil || d.NoOp {
+		return d, err
+	}
+
+	return s.evaluateTiers(ctx, req, d, transition)
+}
+
+// resolveMove answers the STRUCTURAL half: where the entity is, whether the
+// target names a state, and whether the workflow defines an edge between them.
+//
+// It returns the decision so far plus the matched edge. A non-nil Refused or a
+// NoOp means the caller stops here — no guard is loaded and no approval is
+// created, because there is no edge to hang either on.
+func (s *TierService) resolveMove(
+	ctx context.Context, req GateRequest,
+) (TransitionDecision, *Transition, error) {
 	from, err := s.ResolveFromState(ctx, req.WorkflowID, req.CurrentStatus, req.CurrentStateID)
 	if err != nil {
-		return TransitionDecision{}, err
+		return TransitionDecision{}, nil, err
 	}
 	if from == nil {
 		return TransitionDecision{Refused: refuse(CheckNoCurrentState,
-			"this space's workflow declares no starting state, so no transition can be checked against it; an administrator must set one")}, nil
+			"this space's workflow declares no starting state, so no transition can be checked "+
+				"against it; an administrator must set one")}, nil, nil
 	}
 	d := TransitionDecision{FromStateID: &from.ID, FromStatus: from.Name}
 
 	to, err := s.store.StateByName(ctx, req.WorkflowID, req.TargetStatus)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		return TransitionDecision{}, fmt.Errorf("gate: resolving target state: %w", err)
+		return TransitionDecision{}, nil, fmt.Errorf("gate: resolving target state: %w", err)
 	}
 	if to == nil {
 		d.Refused = refuse(CheckUnknownTargetState, fmt.Sprintf(
 			"%q is not a status in this space's workflow", req.TargetStatus))
-		return d, nil
+		return d, nil, nil
 	}
 	d.ToStateID = &to.ID
 
@@ -159,20 +177,27 @@ func (s *TierService) Gate(ctx context.Context, req GateRequest) (TransitionDeci
 		// a request that changes nothing — and every build before this one
 		// accepted it. Nothing is gated because nothing moves.
 		d.NoOp = true
-		return d, nil
+		return d, nil, nil
 	}
 
 	transition, err := s.store.TransitionBetween(ctx, req.WorkflowID, from.ID, to.ID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		return TransitionDecision{}, fmt.Errorf("gate: resolving transition: %w", err)
+		return TransitionDecision{}, nil, fmt.Errorf("gate: resolving transition: %w", err)
 	}
 	if transition == nil {
 		d.Refused = refuse(CheckNoSuchTransition, fmt.Sprintf(
 			"this space's workflow defines no move from %q to %q", from.Name, to.Name))
-		return d, nil
+		return d, nil, nil
 	}
 	d.TransitionID = &transition.ID
+	return d, transition, nil
+}
 
+// evaluateTiers answers the CONFIGURED half for an edge that exists: the
+// ADR-0011 guards, then the approval, then the post-functions.
+func (s *TierService) evaluateTiers(
+	ctx context.Context, req GateRequest, d TransitionDecision, transition *Transition,
+) (TransitionDecision, error) {
 	actor, err := s.resolveActor(ctx, req)
 	if err != nil {
 		return TransitionDecision{}, err
@@ -182,13 +207,14 @@ func (s *TierService) Gate(ctx context.Context, req GateRequest) (TransitionDeci
 	if err != nil {
 		return TransitionDecision{}, fmt.Errorf("gate: loading guards: %w", err)
 	}
-	if refusal := Evaluate(guards, GuardConditionClass, actor, req.Entity); refusal != nil {
-		d.Refused = refusal
-		return d, nil
-	}
-	if refusal := Evaluate(guards, GuardValidatorClass, actor, req.Entity); refusal != nil {
-		d.Refused = refusal
-		return d, nil
+	// Conditions first: failing one means the caller is asking for a move they
+	// were never offered, which is a different thing from failing a validator on
+	// a move they were.
+	for _, class := range []GuardClass{GuardConditionClass, GuardValidatorClass} {
+		if refusal := Evaluate(guards, class, actor, req.Entity); refusal != nil {
+			d.Refused = refusal
+			return d, nil
+		}
 	}
 
 	approvers, err := s.store.ApproversForTransition(ctx, transition.ID)
@@ -278,40 +304,57 @@ func (s *TierService) OfferedTransitions(ctx context.Context, req GateRequest) (
 	}
 
 	for _, t := range candidates {
-		guards, err := s.store.GuardsForTransition(ctx, t.ID)
+		offer, err := s.offerFor(ctx, req, actor, t)
 		if err != nil {
-			return Offering{}, fmt.Errorf("offered transitions: loading guards: %w", err)
+			return Offering{}, err
 		}
-		if Evaluate(guards, GuardConditionClass, actor, req.Entity) != nil {
-			continue
+		if offer != nil {
+			out.Transitions = append(out.Transitions, *offer)
 		}
-
-		to, err := s.store.StateByID(ctx, req.WorkflowID, t.ToStateID)
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return Offering{}, fmt.Errorf("offered transitions: resolving target state: %w", err)
-		}
-		if to == nil {
-			// An edge pointing at a state that no longer exists cannot be
-			// offered, because the client would have no status to post back.
-			// Migration 016 CASCADEs the edge with the state, so this is
-			// unreachable in a consistent database and refuses rather than
-			// panics if it ever is not.
-			continue
-		}
-
-		approvers, err := s.store.ApproversForTransition(ctx, t.ID)
-		if err != nil {
-			return Offering{}, fmt.Errorf("offered transitions: loading approvers: %w", err)
-		}
-		out.Transitions = append(out.Transitions, Offer{
-			TransitionID:     t.ID,
-			Name:             t.Name,
-			ToStateID:        to.ID,
-			ToStatus:         to.Name,
-			RequiresApproval: RequiresApproval(approvers),
-		})
 	}
 	return out, nil
+}
+
+// offerFor turns one candidate edge into an Offer, or nil when it must not be
+// offered to this actor.
+func (s *TierService) offerFor(
+	ctx context.Context, req GateRequest, actor Actor, t *Transition,
+) (*Offer, error) {
+	guards, err := s.store.GuardsForTransition(ctx, t.ID)
+	if err != nil {
+		return nil, fmt.Errorf("offered transitions: loading guards: %w", err)
+	}
+	if Evaluate(guards, GuardConditionClass, actor, req.Entity) != nil {
+		// A condition hides, silently. An actor who needs to know why asks an
+		// administrator, because the answer is configuration they are not
+		// entitled to enumerate.
+		return nil, nil
+	}
+
+	to, err := s.store.StateByID(ctx, req.WorkflowID, t.ToStateID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, fmt.Errorf("offered transitions: resolving target state: %w", err)
+	}
+	if to == nil {
+		// An edge pointing at a state that no longer exists cannot be offered,
+		// because the client would have no status to post back. Migration 016
+		// CASCADEs the edge with the state, so this is unreachable in a
+		// consistent database and drops the offer rather than panicking if it
+		// ever is not.
+		return nil, nil
+	}
+
+	approvers, err := s.store.ApproversForTransition(ctx, t.ID)
+	if err != nil {
+		return nil, fmt.Errorf("offered transitions: loading approvers: %w", err)
+	}
+	return &Offer{
+		TransitionID:     t.ID,
+		Name:             t.Name,
+		ToStateID:        to.ID,
+		ToStatus:         to.Name,
+		RequiresApproval: RequiresApproval(approvers),
+	}, nil
 }
 
 // resolveActor builds the evaluation snapshot. The effective team set comes
@@ -513,7 +556,14 @@ func (s *TierService) Decide(ctx context.Context, req DecideRequest) (Approval, 
 		}
 	}
 
-	return s.applier.DecideAndApply(ctx, in)
+	decided, err := s.applier.DecideAndApply(ctx, in)
+	if err != nil {
+		// Wrapped, not replaced: respondDecideError matches ErrTransitionRaced
+		// and ErrApprovalAlreadyDecided with errors.Is, and a replaced error
+		// would collapse a lost race into a generic 500.
+		return Approval{}, fmt.Errorf("decide: %w", err)
+	}
+	return decided, nil
 }
 
 // ApproverRecipients returns every user who may decide a transition, expanded.

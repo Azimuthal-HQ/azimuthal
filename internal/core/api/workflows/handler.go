@@ -628,7 +628,7 @@ func (h *Handler) GetSpaceWorkflowStates(w http.ResponseWriter, r *http.Request)
 // @Failure      409       {object}  api.SwaggerErrorResponse        "Invalid transition"
 // @Failure      500       {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/workflow-state [post]
-func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // workflow state machine validation requires multiple guard branches
+func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
@@ -725,7 +725,7 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 // @Failure      409      {object}  api.SwaggerErrorResponse        "Invalid transition"
 // @Failure      500      {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/workflow-state [post]
-func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // workflow state machine validation requires multiple guard branches
+func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")

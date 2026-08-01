@@ -1251,9 +1251,25 @@ the pull request did.
 
 **Severity**: Medium (a configured restriction silently does not apply; no disclosure, no data
 loss)
-**Status**: Open. Recorded by P-W PR-B, which was required to dispose of it and chose the ledger
-over a partial close. The failing-shaped test is written and skipped at
-`internal/core/api/workflow_d72_ungated_first_transition_test.go`.
+**Status**: **CLOSED 2026-08-01** by the workflow fail-closed phase, taking **option (e)** below —
+the one this entry recommends. Entities are now born in their space workflow's initial state, with
+`status` and `workflow_state_id` written together, resolved through `tiergate.Gate.InitialPosition`.
+A space with no workflow keeps the old literal default.
+
+`internal/core/api/workflow_d72_ungated_first_transition_test.go` was skipped and now runs, with its
+assertions unchanged: the item is created at `backlog`, and its first move is refused 422 by the
+validator on the initial edge.
+
+Two things this entry raised are worth carrying forward. The blast radius it warned about was real
+but smaller than feared, because `testutil.CreateTestSpace` assigns no workflow — so the Go suite
+was almost entirely unaffected, and the visible change landed in the frontend, where both status
+pickers now derive their options from the server rather than from a hardcoded list. And the backfill
+decision it flags as "a data decision that needs a maintainer" was **not** taken: migration 051
+reconciles `workflow_state_id` from the status text and deliberately leaves `status` alone, so items
+already sitting at `open` stay there and are placed at read time instead.
+
+The original analysis is kept below unedited, because the rejected options are the useful part of
+the record.
 
 `ItemService.CreateItem` in `internal/core/projects/item.go` writes `item.Status = "open"`
 unconditionally — the only occurrence of that literal in the file. The seeded project workflow's states are

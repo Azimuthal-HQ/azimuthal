@@ -285,3 +285,132 @@ test('an org member who is not an admin cannot reach the workflow editor', async
     await member.close()
   }
 })
+
+// ─── 4. A condition HIDES the move, and the server refuses it anyway ──────────
+
+// The two-part fix, end to end, and neither half is sufficient alone.
+//
+// Before this, a condition-class guard was configurable, schema-validated,
+// audited and rendered in the admin UI with a badge reading "hides" — and
+// evaluated on no reachable path. An administrator could configure ADR-0011's
+// own Tier-1 example and watch the transition sail through.
+//
+// Routing the offering to an endpoint makes the condition visible to the client.
+// It does NOT make it enforced: the mutation route is reachable with curl, and a
+// client is not a security boundary. So this asserts both — the picker omits the
+// hidden option, AND posting that exact move directly is refused — and then
+// satisfies the condition and watches the same move commit, which is what makes
+// it a gate rather than a wall.
+test('a condition hides the move from the picker, and the server refuses it directly', async ({
+  page,
+}) => {
+  const { orgId, userId } = await ownerOfFreshOrg(page, `WF Condition ${RUN}`)
+  const spaceId = await createSpace(page, `Condition ${RUN}`, 'beacon')
+  const { edgeId } = await ticketWorkflow(page, orgId)
+
+  // Configured through the EDITOR, because "the admin UI presents a control
+  // that looks enforceable" is the defect, so the control has to be the one an
+  // administrator actually uses.
+  await page.goto('/admin/workflows')
+  await expect(page.getByTestId('admin-layout')).toBeVisible()
+
+  const transitionRow = page.getByTestId(`transition-${edgeId}`)
+  await transitionRow.scrollIntoViewIfNeeded()
+  await transitionRow.click()
+
+  await page.getByTestId(`add-guard-${edgeId}`).click()
+  await page.getByTestId('guard-class').selectOption('condition')
+  await page.getByTestId('guard-kind').selectOption('actor_is_assignee')
+
+  const created = page.waitForResponse(
+    (r) => r.url().includes(`/transitions/${edgeId}/guards`) && r.request().method() === 'POST',
+  )
+  await page.getByTestId('guard-submit').click()
+  expect((await created).status()).toBe(201)
+
+  // An UNASSIGNED ticket: this actor does not satisfy the condition.
+  const ticketId = await createTicket(page, orgId, spaceId, `Hidden move ${RUN}`)
+  await page.goto(`/beacon/${spaceId}/tickets/${ticketId}`)
+
+  const picker = page.getByLabel('Change status')
+  await expect(picker).toHaveValue('open')
+
+  // Half one: the move is not offered. `closed` still is, so this is a hidden
+  // option rather than an empty picker — the difference between a condition
+  // working and the page failing to load its options at all.
+  await expect(picker.locator('option[value="in_progress"]')).toHaveCount(0)
+  await expect(picker.locator('option[value="closed"]')).toHaveCount(1)
+  await expect(picker.locator('option[value="open"]')).toHaveCount(1)
+
+  // Half two: the server refuses the same move posted directly, bypassing the
+  // picker entirely. This is the assertion that makes the feature enforcement
+  // rather than decoration.
+  const direct = await api(page, 'post',
+    `/api/v1/orgs/${orgId}/spaces/${spaceId}/tickets/${ticketId}/status`, { status: 'in_progress' })
+  expect(direct.status()).toBe(422)
+
+  const unmoved = await api(page, 'get',
+    `/api/v1/orgs/${orgId}/spaces/${spaceId}/tickets/${ticketId}`)
+  expect((await unmoved.json()).status).toBe('open')
+
+  // Satisfy the condition and the same move is both offered and accepted.
+  const assigned = await api(page, 'post',
+    `/api/v1/orgs/${orgId}/spaces/${spaceId}/tickets/${ticketId}/assign`, { assignee_id: userId })
+  expect(assigned.status()).toBe(200)
+
+  await page.reload()
+  await expect(picker.locator('option[value="in_progress"]')).toHaveCount(1)
+
+  const accepted = page.waitForResponse(
+    (r) => r.url().includes(`/tickets/${ticketId}/status`) && r.request().method() === 'POST',
+  )
+  await picker.selectOption('in_progress')
+  expect((await accepted).status()).toBe(200)
+  await expect(picker).toHaveValue('in_progress')
+
+  await assertNoErrors(page)
+})
+
+// ─── 5. A space with no workflow is untouched ─────────────────────────────────
+
+// The other side of the guarantee, and the reason the fail-closed change is safe
+// to ship: a space with NO workflow assigned still behaves exactly as it did.
+//
+// The Go suite proves this at the route (TestWorkflowFailsClosed_UntouchedSpaceIsUnaffected).
+// What only a browser can show is that the PICKER still offers its own
+// vocabulary there — the client falls back when the server says "no workflow",
+// and it must not confuse that with "the workflow offers you nothing".
+//
+// createSpace assigns the module's default workflow, so the space is stripped of
+// it here rather than built without one. That is a real production state: the
+// column is ON DELETE SET NULL, and the assignment at create time is best-effort.
+test('a space whose workflow was removed keeps the full status vocabulary', async ({ page }) => {
+  const { orgId } = await ownerOfFreshOrg(page, `WF Untouched ${RUN}`)
+  const spaceId = await createSpace(page, `Untouched ${RUN}`, 'beacon')
+
+  const wfRes = await api(page, 'get', `/api/v1/orgs/${orgId}/workflows`)
+  const wf = (await wfRes.json()).find(
+    (w: { applies_to: string; is_default: boolean }) => w.applies_to === 'tickets' && w.is_default,
+  )
+  // Deleting the workflow nulls spaces.workflow_id through the FK, which is the
+  // state under test.
+  const deleted = await api(page, 'delete', `/api/v1/orgs/${orgId}/workflows/${wf.id}`)
+  expect(deleted.status()).toBe(204)
+
+  const ticketId = await createTicket(page, orgId, spaceId, `Ungoverned ${RUN}`)
+  await page.goto(`/beacon/${spaceId}/tickets/${ticketId}`)
+
+  const picker = page.getByLabel('Change status')
+  // All four, because the hardcoded map still decides here and knows all four.
+  for (const s of ['open', 'in_progress', 'resolved', 'closed']) {
+    await expect(picker.locator(`option[value="${s}"]`)).toHaveCount(1)
+  }
+
+  // And the hardcoded map's own refusal is unchanged: open -> resolved skips
+  // in_progress and is a 409, exactly as it always was.
+  const skipped = await api(page, 'post',
+    `/api/v1/orgs/${orgId}/spaces/${spaceId}/tickets/${ticketId}/status`, { status: 'resolved' })
+  expect(skipped.status()).toBe(409)
+
+  await assertNoErrors(page)
+})

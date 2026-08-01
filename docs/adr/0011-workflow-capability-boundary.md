@@ -225,6 +225,27 @@ edited. The fix is two-part — route `AvailableTransitions` so a condition remo
 from the offer, *and* have `Gate` evaluate conditions too, so a transition POSTed directly still
 refuses; hiding alone is a UI control any HTTP client bypasses. Catalogued as **D93**.
 
+> **Resolved — 2026-08-01, workflow fail-closed phase. Both parts.**
+>
+> `TierService.OfferedTransitions` is reachable at
+> `GET /orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/transitions`, and
+> both status pickers derive their options from it — so a condition now hides a transition from the
+> people it was configured to hide it from. `TierService.Gate` evaluates `GuardConditionClass`
+> before `GuardValidatorClass` on every mutation route, so a move that was never offered is refused
+> when posted directly.
+>
+> The same phase closed the larger version of this defect that surrounded it. `Gate` used to answer
+> "nothing applies" — and let the write through — whenever a move resolved to no edge, which it did
+> whenever the status named no state or the workflow defined no such edge. **A workflow, once
+> assigned to a space, now decides**: an unknown target status and a missing edge are refusals. A
+> space with NO workflow is unchanged, and keeps whatever rule it had before this ADR was
+> implemented.
+>
+> Nothing in the Decision above changes. The vocabulary is still closed at four guard kinds, the
+> Tier-3 action set is still fixed, approvals are still single-step, and the prohibition on
+> scripting is untouched. What changed is that the tiers are now enforceable, which is what this ADR
+> assumed all along.
+
 ### 3. The integration boundary this ADR names is currently aspirational
 
 Consequences names webhooks and the job queue as where "genuine automation belongs" — the

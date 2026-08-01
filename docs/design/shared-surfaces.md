@@ -791,6 +791,60 @@ light-on-light for anybody whose system theme disagrees with their app theme.
 
 ---
 
+## 20. `TierService` — the only thing that decides whether a status may change
+
+Five routes can change an entity's status or workflow state:
+
+```
+POST .../tickets/{ticketID}/status
+POST .../projects/items/{itemID}/status
+POST .../tickets/{ticketID}/workflow-state
+POST .../projects/items/{itemID}/workflow-state
+POST .../workflow/approvals/{approvalID}/decide
+```
+
+**All five reach `TierService`, and none of them decides anything itself.** That is the whole rule.
+A route that answered the legality question on its own would be a way around every configured guard
+— which is exactly what shipped: two of these ran a hardcoded Go map, one ran the database engine,
+and one validated nothing at all.
+
+**`TierService.Gate` is the write side.** It answers where the entity is, whether the target names a
+state, whether the workflow defines an edge, and then the ADR-0011 tiers in order — conditions,
+validators, approvers, post-functions. A caller's only job is to render the answer and, when it says
+proceed, write it.
+
+**`TierService.OfferedTransitions` is the read side**, served at
+`GET .../workflow/entities/{entityType}/{entityID}/transitions`, and both status pickers derive
+their options from it. The two halves share `TierService.ResolveFromState`, and that sharing is
+load-bearing: if the picker and the mutation placed the entity differently, the picker would offer
+moves the server refuses and nothing would point at the disagreement.
+
+The read side is deliberately NOT built on the gate. `tiergate.Gate.Evaluate` **writes** — it
+creates the pending approval row and notifies its approvers — so a picker built on it would file an
+approval request every time a page loaded.
+
+**Three things that look like exceptions and are not.**
+
+*A space with no workflow.* `TransitionDecision.NoWorkflow` tells the caller this package has no
+opinion, and the caller applies whatever rule it had before workflows existed. That is the only
+surviving "nothing applies", and it is what keeps an unassigned space behaving exactly as it did.
+
+*Conditions are evaluated on both sides.* A condition hides at offer time AND refuses at commit
+time. Not redundancy: the mutation route is reachable with curl, and a server that assumes the
+client filtered is not enforcing anything.
+
+*Creation is not a transition.* A new entity is PLACED in the machine rather than moved through it,
+so it has no from-state and no edge. `tiergate.Gate.InitialPosition` is that seam, and both create
+routes call it.
+
+**On the frontend, `statusOptionsFor` in `web/src/lib/workflow/statusOptions.ts` is the only
+derivation of a status picker's options.** Vector and Beacon each had their own hardcoded list, and
+the two disagreed with each other, with the board's columns, and with the server — one offered a
+status naming no state and omitted one that did, so an item in that state rendered a `<select>` with
+no matching option. A third copy is a defect.
+
+---
+
 ## Related
 
 - Decisions: [`../adr/`](../adr/) — ADR-0007 for the capability model, ADR-0008 for share rules.

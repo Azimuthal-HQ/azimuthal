@@ -173,8 +173,8 @@ func (s *TicketService) Create(ctx context.Context, params CreateTicketParams) (
 		// above is unchanged. Only the read model widened, so that a ticket
 		// raised through the portal (which does not come through here) can
 		// carry a requester instead. See the Ticket doc comment.
-		ReporterID: &params.ReporterID,
-		AssigneeID: params.AssigneeID,
+		ReporterID:      &params.ReporterID,
+		AssigneeID:      params.AssigneeID,
 		Labels:          params.Labels,
 		DueAt:           params.DueAt,
 		Rank:            "",
