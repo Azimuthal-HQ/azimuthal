@@ -2,6 +2,7 @@ package tiergate
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -60,7 +61,7 @@ func gateFor(rec *recordingEnqueuer, transitionID uuid.UUID, approvers ...uuid.U
 			SubjectID:    a,
 		}
 	}
-	svc := workflow.NewTierService(stubTierStore{approvers: rows})
+	svc := workflow.NewTierService(stubTierStore{approvers: rows}, stubApplier{})
 	// The workflow resolver is never reached: these tests call notifyApprovers
 	// directly with an already-decided GateResult, so nil is honest rather than
 	// convenient — if the code started resolving a workflow here, it would
@@ -68,8 +69,8 @@ func gateFor(rec *recordingEnqueuer, transitionID uuid.UUID, approvers ...uuid.U
 	return New(svc, nil, rec)
 }
 
-func pendingResult(transitionID, entityID uuid.UUID, isNew bool) workflow.GateResult {
-	return workflow.GateResult{
+func pendingResult(transitionID, entityID uuid.UUID, isNew bool) workflow.TransitionDecision {
+	return workflow.TransitionDecision{
 		TransitionID: &transitionID,
 		PendingIsNew: isNew,
 		Pending: &workflow.Approval{
@@ -127,7 +128,7 @@ func TestNotifyApprovers_OnlyForARequestThisCallCreated(t *testing.T) {
 		gateFor(rec, transitionID, approver).notifyApprovers(
 			context.Background(),
 			request(uuid.New(), uuid.New()),
-			workflow.GateResult{TransitionID: &transitionID},
+			workflow.TransitionDecision{TransitionID: &transitionID},
 		)
 		require.Empty(t, rec.sent, "no approval was requested, so there is nobody to tell")
 	})
@@ -179,4 +180,20 @@ func TestNotifyApprovers_CarriesTheItemAndItsSpace(t *testing.T) {
 		"the entity vocabulary migration 047 matched to the audit log's words")
 	require.Contains(t, got.Message, "open")
 	require.Contains(t, got.Message, "in_progress")
+}
+
+// stubApplier satisfies the applier seam without doing anything: these tests
+// exercise the NOTIFICATION fan-out, which runs after Gate and never decides an
+// approval. A call here would mean the test had drifted into a path it does not
+// cover, so it reports an error rather than a zero value.
+type stubApplier struct{}
+
+func (stubApplier) ApplyTransition(context.Context, workflow.ApplyInput) error {
+	return errors.New("stubApplier: notify tests do not apply transitions")
+}
+
+func (stubApplier) DecideAndApply(
+	context.Context, workflow.DecideAndApplyInput,
+) (workflow.Approval, error) {
+	return workflow.Approval{}, errors.New("stubApplier: notify tests do not decide approvals")
 }

@@ -14,26 +14,41 @@ import (
 
 const createTicket = `-- name: CreateTicket :one
 INSERT INTO tickets (id, space_id, number, title, description, status, priority,
-                     reporter_id, assignee_id, labels, due_at, rank)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                     reporter_id, assignee_id, labels, due_at, rank, workflow_state_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
 type CreateTicketParams struct {
-	ID          uuid.UUID          `json:"id"`
-	SpaceID     uuid.UUID          `json:"space_id"`
-	Number      int32              `json:"number"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Status      string             `json:"status"`
-	Priority    string             `json:"priority"`
-	ReporterID  pgtype.UUID        `json:"reporter_id"`
-	AssigneeID  pgtype.UUID        `json:"assignee_id"`
-	Labels      []string           `json:"labels"`
-	DueAt       pgtype.Timestamptz `json:"due_at"`
-	Rank        string             `json:"rank"`
+	ID              uuid.UUID          `json:"id"`
+	SpaceID         uuid.UUID          `json:"space_id"`
+	Number          int32              `json:"number"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Status          string             `json:"status"`
+	Priority        string             `json:"priority"`
+	ReporterID      pgtype.UUID        `json:"reporter_id"`
+	AssigneeID      pgtype.UUID        `json:"assignee_id"`
+	Labels          []string           `json:"labels"`
+	DueAt           pgtype.Timestamptz `json:"due_at"`
+	Rank            string             `json:"rank"`
+	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
 }
 
+// workflow_state_id is written AT CREATION, not left for the first transition
+// to discover.
+//
+// It was absent from this column list and the column has no DEFAULT, so every
+// ticket was born NULL and stayed NULL until something wrote it — which, for any
+// installation driven by the shipped frontend, was never (D71). The status text
+// happened to be right for the seeded ticket workflow because that workflow has
+// a state called "open"; D85 records that as a name coincidence rather than a
+// design, and it stops being true for any workflow an administrator starts
+// elsewhere.
+//
+// NULL is still accepted here, and means the space has no workflow to be placed
+// in. That is a supported live state, not an error — see
+// tiergate.Gate.InitialPosition.
 func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) (Ticket, error) {
 	row := q.db.QueryRow(ctx, createTicket,
 		arg.ID,
@@ -48,6 +63,7 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) (Tic
 		arg.Labels,
 		arg.DueAt,
 		arg.Rank,
+		arg.WorkflowStateID,
 	)
 	var i Ticket
 	err := row.Scan(
@@ -575,6 +591,7 @@ const updateTicketWorkflowState = `-- name: UpdateTicketWorkflowState :one
 UPDATE tickets
 SET status = $1, workflow_state_id = $2, updated_at = now()
 WHERE id = $3 AND space_id = $4 AND deleted_at IS NULL
+  AND status = $5
 RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
@@ -583,6 +600,7 @@ type UpdateTicketWorkflowStateParams struct {
 	WorkflowStateID pgtype.UUID `json:"workflow_state_id"`
 	TicketID        uuid.UUID   `json:"ticket_id"`
 	SpaceID         uuid.UUID   `json:"space_id"`
+	ExpectStatus    string      `json:"expect_status"`
 }
 
 // The space predicate is what makes ApplyInput.SpaceID load-bearing. It was
@@ -592,12 +610,26 @@ type UpdateTicketWorkflowStateParams struct {
 // reconciled upstream and cannot arrive here mismatched, so this is the seam
 // being closed rather than the hole; a miss is zero rows and the transaction
 // rolls back rather than committing a status the caller had no claim on.
+//
+// `status = @expect_status` is the compare-and-swap, and it is what makes a
+// decided approval safe to apply (D91). An approval captures the status the
+// entity was in when the request was made and is decided minutes or days later;
+// without this predicate, approving it writes the captured TARGET over whatever
+// the entity has become in the meantime, silently reverting every change made
+// in between. The direct-transition path takes the same predicate for the same
+// reason one layer down: the gate reads the entity, decides, then writes, and a
+// concurrent transition can land between the read and the write.
+//
+// Zero rows is the lost race, and it is not a failure the caller may treat as
+// "not found": the row is there, and what expired is the caller's assumption
+// about it. The adapter maps it to a conflict.
 func (q *Queries) UpdateTicketWorkflowState(ctx context.Context, arg UpdateTicketWorkflowStateParams) (Ticket, error) {
 	row := q.db.QueryRow(ctx, updateTicketWorkflowState,
 		arg.Status,
 		arg.WorkflowStateID,
 		arg.TicketID,
 		arg.SpaceID,
+		arg.ExpectStatus,
 	)
 	var i Ticket
 	err := row.Scan(

@@ -22,6 +22,11 @@ const state = vi.hoisted(() => ({
 
 vi.mock('../../../lib/api', () => ({
   useTicket: () => ({ data: state.ticket, isLoading: false, error: null, refetch: vi.fn() }),
+  // The status picker reads its options from the server's offering. `undefined`
+  // is the still-loading answer, which falls back to the page's own vocabulary
+  // — the right stub here, because these tests are about the COMMENT surface
+  // and the picker only has to render at all.
+  useAvailableTransitions: () => ({ data: undefined, refetch: vi.fn() }),
   useTransitionTicketStatus: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useAssignTicket: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useMembers: () => ({ data: members }),

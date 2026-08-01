@@ -413,6 +413,17 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		Labels:      req.Labels,
 		DueAt:       req.DueAt,
 	}
+	// Born INSIDE the space's state machine, both position columns written
+	// together. Without this an item started at the literal "open", which names
+	// no state in the seeded project workflow, so its first transition resolved
+	// no edge and nothing configured on the initial edge ever applied to it
+	// (D72). A space with no workflow leaves both zero and the service's own
+	// default stands, exactly as before.
+	if h.tiers != nil {
+		if status, stateID, ok := h.tiers.InitialPosition(r.Context(), spaceID); ok {
+			item.Status, item.WorkflowStateID = status, stateID
+		}
+	}
 
 	created, err := h.items.CreateItem(r.Context(), item)
 	if err != nil {
@@ -666,10 +677,14 @@ func (h *Handler) UpdateItemStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read before writing. This route had no state machine at all — it wrote
-	// any string it was given — so the read is new, and it is what lets a guard
-	// see the item it is guarding. Legality is still not adjudicated here: the
-	// tiers add restrictions and do not invent a rule this route never had.
+	// Read before writing, and now the read decides as well as informs.
+	//
+	// This route wrote any string it was given. That is no longer true where a
+	// workflow governs: the workflow names the legal statuses and the legal
+	// moves between them, and one it does not name is refused. Where a space has
+	// NO workflow the route keeps its original behaviour — no state machine,
+	// any string — because that is the only rule it ever had and inventing one
+	// for those spaces is not this change's business.
 	current, getErr := h.items.GetItemInSpace(r.Context(), spaceID, id)
 	if getErr != nil {
 		handleProjectError(w, r, getErr)
@@ -682,7 +697,8 @@ func (h *Handler) UpdateItemStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.applyItemTransition(w, r, itemTransition{
-		itemID: id, spaceID: spaceID, status: req.Status, gated: gated,
+		itemID: id, spaceID: spaceID, status: req.Status,
+		expectStatus: current.Status, gated: gated,
 	})
 }
 
@@ -691,59 +707,80 @@ type itemTransition struct {
 	itemID  uuid.UUID
 	spaceID uuid.UUID
 	status  string
-	gated   workflow.GateResult
+	// expectStatus is the status the gate read, and the compare-and-swap value
+	// the write carries; see the ticket twin.
+	expectStatus string
+	gated        workflow.TransitionDecision
 }
 
 // gateItemTransition runs the ADR-0011 tiers and reports whether the transition
 // may proceed, answering the request itself in every case that stops it.
 func (h *Handler) gateItemTransition(
 	w http.ResponseWriter, r *http.Request, spaceID uuid.UUID, current *projects.Item, target string,
-) (workflow.GateResult, bool) {
+) (workflow.TransitionDecision, bool) {
 	if h.tiers == nil || h.applier == nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
 			"workflow tier evaluation is not configured on this server")
-		return workflow.GateResult{}, false
+		return workflow.TransitionDecision{}, false
 	}
 	claims, orgID, ok := actorFromRequest(w, r)
 	if !ok {
-		return workflow.GateResult{}, false
+		return workflow.TransitionDecision{}, false
 	}
 
-	gated, err := h.tiers.Evaluate(r.Context(), tiergate.Request{
-		OrgID:         orgID,
-		SpaceID:       spaceID,
-		EntityType:    workflow.ApprovalEntityItem,
-		EntityID:      current.ID,
-		ActorID:       claims.UserID,
-		CurrentStatus: current.Status,
-		TargetStatus:  target,
+	gated, err := h.tiers.Evaluate(r.Context(), ItemGateRequest(orgID, spaceID, claims.UserID, current, target))
+	if err != nil {
+		handleTierError(w, r, err)
+		return workflow.TransitionDecision{}, false
+	}
+	if tiergate.Refused(w, r, gated) || tiergate.Pending(w, gated) {
+		return workflow.TransitionDecision{}, false
+	}
+	return gated, true
+}
+
+// ItemGateRequest describes one project item to the chokepoint.
+//
+// Exported and shared with the read path for the same reason its ticket twin
+// is: the transitions a client is OFFERED must be filtered against the same
+// entity snapshot the mutation is checked against, or the picker and the server
+// disagree about the same item.
+func ItemGateRequest(
+	orgID, spaceID, actorID uuid.UUID, current *projects.Item, target string,
+) tiergate.Request {
+	return tiergate.Request{
+		OrgID:          orgID,
+		SpaceID:        spaceID,
+		EntityType:     workflow.ApprovalEntityItem,
+		EntityID:       current.ID,
+		ActorID:        actorID,
+		CurrentStatus:  current.Status,
+		TargetStatus:   target,
+		CurrentStateID: current.WorkflowStateID,
 		Entity: workflow.EntitySnapshot{
 			AssigneeID:  current.AssigneeID,
 			DueAt:       current.DueAt,
 			Description: current.Description,
 			Labels:      current.Labels,
 		},
-	})
-	if err != nil {
-		handleTierError(w, r, err)
-		return workflow.GateResult{}, false
 	}
-	if tiergate.Refused(w, r, gated) || tiergate.Pending(w, gated) {
-		return workflow.GateResult{}, false
-	}
-	return gated, true
 }
 
-// applyItemTransition writes the status change the gate permitted. See
-// workflow.TransitionApplier for why only a transition carrying post-functions
-// takes the transaction.
+// applyItemTransition writes the status change the workflow permitted.
+//
+// The split is by whether a workflow governs, not by whether post-functions
+// exist — see the ticket twin, applyTicketTransition, for why: `status` and
+// `workflow_state_id` have to be written together (D71) and the write has to
+// carry the compare-and-swap, and both of those live in the applier's
+// statement. A space with no workflow keeps the single UPDATE and the
+// Convention A audit row it has always had.
 func (h *Handler) applyItemTransition(w http.ResponseWriter, r *http.Request, t itemTransition) {
 	claims, orgID, ok := actorFromRequest(w, r)
 	if !ok {
 		return
 	}
 
-	if len(t.gated.Effects) == 0 {
+	if t.gated.NoWorkflow {
 		item, err := h.items.UpdateItemStatus(r.Context(), t.itemID, t.status)
 		if err != nil {
 			handleProjectError(w, r, err)
@@ -759,18 +796,18 @@ func (h *Handler) applyItemTransition(w http.ResponseWriter, r *http.Request, t 
 	}
 
 	if err := h.applier.ApplyTransition(r.Context(), workflow.ApplyInput{
-		EntityType:   workflow.ApprovalEntityItem,
-		EntityID:     t.itemID,
-		OrgID:        orgID,
-		SpaceID:      t.spaceID,
-		ActorID:      claims.UserID,
-		ToStatus:     t.status,
-		ToStateID:    t.gated.ToStateID,
-		TransitionID: t.gated.TransitionID,
-		Effects:      t.gated.Effects,
+		EntityType:       workflow.ApprovalEntityItem,
+		EntityID:         t.itemID,
+		OrgID:            orgID,
+		SpaceID:          t.spaceID,
+		ActorID:          claims.UserID,
+		ToStatus:         t.status,
+		ToStateID:        t.gated.ToStateID,
+		ExpectFromStatus: t.expectStatus,
+		TransitionID:     t.gated.TransitionID,
+		Effects:          t.gated.Effects,
 	}); err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
-			"the transition could not be completed and no change was made")
+		respondApplyError(w, r, err)
 		return
 	}
 
@@ -799,6 +836,18 @@ func actorFromRequest(w http.ResponseWriter, r *http.Request) (*auth.Claims, uui
 		return nil, uuid.Nil, false
 	}
 	return claims, orgID, true
+}
+
+// respondApplyError renders a failed apply. A lost compare-and-swap is 409, not
+// 500: the item is fine and the request was fine — somebody else moved it
+// first. See the ticket twin for the full reasoning.
+func respondApplyError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, workflow.ErrTransitionRaced) {
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
+		return
+	}
+	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+		"the transition could not be completed and no change was made")
 }
 
 // handleTierError maps a tier failure onto a response. A post-function this

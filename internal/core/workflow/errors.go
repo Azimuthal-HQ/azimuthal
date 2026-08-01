@@ -38,6 +38,18 @@ var ErrApprovalPending = errors.New("an approval is already pending for this ite
 // that another approver has already decided.
 var ErrApprovalAlreadyDecided = errors.New("this approval has already been decided")
 
+// ErrTransitionRaced is returned when the entity is no longer in the status the
+// caller decided about, so the compare-and-swap on the status write matched no
+// rows and nothing was written.
+//
+// It is a CONFLICT, not a not-found and not an internal error. The entity
+// exists; what expired is the caller's belief about where it was. Two callers
+// can reach it: a direct transition whose gate read is overtaken by a
+// concurrent one, and an approval decided after the entity has moved on from
+// the status the request captured (D91). Both want the same answer — re-read
+// and decide again — which is why they share a sentinel.
+var ErrTransitionRaced = errors.New("this item changed while the request was in flight, so nothing was written")
+
 // ErrNotAnApprover is returned when the actor is not among the transition's
 // configured approvers.
 var ErrNotAnApprover = errors.New("you are not an approver for this transition")

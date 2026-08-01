@@ -204,7 +204,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := h.svc.Create(r.Context(), tickets.CreateTicketParams{
+	// Born INSIDE the space's state machine, both position columns written
+	// together. The status text was already right for the seeded ticket
+	// workflow, but only because that workflow happens to have a state named
+	// "open" — a coincidence (D85), not a design, and one that fails for any
+	// workflow an administrator starts elsewhere. workflow_state_id was not
+	// written at all (D71).
+	params := tickets.CreateTicketParams{
 		SpaceID:     spaceID,
 		Title:       req.Title,
 		Description: req.Description,
@@ -212,7 +218,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		ReporterID:  claims.UserID,
 		AssigneeID:  req.AssigneeID,
 		Labels:      req.Labels,
-	})
+	}
+	if h.tiers != nil {
+		if status, stateID, ok := h.tiers.InitialPosition(r.Context(), spaceID); ok {
+			params.Status, params.WorkflowStateID = tickets.Status(status), stateID
+		}
+	}
+
+	ticket, err := h.svc.Create(r.Context(), params)
 	if err != nil {
 		handleTicketError(w, r, err)
 		return
@@ -432,20 +445,12 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The hardcoded state machine still decides LEGALITY, exactly as before.
-	// The tiers only add restrictions on top of it, so a transition this
-	// machine rejects is still rejected the same way, with the same error.
-	//
 	// Scoped to {spaceID}, because the capability check above named that space
-	// and the ticket id named nothing: the tiers, the state machine and the
+	// and the ticket id named nothing: the workflow, the state machine and the
 	// audit row must all be about a ticket the caller was authorised for.
 	current, getErr := h.svc.GetInSpace(r.Context(), spaceID, id)
 	if getErr != nil {
 		handleTicketError(w, r, getErr)
-		return
-	}
-	if err := tickets.ValidateTransition(current.Status, req.Status); err != nil {
-		handleTicketError(w, r, err)
 		return
 	}
 
@@ -463,10 +468,32 @@ func (h *Handler) TransitionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The hardcoded state machine decides legality ONLY where there is no
+	// workflow to decide it.
+	//
+	// It used to run first and always, which made it the authority and left the
+	// workflow adding restrictions on top of a rule it did not agree with. Now
+	// a space with a workflow is adjudicated by that workflow, and this map is
+	// what a space WITHOUT one falls back to — a codex-typed space, or one whose
+	// best-effort assignment at create time failed, or one whose workflow was
+	// deleted (spaces.workflow_id is ON DELETE SET NULL).
+	//
+	// The two agree by construction for the shipped workflow: migration 029 and
+	// seedTicketWorkflow write the same eleven edges validTransitions holds,
+	// reverse edges included. That is not a coincidence to rely on silently —
+	// TestTicketStateMachine_MatchesTheSeededWorkflow asserts the two are equal
+	// and fails if either side is edited alone.
+	if gated.NoWorkflow {
+		if err := tickets.ValidateTransition(current.Status, req.Status); err != nil {
+			handleTicketError(w, r, err)
+			return
+		}
+	}
+
 	h.applyTicketTransition(w, r, ticketTransition{
 		ticketID: id, spaceID: spaceID, orgID: orgID,
 		actorID: claims.UserID, actorOrgID: claims.OrgID,
-		status: req.Status, gated: gated,
+		status: req.Status, expectStatus: current.Status, gated: gated,
 	})
 }
 
@@ -480,18 +507,33 @@ type ticketTransition struct {
 	// actorOrgID is the wire-string org id the audit event carries.
 	actorOrgID string
 	status     tickets.Status
-	gated      workflow.GateResult
+	// expectStatus is the status the gate read, and the compare-and-swap value
+	// the write carries. A concurrent transition between the read and the write
+	// matches no rows and answers 409 rather than silently winning.
+	expectStatus tickets.Status
+	gated        workflow.TransitionDecision
 }
 
-// applyTicketTransition writes the status change the gate permitted.
+// applyTicketTransition writes the status change the workflow permitted.
 //
-// With no post-functions this is the single UPDATE it has always been, and the
-// audit row is written the way it has always been written (Convention A). Only
-// a transition carrying effects is an atomicity contract, and only that one
-// takes the transaction — see workflow.TransitionApplier for why that
-// distinction is deliberate rather than an inconsistency.
+// Two paths, chosen by whether a workflow governs rather than by whether
+// post-functions exist:
+//
+//   - NO WORKFLOW — the single UPDATE it has always been, with the audit row
+//     written the way it has always been written (Convention A). This is the
+//     untouched-space guarantee, and it is a real statement-level guarantee
+//     rather than an aspiration: the same query, the same columns, the same
+//     order.
+//
+//   - A WORKFLOW — the transactional applier, always, even with no effects.
+//     That is a change from the previous split, and the reason is D71: `status`
+//     and `workflow_state_id` must be written together or the second column
+//     goes on meaning nothing, and the write must carry the compare-and-swap.
+//     Both live in the applier's statement. Routing only the post-function case
+//     through it would leave the ordinary case writing one column, which is the
+//     defect.
 func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, t ticketTransition) {
-	if len(t.gated.Effects) == 0 {
+	if t.gated.NoWorkflow {
 		ticket, err := h.svc.TransitionStatus(r.Context(), t.ticketID, t.spaceID, t.status)
 		if err != nil {
 			handleTicketError(w, r, err)
@@ -507,21 +549,18 @@ func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if err := h.applier.ApplyTransition(r.Context(), workflow.ApplyInput{
-		EntityType:   workflow.ApprovalEntityTicket,
-		EntityID:     t.ticketID,
-		OrgID:        t.orgID,
-		SpaceID:      t.spaceID,
-		ActorID:      t.actorID,
-		ToStatus:     string(t.status),
-		ToStateID:    t.gated.ToStateID,
-		TransitionID: t.gated.TransitionID,
-		Effects:      t.gated.Effects,
+		EntityType:       workflow.ApprovalEntityTicket,
+		EntityID:         t.ticketID,
+		OrgID:            t.orgID,
+		SpaceID:          t.spaceID,
+		ActorID:          t.actorID,
+		ToStatus:         string(t.status),
+		ToStateID:        t.gated.ToStateID,
+		ExpectFromStatus: string(t.expectStatus),
+		TransitionID:     t.gated.TransitionID,
+		Effects:          t.gated.Effects,
 	}); err != nil {
-		// The transaction rolled back, so the status did not change either. The
-		// message says so, because "failed" without "nothing happened" leaves a
-		// user wondering which half landed.
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
-			"the transition could not be completed and no change was made")
+		respondApplyError(w, r, err)
 		return
 	}
 
@@ -533,6 +572,23 @@ func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, 
 	h.respondTicket(w, r, http.StatusOK, ticket)
 }
 
+// respondApplyError renders a failed apply.
+//
+// A lost compare-and-swap is 409, not 500: the entity is fine, the request is
+// fine, and what went wrong is that somebody else moved it first. Telling the
+// client 500 there would invite a retry of a request that is now about a status
+// the entity has left. Everything else rolled back, and the message says so,
+// because "failed" without "nothing happened" leaves a user wondering which
+// half landed.
+func respondApplyError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, workflow.ErrTransitionRaced) {
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
+		return
+	}
+	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+		"the transition could not be completed and no change was made")
+}
+
 // gateTicketTransition runs the ADR-0011 tiers and reports whether the
 // transition may proceed.
 //
@@ -542,7 +598,7 @@ func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, 
 func (h *Handler) gateTicketTransition(
 	w http.ResponseWriter, r *http.Request,
 	orgID, spaceID, actorID uuid.UUID, current *tickets.Ticket, target tickets.Status,
-) (workflow.GateResult, bool) {
+) (workflow.TransitionDecision, bool) {
 	// A missing gate is a wiring fault, never a reason to skip the tiers. It
 	// answers 500 rather than transitioning ungated: an approval an operator
 	// configured must not be bypassable by a deployment that forgot to wire it.
@@ -551,32 +607,47 @@ func (h *Handler) gateTicketTransition(
 	if h.tiers == nil || h.applier == nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
 			"workflow tier evaluation is not configured on this server")
-		return workflow.GateResult{}, false
+		return workflow.TransitionDecision{}, false
 	}
 
-	gated, err := h.tiers.Evaluate(r.Context(), tiergate.Request{
-		OrgID:         orgID,
-		SpaceID:       spaceID,
-		EntityType:    workflow.ApprovalEntityTicket,
-		EntityID:      current.ID,
-		ActorID:       actorID,
-		CurrentStatus: string(current.Status),
-		TargetStatus:  string(target),
+	gated, err := h.tiers.Evaluate(r.Context(), TicketGateRequest(orgID, spaceID, actorID, current, target))
+	if err != nil {
+		handleTierError(w, r, err)
+		return workflow.TransitionDecision{}, false
+	}
+	if tiergate.Refused(w, r, gated) || tiergate.Pending(w, gated) {
+		return workflow.TransitionDecision{}, false
+	}
+	return gated, true
+}
+
+// TicketGateRequest describes one ticket to the chokepoint.
+//
+// It is exported and shared rather than written inline, because the READ path —
+// the transitions a client is offered, served from the workflows package — must
+// describe the same ticket in the same terms as this write path. Two literals is
+// exactly how a picker comes to be filtered against a different entity snapshot
+// than the mutation it feeds, and the resulting disagreement is invisible: the
+// picker offers a move and the server refuses it, with nothing to point at.
+func TicketGateRequest(
+	orgID, spaceID, actorID uuid.UUID, current *tickets.Ticket, target tickets.Status,
+) tiergate.Request {
+	return tiergate.Request{
+		OrgID:          orgID,
+		SpaceID:        spaceID,
+		EntityType:     workflow.ApprovalEntityTicket,
+		EntityID:       current.ID,
+		ActorID:        actorID,
+		CurrentStatus:  string(current.Status),
+		TargetStatus:   string(target),
+		CurrentStateID: current.WorkflowStateID,
 		Entity: workflow.EntitySnapshot{
 			AssigneeID:  current.AssigneeID,
 			DueAt:       current.DueAt,
 			Description: current.Description,
 			Labels:      current.Labels,
 		},
-	})
-	if err != nil {
-		handleTierError(w, r, err)
-		return workflow.GateResult{}, false
 	}
-	if tiergate.Refused(w, r, gated) || tiergate.Pending(w, gated) {
-		return workflow.GateResult{}, false
-	}
-	return gated, true
 }
 
 // actorFromRequest resolves the caller's claims and org id, answering 401 and

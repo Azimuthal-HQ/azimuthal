@@ -410,7 +410,11 @@ func TestWorkflowSpacesNeg_TicketTransition_Rejections(t *testing.T) {
 	// in_progress.
 	wsnegRequireError(t, ts.post(t, fmt.Sprintf("%s/tickets/%s/workflow-state", base, ticketID),
 		map[string]any{"state_id": states["resolved"]}, true),
-		http.StatusConflict, "CONFLICT", "invalid workflow transition")
+		http.StatusConflict, "INVALID_TRANSITION",
+		// The refusal NAMES the two states, which is what makes it actionable:
+		// "invalid workflow transition" left an administrator guessing which edge
+		// was missing from a graph they had built themselves.
+		`this space's workflow defines no move from "open" to "resolved"`)
 
 	r := ts.get(t, fmt.Sprintf("%s/tickets/%s", base, ticketID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
@@ -540,11 +544,12 @@ func TestWorkflowSpacesNeg_ItemTransition_Rejections(t *testing.T) {
 	// backlog (the initial state) has edges to todo and in_progress only.
 	wsnegRequireError(t, ts.post(t, fmt.Sprintf("%s/projects/items/%s/workflow-state", base, itemID),
 		map[string]any{"state_id": states["done"]}, true),
-		http.StatusConflict, "CONFLICT", "invalid workflow transition")
+		http.StatusConflict, "INVALID_TRANSITION",
+		`this space's workflow defines no move from "backlog" to "done"`)
 
 	r := ts.get(t, fmt.Sprintf("%s/projects/items/%s", base, itemID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
-	require.Equal(t, "open", decodeJSONMap(t, r.Body)["status"],
+	require.Equal(t, "backlog", decodeJSONMap(t, r.Body)["status"],
 		"a refused transition must leave the item's status alone")
 }
 
@@ -585,7 +590,7 @@ func TestWorkflowSpacesNeg_ItemTransition_ContributorIsRefused(t *testing.T) {
 
 	r = ts.get(t, fmt.Sprintf("%s/projects/items/%s", base, itemID), true)
 	require.Equal(t, http.StatusOK, r.StatusCode)
-	require.Equal(t, "open", decodeJSONMap(t, r.Body)["status"],
+	require.Equal(t, "backlog", decodeJSONMap(t, r.Body)["status"],
 		"the refused transition must not have moved the item")
 }
 

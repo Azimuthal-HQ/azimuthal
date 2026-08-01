@@ -26,7 +26,6 @@ import (
 type Handler struct {
 	q    *generated.Queries
 	repo workflow.Repository
-	eng  workflow.Engine
 	// tiers and applier gate and write a transition exactly as the /status
 	// routes do. Both engine-backed routes below go through them, so no route
 	// is a way around a configured guard. Nil-able, so covered by
@@ -76,8 +75,16 @@ func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 }
 
 // NewHandler creates a Handler.
-func NewHandler(q *generated.Queries, repo workflow.Repository, eng workflow.Engine) *Handler {
-	return &Handler{q: q, repo: repo, eng: eng, auditLog: audit.NewLogger()}
+//
+// It no longer takes a workflow.Engine. The engine's ValidateTransition was the
+// second legality authority on the two engine-backed routes, and it placed the
+// entity differently from the way the /status routes place it — by the stored
+// state id rather than by the status text — so on a drifted row the two
+// disagreed about which edge was being traversed. One authority now answers for
+// all four routes. The type keeps its own tests and is no longer wired into any
+// request path.
+func NewHandler(q *generated.Queries, repo workflow.Repository) *Handler {
+	return &Handler{q: q, repo: repo, auditLog: audit.NewLogger()}
 }
 
 // OrgRoutes mounts org-scoped workflow CRUD under /orgs/{orgID}/workflows.
@@ -621,7 +628,7 @@ func (h *Handler) GetSpaceWorkflowStates(w http.ResponseWriter, r *http.Request)
 // @Failure      409       {object}  api.SwaggerErrorResponse        "Invalid transition"
 // @Failure      500       {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/workflow-state [post]
-func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // workflow state machine validation requires multiple guard branches
+func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
@@ -643,18 +650,11 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Fetch the space workflow.
-	spaceWF, err := h.q.GetSpaceWorkflow(r.Context(), spaceID)
-	if err != nil {
-		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "no workflow assigned to space")
-		return
-	}
-
-	// Fetch the ticket's current state, reconciled against the space the
-	// request named. The route proves the caller may transition items in
-	// {spaceID} and proves nothing about {ticketID}: without this it applied
-	// THIS space's workflow to a ticket in any other space or organization,
-	// disclosing the ticket and moving its status.
+	// Fetch the ticket, reconciled against the space the request named. The
+	// route proves the caller may transition items in {spaceID} and proves
+	// nothing about {ticketID}: without this it applied THIS space's workflow to
+	// a ticket in any other space or organization, disclosing the ticket and
+	// moving its status.
 	ticket, err := h.q.GetTicketInSpace(r.Context(), generated.GetTicketInSpaceParams{
 		TicketID: ticketID, SpaceID: spaceID,
 	})
@@ -663,38 +663,25 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 		return
 	}
 
-	var currentStateID uuid.UUID
-	if ticket.WorkflowStateID.Valid {
-		currentStateID = ticket.WorkflowStateID.Bytes
-	} else {
-		// Fall back to initial state if workflow_state_id is not yet set.
-		initial, err := h.repo.GetInitialState(r.Context(), spaceWF.ID)
-		if err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to get initial state")
-			return
-		}
-		currentStateID = initial.ID
-	}
-
-	// Validate the transition.
-	if err := h.eng.ValidateTransition(r.Context(), spaceWF.ID, currentStateID, req.StateID); err != nil {
-		if errors.Is(err, workflow.ErrInvalidTransition) {
-			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "invalid workflow transition")
-			return
-		}
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to validate transition")
-		return
-	}
-
-	// Fetch the target state name to keep the status column in sync.
-	targetState, err := h.repo.GetState(r.Context(), req.StateID)
-	if err != nil {
-		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "target state not found")
+	// This route speaks state IDs rather than status text, so the only
+	// translation it owns is turning the requested id into the name the
+	// chokepoint speaks.
+	//
+	// What it no longer owns is LEGALITY. It used to run
+	// workflow.Engine.ValidateTransition and carry its own "fall back to the
+	// initial state when workflow_state_id is not set" branch — a second
+	// authority with a second way of placing the entity. The two could disagree,
+	// and on a drifted row they did: this route placed the entity by its stored
+	// state id, the /status route placed it by its status text, and D71 made
+	// those different answers on essentially every row. One authority now
+	// decides for all four routes; see workflow.TierService.ResolveFromState.
+	targetState, ok := h.targetStateInSpace(w, r, spaceID, req.StateID)
+	if !ok {
 		return
 	}
 
 	gated, ok := h.gate(w, r, spaceID, workflow.ApprovalEntityTicket, ticketID,
-		ticket.Status, targetState.Name, workflow.EntitySnapshot{
+		ticket.Status, targetState.Name, goUUIDPtr(ticket.WorkflowStateID), workflow.EntitySnapshot{
 			AssigneeID:  goUUIDPtr(ticket.AssigneeID),
 			DueAt:       goTimePtr(ticket.DueAt),
 			Description: ticket.Description,
@@ -704,32 +691,19 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 		return
 	}
 
-	if len(gated.Effects) > 0 {
-		if !h.applyWithEffects(w, r, spaceID, workflow.ApprovalEntityTicket, ticketID, targetState.Name, gated) {
-			return
-		}
-		refreshed, err := h.q.GetTicketInSpace(r.Context(), generated.GetTicketInSpaceParams{
-			TicketID: ticketID, SpaceID: spaceID,
-		})
-		if err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to read the updated ticket")
-			return
-		}
-		respond.JSON(w, http.StatusOK, refreshed)
+	if !h.applyTransition(w, r, spaceID, workflow.ApprovalEntityTicket, ticketID,
+		targetState.Name, ticket.Status, gated) {
 		return
 	}
 
-	updated, err := h.q.UpdateTicketWorkflowState(r.Context(), generated.UpdateTicketWorkflowStateParams{
-		TicketID:        ticketID,
-		SpaceID:         spaceID,
-		Status:          targetState.Name,
-		WorkflowStateID: pgtype.UUID{Bytes: req.StateID, Valid: true},
+	refreshed, err := h.q.GetTicketInSpace(r.Context(), generated.GetTicketInSpaceParams{
+		TicketID: ticketID, SpaceID: spaceID,
 	})
 	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to update ticket")
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to read the updated ticket")
 		return
 	}
-	respond.JSON(w, http.StatusOK, updated)
+	respond.JSON(w, http.StatusOK, refreshed)
 }
 
 // ApplyWorkflowTransitionToItem transitions a project item via the workflow engine.
@@ -751,7 +725,7 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 // @Failure      409      {object}  api.SwaggerErrorResponse        "Invalid transition"
 // @Failure      500      {object}  api.SwaggerErrorResponse        "Internal error"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/workflow-state [post]
-func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.Request) { //nolint:cyclop,funlen // workflow state machine validation requires multiple guard branches
+func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.Request) {
 	spaceID, err := spaceIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space ID")
@@ -773,12 +747,6 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	spaceWF, err := h.q.GetSpaceWorkflow(r.Context(), spaceID)
-	if err != nil {
-		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "no workflow assigned to space")
-		return
-	}
-
 	// Reconciled against the request's space — see the ticket handler above.
 	item, err := h.q.GetProjectItemInSpace(r.Context(), generated.GetProjectItemInSpaceParams{
 		ItemID: itemID, SpaceID: spaceID,
@@ -788,35 +756,16 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	var currentStateID uuid.UUID
-	if item.WorkflowStateID.Valid {
-		currentStateID = item.WorkflowStateID.Bytes
-	} else {
-		initial, err := h.repo.GetInitialState(r.Context(), spaceWF.ID)
-		if err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to get initial state")
-			return
-		}
-		currentStateID = initial.ID
-	}
-
-	if err := h.eng.ValidateTransition(r.Context(), spaceWF.ID, currentStateID, req.StateID); err != nil {
-		if errors.Is(err, workflow.ErrInvalidTransition) {
-			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "invalid workflow transition")
-			return
-		}
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to validate transition")
-		return
-	}
-
-	targetState, err := h.repo.GetState(r.Context(), req.StateID)
-	if err != nil {
-		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "target state not found")
+	// This route speaks state IDs, so the only translation it owns is turning
+	// the requested id into the status text the chokepoint speaks. Legality,
+	// position and guards are all the chokepoint's — see the ticket twin.
+	targetState, ok := h.targetStateInSpace(w, r, spaceID, req.StateID)
+	if !ok {
 		return
 	}
 
 	gated, ok := h.gate(w, r, spaceID, workflow.ApprovalEntityItem, itemID,
-		item.Status, targetState.Name, workflow.EntitySnapshot{
+		item.Status, targetState.Name, goUUIDPtr(item.WorkflowStateID), workflow.EntitySnapshot{
 			AssigneeID:  goUUIDPtr(item.AssigneeID),
 			DueAt:       goTimePtr(item.DueAt),
 			Description: item.Description,
@@ -826,32 +775,19 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if len(gated.Effects) > 0 {
-		if !h.applyWithEffects(w, r, spaceID, workflow.ApprovalEntityItem, itemID, targetState.Name, gated) {
-			return
-		}
-		refreshed, err := h.q.GetProjectItemInSpace(r.Context(), generated.GetProjectItemInSpaceParams{
-			ItemID: itemID, SpaceID: spaceID,
-		})
-		if err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to read the updated item")
-			return
-		}
-		respond.JSON(w, http.StatusOK, refreshed)
+	if !h.applyTransition(w, r, spaceID, workflow.ApprovalEntityItem, itemID,
+		targetState.Name, item.Status, gated) {
 		return
 	}
 
-	updated, err := h.q.UpdateProjectItemWorkflowState(r.Context(), generated.UpdateProjectItemWorkflowStateParams{
-		ItemID:          itemID,
-		SpaceID:         spaceID,
-		Status:          targetState.Name,
-		WorkflowStateID: pgtype.UUID{Bytes: req.StateID, Valid: true},
+	refreshed, err := h.q.GetProjectItemInSpace(r.Context(), generated.GetProjectItemInSpaceParams{
+		ItemID: itemID, SpaceID: spaceID,
 	})
 	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to update item")
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to read the updated item")
 		return
 	}
-	respond.JSON(w, http.StatusOK, updated)
+	respond.JSON(w, http.StatusOK, refreshed)
 }
 
 type workflowTransitionRequest struct {
@@ -941,6 +877,40 @@ func transitionIDFromURL(r *http.Request) (uuid.UUID, error) {
 	return id, nil
 }
 
+// targetStateInSpace resolves {state_id} to a state of the SPACE'S OWN
+// workflow, answering the request itself on any failure.
+//
+// Two things are checked here that were not checked before, and both are the
+// same mistake at different layers.
+//
+// The space must HAVE a workflow. These two routes take a target state id, and
+// a space with none has no states — so "no workflow assigned to space" is the
+// precise answer, and it is a 404 exactly as it was before. Without this the
+// request falls through to a confusing complaint about the state instead.
+//
+// And the state must belong to THAT workflow. GetState resolves a bare id
+// across every workflow in the installation, so an id from another org's
+// workflow used to resolve happily and was only stopped later, by an engine
+// check that no longer runs here. Reconciling it against the space's own
+// workflow is the id-belongs-to-parent pattern the rest of this file already
+// uses, and it answers not-found rather than forbidden for the same reason: a
+// state in another org must not be distinguishable from one that does not exist.
+func (h *Handler) targetStateInSpace(
+	w http.ResponseWriter, r *http.Request, spaceID, stateID uuid.UUID,
+) (*workflow.State, bool) {
+	spaceWF, err := h.q.GetSpaceWorkflow(r.Context(), spaceID)
+	if err != nil {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "no workflow assigned to space")
+		return nil, false
+	}
+	state, err := h.repo.GetState(r.Context(), stateID)
+	if err != nil || state.WorkflowID != spaceWF.ID {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "target state not found")
+		return nil, false
+	}
+	return state, true
+}
+
 // ─── Tier evaluation, shared by both engine-backed transition routes ──────────
 
 // gate runs the ADR-0011 tiers for an engine-backed transition and reports
@@ -952,56 +922,63 @@ func transitionIDFromURL(r *http.Request) (uuid.UUID, error) {
 func (h *Handler) gate(
 	w http.ResponseWriter, r *http.Request,
 	spaceID uuid.UUID, entityType workflow.ApprovalEntityType, entityID uuid.UUID,
-	currentStatus, targetStatus string, snapshot workflow.EntitySnapshot,
-) (workflow.GateResult, bool) {
+	currentStatus, targetStatus string, currentStateID *uuid.UUID, snapshot workflow.EntitySnapshot,
+) (workflow.TransitionDecision, bool) {
 	if h.tiers == nil || h.applier == nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
 			"workflow tier evaluation is not configured on this server")
-		return workflow.GateResult{}, false
+		return workflow.TransitionDecision{}, false
 	}
 
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
-		return workflow.GateResult{}, false
+		return workflow.TransitionDecision{}, false
 	}
 	orgID, err := uuid.Parse(claims.OrgID)
 	if err != nil {
 		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
-		return workflow.GateResult{}, false
+		return workflow.TransitionDecision{}, false
 	}
 
 	gated, err := h.tiers.Evaluate(r.Context(), tiergate.Request{
-		OrgID:         orgID,
-		SpaceID:       spaceID,
-		EntityType:    entityType,
-		EntityID:      entityID,
-		ActorID:       claims.UserID,
-		CurrentStatus: currentStatus,
-		TargetStatus:  targetStatus,
-		Entity:        snapshot,
+		OrgID:          orgID,
+		SpaceID:        spaceID,
+		EntityType:     entityType,
+		EntityID:       entityID,
+		ActorID:        claims.UserID,
+		CurrentStatus:  currentStatus,
+		TargetStatus:   targetStatus,
+		CurrentStateID: currentStateID,
+		Entity:         snapshot,
 	})
 	if err != nil {
 		if errors.Is(err, workflow.ErrPostFunctionUnknown) || errors.Is(err, workflow.ErrPostFunctionMalformed) {
 			respond.Error(w, r, http.StatusUnprocessableEntity, respond.CodeValidation,
 				"this transition is configured with an action this server cannot perform, so it was not applied")
-			return workflow.GateResult{}, false
+			return workflow.TransitionDecision{}, false
 		}
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to evaluate the transition")
-		return workflow.GateResult{}, false
+		return workflow.TransitionDecision{}, false
 	}
 	if tiergate.Refused(w, r, gated) || tiergate.Pending(w, gated) {
-		return workflow.GateResult{}, false
+		return workflow.TransitionDecision{}, false
 	}
 	return gated, true
 }
 
-// applyWithEffects writes the status and its post-function effects in one
-// transaction, reporting whether it succeeded.
-func (h *Handler) applyWithEffects(
+// applyTransition writes the status, its state id, its post-function effects
+// and the audit row in one transaction, reporting whether it succeeded.
+//
+// These two routes are unreachable without a workflow — they take a target
+// STATE id, and a space with no workflow has no states — so unlike the /status
+// pair there is no no-workflow branch here. A caller that reaches this with
+// gated.NoWorkflow set has named a state belonging to no assigned workflow, and
+// the applier's own space predicate refuses it.
+func (h *Handler) applyTransition(
 	w http.ResponseWriter, r *http.Request,
 	spaceID uuid.UUID, entityType workflow.ApprovalEntityType, entityID uuid.UUID,
-	toStatus string, gated workflow.GateResult,
+	toStatus, expectFromStatus string, gated workflow.TransitionDecision,
 ) bool {
 	claims := auth.ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -1015,21 +992,32 @@ func (h *Handler) applyWithEffects(
 	}
 
 	if err := h.applier.ApplyTransition(r.Context(), workflow.ApplyInput{
-		EntityType:   entityType,
-		EntityID:     entityID,
-		OrgID:        orgID,
-		SpaceID:      spaceID,
-		ActorID:      claims.UserID,
-		ToStatus:     toStatus,
-		ToStateID:    gated.ToStateID,
-		TransitionID: gated.TransitionID,
-		Effects:      gated.Effects,
+		EntityType:       entityType,
+		EntityID:         entityID,
+		OrgID:            orgID,
+		SpaceID:          spaceID,
+		ActorID:          claims.UserID,
+		ToStatus:         toStatus,
+		ToStateID:        gated.ToStateID,
+		ExpectFromStatus: expectFromStatus,
+		TransitionID:     gated.TransitionID,
+		Effects:          gated.Effects,
 	}); err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
-			"the transition could not be completed and no change was made")
+		respondApplyError(w, r, err)
 		return false
 	}
 	return true
+}
+
+// respondApplyError renders a failed apply. A lost compare-and-swap is a 409
+// conflict; see the same helper in the tickets package for why it is not a 500.
+func respondApplyError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, workflow.ErrTransitionRaced) {
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
+		return
+	}
+	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+		"the transition could not be completed and no change was made")
 }
 
 // goUUIDPtr converts a pgtype.UUID to a *uuid.UUID; an invalid (NULL) value

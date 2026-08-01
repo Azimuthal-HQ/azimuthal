@@ -2494,6 +2494,11 @@ export const queryKeys = {
   spacePendingApprovals: (spaceId: string) => ['spacePendingApprovals', spaceId] as const,
   entityApprovals: (spaceId: string, entityType: string, entityId: string) =>
     ['entityApprovals', spaceId, entityType, entityId] as const,
+  // The offered moves depend on the entity's own state and on guards evaluated
+  // against the CALLER, so the key carries the entity and is refetched after
+  // every status change rather than cached across one.
+  availableTransitions: (spaceId: string, entityType: string, entityId: string) =>
+    ['availableTransitions', spaceId, entityType, entityId] as const,
   // Team keys nest members under ['teams', orgId] so one prefix invalidation
   // catches every membership side effect (default-team re-add, primary moves).
   teams: (orgId: string) => ['teams', orgId] as const,
@@ -3957,6 +3962,70 @@ export function useEntityApprovals(
     queryFn: () =>
       apiFetch<WorkflowApproval[]>(
         `${spaceBase(spaceId)}/workflow/entities/${entityType}/${entityId}/approvals`,
+      ),
+    enabled: !!spaceId && !!entityId,
+    ...opts,
+  });
+}
+
+/** One transition the workflow is willing to offer this actor for this entity. */
+export interface WorkflowOffer {
+  transition_id: string;
+  name: string;
+  to_state_id: string;
+  to_status: string;
+  /**
+   * Taking this move creates an approval request rather than moving the entity.
+   * Saying so before the click matters: without it the only honest control is
+   * one that sometimes answers "pending" for reasons the user cannot see.
+   */
+  requires_approval: boolean;
+}
+
+/** What the workflow will offer for one entity. */
+export interface WorkflowOffering {
+  /**
+   * The space has no workflow, so the server has no opinion and the client
+   * keeps its own vocabulary.
+   *
+   * This is NOT the same as an empty `transitions` list, and collapsing the two
+   * strands the picker: "use your own statuses" and "the workflow offers you
+   * nothing" are opposite instructions.
+   */
+  no_workflow: boolean;
+  /** Where the workflow considers the entity to be. */
+  current_status: string;
+  /**
+   * The entity's stored status text, which can differ from `current_status` on
+   * a row written before the two position columns were kept in step.
+   */
+  entity_status: string;
+  transitions: WorkflowOffer[];
+}
+
+/**
+ * The status changes this entity may be offered, with ADR-0011 conditions
+ * applied.
+ *
+ * This is what makes a configured condition mean anything to a user: a condition
+ * HIDES a transition, and until this endpoint existed nothing offered
+ * transitions, so it hid nothing from anybody.
+ *
+ * It is NOT the authority. The server refuses an illegal move whether or not the
+ * client asked first; this only stops the UI presenting doors that do not open.
+ * A picker built on it must still handle a refusal on submit.
+ */
+export function useAvailableTransitions(
+  spaceId: string,
+  entityType: ApprovalEntityType,
+  entityId: string,
+  opts?: QueryOpts<WorkflowOffering>,
+) {
+  return useQuery<WorkflowOffering, APIError>({
+    queryKey: queryKeys.availableTransitions(spaceId, entityType, entityId),
+    queryFn: () =>
+      apiFetch<WorkflowOffering>(
+        `${spaceBase(spaceId)}/workflow/entities/${entityType}/${entityId}/transitions`,
       ),
     enabled: !!spaceId && !!entityId,
     ...opts,

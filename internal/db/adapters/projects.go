@@ -44,6 +44,9 @@ func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
 		Labels:      coalesceLabels(item.Labels),
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
+		// See the ticket twin: written at creation so the item starts inside its
+		// state machine, and omitting the field would silently mean NULL.
+		WorkflowStateID: pgUUID(item.WorkflowStateID),
 	})
 	if err != nil {
 		return fmt.Errorf("item adapter create: %w", err)
@@ -266,9 +269,12 @@ func dbProjectItemToItem(i generated.ProjectItem) *projects.Item {
 		DueAt:       goTimePtr(i.DueAt),
 		ResolvedAt:  goTimePtr(i.ResolvedAt),
 		Rank:        i.Rank,
-		CreatedAt:   goTime(i.CreatedAt),
-		UpdatedAt:   goTime(i.UpdatedAt),
-		DeletedAt:   goTimePtr(i.DeletedAt),
+		// See the ticket twin in tickets.go: populated on every read, because a
+		// gate that sometimes receives a zero value decides against one.
+		WorkflowStateID: goUUIDPtr(i.WorkflowStateID),
+		CreatedAt:       goTime(i.CreatedAt),
+		UpdatedAt:       goTime(i.UpdatedAt),
+		DeletedAt:       goTimePtr(i.DeletedAt),
 	}
 }
 

@@ -15,11 +15,21 @@ WITH seq AS (
 sp AS (
     SELECT org_id, key FROM spaces WHERE id = $2
 )
+--
+-- workflow_state_id is written AT CREATION. It was absent from this column list
+-- and the column has no DEFAULT, so every item was born NULL — and unlike the
+-- ticket side there was not even a name coincidence to save it: items were born
+-- at the literal "open" while the seeded project workflow's states are
+-- backlog/todo/in_progress/in_review/done. So a new item's status named no
+-- state, its first transition resolved no edge, and nothing an administrator
+-- configured on the initial edge applied to it (D72, known-issues #30).
+--
+-- NULL is still accepted and means the space has no workflow.
 INSERT INTO project_items (id, space_id, org_id, parent_id, number, item_key, kind,
                            title, description, status, priority, reporter_id,
-                           assignee_id, sprint_id, labels, due_at, rank)
+                           assignee_id, sprint_id, labels, due_at, rank, workflow_state_id)
 SELECT $1, $2, sp.org_id, $3, seq.last_number, sp.key || '-' || seq.last_number,
-       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 FROM seq, sp
 RETURNING *;
 
@@ -115,9 +125,14 @@ RETURNING *;
 -- reconciled upstream and cannot arrive here mismatched, so this is the seam
 -- being closed rather than the hole; a miss is zero rows and the transaction
 -- rolls back rather than committing a status the caller had no claim on.
+--
+-- `status = @expect_status` is the compare-and-swap; see the ticket twin in
+-- tickets.sql for what it protects (D91) and why zero rows is a conflict rather
+-- than a miss.
 UPDATE project_items
 SET status = @status, workflow_state_id = @workflow_state_id, updated_at = now()
 WHERE id = @item_id AND space_id = @space_id AND deleted_at IS NULL
+  AND status = @expect_status
 RETURNING *;
 
 -- name: AssignProjectItemToSprintInSpace :exec

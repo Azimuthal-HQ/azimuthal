@@ -6,6 +6,27 @@ import { createUserAndLogin, createSpace, assertNoErrors } from './helpers/setup
 // ---------------------------------------------------------------------------
 
 /** Creates a backlog item through the page's own dialog. */
+/**
+ * Walk an item from the project workflow's initial state to `done`.
+ *
+ * A single `selectOption('done')` used to work because the /status route wrote
+ * whatever string it was given. It no longer does: the seeded project workflow
+ * defines backlog -> in_progress -> in_review -> done and no shortcut, and now
+ * that a configured workflow is ENFORCED the picker does not even offer `done`
+ * from the backlog. That is the feature working; these tests want an item in a
+ * done-category status, not a particular number of clicks, so they walk the
+ * edges the workflow actually declares.
+ *
+ * Each hop asserts the value landed, so a broken hop fails here rather than
+ * three lines later as a mystifying sprint-completion result.
+ */
+async function takeItemToDone(page: Page) {
+  for (const status of ['in_progress', 'in_review', 'done']) {
+    await page.getByLabel('Status').selectOption(status)
+    await expect(page.getByLabel('Status')).toHaveValue(status)
+  }
+}
+
 async function createItem(page: Page, title: string) {
   await page.click('button:has-text("Create Item")')
   await expect(page.locator('#item-title')).toBeVisible()
@@ -118,8 +139,7 @@ test.describe('Sprints', () => {
     // Take one item to a done status.
     await page.click('text=Alpha Done')
     await expect(page).toHaveURL(/\/backlog\/[0-9a-f-]{36}/, { timeout: 10000 })
-    await page.getByLabel('Status').selectOption('done')
-    await expect(page.getByLabel('Status')).toHaveValue('done')
+    await takeItemToDone(page)
 
     // Start and complete, choosing the backlog disposition.
     await page.goto(`/vector/${spaceId}/sprints`)
@@ -158,8 +178,7 @@ test.describe('Sprints', () => {
 
     await page.click('text=Shipped Item')
     await expect(page).toHaveURL(/\/backlog\/[0-9a-f-]{36}/, { timeout: 10000 })
-    await page.getByLabel('Status').selectOption('done')
-    await expect(page.getByLabel('Status')).toHaveValue('done')
+    await takeItemToDone(page)
 
     await page.goto(`/vector/${spaceId}/sprints`)
     // Only the planned sprints offer Start; Alpha is the first row.

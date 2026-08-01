@@ -16,12 +16,14 @@ import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn } from '../../lib/utils';
 import { Markdown } from '../../components/Markdown';
 import { ApprovalBlock } from '../../components/workflow/ApprovalBlock';
+import { statusOptionsFor, statusOptionLabel } from '../../lib/workflow/statusOptions';
 import {
   runStatusChange,
   statusOutcomeMessage,
   type StatusOutcome,
 } from '../../components/workflow/statusOutcome';
 import {
+  useAvailableTransitions,
   useTicket,
   useTransitionTicketStatus,
   useAssignTicket,
@@ -53,7 +55,18 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
   closed: 'Closed',
 };
 
-const ALL_STATUSES: TicketStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
+/**
+ * The picker's vocabulary for a space with NO workflow assigned.
+ *
+ * Where a workflow governs, the options come from the server's offering — the
+ * only thing that can know which moves this actor may take from this ticket's
+ * current state, since ADR-0011 conditions are evaluated against both.
+ *
+ * These four remain the fallback because that is exactly what an unworkflowed
+ * beacon space still runs: tickets.validTransitions, the hardcoded map, which
+ * knows these four and no others.
+ */
+const FALLBACK_STATUSES: TicketStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
 
 const sideSelectClass = cn(
   'h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
@@ -162,6 +175,11 @@ export function TicketDetailPage() {
   const { spaceId = '', ticketId } = useParams<{ spaceId: string; ticketId: string }>();
   const { data: space } = useSpace(spaceId);
   const { data: ticket, isLoading, error, refetch: refetchTicket } = useTicket(spaceId, ticketId ?? '');
+  // The moves this actor may be offered, with ADR-0011 conditions applied. The
+  // server refuses an illegal move regardless — this only stops the picker
+  // showing doors that do not open.
+  const { data: transitions, refetch: refetchTransitions } =
+    useAvailableTransitions(spaceId, 'ticket', ticketId ?? '');
   const transitionMutation = useTransitionTicketStatus(spaceId, ticketId ?? '');
   const assignMutation = useAssignTicket(spaceId, ticketId ?? '');
   const { data: me } = useMe();
@@ -169,6 +187,11 @@ export function TicketDetailPage() {
   const { data: members } = useMembers(orgId, spaceId);
   const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, 'ticket', ticketId ?? '');
   const createCommentMutation = useCreateComment(orgId, spaceId, 'ticket', ticketId ?? '');
+
+  // Always includes the ticket's CURRENT status, which the workflow never
+  // offers (no state has an edge to itself) and a <select> renders blank
+  // without.
+  const statusOptions = statusOptionsFor(ticket?.status ?? '', transitions, FALLBACK_STATUSES);
 
   const [newComment, setNewComment] = useState('');
   // Internal is the default and the safe direction: a note that stays inside
@@ -191,8 +214,11 @@ export function TicketDetailPage() {
     setStatusOutcome(outcome);
     // Refetch on every outcome, not just success: the select is bound to
     // ticket.status, so re-reading the server's truth is what snaps it back
-    // when the transition was refused or is merely pending.
+    // when the transition was refused or is merely pending. The OFFERED set
+    // goes stale with it, because what is legal depends on where the ticket now
+    // is.
     refetchTicket();
+    refetchTransitions();
   }
 
   async function handleAssigneeChange(assigneeId: string) {
@@ -532,8 +558,16 @@ export function TicketDetailPage() {
                 aria-label="Change status"
                 className={sideSelectClass}
               >
-                {ALL_STATUSES.map((s) => (
-                  <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+                {statusOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {statusOptionLabel(
+                      o,
+                      // A workflow state can be named anything an administrator
+                      // likes, so the label map is a lookup with a fallback
+                      // rather than an exhaustive Record.
+                      STATUS_LABEL[o.value as TicketStatus] ?? o.value,
+                    )}
+                  </option>
                 ))}
               </select>
               {/* The reason, beside the control that produced it. A refusal

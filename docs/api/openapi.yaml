@@ -1560,6 +1560,54 @@ components:
       - GuardActorInTeam
       - GuardActorHasCapability
       - GuardFieldRequired
+    workflow.Offer:
+      properties:
+        name:
+          type: string
+        requires_approval:
+          description: |-
+            RequiresApproval reports that taking this transition creates an approval
+            request rather than moving the entity. The client says so before the
+            click; without it the only honest UI is a button that sometimes answers
+            202 for reasons the user cannot see.
+          type: boolean
+        to_state_id:
+          type: string
+        to_status:
+          type: string
+        transition_id:
+          type: string
+      type: object
+    workflow.Offering:
+      properties:
+        current_status:
+          description: |-
+            CurrentStatus is where the workflow considers the entity to be, which is
+            not always the entity's status text — see ResolveFromState.
+          type: string
+        entity_status:
+          description: |-
+            EntityStatus is the entity's stored status text, so a client can tell
+            that the two have drifted rather than silently rendering the resolved one.
+          type: string
+        no_workflow:
+          description: |-
+            NoWorkflow reports that the space has no workflow, so this package can
+            offer nothing and the client falls back to its own vocabulary. It is the
+            read-side twin of Decision.NoWorkflow, and it exists so "no workflow" and
+            "a workflow that offers nothing" are distinguishable — they are very
+            different answers and collapsing them would strand the client.
+          type: boolean
+        transitions:
+          description: |-
+            Transitions are the moves the actor may be offered, conditions applied.
+            Never nil; an empty list means the actor is offered nothing, which is a
+            real answer.
+          items:
+            $ref: '#/components/schemas/workflow.Offer'
+          type: array
+          uniqueItems: false
+      type: object
     workflow.PostFieldKey:
       description: FieldKey and FieldValue are meaningful iff Kind is PostSetField.
       enum:
@@ -10238,6 +10286,71 @@ paths:
       security:
       - BearerAuth: []
       summary: List an item's approvals
+      tags:
+      - workflows
+  /orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/transitions:
+    get:
+      description: The status changes this entity may be offered, with ADR-0011 conditions
+        applied.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: ticket or item
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      - description: Entity ID
+        in: path
+        name: entityID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/workflow.Offering'
+          description: The offered transitions
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: List available transitions
       tags:
       - workflows
   /orgs/{orgID}/spaces/{spaceID}/workflow/states:

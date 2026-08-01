@@ -495,6 +495,56 @@ func (a *WorkflowTierAdapter) StateByName(ctx context.Context, workflowID uuid.U
 	return rowToState(row), nil
 }
 
+// StateByID returns one state of this workflow.
+//
+// GetWorkflowState resolves a bare id, so the workflow is reconciled here
+// rather than in the query: an entity's stored workflow_state_id can point into
+// a workflow the space no longer uses — nothing rewrites the column when a
+// space is reassigned — and placing the entity in that graph would check its
+// move against edges that do not apply to it. Same shape as the id-belongs-to-
+// parent checks on the workflow routes, and the same answer: not found.
+func (a *WorkflowTierAdapter) StateByID(ctx context.Context, workflowID, stateID uuid.UUID) (*workflow.State, error) {
+	row, err := a.q.GetWorkflowState(ctx, stateID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, workflow.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("workflow tier adapter state by id: %w", err)
+	}
+	if row.WorkflowID != workflowID {
+		return nil, workflow.ErrNotFound
+	}
+	return rowToState(row), nil
+}
+
+// InitialState returns the workflow's starting state.
+func (a *WorkflowTierAdapter) InitialState(ctx context.Context, workflowID uuid.UUID) (*workflow.State, error) {
+	row, err := a.q.GetInitialWorkflowState(ctx, workflowID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, workflow.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("workflow tier adapter initial state: %w", err)
+	}
+	return rowToState(row), nil
+}
+
+// TransitionsFrom returns every edge leaving a state.
+func (a *WorkflowTierAdapter) TransitionsFrom(ctx context.Context, workflowID, fromStateID uuid.UUID) ([]*workflow.Transition, error) {
+	rows, err := a.q.ListAvailableTransitions(ctx, generated.ListAvailableTransitionsParams{
+		WorkflowID:  workflowID,
+		FromStateID: fromStateID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("workflow tier adapter transitions from: %w", err)
+	}
+	out := make([]*workflow.Transition, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, rowToTransition(r))
+	}
+	return out, nil
+}
+
 // TransitionBetween returns the edge between two states.
 func (a *WorkflowTierAdapter) TransitionBetween(ctx context.Context, workflowID, fromStateID, toStateID uuid.UUID) (*workflow.Transition, error) {
 	row, err := a.q.GetTransitionByStates(ctx, generated.GetTransitionByStatesParams{

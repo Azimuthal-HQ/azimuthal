@@ -2640,6 +2640,105 @@ converting a past entry would edit a record rather than fix a document.
 
 ---
 
+## 6b. Workflow enforcement — four entries settled, D149–D152 opened
+
+Added by the workflow fail-closed phase, which is a CODE pass rather than a reconciliation pass. The
+new entries are here because this is where the ledger lives; the four settlements above them are the
+point of the phase.
+
+### D71 — status and `workflow_state_id` drift apart — **SETTLED**
+
+Both position columns are now written together by every route that moves an entity, through
+`UpdateTicketWorkflowState` and `UpdateProjectItemWorkflowState`.
+`migrations/051_workflow_state_backfill.sql` reconciles the rows that predate this by name-match,
+resolving the workflow through the entity's own space rather than through the org's seeded default —
+the mistake a copy of migration 016's block would have made, since a space can now be pointed at any
+workflow.
+
+It deliberately does NOT rewrite `status`, and does not fall back to the initial state for rows whose
+status names none. Both are decisions about user-visible data; that migration's header records why
+each was refused. Rows it leaves NULL are handled at read time by `TierService.ResolveFromState`.
+
+### D72 — a new item's first transition is ungated — **SETTLED**
+
+Closed by option (e) of known-issues #30, the one that entry recommends: entities are born in their
+space workflow's initial state with both columns written, resolved through
+`tiergate.Gate.InitialPosition`. `TestTierAPI_ANewItemsFirstTransitionIsGated` was skipped and now
+runs with its assertions unchanged.
+
+The gate-level initial-state fallback that #30 rejects is NOT what shipped. `ResolveFromState`
+consults the stored `workflow_state_id` *before* falling back, so a renamed state resolves exactly
+and the fallback is reached only when neither recorded position resolves. That distinction is only
+available because the same phase repaired D71.
+
+### D91 — an approval's verdict and its transition are two writes — **SETTLED**
+
+`TierService.Decide` commits both through `ApprovalApplier.DecideAndApply`, one transaction. The
+route's "the approval was recorded but the transition could not be applied" branch is deleted rather
+than left as a comment on a fixed bug: the state it described is unreachable.
+
+The second half of the same defect — that the apply was unconditional — is closed by
+`ApplyInput.ExpectFromStatus`, a compare-and-swap predicate on the status write. An approval decided
+after the entity has moved on fails the whole transaction instead of blind-overwriting, and the
+verdict rolls back with it so the request is still decidable.
+
+### D93 — condition-class guards are configurable and never evaluated — **SETTLED, both parts**
+
+Both halves of the follow-up this ledger specified, with the warning it gave about testing heeded.
+`TierService.OfferedTransitions` is reachable at
+`GET /orgs/{orgID}/spaces/{spaceID}/workflow/entities/{entityType}/{entityID}/transitions`, and
+`TierService.Gate` evaluates `GuardConditionClass` regardless of what the client asked first.
+
+The ledger warned that a test added to `tier_service_test.go` proves nothing about reachability.
+`TestWorkflowFailsClosed_OfferedTransitionsAndTheMutationRouteAgree` therefore drives both halves
+through the router. The interim mitigation this entry suggested — suppressing `condition` in the
+admin picker — was NOT taken, and must not be now: the class works.
+
+### D149 — a missing edge answers 409, not the 422 the phase brief asked for
+
+The brief specified 422 for both structural refusals. `tiergate.Refused` answers **409
+INVALID_TRANSITION** for `CheckNoSuchTransition` and 422 VALIDATION_ERROR for everything else.
+
+`tickets.ValidateTransition` has answered 409 INVALID_TRANSITION for "cannot transition from x to y"
+since before workflows existed, the Beacon board rolls a card back on it, and now that the workflow
+adjudicates the same question it must not answer it under a different number. An unknown target
+status keeps 422, which is the brief's own wording — "status not in the workflow" is exactly that
+case. Recorded as a deliberate departure rather than an oversight.
+
+### D150 — `workflow.Engine` is no longer wired into any request path
+
+The two engine-backed `/workflow-state` routes ran `Engine.ValidateTransition` and carried their own
+"fall back to the initial state" branch — a second legality authority that placed the entity by its
+stored state id while the `/status` routes placed it by status text. On a drifted row the two
+disagreed about which edge was being traversed, which under D71 was nearly every row.
+
+`workflows.NewHandler` no longer takes an `Engine`. The type and its tests remain; it has no
+production caller. Left as a live exported API rather than deleted, because deleting an exported
+symbol is a contract change — but a reader should know it is no longer load-bearing.
+
+### D151 — `Repository.GetState` resolves a state id across every workflow in the installation
+
+Found while removing the engine check. It takes a bare id, so a state belonging to another org's
+workflow used to resolve happily on the `/workflow-state` routes and was stopped only by the engine
+check that no longer runs there. `Handler.targetStateInSpace` now reconciles the state against the
+space's own workflow and answers 404; `WorkflowTierAdapter.StateByID` does the same on the read side.
+
+`Repository.GetState` itself is unchanged and still unscoped. Its other callers were not audited by
+this phase.
+
+### D152 — `spaces.workflow_id` has no `applies_to` check
+
+`AssignWorkflowToSpace` is `UPDATE spaces SET workflow_id = $1 WHERE id = $2`, and `GetSpaceWorkflow`
+never checks `applies_to`, so nothing stops a beacon space being pointed at a `project_items`
+workflow. Pre-existing and unchanged — but materially more visible now the workflow decides, because
+such a space would refuse every ticket transition with `no_such_transition`, the graph it is checked
+against being the wrong one.
+
+Not fixed here: it is a constraint decision with a data question attached (what to do with any
+existing mismatched rows), which is a maintainer's call rather than a phase's.
+
+---
+
 ## 7. What this pass deliberately did not touch
 
 - **Specification §2.** Non-negotiable text. Three findings land on it — D97 (skip enforcement),
