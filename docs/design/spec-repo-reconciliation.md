@@ -2185,7 +2185,7 @@ in-process dump; add `-v ON_ERROR_STOP=1` and stop discarding psql's output; nor
 the whole section, and `docs/upgrade.md`'s rollback no longer routes through the app container. Do
 not close this by deleting the backup documentation.
 
-> **CLOSED 2026-08-01.** All three parts are fixed, and the ⚠ block in `docs/self-hosting.md` is
+> **CLOSED 2026-08-01 in PR #103.** All three parts are fixed, and the ⚠ block in `docs/self-hosting.md` is
 > deleted rather than softened.
 >
 > - **The image carries the client.** `build/Dockerfile` gained a `pgclient` stage that copies
