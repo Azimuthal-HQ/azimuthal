@@ -2233,17 +2233,35 @@ figure: `go tool cover -func | tail -1` prints one decimal, so a floor of 84 tri
 gate's favour. Ordinary work will not spend 146 statements; a large phase landing at low coverage
 can, and should be interrupted when it does.
 
-**84 is a ratchet, not a settlement.** The target stays 85, §2.8 is unchanged, and this entry stays
-open. The constraint this entry set still holds and is not evaded: D98 must not be closed by
-lowering the target, and raising the floor is not lowering the target.
+**84 is a ratchet, not a settlement.** The target stays 85, §2.8's *second* half is unchanged, and
+this entry stays open. The constraint this entry set still holds and is not evaded: D98 must not be
+closed by lowering the target, and raising the floor is not lowering the target.
 
-> **Flagged, not resolved — §2.8's own gate figure is now stale in the other direction.** §2.8
-> reads "Coverage gate is 80%, rising to 85% at the end of P5." CI now enforces 84, so the first
-> half understates the gate. Correcting 80 → 84 there would *strengthen* rather than weaken the
-> assertion, so it is not the §2.3 problem that kept the second half untouched — but it is still
-> §2 text, and `CLAUDE.md` §5 sends a change to §2 to the maintainer rather than to the phase. The
-> drift is benign in direction: an agent trusting the spec aims at 80 and is surprised by CI rather
-> than shipping a defect. Maintainer's call.
+> **Resolved on the maintainer's ruling — §2.8's gate figure is corrected 80 → 84 in this PR.**
+>
+> This was raised as *"flagged, not resolved,"* and the flag's reasoning is kept rather than
+> deleted, because it is the record of why the edit was permissible. §2.8 read "Coverage gate is
+> 80%, rising to 85% at the end of P5." Ratcheting CI to 84 made the first half understate the
+> gate. Correcting it *strengthens* the assertion, so it is not the §2.3 problem that kept the
+> second half untouched — but it is still §2 text, and `CLAUDE.md` §5 sends a §2 change to the
+> maintainer rather than to the phase. The drift was benign in direction: an agent trusting the
+> spec would aim at 80 and be surprised by CI rather than ship a defect.
+>
+> **The ruling was to fix it here rather than carry it, and the reason is not severity.** This PR
+> is what made §2.8 false. Before the ratchet the sentence was correct; after it, the specification
+> contradicts the pipeline in the one document a new agent reads first. Shipping a knowingly-false
+> spec sentence because the direction is benign is the move **D106** was settled to stop — a stated
+> rule left wrong provided someone writes a paragraph about it. The paragraph is not the fix.
+>
+> Only the gate figure moved. *"Rising to 85% at the end of P5"* is untouched: it is §2.3-fenced,
+> it is this entry's subject, and this entry stays **open**. P5's Definition of Done ("Coverage gate
+> raised to 85%") is likewise untouched.
+>
+> **Carried to the 0.5.0 hardening wave (W4):** a `docs-check` rule that reads the floor out of
+> `.github/workflows/ci.yml` and out of §2.8 and fails when they disagree. Under **D148** a figure
+> that *is* the claim must be backed by a test that fails when it drifts, and this one is not —
+> which is exactly how it drifted. New tooling does not belong on a branch that is otherwise ready;
+> it joins the citation-guard-for-Go-source item already queued there.
 
 ### D105 — backup cannot run where every document says to run it, and restore reports success on a partial recovery
 
