@@ -196,6 +196,100 @@ func TestPortalLinkDisclosureAllowed_IsIndependentOfDeliveryMode(t *testing.T) {
 	}
 }
 
+// TestPortalDisclosureFlagIgnored_TruthTable pins what the startup warning
+// fires on.
+//
+// The predicate is the exact complement of the case that "works": true only when
+// an operator asked for disclosure AND production overruled them. Its narrowness
+// is the whole point. cmd/server/serve.go turns this into a line an operator
+// reads at boot, and a warning that also fired on development+flag would be
+// telling somebody their working setup is broken — which is how a warning
+// becomes noise, and noise leaves the real case no better off than the silence
+// it replaced.
+//
+// Invert the predicate to `!c.IsProduction()` and the two development rows fail;
+// widen it to `c.PortalDiscloseLink` alone and the same two fail; narrow it to
+// `c.IsProduction()` alone and the production-without-the-flag row fails.
+func TestPortalDisclosureFlagIgnored_TruthTable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		appEnv string
+		flag   string
+		want   bool
+		why    string
+	}{
+		{
+			name:   "flag set on production is the ignored combination",
+			appEnv: "production",
+			flag:   "true",
+			want:   true,
+			why:    "the only case that is silently discarded, and so the only one worth a line",
+		},
+		{
+			name:   "production without the flag has nothing to report",
+			appEnv: "production",
+			flag:   "false",
+			want:   false,
+			why:    "nobody asked for anything, so there is nothing being ignored",
+		},
+		{
+			name:   "development with the flag is working as asked",
+			appEnv: "development",
+			flag:   "true",
+			want:   false,
+			why:    "this configuration DOES disclose — warning here would contradict the truth table",
+		},
+		{
+			name:   "development without the flag is the ordinary case",
+			appEnv: "development",
+			flag:   "false",
+			want:   false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := discloseCase{appEnv: tc.appEnv, flag: tc.flag}.load(t)
+			if got := cfg.PortalDisclosureFlagIgnored(); got != tc.want {
+				t.Errorf("APP_ENV=%q AZIMUTHAL_PORTAL_DISCLOSE_LINK=%q: ignored=%v, want %v\n%s",
+					tc.appEnv, tc.flag, got, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// TestPortalDisclosureFlagIgnored_IsExactlyWhatTheRuleDiscards states the
+// relationship between the two predicates rather than leaving it to be inferred
+// from two separate tables.
+//
+// The warning must fire on precisely the configurations where the operator asked
+// for disclosure and did not get it. Drift either predicate independently — a
+// warning that stops covering an ignored case, or one that starts firing on a
+// case that works — and this fails.
+func TestPortalDisclosureFlagIgnored_IsExactlyWhatTheRuleDiscards(t *testing.T) {
+	for _, appEnv := range []string{"production", "development", "test", "staging"} {
+		for _, flag := range []string{"true", "false"} {
+			t.Run(appEnv+"/"+flag, func(t *testing.T) {
+				cfg := discloseCase{appEnv: appEnv, flag: flag}.load(t)
+
+				asked := cfg.PortalDiscloseLink
+				got := cfg.PortalLinkDisclosureAllowed()
+				ignored := cfg.PortalDisclosureFlagIgnored()
+
+				if want := asked && !got; ignored != want {
+					t.Errorf("APP_ENV=%q flag=%q: asked=%v allowed=%v ignored=%v, want ignored=%v — "+
+						"the warning must cover exactly the requests the rule discards",
+						appEnv, flag, asked, got, ignored, want)
+				}
+				// The two can never both be true: a request cannot be honoured
+				// and ignored at once.
+				if ignored && got {
+					t.Errorf("APP_ENV=%q flag=%q: disclosure is both allowed and reported ignored",
+						appEnv, flag)
+				}
+			})
+		}
+	}
+}
+
 // TestLoad_PortalDiscloseLinkDefaultsToOff pins the flag's own default,
 // independently of the environment name.
 //

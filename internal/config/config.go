@@ -399,11 +399,34 @@ func (c *Config) IsProduction() bool {
 // A production server therefore never discloses, whatever the flag says. It is
 // still a runtime degrade rather than a boot refusal: validate() does not reject
 // the combination, on the same reasoning that keeps it from rejecting
-// PortalLinkDeliveryLink in production. Whether an operator who explicitly asks
-// for disclosure in production should instead be refused at startup is a
-// maintainer decision, not one to take here.
+// PortalLinkDeliveryLink in production.
+//
+// RESOLVED — this comment used to leave the question open ("whether an operator
+// who explicitly asks for disclosure in production should instead be refused at
+// startup is a maintainer decision"). The maintainer ruled: WARN, DO NOT REFUSE.
+// The silent ignore was the real defect — this file's own philosophy, stated at
+// parseLogLevel, is that a value the server ignores is worse than one it
+// rejects — but a hard refusal shipped inside a security patch could lock an
+// operator out over a combination that is already safe, since the security
+// property is enforced here regardless. So the flag stays ignored and the
+// operator is told: see PortalDisclosureFlagIgnored.
 func (c *Config) PortalLinkDisclosureAllowed() bool {
 	return c.PortalDiscloseLink && !c.IsProduction()
+}
+
+// PortalDisclosureFlagIgnored reports the one combination
+// PortalLinkDisclosureAllowed silently discards: an operator asked for
+// disclosure and production overruled them.
+//
+// It exists to be warned about, not to be acted on — cmd/server/serve.go logs
+// one line at startup when it is true. The predicate is deliberately NARROW: it
+// is not "the flag is set" and not "we are in production", but exactly the pair
+// where the setting has no effect. A warning that also fired on dev+flag would
+// be telling an operator their working configuration is wrong, and a warning
+// that cries wolf is one operators learn to scroll past — which would leave the
+// real case no better off than the silence it replaced.
+func (c *Config) PortalDisclosureFlagIgnored() bool {
+	return c.PortalDiscloseLink && c.IsProduction()
 }
 
 // parseAllowedOrigins splits a comma-separated origin list. When the env var
