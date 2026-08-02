@@ -777,13 +777,30 @@ list before a fifth was about to ship with the P5 note gadget. The three non-Cod
 (`TicketDetailPage`, `ItemDetailPage`, `SharedEntityPage`) now use this one.
 
 > **The rule: raw HTML stays off.** react-markdown v10 escapes embedded HTML by default; turning it
-> back on means `rehype-raw`, and there is no sanitiser behind it anywhere in this codebase. A note
-> gadget's body lands on somebody else's dashboard the moment the dashboard is shared.
+> back on means `rehype-raw`. A note gadget's body lands on somebody else's dashboard the moment
+> the dashboard is shared, and this surface has no need of markup at all.
 
 `pages/codex/WikiPage.tsx` keeps its own call site because it DOES pass `rehype-raw`, for legacy
-wiki content. That is a Codex decision with a real XSS surface behind it; it is recorded here so
-that nobody copies that block, and in the P5 phase report so that somebody eventually decides
-about it.
+wiki content.
+
+**That decision has now been made, and not by turning it off.** The rule above used to end "and
+there is no sanitiser behind it anywhere in this codebase", and this section used to say somebody
+eventually had to decide about the Codex call site. The v0.4.1 trust patch decided it: raw HTML
+stays a Codex feature, and `rehype-sanitize` runs immediately behind `rehype-raw` there.
+
+Plugin order is the whole security property — sanitising *before* `rehype-raw` sanitises escaped
+text and then re-inflates the markup, which is the same as not sanitising — so the pair lives in
+one named constant, `WIKI_REHYPE_PLUGINS` in `WikiPage`, with the reasoning beside it.
+
+The schema is `rehype-sanitize`'s default (GitHub's) with **nothing widened**. It already permits
+what this surface needs: `className` matching `/^language-./` on `<code>`, which is what the `code`
+component override reads to pick a highlighter language, and relative `src`/`href`. The one
+deviation is a tightening — `<style>` joins `<script>` in `strip`, because anything outside
+`tagNames` is otherwise *unwrapped*, which left a page printing its own stylesheet into the body as
+visible text.
+
+**Still do not copy that block into a new surface.** Owning a sanitiser schema is a cost, and
+every surface in this section renders text that has no business being markup.
 
 **Every prose colour is pinned to a token.** The app's theme is the `.dark` class while
 `prose-invert` keys off the OS media query, so a body styled with `dark:prose-invert` alone renders
