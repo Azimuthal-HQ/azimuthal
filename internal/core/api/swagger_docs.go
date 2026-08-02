@@ -13,6 +13,16 @@ import (
 // server, never from a CDN — see the swaggerui package for why. The assets are
 // embedded in the binary, so /api/docs works on an isolated network and cannot
 // be changed under an administrator by a third party.
+//
+// The page's initialiser is served as its own file rather than written inline,
+// and that is a CSP requirement rather than a style choice. The global policy
+// (api.ContentSecurityPolicy) is `script-src 'self'` with no 'unsafe-inline',
+// no nonce and no hash, because keeping it bare is what makes it worth having.
+// An inline <script> here would have forced one of those three concessions on
+// every response in the product — including the wiki pages the policy exists
+// for — to keep one internal documentation page working. So the script moved
+// out instead. The <style> block below stays inline: style-src already carries
+// 'unsafe-inline' for reasons the SPA imposes and this page cannot change.
 
 const swaggerUIHTML = `<!DOCTYPE html>
 <html lang="en">
@@ -48,42 +58,58 @@ const swaggerUIHTML = `<!DOCTYPE html>
     <div id="swagger-ui"></div>
     <script src="/api/docs/assets/swagger-ui-bundle.js"></script>
     <script src="/api/docs/assets/swagger-ui-standalone-preset.js"></script>
-    <script>
-        window.onload = function() {
-            SwaggerUIBundle({
-                url: '/api/docs/openapi.yaml',
-                dom_id: '#swagger-ui',
-                presets: [
-                    SwaggerUIBundle.presets.apis,
-                    SwaggerUIStandalonePreset
-                ],
-                plugins: [SwaggerUIBundle.plugins.DownloadUrl],
-                layout: 'StandaloneLayout',
-                deepLinking: true,
-                displayRequestDuration: true,
-                defaultModelsExpandDepth: 2,
-                defaultModelExpandDepth: 2,
-                persistAuthorization: true,
-                tryItOutEnabled: true,
-                filter: true,
-                syntaxHighlight: {
-                    activated: true,
-                    theme: 'monokai'
-                }
-            })
-        }
-    </script>
+    <script src="/api/docs/init.js"></script>
 </body>
 </html>`
 
+// swaggerUIInitJS is the page's initialiser, served from /api/docs/init.js.
+// It was the inline <script> at the bottom of swaggerUIHTML until the global
+// CSP arrived; see the comment above swaggerUIHTML for why it is a file now.
+const swaggerUIInitJS = `window.onload = function() {
+    SwaggerUIBundle({
+        url: '/api/docs/openapi.yaml',
+        dom_id: '#swagger-ui',
+        presets: [
+            SwaggerUIBundle.presets.apis,
+            SwaggerUIStandalonePreset
+        ],
+        plugins: [SwaggerUIBundle.plugins.DownloadUrl],
+        layout: 'StandaloneLayout',
+        deepLinking: true,
+        displayRequestDuration: true,
+        defaultModelsExpandDepth: 2,
+        defaultModelExpandDepth: 2,
+        persistAuthorization: true,
+        tryItOutEnabled: true,
+        filter: true,
+        syntaxHighlight: {
+            activated: true,
+            theme: 'monokai'
+        }
+    })
+}
+`
+
 // RegisterDocsRoutes adds API documentation routes to the router.
-// GET /api/docs           -> Swagger UI (interactive documentation)
+// GET /api/docs              -> Swagger UI (interactive documentation)
+// GET /api/docs/init.js      -> the UI page's initialiser (see swaggerUIHTML)
 // GET /api/docs/openapi.yaml -> raw OpenAPI 3.0 spec
 func RegisterDocsRoutes(r chi.Router) {
 	r.Get("/api/docs", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(swaggerUIHTML))
+	})
+
+	// Not under /api/docs/assets/: that path is the vendored Swagger UI tree
+	// served straight out of an embedded FS, and it is cached `immutable` for a
+	// year on the grounds that the path changes when the vendored version does.
+	// This file is ours and changes when we change it, so it gets its own route
+	// and no such caching.
+	r.Get("/api/docs/init.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(swaggerUIInitJS))
 	})
 
 	// No Access-Control-Allow-Origin here. It used to be "*", which let any

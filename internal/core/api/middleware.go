@@ -177,6 +177,74 @@ func writeCORSHeaders(w http.ResponseWriter, allowed string) {
 	w.Header().Set("Access-Control-Max-Age", "86400")
 }
 
+// ContentSecurityPolicy is the policy served on every response.
+//
+// One global policy rather than a per-route one, on purpose: the SPA, the JSON
+// API, the Swagger UI and the wiki render endpoint all sit on a single origin,
+// and a policy that varies by path is a policy nobody can reason about. Every
+// directive below is the strictest value that leaves a shipped feature working,
+// and where it is not strict the reason is written down.
+//
+//   - script-src 'self' is the point of the whole header. No 'unsafe-inline',
+//     no 'unsafe-eval', no nonce, no hash. The built SPA carries no inline
+//     script — vite emits `<script type="module" crossorigin src="/assets/…">`
+//     and nothing else — and the Swagger UI page's initialiser was moved out to
+//     /api/docs/init.js so this directive could stay bare. Markup that gets
+//     past the wiki sanitiser still cannot execute.
+//   - style-src needs 'unsafe-inline', and it is the one loosening here. Three
+//     independent sources need it and none can be nonced away: the Swagger UI
+//     page's literal <style> block, and at runtime the <style> elements tiptap
+//     (createStyleTag) and react-style-singleton inject into the head. React's
+//     own style={{…}} props are unaffected either way — React writes those
+//     through the CSSOM, which CSP does not govern. Styles cannot execute; the
+//     residual risk is defacement, not code.
+//   - img-src is deliberately as wide as the wiki sanitiser's own URL policy.
+//     rehype-sanitize's default schema permits http and https `src`, converted
+//     legacy markdown pages carry external images, and attachments are fetched
+//     with a bearer token and handed to <img> as blob: URLs (fetchObjectURL in
+//     web/src/lib/api.ts). Narrowing it here would break shipped content from a
+//     second place while the sanitiser still permitted it — two policies
+//     disagreeing about one question. What decides which URLs reach a page is
+//     the sanitiser; this directive only has to not contradict it.
+//   - font-src needs data: — the built stylesheet inlines Inter as
+//     url(data:font/woff…).
+//   - connect-src 'self' matches the frontend's default API base of /api/v1.
+//     An operator who builds the SPA with an absolute VITE_API_BASE_URL is
+//     pointing it at another origin and must widen this — the same coupling
+//     AZIMUTHAL_ALLOWED_ORIGINS already carries.
+//   - object-src 'none' and base-uri 'self' close the two classic bypasses a
+//     script-src alone leaves open: plugin content, and rewriting the document
+//     base so a relative script src resolves off-origin.
+//   - frame-ancestors 'none' is the modern clickjacking control; the
+//     X-Frame-Options header beside it says the same for browsers that never
+//     learned the directive. Nothing in this product embeds itself in a frame.
+const ContentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob: http: https:; " +
+	"font-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"media-src 'self' blob:; " +
+	"worker-src 'self' blob:; " +
+	"object-src 'none'; " +
+	"base-uri 'self'; " +
+	"form-action 'self'; " +
+	"frame-ancestors 'none'"
+
+// strictTransportSecurity asks a browser to refuse plaintext to this host for a
+// year. No `preload`: that submits the domain to a browser-vendor list which is
+// slow to leave again, and is not a self-hosted operator's decision to have
+// made for them by a default.
+//
+// Sent unconditionally rather than only when r.TLS != nil, and that is
+// deliberate in both directions. A browser ignores HSTS received over plain
+// HTTP entirely — the spec requires a secure transport — so a localhost or
+// plain-HTTP deployment is unaffected. And the usual production shape here is a
+// TLS-terminating proxy in front of this binary, where r.TLS is nil on every
+// request; a conditional would have switched the header off in exactly the
+// deployment that needs it.
+const strictTransportSecurity = "max-age=31536000; includeSubDomains"
+
 // SecurityHeaders sets the response headers that hold for every route.
 //
 // X-Content-Type-Options: nosniff stops a browser second-guessing a declared
@@ -195,9 +263,26 @@ func writeCORSHeaders(w http.ResponseWriter, allowed string) {
 // attachment serve path sniffs the stored bytes instead of relying on this
 // header, and why adding this middleware would not on its own have closed
 // that hole.
+//
+// The other four headers arrived with the v0.4.1 trust patch. Until then this
+// middleware set nosniff and nothing else: no CSP, so script that reached a
+// rendered page ran with the origin's full authority; no frame controls, so the
+// whole app could be framed; no referrer policy, so a full URL — which in this
+// product carries org, space and entity ids — travelled to every cross-origin
+// destination a user clicked through to.
+//
+// Referrer-Policy is strict-origin-when-cross-origin: a same-origin navigation
+// keeps the full path (the SPA is one origin, so nothing internal is lost), a
+// cross-origin one sends the bare origin, and an HTTPS→HTTP downgrade sends
+// nothing at all.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Content-Security-Policy", ContentSecurityPolicy)
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Strict-Transport-Security", strictTransportSecurity)
 		next.ServeHTTP(w, r)
 	})
 }
