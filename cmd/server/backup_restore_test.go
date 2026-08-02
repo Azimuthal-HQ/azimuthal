@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -506,6 +507,320 @@ func TestDumpPostgres_RecordsAVersion(t *testing.T) {
 		"the manifest's postgres_version must carry the server's version string, got %q", version)
 	require.Equal(t, strings.TrimSpace(version), version,
 		"the version string must be trimmed — it is printed back to the operator on restore")
+}
+
+// --- Backup integrity: flush ordering and archive permissions (T3) ----------
+//
+// Two defects, one shape. runBackup wrote a world-readable archive containing
+// a full pg_dump, and it printed "Backup complete" and returned nil *before*
+// any of its three writers had been flushed, with every Close error discarded
+// by a defer. A truncated archive was reported as a success.
+
+// unreachableDSN is syntactically valid and cannot connect: port 1 refuses,
+// and these tests must fail before any connection is made. config.Load only
+// validates the DSN, so this is enough to get past loadConfig.
+//
+// It carries no userinfo at all. The obvious spelling — the
+// `postgres://unused:unused@…` used elsewhere in cmd/server — trips gosec's
+// G101 "Password in URL" when it appears as a literal in a struct field, and
+// the right answer to a scanner finding here is to change the string rather
+// than annotate it (docs/security-scanning.md). There is no credential to
+// express: nothing authenticates against this.
+const unreachableDSN = "postgres://127.0.0.1:1/unused?sslmode=disable"
+
+// withBackupOutput points the backup command's --output flag at path for the
+// duration of one test.
+//
+// backupOutput is a package-level var bound to a cobra flag, and cobra commands
+// here are package singletons — the same mutation hazard
+// TestCommands_SilenceUsageOnRuntimeFailure documents for SilenceUsage, which
+// runBackup also sets. Both are restored.
+func withBackupOutput(t *testing.T, path string) {
+	t.Helper()
+	prev := backupOutput
+	backupOutput = path
+	t.Cleanup(func() {
+		backupOutput = prev
+		backupCmd.SilenceUsage = false
+	})
+}
+
+// swapBackupOpener substitutes the archive's file opener for one test.
+func swapBackupOpener(t *testing.T, fn func(string) (io.WriteCloser, error)) {
+	t.Helper()
+	prev := openBackupOutput
+	openBackupOutput = fn
+	t.Cleanup(func() { openBackupOutput = prev })
+}
+
+// recordingCloser reports when it was closed and, optionally, fails.
+type recordingCloser struct {
+	name  string
+	order *[]string
+	err   error
+}
+
+func (c *recordingCloser) Close() error {
+	*c.order = append(*c.order, c.name)
+	return c.err
+}
+
+// closeFailsWriter accepts every write and fails on Close — the sink that
+// makes a flush failure reproducible without a full disk.
+type closeFailsWriter struct {
+	buf      bytes.Buffer
+	closeErr error
+	closed   bool
+}
+
+func (w *closeFailsWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+
+func (w *closeFailsWriter) Close() error {
+	w.closed = true
+	return w.closeErr
+}
+
+// TestFinalizeArchive_ClosesInOrderAndReportsEveryFailure is the unit-level
+// half of the flush fix, and it needs no postgres, so it runs everywhere.
+//
+// It asserts the two things the deferred-close version got wrong: that all
+// three writers are closed innermost-first, and that a failure in ANY of them
+// is returned rather than discarded. The ordering assertion is not decoration —
+// tw.Close writes the tar footer into gw and gw.Close writes the gzip trailer
+// into outFile, so closing them in any other order silently truncates the
+// archive. finalizeArchive takes three same-typed io.Closers, which is exactly
+// the shape that swaps unnoticed; this is what would notice.
+func TestFinalizeArchive_ClosesInOrderAndReportsEveryFailure(t *testing.T) {
+	t.Run("all three close, innermost first", func(t *testing.T) {
+		var order []string
+		err := finalizeArchive(
+			&recordingCloser{name: "tar", order: &order},
+			&recordingCloser{name: "gzip", order: &order},
+			&recordingCloser{name: "file", order: &order},
+		)
+		require.NoError(t, err)
+		require.Equal(t, []string{"tar", "gzip", "file"}, order,
+			"the writers must be closed innermost-first: the tar footer is written into "+
+				"the gzip stream and the gzip trailer into the file, so any other order "+
+				"truncates the archive")
+	})
+
+	// Each layer, separately: a single test that only failed the outermost
+	// close would pass with the other two errors still discarded.
+	failures := []struct {
+		layer     string
+		tarErr    error
+		gzipErr   error
+		fileErr   error
+		wantStage string
+		wantOrder []string
+	}{
+		{
+			layer:     "tar footer",
+			tarErr:    errors.New("tar boom"),
+			wantStage: "finalising tar archive",
+			wantOrder: []string{"tar"},
+		},
+		{
+			layer:     "gzip trailer",
+			gzipErr:   errors.New("gzip boom"),
+			wantStage: "finalising gzip stream",
+			wantOrder: []string{"tar", "gzip"},
+		},
+		{
+			layer:     "output file",
+			fileErr:   errors.New("file boom"),
+			wantStage: "closing backup file",
+			wantOrder: []string{"tar", "gzip", "file"},
+		},
+	}
+	for _, f := range failures {
+		t.Run("a failure closing the "+f.layer+" is returned", func(t *testing.T) {
+			var order []string
+			err := finalizeArchive(
+				&recordingCloser{name: "tar", order: &order, err: f.tarErr},
+				&recordingCloser{name: "gzip", order: &order, err: f.gzipErr},
+				&recordingCloser{name: "file", order: &order, err: f.fileErr},
+			)
+			require.Error(t, err,
+				"a failure closing the %s leaves a corrupt archive; discarding it is how "+
+					"a truncated backup reported success", f.layer)
+			require.Contains(t, err.Error(), f.wantStage,
+				"the error must name the stage that failed; got %q", err.Error())
+			require.Equal(t, f.wantOrder, order,
+				"finalizeArchive must stop at the first failure — the archive is already corrupt")
+		})
+	}
+}
+
+// TestFinalizeArchive_SurfacesARealSinkFailure is the composition check for
+// the test above: the fakes prove the ordering and the error plumbing, this
+// proves the same function behaves over the real tar and gzip writers rather
+// than only over io.Closers that agree with it.
+func TestFinalizeArchive_SurfacesARealSinkFailure(t *testing.T) {
+	sink := &closeFailsWriter{closeErr: errors.New("disk went away")}
+	gw := gzip.NewWriter(sink)
+	tw := tar.NewWriter(gw)
+	require.NoError(t, addToTar(tw, "database.sql", []byte("-- dump")))
+
+	err := finalizeArchive(tw, gw, sink)
+	require.Error(t, err, "a sink that cannot be closed must fail the backup")
+	require.ErrorContains(t, err, "disk went away")
+	require.True(t, sink.closed, "the sink must actually have been closed")
+
+	// The bytes did reach the sink before it failed — proof the tar footer and
+	// gzip trailer were flushed in order and the failure is genuinely the
+	// close, not an earlier short-circuit that never wrote anything.
+	require.NotEmpty(t, sink.buf.Bytes(), "the archive bytes must have been flushed to the sink")
+}
+
+// TestRunBackup_FlushFailureIsNotASuccess is the end-to-end regression test:
+// runBackup itself must report the failure and must not print the success line.
+//
+// This is the defect exactly as it shipped. The three writers were closed by
+// deferred functions that discarded their errors, and defers run after the
+// return statement — so `fmt.Printf("Backup complete: %s\n", ...)` had already
+// printed and runBackup had already returned nil by the time the flush failed.
+// The operator saw a success message over a truncated archive and discovered
+// otherwise while restoring.
+//
+// Gated on requirePostgresClientTools like its sibling
+// TestRestorePostgres_PartialRestoreIsAFailure, and for the same reason: the
+// dump is runBackup's first step, so there is no route to the flush without a
+// real server. That gate is fatal in CI, so the coverage is real there.
+func TestRunBackup_FlushFailureIsNotASuccess(t *testing.T) {
+	dsn := requirePostgresClientTools(t)
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, dsn)
+	require.NoError(t, err)
+	defer adminPool.Close()
+
+	srcDSN := newScratchDatabase(ctx, t, adminPool, dsn, "azim_flushfail_")
+
+	t.Setenv("DATABASE_URL", srcDSN)
+	t.Setenv("STORAGE_ENDPOINT", "") // the supported "no object store" case
+	withBackupOutput(t, filepath.Join(t.TempDir(), "unflushable.tar.gz"))
+
+	sink := &closeFailsWriter{closeErr: errors.New("simulated flush failure")}
+	swapBackupOpener(t, func(string) (io.WriteCloser, error) { return sink, nil })
+
+	var backupErr error
+	out := captureStdout(t, func() {
+		backupErr = runBackup(backupCmd, nil)
+	})
+
+	require.Error(t, backupErr,
+		"a backup whose archive could not be flushed must fail; returning nil here is how "+
+			"a truncated archive becomes a backup an operator trusts")
+	require.ErrorContains(t, backupErr, "simulated flush failure",
+		"the error must carry the underlying flush failure; got %q", backupErr.Error())
+	require.NotContains(t, out, "Backup complete",
+		"a backup that could not be flushed must not print the success line; stdout was:\n%s", out)
+}
+
+// TestRunBackup_SucceedsAndPrintsCompleteOnAGoodRun is the positive control.
+// Without it, runBackup could be changed to return an error unconditionally
+// and the test above would still pass.
+//
+// It also closes the loop the flush fix is really about: the archive left on
+// disk is read back and must contain the dump the run claimed to take.
+func TestRunBackup_SucceedsAndPrintsCompleteOnAGoodRun(t *testing.T) {
+	dsn := requirePostgresClientTools(t)
+	ctx := context.Background()
+
+	adminPool, err := pgxpool.New(ctx, dsn)
+	require.NoError(t, err)
+	defer adminPool.Close()
+
+	srcDSN := newScratchDatabase(ctx, t, adminPool, dsn, "azim_goodbackup_")
+
+	archive := filepath.Join(t.TempDir(), "good.tar.gz")
+	t.Setenv("DATABASE_URL", srcDSN)
+	t.Setenv("STORAGE_ENDPOINT", "")
+	withBackupOutput(t, archive)
+
+	var backupErr error
+	out := captureStdout(t, func() {
+		backupErr = runBackup(backupCmd, nil)
+	})
+
+	require.NoError(t, backupErr, "a backup against a reachable database must succeed")
+	require.Contains(t, out, "Backup complete", "a successful backup must say so")
+
+	// And the file it left behind is a readable archive with a dump in it —
+	// the success line must correspond to something real.
+	entries, err := readArchive(archive)
+	require.NoError(t, err, "the archive runBackup wrote must be readable")
+	require.Contains(t, entries, "database.sql", "the archive must contain the database dump")
+	require.NotEmpty(t, entries["database.sql"])
+	require.Contains(t, entries, "manifest.json")
+}
+
+// TestRestore_MissingDatabaseDumpIsAFailure is the regression test for the
+// silent no-op restore.
+//
+// restoreDatabase printed "No database dump found in backup, skipping." and
+// returned nil, so runRestore carried on to "Restore complete (N files in
+// manifest)." having restored no database at all. validateManifest does not
+// close this: it verifies that files the manifest *lists* are present, and a
+// manifest listing no dump passes it. An operator restoring from a corrupt or
+// foreign archive got a success message and an untouched database.
+func TestRestore_MissingDatabaseDumpIsAFailure(t *testing.T) {
+	manifest := backupManifest{
+		AzimuthalVersion: "test",
+		BackupTimestamp:  time.Now().UTC(),
+		Files:            []string{"storage/avatar.png"},
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	require.NoError(t, err)
+
+	entries := map[string][]byte{
+		"manifest.json":      manifestJSON,
+		"storage/avatar.png": []byte("fake-image-bytes"),
+		// database.sql deliberately absent
+	}
+
+	// The manifest itself is valid — this archive passes every check that
+	// existed before the fix, which is precisely why the skip was dangerous.
+	_, err = validateManifest(entries)
+	require.NoError(t, err, "the archive must be manifest-valid, or this test proves nothing new")
+
+	cfg := &config.Config{DatabaseURL: unreachableDSN}
+
+	var restoreErr error
+	out := captureStdout(t, func() {
+		restoreErr = restoreDatabase(cfg, entries)
+	})
+
+	require.Error(t, restoreErr,
+		"an archive with no database.sql must fail the restore; returning nil is a "+
+			"restore that silently restores nothing")
+	require.ErrorIs(t, restoreErr, errNoDatabaseDump)
+	require.Contains(t, restoreErr.Error(), "database.sql",
+		"the error must name what is missing; got %q", restoreErr.Error())
+	require.NotContains(t, out, "skipping",
+		"a missing dump must not be reported as a skip; stdout was:\n%s", out)
+}
+
+// TestRestore_PresentDatabaseDumpIsNotRefused is the negative control for the
+// test above: without it, restoreDatabase could return errNoDatabaseDump
+// unconditionally and the regression test would still pass.
+//
+// It needs no postgres — whatever happens once psql is forked (missing binary,
+// unreachable DSN), the one thing that must NOT come back is the missing-dump
+// sentinel.
+func TestRestore_PresentDatabaseDumpIsNotRefused(t *testing.T) {
+	cfg := &config.Config{DatabaseURL: unreachableDSN}
+	entries := map[string][]byte{"database.sql": []byte("SELECT 1;")}
+
+	var restoreErr error
+	_ = captureStdout(t, func() {
+		restoreErr = restoreDatabase(cfg, entries)
+	})
+
+	require.NotErrorIs(t, restoreErr, errNoDatabaseDump,
+		"a dump IS present, so the missing-dump sentinel must not be what comes back; got %v", restoreErr)
 }
 
 // seedFixtures captures the rows seedRoundTripFixtures inserted so the
