@@ -72,11 +72,12 @@ func (h *Handler) WithRegistrationPolicy(allow bool) *Handler {
 
 // Routes returns a chi.Router with the PUBLIC auth endpoints mounted.
 //
-// Logout is deliberately absent. It used to be mounted here, which put it
-// outside the RequireAuth group in NewRouter and left the middleware's
-// token_generation check off the one request whose whole purpose is to end a
-// session. It is now mounted beside /me, inside that group; see the comment
-// there.
+// Logout is deliberately absent, and moving it out was a repair. Mounted here
+// it sat outside the RequireAuth group in NewRouter, and nothing in that router
+// mounts OptionalAuth — so no middleware ever put claims on the context at that
+// path and Logout's own nil-claims branch answered 401 to every caller, valid
+// bearer token included. It is now mounted beside /me, inside the group; see
+// the comment there.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Post("/login", h.Login)

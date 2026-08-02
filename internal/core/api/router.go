@@ -140,12 +140,17 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 		// all other protected endpoints, to avoid redirect loops.
 		//
 		// /logout moved in here from AuthHandler.Routes() in the v0.4.1 trust
-		// patch. It always refused an anonymous caller — the handler checks
-		// for claims itself and 401s without them — so this is a tightening,
-		// not a behaviour change for a legitimate caller. What it adds is the
-		// middleware's live-state read: outside the group, a token whose
-		// generation had already been revoked (or whose account had been
-		// deactivated) still reached the handler and got a 200 "logged out".
+		// patch, and this is a repair rather than a tightening. Out there it
+		// refused EVERY caller, not just anonymous ones: nothing in this router
+		// mounts OptionalAuth, so no middleware ever put claims on the context
+		// at that path, ClaimsFromContext returned nil, and the handler's own
+		// nil-claims branch answered 401 to a valid bearer token exactly as to
+		// a stranger. The endpoint was unreachable.
+		//
+		// Inside the group it also gains the middleware's live-state read,
+		// which is a genuine tightening: a token whose generation had already
+		// been revoked, or whose account had been deactivated, is now refused
+		// here rather than reaching a handler that would have to trust it.
 		r.Group(func(r chi.Router) {
 			r.Use(cfg.Authenticator.RequireAuth)
 			r.Post("/logout", cfg.AuthHandler.Logout)
