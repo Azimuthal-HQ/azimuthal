@@ -684,11 +684,23 @@ jobs:
       # about, arriving from the other direction. So read the tags back out of
       # the registry and compare them to what was pushed.
       #
-      # Compared as raw manifest bytes: `imagetools create` copies an index
-      # rather than re-deriving one, so a byte diff here means the copy did not
-      # do what this job assumes, and that assumption should break loudly. The
-      # release object and the immutable tags already exist at this point, so
-      # recovery is a hand-retag, not a re-release.
+      # Compared as raw manifest bytes. That is sound for exactly one reason,
+      # and it is a reason that can be edited away: `imagetools create` with a
+      # single source performs a carbon copy WHEN THAT SOURCE IS A MANIFEST
+      # LIST — which docker-release's source is, because it builds
+      # `platforms: linux/amd64,linux/arm64` and therefore pushes an index.
+      #
+      # IF SOMEBODY EVER NARROWS THAT TO ONE PLATFORM, this step is where it
+      # surfaces, and the failure will look unrelated. A single-platform source
+      # is not an index, so `imagetools create` wraps it in one and the raw
+      # bytes legitimately differ (docker/buildx#2481). The tags would still be
+      # functionally correct; this check would still fail. Fix it by comparing
+      # resolved digests instead of raw bytes, or by passing
+      # `--prefer-index=false` — do not simply delete the check.
+      #
+      # The release object and the immutable tags already exist by the time
+      # this runs, so recovery from a genuine failure here is a hand-retag,
+      # not a re-release.
       - name: The floating tags resolve to the released image
         if: steps.retag.outputs.moved == 'true'
         env:
