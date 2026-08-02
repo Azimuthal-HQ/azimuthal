@@ -65,6 +65,21 @@ func TestLoad_Defaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// APP_ENV defaults to production, not development. An unset variable has to
+	// describe the deployment that exists when nobody set anything, and for a
+	// self-hosted product that is somebody's server. Every developer path in
+	// this repository sets APP_ENV explicitly — .env.test, the E2E
+	// webServer.env, scripts/verify-api.sh, scripts/regression-test.sh, the CI
+	// jobs, build/docker-compose.yml — so the old development default was
+	// serving the one case that never relied on it while a bare `azimuthal
+	// serve` silently inherited a developer's safety posture.
+	//
+	// This assertion did not exist while the default was "development", which is
+	// part of how it survived: the value was pinned nowhere, so changing it
+	// broke nothing and stating it corrected nothing.
+	if cfg.AppEnv != "production" {
+		t.Errorf("expected default APP_ENV production, got %q", cfg.AppEnv)
+	}
 	if cfg.AppPort != 8080 {
 		t.Errorf("expected default APP_PORT 8080, got %d", cfg.AppPort)
 	}
@@ -418,11 +433,19 @@ func TestConfig_PortalLinkDeliveryEmail_RequiresExplicitSMTP(t *testing.T) {
 // The default must keep booting in EVERY environment, production included.
 //
 // This is the guard on the decision recorded in PortalLinkDeliveryLink's own
-// comment. Four comments across three packages used to claim production
-// refuses "link" at startup; it does not, and it must not, because "link" is
-// the default and the portal has no enable flag — refusing it would stop
-// every production deployment that runs no customer portal from booting.
-// Production safety comes from main.go withholding DiscloseLink instead.
+// comment. Four comments across three packages used to claim production refuses
+// "link" at startup; it does not, and it must not, because "link" is the default
+// and the portal has no enable flag — refusing it would stop every production
+// deployment that runs no customer portal from booting.
+//
+// WHAT THIS TEST NOW MEANS, which is not what it meant when it was written.
+// Production safety used to come from main.go withholding DiscloseLink whenever
+// the environment was production — so this test was the record of a deliberate
+// hole left open on the grounds that something downstream closed it. Disclosure
+// has since moved to AZIMUTHAL_PORTAL_DISCLOSE_LINK, which defaults to off, so
+// there is no longer anything unsafe in the mode for validate() to refuse: the
+// test is now simply the guard on a compatibility promise, and the security
+// claim it used to lean on lives in portal_disclosure_test.go.
 //
 // Delete that reasoning and add the refusal, and this test fails.
 func TestConfig_PortalLinkDeliveryLinkIsAcceptedInProduction(t *testing.T) {
@@ -438,6 +461,12 @@ func TestConfig_PortalLinkDeliveryLinkIsAcceptedInProduction(t *testing.T) {
 	}
 	if !cfg.IsProduction() {
 		t.Fatal("this test only means something with APP_ENV=production")
+	}
+	// The compatibility promise is "boots", not "boots and is inert". Assert the
+	// safety half here too, so that a future change which made link mode
+	// disclose again could not be defended by pointing at this test's name.
+	if cfg.PortalLinkDisclosureAllowed() {
+		t.Error("the default delivery mode must not disclose in production")
 	}
 }
 

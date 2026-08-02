@@ -23,17 +23,21 @@ type Config struct {
 	LinkTTL time.Duration
 	// DeliverByEmail mirrors AZIMUTHAL_PORTAL_LINK_DELIVERY.
 	DeliverByEmail bool
-	// DiscloseLink returns the sign-in URL in the API response instead of only
+	// DiscloseLink returns the sign-in URL in the API response as well as
 	// sending it. This is a DEVELOPMENT AND TEST AFFORDANCE. The request-link
-	// endpoint is unauthenticated, so a disclosed URL would let any caller
-	// sign in as any address they can name.
+	// endpoint is unauthenticated, so a disclosed URL lets any caller sign in
+	// as any address they can name.
 	//
-	// What keeps it out of production is cmd/server/main.go, which sets this
-	// only when the delivery mode is "link" AND the environment is not
-	// production. config.validate does NOT reject the mode in production —
-	// "link" is the default and refusing it would stop portal-less
-	// deployments booting — so this field's safety rests entirely on its one
-	// assignment site.
+	// What keeps it out of production is config.Config.PortalLinkDisclosureAllowed,
+	// which cmd/server/main.go calls and which requires BOTH an explicit
+	// AZIMUTHAL_PORTAL_DISCLOSE_LINK=true and a non-production APP_ENV. Neither
+	// is a default, so this field is false unless somebody said otherwise.
+	//
+	// It used to be derived from the delivery mode instead — "link" mode plus
+	// a non-production environment — and since both of those WERE defaults, a
+	// stock install disclosed. Do not re-couple it to delivery: sending mail
+	// and publishing a credential are different decisions and only one of them
+	// is dangerous.
 	DiscloseLink bool
 	// BaseURL is the deployment's public base, used to build link URLs.
 	BaseURL string
@@ -81,8 +85,9 @@ func (s *Service) SessionTTL() time.Duration { return s.tokens.SessionTTL() }
 
 // LinkIssued is the outcome of a sign-in link request.
 type LinkIssued struct {
-	// URL is populated only when Config.DiscloseLink is set. It is empty in
-	// production by construction.
+	// URL is populated only when Config.DiscloseLink is set, which requires an
+	// operator to have asked for it and the environment not to be production.
+	// It is empty in production by construction.
 	URL string
 	// Delivered reports whether an email was actually sent.
 	Delivered bool

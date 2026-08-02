@@ -46,12 +46,22 @@ export default defineConfig({
       // URL (see web/e2e/admin.spec.ts's invite flow) — that resolves against
       // use.baseURL and is port-correct by construction. Both, deliberately.
       APP_BASE_URL: `http://localhost:${process.env.E2E_PORT || '8082'}`,
-      // Link delivery discloses the sign-in URL in the response instead of
-      // sending mail, which is how a browser test signs a requester in without
-      // a mailbox. It is already the default and APP_ENV=test keeps disclosure
-      // on; declaring it makes the dependency visible and survives a change of
-      // default.
+      // Link delivery means the server sends no mail. It no longer implies
+      // anything about disclosure, and that separation is the point: 'link' and
+      // 'development' used to be defaults that between them returned a sign-in
+      // credential to an unauthenticated caller.
       AZIMUTHAL_PORTAL_LINK_DELIVERY: 'link',
+      // Disclosure is now its own flag, default OFF, and this line is what turns
+      // it on for the browser suite. A browser has no mailbox, so the response
+      // body is the only way a spec can learn the URL; without this every portal
+      // spec fails at requestLink's premise assertion.
+      //
+      // BOTH THIS AND APP_ENV: 'test' ARE REQUIRED. Disclosure needs the flag
+      // AND a non-production environment
+      // (config.Config.PortalLinkDisclosureAllowed), so the APP_ENV line above
+      // is load-bearing for the portal suite rather than merely descriptive.
+      // Delete either one and the same specs fail.
+      AZIMUTHAL_PORTAL_DISCLOSE_LINK: 'true',
     },
   },
 })

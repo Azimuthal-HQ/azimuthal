@@ -403,13 +403,17 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		LinkTTL:        cfg.PortalLinkTTL,
 		DeliverByEmail: cfg.PortalLinkDelivery == config.PortalLinkDeliveryEmail,
 		// Disclosing the sign-in URL to an unauthenticated caller is an
-		// authentication bypass, so this line — not a config refusal — is what
-		// prevents it. config.validate accepts "link" in every environment,
-		// because it is the default and refusing it would stop every
-		// production deployment that runs no portal from booting; the
-		// `!cfg.IsProduction()` conjunct here is therefore the whole control,
-		// and it is load-bearing rather than belt-and-braces.
-		DiscloseLink: cfg.PortalLinkDelivery == config.PortalLinkDeliveryLink && !cfg.IsProduction(),
+		// authentication bypass, so the rule that decides it is stated once —
+		// in config.Config.PortalLinkDisclosureAllowed — and only called here.
+		//
+		// DO NOT INLINE IT BACK. This line used to read
+		// `cfg.PortalLinkDelivery == config.PortalLinkDeliveryLink &&
+		// !cfg.IsProduction()`. Both operands were defaults, so a stock install
+		// disclosed, and nothing failed: the expression lived in main.go, which
+		// had no test, so the production off-branch was asserted nowhere.
+		// TestMainWiresPortalDisclosureToTheConfigRule now reads this source
+		// and fails if the call is replaced by an expression.
+		DiscloseLink: cfg.PortalLinkDisclosureAllowed(),
 		BaseURL:      cfg.AppBaseURL,
 	})
 	portalHandler := portalapi.NewHandler(portalSvc).

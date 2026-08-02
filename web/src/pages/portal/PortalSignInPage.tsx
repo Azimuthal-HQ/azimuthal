@@ -13,12 +13,14 @@ import { EmptyState } from '../../shell/EmptyState';
  *
  * TWO THINGS HERE ARE SECURITY BEHAVIOUR, not copywriting.
  *
- * The response NEVER discloses the link. `requestLinkResponse` carries
- * `magic_link_url` in development and test configurations, and rendering it
- * would hand a sign-in credential to whoever typed an address into an
- * unauthenticated form — an authentication bypass reachable by anyone who
- * knows a customer's email. This component does not read that field at all,
- * which is a stronger guarantee than remembering not to display it.
+ * This PAGE never discloses the link. `requestLinkResponse` can carry
+ * `magic_link_url` where an operator has explicitly opted into disclosure on a
+ * non-production deployment, and rendering it would hand a sign-in credential to
+ * whoever typed an address into an unauthenticated form — an authentication
+ * bypass reachable by anyone who knows a customer's email. This component does
+ * not read that field at all, which is a stronger guarantee than remembering not
+ * to display it, and it is why the page needs no change when the server's
+ * disclosure setting does.
  *
  * The confirmation NEVER claims the address was found. The endpoint answers
  * 202 identically for a known address, an unknown one and a deactivated one
