@@ -12,6 +12,17 @@ var ErrInvalidTransition = errors.New("invalid workflow transition")
 // ErrNoWorkflow is returned when an entity has no workflow assigned.
 var ErrNoWorkflow = errors.New("no workflow assigned")
 
+// ErrStateNotInWorkflow is returned when a transition names an endpoint state
+// that is not a state of the workflow the transition is being added to.
+//
+// It deliberately does not say WHICH endpoint was wrong, and does not
+// distinguish a state that exists in another workflow from one that exists
+// nowhere at all. The predicate that raises it cannot tell those apart either —
+// that is the point of it. A caller that maps this to anything other than the
+// answer it gives for a state that does not exist turns the route back into an
+// existence oracle over every workflow state in the installation.
+var ErrStateNotInWorkflow = errors.New("state not found")
+
 // ─── Tier errors (ADR-0011) ───────────────────────────────────────────────────
 
 // ErrPostFunctionUnknown is returned when a stored post-function names an

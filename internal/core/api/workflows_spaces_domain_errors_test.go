@@ -38,6 +38,7 @@ package api_test
 // exist, and both the status assertion and the read-back fail.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
@@ -75,6 +76,19 @@ func wfsdCreateState(t *testing.T, ts *testServer, wfID, name, category string, 
 
 // wfsdListLen returns the length of a JSON array response, failing on any
 // status other than 200.
+// wfsdErrorEnvelopeWithoutRequestID decodes an error body and drops the one
+// field that is expected to differ between two otherwise identical refusals, so
+// the rest can be compared for equality rather than merely spot-checked.
+func wfsdErrorEnvelopeWithoutRequestID(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+	var env map[string]any
+	require.NoError(t, json.Unmarshal(body, &env), "error envelope expected, got: %s", body)
+	if inner, ok := env["error"].(map[string]any); ok {
+		delete(inner, "request_id")
+	}
+	return env
+}
+
 func wfsdListLen(t *testing.T, ts *testServer, path string) int {
 	t.Helper()
 	r := ts.get(t, path, true)
@@ -338,16 +352,25 @@ func TestWfSpaceDomain_WorkflowDelete_RefusedWhileATicketSitsInItsStates(t *test
 }
 
 // TestWfSpaceDomain_TransitionCreate_UnknownEndpointAndDuplicateEdgeRefused
-// drives CreateTransition's error arm: an edge whose from_state_id names no
-// state (FK to workflow_states) and a second copy of an edge that already
-// exists (UNIQUE (workflow_id, from_state_id, to_state_id)).
+// drives CreateTransition's error arms: an edge whose from_state_id names no
+// state, and a second copy of an edge that already exists
+// (UNIQUE (workflow_id, from_state_id, to_state_id)).
 //
 // Defect it catches: the handler validates only that the transition has a
 // name — the two state IDs are taken on trust and written straight through.
-// Delete the error arm and the first case answers 201 for an edge the
-// database refused, and the second silently duplicates an edge, which
+// Delete the error arms and the first case answers 201 for an edge nothing
+// authorised, and the second silently duplicates an edge, which
 // ValidateTransition then walks twice. The transition count read-back is the
 // assertion: exactly one edge exists at the end, not two and not three.
+//
+// The two unknown-endpoint cases answered 500 INTERNAL_ERROR until the
+// CreateWorkflowTransition predicate landed, because an invented uuid reached
+// the INSERT and violated the foreign key. They now answer the same 404 a state
+// belonging to another workflow does, which is the whole point and is asserted
+// as such in
+// TestWfSpaceDomain_TransitionCreate_ForeignStateIsIndistinguishableFromAbsent.
+// The duplicate case still answers 500: a UNIQUE violation is a real conflict
+// between two edges the caller is entitled to name, not a disclosure.
 func TestWfSpaceDomain_TransitionCreate_UnknownEndpointAndDuplicateEdgeRefused(t *testing.T) {
 	ts := newTestServer(t)
 	wfID := wfsdCreateWorkflow(t, ts, "Edge WF", "tickets")
@@ -355,15 +378,15 @@ func TestWfSpaceDomain_TransitionCreate_UnknownEndpointAndDuplicateEdgeRefused(t
 	to := wfsdCreateState(t, ts, wfID, "done", "done", 1, false)
 	transitionsPath := wfsdWorkflowBase(ts) + "/" + wfID + "/transitions"
 
-	// from_state_id names no state at all: FK violation.
+	// from_state_id names no state at all.
 	wsnegRequireError(t, ts.post(t, transitionsPath, map[string]any{
 		"name": "From Nowhere", "from_state_id": uuid.New(), "to_state_id": to,
-	}, true), http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create transition")
+	}, true), http.StatusNotFound, "NOT_FOUND", "state not found")
 
-	// to_state_id names no state: the other end of the same FK.
+	// to_state_id names no state: the other endpoint, the same refusal.
 	wsnegRequireError(t, ts.post(t, transitionsPath, map[string]any{
 		"name": "To Nowhere", "from_state_id": from, "to_state_id": uuid.New(),
-	}, true), http.StatusInternalServerError, "INTERNAL_ERROR", "failed to create transition")
+	}, true), http.StatusNotFound, "NOT_FOUND", "state not found")
 
 	require.Equal(t, 0, wfsdListLen(t, ts, transitionsPath),
 		"neither refused edge may have been written")
@@ -380,6 +403,89 @@ func TestWfSpaceDomain_TransitionCreate_UnknownEndpointAndDuplicateEdgeRefused(t
 
 	require.Equal(t, 1, wfsdListLen(t, ts, transitionsPath),
 		"the duplicate edge must not have been written beside the real one")
+}
+
+// TestWfSpaceDomain_TransitionCreate_ForeignStateIsIndistinguishableFromAbsent
+// is the refutation for the CreateWorkflowTransition predicate.
+//
+// from_state_id and to_state_id arrive in the request body. workflowInOrg proves
+// the workflow in the URL belongs to the caller's org and proves nothing about
+// those two ids, and migration 016's REFERENCES workflow_states (id) is a bare
+// foreign key to the whole table — so before the predicate, an org admin could
+// name any state of any workflow, in any space and any organisation, and the
+// INSERT accepted it. The stitched edge then became part of a graph the other
+// workflow's owner never authorised.
+//
+// Two assertions, and both fail with the WHERE EXISTS deleted:
+//
+//  1. The stitched edge is refused and not written. Without the predicate the
+//     foreign state satisfies the foreign key, so the POST answers 201 and the
+//     list length is 1 — this is the assertion that fails loudest, and it fails
+//     on the write having landed, not merely on a status code.
+//  2. The refusal is byte-identical to the one an invented uuid gets. Without
+//     the predicate they differ maximally — 201 versus a foreign-key 500 — which
+//     is an existence oracle over every workflow state in the installation:
+//     probe an id, and the status tells you whether it names a real state
+//     somewhere you cannot see. This is why the answer may not be made more
+//     specific later; "which endpoint was wrong" is the question the probe asks.
+//
+// The legitimate same-workflow edge is created last and must still succeed, so
+// the predicate cannot be satisfied by refusing everything.
+func TestWfSpaceDomain_TransitionCreate_ForeignStateIsIndistinguishableFromAbsent(t *testing.T) {
+	ts := newTestServer(t)
+
+	// The caller's own workflow, and a second one they equally own. Same org and
+	// same admin: nothing about the caller's authority is what refuses this, so
+	// the test cannot pass for the wrong reason (a 403 would fail these
+	// assertions, which expect 404).
+	mine := wfsdCreateWorkflow(t, ts, "Mine", "tickets")
+	from := wfsdCreateState(t, ts, mine, "open", "todo", 0, true)
+	to := wfsdCreateState(t, ts, mine, "done", "done", 1, false)
+
+	other := wfsdCreateWorkflow(t, ts, "Other", "tickets")
+	foreign := wfsdCreateState(t, ts, other, "elsewhere", "todo", 0, true)
+
+	minePath := wfsdWorkflowBase(ts) + "/" + mine + "/transitions"
+	otherPath := wfsdWorkflowBase(ts) + "/" + other + "/transitions"
+
+	// A real state, owned by the same admin, but not a state of `mine`.
+	foreignResp := ts.post(t, minePath, map[string]any{
+		"name": "Stitched", "from_state_id": from, "to_state_id": foreign,
+	}, true)
+	wsnegRequireError(t, foreignResp, http.StatusNotFound, "NOT_FOUND", "state not found")
+
+	// The same shape with an id that names nothing anywhere.
+	absentResp := ts.post(t, minePath, map[string]any{
+		"name": "Stitched", "from_state_id": from, "to_state_id": uuid.New(),
+	}, true)
+	wsnegRequireError(t, absentResp, http.StatusNotFound, "NOT_FOUND", "state not found")
+
+	// The oracle assertion. Not merely "both are 404" — everything a caller can
+	// read must match, or the difference is itself the signal. request_id is the
+	// one field that legitimately differs (it is per-request, and it is what
+	// makes the redacted 500s elsewhere traceable), so it is compared away
+	// rather than ignored: blanking it and requiring the rest to be equal fails
+	// if any OTHER field starts to differ, which ignoring the body would not.
+	require.Equal(t, absentResp.StatusCode, foreignResp.StatusCode,
+		"a state in another workflow and a state that does not exist must answer alike")
+	require.Equal(t,
+		wfsdErrorEnvelopeWithoutRequestID(t, absentResp.Body),
+		wfsdErrorEnvelopeWithoutRequestID(t, foreignResp.Body),
+		"the two refusals differ, so the route reports whether the id names a real state")
+
+	// And nothing was written into either workflow — neither the one that was
+	// named in the URL nor the one whose state was borrowed.
+	require.Equal(t, 0, wfsdListLen(t, ts, minePath),
+		"the stitched edge must not have been written")
+	require.Equal(t, 0, wfsdListLen(t, ts, otherPath),
+		"the borrowed state's own workflow must be untouched")
+
+	// The predicate refuses foreign states, not every state.
+	r := ts.post(t, minePath, map[string]any{
+		"name": "Finish", "from_state_id": from, "to_state_id": to,
+	}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "the legitimate edge: %s", r.Body)
+	require.Equal(t, 1, wfsdListLen(t, ts, minePath))
 }
 
 // ─── Workflows: the transition endpoints' initial-state fallback ──────────────
