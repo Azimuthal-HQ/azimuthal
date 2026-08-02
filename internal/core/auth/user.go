@@ -42,6 +42,17 @@ type UserRepository interface {
 	Delete(ctx context.Context, id uuid.UUID) error
 	// TouchLastLogin stamps last_login_at for the admin People page.
 	TouchLastLogin(ctx context.Context, id uuid.UUID) error
+	// RevokeTokens bumps the user's token_generation, which invalidates every
+	// access and refresh token already issued to them. The account is
+	// otherwise untouched — it stays active and the holder can sign in again
+	// immediately.
+	//
+	// This is a REQUIRED method rather than an optional collaborator on
+	// purpose. A nil-able revoker would let a handler that forgot to wire one
+	// answer "logged out" while the stolen token kept working, which is the
+	// dark-harness failure CLAUDE.md §2 names: the surface reports success and
+	// nothing announces that the security step did not happen.
+	RevokeTokens(ctx context.Context, id uuid.UUID) error
 }
 
 // UserService handles user account management.
@@ -143,6 +154,21 @@ func (s *UserService) DeactivateUser(ctx context.Context, id uuid.UUID) error {
 func (s *UserService) TouchLastLogin(ctx context.Context, id uuid.UUID) error {
 	if err := s.repo.TouchLastLogin(ctx, id); err != nil {
 		return fmt.Errorf("touching last login: %w", err)
+	}
+	return nil
+}
+
+// RevokeTokens invalidates every token already issued to the user by moving
+// their token_generation past what those tokens claim. The auth middleware
+// reads the live column on every request, so revocation takes effect on the
+// next one rather than at the next expiry.
+//
+// Unlike TouchLastLogin, a failure here is NOT the caller's to swallow: a
+// logout that could not revoke has not logged anybody out of anything an
+// attacker holds, and reporting success would be a lie.
+func (s *UserService) RevokeTokens(ctx context.Context, id uuid.UUID) error {
+	if err := s.repo.RevokeTokens(ctx, id); err != nil {
+		return fmt.Errorf("revoking tokens: %w", err)
 	}
 	return nil
 }

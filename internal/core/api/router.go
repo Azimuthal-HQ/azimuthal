@@ -136,10 +136,19 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.Mount("/", cfg.AuthHandler.Routes())
 
-		// /me requires authentication — uses the same JWT middleware as
-		// all other protected endpoints to avoid redirect loops.
+		// /me and /logout require authentication — the same JWT middleware as
+		// all other protected endpoints, to avoid redirect loops.
+		//
+		// /logout moved in here from AuthHandler.Routes() in the v0.4.1 trust
+		// patch. It always refused an anonymous caller — the handler checks
+		// for claims itself and 401s without them — so this is a tightening,
+		// not a behaviour change for a legitimate caller. What it adds is the
+		// middleware's live-state read: outside the group, a token whose
+		// generation had already been revoked (or whose account had been
+		// deactivated) still reached the handler and got a 200 "logged out".
 		r.Group(func(r chi.Router) {
 			r.Use(cfg.Authenticator.RequireAuth)
+			r.Post("/logout", cfg.AuthHandler.Logout)
 			r.Get("/me", cfg.AuthHandler.Me)
 			r.Patch("/me", cfg.AuthHandler.UpdateMe)
 			if cfg.AvatarHandler != nil {

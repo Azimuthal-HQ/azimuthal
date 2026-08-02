@@ -48,12 +48,12 @@ var routeAccounting = map[string]string{
 	"GET /health":                "public: liveness probe, no org data",
 	"GET /ready":                 "public: readiness probe, no org data",
 	"GET /api/docs":              "public: API documentation UI",
+	"GET /api/docs/init.js":      "public: the documentation UI's own initialiser (moved out of the page so the CSP can keep script-src bare)",
 	"GET /api/docs/openapi.yaml": "public: committed OpenAPI spec",
 	"GET /api/docs/assets/":      "public: vendored Swagger UI assets (static, embedded)",
 	"POST /api/v1/auth/login":    "public: credential exchange",
 	"POST /api/v1/auth/register": "public: account creation — 404 unless allow_registration (default off since P2.5)",
 	"POST /api/v1/auth/refresh":  "public: token refresh (validates refresh token + live account state)",
-	"POST /api/v1/auth/logout":   "public: session teardown (validates session)",
 
 	// Invite acceptance: possession of the raw crypto/rand token is the
 	// credential, exactly like a password-reset link.
@@ -88,6 +88,17 @@ var routeAccounting = map[string]string{
 
 	// User-scoped: authenticated, filtered by caller identity, no org data
 	// beyond the caller's own memberships.
+	//
+	// /logout was in the public block above, as "public: session teardown
+	// (validates session)". Both halves of that row were wrong. It was mounted
+	// by AuthHandler.Routes(), outside the RequireAuth group, and OptionalAuth
+	// is mounted nowhere — so nothing put claims on the context at that path,
+	// it validated nothing, and the handler's nil-claims branch answered 401 to
+	// every caller including a valid one. It now sits inside RequireAuth beside
+	// /me. TestAuthLogoutIsAuthenticated asserts both directions through the
+	// wired router; note the sweep below cannot, because carries() is only
+	// consulted for the admin and portal guards, never for RequireAuth.
+	"POST /api/v1/auth/logout":                         "user-scoped: revokes the caller's own token generation and sessions",
 	"GET /api/v1/auth/me":                              "user-scoped",
 	"PATCH /api/v1/auth/me":                            "user-scoped",
 	"PUT /api/v1/auth/me/avatar":                       "user-scoped: self avatar upload",

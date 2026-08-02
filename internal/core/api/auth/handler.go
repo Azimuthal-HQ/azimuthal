@@ -70,13 +70,18 @@ func (h *Handler) WithRegistrationPolicy(allow bool) *Handler {
 	return h
 }
 
-// Routes returns a chi.Router with all auth endpoints mounted.
+// Routes returns a chi.Router with the PUBLIC auth endpoints mounted.
+//
+// Logout is deliberately absent. It used to be mounted here, which put it
+// outside the RequireAuth group in NewRouter and left the middleware's
+// token_generation check off the one request whose whole purpose is to end a
+// session. It is now mounted beside /me, inside that group; see the comment
+// there.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Post("/login", h.Login)
 	r.Post("/register", h.Register)
 	r.Post("/refresh", h.Refresh)
-	r.Post("/logout", h.Logout)
 	return r
 }
 
@@ -390,10 +395,24 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Logout invalidates all sessions for the current user. Requires authentication.
+// Logout revokes every token and session the current user holds.
+//
+// TWO STEPS, AND THE SECOND IS THE ONE THAT MATTERS. DeleteAllSessions clears
+// the database session rows; on its own that revoked nothing an attacker could
+// use, because the SPA authenticates with a bearer JWT and the middleware
+// validates that signature-plus-generation without consulting the session
+// table at all. A token copied out of localStorage therefore survived logout
+// until it expired. Bumping token_generation is what actually ends it: the
+// middleware reads the live column on every request (GetUserAuthState), so the
+// stolen copy is refused on the very next call.
+//
+// Both are attempted even if the first fails, and the response reports failure
+// if either did. Answering "logged out" after a failed revocation would tell
+// somebody who is signing out because they think they have been compromised
+// exactly the opposite of the truth.
 //
 // @Summary      Logout user
-// @Description  Deletes all sessions for the current user.
+// @Description  Revokes every token and deletes every session for the current user.
 // @Tags         auth
 // @Produce      json
 // @Security     BearerAuth
@@ -408,7 +427,14 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.sessions.DeleteAllSessions(r.Context(), claims.UserID); err != nil {
+	sessionErr := h.sessions.DeleteAllSessions(r.Context(), claims.UserID)
+	revokeErr := h.users.RevokeTokens(r.Context(), claims.UserID)
+	if sessionErr != nil || revokeErr != nil {
+		slog.Error("logout failed",
+			"session_error", sessionErr,
+			"revoke_error", revokeErr,
+			"request_id", respond.RequestIDFromContext(r.Context()),
+		)
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to logout")
 		return
 	}
