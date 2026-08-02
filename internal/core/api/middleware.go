@@ -208,6 +208,14 @@ func writeCORSHeaders(w http.ResponseWriter, allowed string) {
 //     the sanitiser; this directive only has to not contradict it.
 //   - font-src needs data: — the built stylesheet inlines Inter as
 //     url(data:font/woff…).
+//   - media-src carries blob: for the same reason img-src does: every
+//     attachment reaches the browser through fetchObjectURL, and an audio or
+//     video attachment is that same code path with a different element. It is
+//     the one directive here that is not exercised by anything shipped today —
+//     kept because the failure it would otherwise produce is a silent one, a
+//     dead player and a console line nobody is watching. There is deliberately
+//     no worker-src: nothing in this tree constructs a Worker, and a
+//     same-origin one would fall back to default-src and work anyway.
 //   - connect-src 'self' matches the frontend's default API base of /api/v1.
 //     An operator who builds the SPA with an absolute VITE_API_BASE_URL is
 //     pointing it at another origin and must widen this — the same coupling
@@ -225,7 +233,6 @@ const ContentSecurityPolicy = "default-src 'self'; " +
 	"font-src 'self' data:; " +
 	"connect-src 'self'; " +
 	"media-src 'self' blob:; " +
-	"worker-src 'self' blob:; " +
 	"object-src 'none'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'; " +
