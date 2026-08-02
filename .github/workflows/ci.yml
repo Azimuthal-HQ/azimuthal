@@ -23,13 +23,18 @@ on:
   # thing being released, not on whatever main happened to be.
   #
   # WHY NOT `push: tags:` AS WELL. It looks like belt-and-braces and is worse
-  # than nothing. Two reasons. (1) A push-triggered run is not a `needs:` edge
-  # — release.yml would not wait for it and could not read its result, so it
-  # would gate exactly nothing while looking like it did. (2) It would land in
-  # the same `concurrency` group as the call below (both resolve
-  # `github.ref` to `refs/tags/vX.Y.Z`) with `cancel-in-progress: true`, so the
-  # two runs would race to cancel each other — and a cancelled gate is a
-  # blocked release at best and a confusing one always. One run, one edge.
+  # than nothing, because a push-triggered run is not a `needs:` edge —
+  # release.yml would neither wait for it nor be able to read its result, so it
+  # would gate exactly nothing while looking like it did. That argument stands
+  # on its own and is the reason.
+  #
+  # There is probably a second effect, recorded as a suspicion rather than a
+  # fact: both runs would resolve `github.ref` to `refs/tags/vX.Y.Z` and land in
+  # the same `concurrency` group below, which cancels in progress. But that a
+  # called workflow's WORKFLOW-LEVEL `concurrency` is evaluated at all is
+  # undocumented — GitHub's docs address only job-level concurrency inside a
+  # called workflow — so do not lean on it. It is not load-bearing either way:
+  # under a tag push that group resolves to a value no other run occupies.
   #
   # Nothing here reads `secrets.*`, so release.yml deliberately does not pass
   # `secrets: inherit`. GITHUB_TOKEN reaches a called workflow regardless; the

@@ -116,11 +116,24 @@ jobs:
   # skipped one. The cost is runner minutes on a repository that cannot
   # publish; the alternative cost is a hole that only opens later.
   #
-  # `permissions` here is a CEILING, not a grant: a called workflow cannot
-  # exceed what the calling job holds, and ci.yml's jobs ask for
-  # security-events: write (gosec/trivy SARIF upload), contents: read, and
-  # pull-requests: read (gitleaks). Ask for less and the call fails to
-  # validate. No `secrets:` key — ci.yml reads no `secrets.*`.
+  # `permissions` here is a CEILING, not a grant: the docs are explicit that a
+  # called workflow's token can only be maintained or reduced through the
+  # chain, never elevated. ci.yml's jobs ask for security-events: write
+  # (gosec/trivy SARIF upload), contents: read, and pull-requests: read
+  # (gitleaks); those three are granted, and the union was checked against the
+  # file rather than assumed.
+  #
+  # Whether asking for LESS produces a hard validation error or a silent
+  # downgrade is not stated anywhere in GitHub's docs, and is not relied on
+  # here — it is fail-closed either way, since a scanner that cannot upload
+  # SARIF fails its job and fails the call. Note the one-directional hazard:
+  # ci.yml's other jobs declare no `permissions:` and today inherit the
+  # repository default, so a future job that starts needing, say,
+  # `packages: read` would stay green on every pull request and fail only on a
+  # tag push. If you add a scope to a ci.yml job, add it here too.
+  #
+  # No `secrets:` key — ci.yml reads no `secrets.*`, and a called workflow is
+  # granted `secrets.GITHUB_TOKEN` automatically.
   # ─────────────────────────────────────────────────────────────
   ci:
     name: CI
@@ -238,8 +251,9 @@ jobs:
       # Self-hosted DinD sidecar can take 10-180s to be ready. Wait before
       # setup-buildx (which immediately requires a working daemon socket).
       # Short-circuits on GitHub-hosted runners, where the daemon is up before
-      # the job starts — same form as ci.yml's wait, so there is one of these
-      # to reason about rather than two that drift.
+      # the job starts — the short-circuit ci.yml's waits already use. This
+      # file's two copies are identical to each other; the several across both
+      # files still differ in their log wording.
       - name: Wait for Docker daemon
         run: |
           if docker info >/dev/null 2>&1; then
@@ -307,33 +321,48 @@ jobs:
           echo "Tags metadata-action produced:"
           echo "$TAGS"
 
+          # An empty list must FAIL, not pass quietly. Written as a denylist
+          # this printed a tick for it — the one loop iteration hit `continue`
+          # and FAILED stayed 0 — which is the classic shape of a check that
+          # reports coverage for having examined nothing.
+          if [ -z "${TAGS//[[:space:]]/}" ]; then
+            echo "❌ metadata-action produced no tags at all"
+            exit 1
+          fi
+
+          # ALLOW-LIST, not a denylist, and the difference is the whole value.
+          # A denylist only rejects the two spellings that were just removed, so
+          # the likeliest future edits walk straight past it: a
+          # `v{{major}}.{{minor}}` pattern added to mirror the v-prefixed tag
+          # that `type=ref,event=tag` already emits, a bare `{{major}}`, or any
+          # `type=raw` name like `edge` or `stable`. Every one of those is
+          # floating and not one of them looks like `latest`.
+          #
+          # So name the three immutable shapes this job may push, and reject
+          # everything else.
+          TAG_REF="${GITHUB_REF#refs/tags/}"
           FAILED=0
           while IFS= read -r t; do
-            [ -z "$t" ] && continue
+            if [ -z "$t" ]; then continue; fi
             REF="${t##*:}"
             case "$REF" in
-              latest)
-                echo "❌ '$t' — :latest must not be pushed here"
+              [0-9]*.[0-9]*.[0-9]*) ;;  # type=semver {{version}} — 1.2.3, 1.2.3-rc1
+              "$TAG_REF")           ;;  # type=ref,event=tag      — v1.2.3
+              sha-*)                ;;  # type=sha                — sha-abc1234
+              *)
+                echo "❌ '$t' is not one of this job's immutable tag shapes"
                 FAILED=1
-                ;;
-              [0-9]*.[0-9]*)
-                # A version tag is immutable only if it names a patch release:
-                # 1.2.3 and 1.2.3-rc1 both carry two dots, 1.2 carries one.
-                case "$REF" in
-                  *.*.*) ;;
-                  *)
-                    echo "❌ '$t' — :MAJOR.MINOR is a floating tag and must not be pushed here"
-                    FAILED=1
-                    ;;
-                esac
                 ;;
             esac
           done <<< "$TAGS"
 
           if [ "$FAILED" != 0 ]; then
             echo ""
-            echo "Floating tags move in docker-floating-tags, after the GitHub"
-            echo "Release exists. Check the 'flavor: latest=false' above."
+            echo "This job may push only {{version}}, the tag ref, and sha-*."
+            echo "Anything that reassigns an existing name to new bytes moves in"
+            echo "docker-floating-tags, after the GitHub Release exists — and"
+            echo "only when this release is the newest tag it tracks."
+            echo "Check 'flavor: latest=false' above."
             exit 1
           fi
           echo "✅ every tag in this push is immutable"
@@ -392,8 +421,11 @@ jobs:
       # position, and the tag exists before anyone can read this.
       #
       # README.md and docs/self-hosting.md carry the same two `curl … /main/…`
-      # lines and are NOT this workflow's to edit; they go to the docs track.
-      # If you are changing install instructions, change all three or none.
+      # lines and are NOT pinned. They are prose, owned by the docs track, and
+      # are catalogued for it rather than edited here — so until that lands, a
+      # user who follows the README still gets `main`'s infra alongside a
+      # pinned image. Stated plainly rather than as "change all three or none",
+      # which would be a rule this hunk itself breaks.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
