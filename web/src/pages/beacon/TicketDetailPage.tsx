@@ -13,7 +13,8 @@ import {
 import { EntityShareControl } from '../../components/EntityShareControl';
 import { ModuleChip } from '../../shell/ModuleChip';
 import { PriorityPill, normalizePriority } from '../../components/priority';
-import { cn } from '../../lib/utils';
+import { Input } from '../../components/ui/input';
+import { cn, formatUTCDate, toRFC3339Date } from '../../lib/utils';
 import { Markdown } from '../../components/Markdown';
 import { ApprovalBlock } from '../../components/workflow/ApprovalBlock';
 import { statusOptionsFor, statusOptionLabel } from '../../lib/workflow/statusOptions';
@@ -27,6 +28,7 @@ import {
   useTicket,
   useTransitionTicketStatus,
   useAssignTicket,
+  useUpdateTicket,
   useMembers,
   useComments,
   useCreateComment,
@@ -182,6 +184,10 @@ export function TicketDetailPage() {
     useAvailableTransitions(spaceId, 'ticket', ticketId ?? '');
   const transitionMutation = useTransitionTicketStatus(spaceId, ticketId ?? '');
   const assignMutation = useAssignTicket(spaceId, ticketId ?? '');
+  // The first caller of the ticket PATCH from anywhere in the product. Assignee
+  // and status have their own routes; due_at has none, so it goes through the
+  // general update — which until this change could not carry it.
+  const updateMutation = useUpdateTicket(spaceId, ticketId ?? '');
   const { data: me } = useMe();
   const orgId = me?.org_id ?? '';
   const { data: members } = useMembers(orgId, spaceId);
@@ -198,6 +204,7 @@ export function TicketDetailPage() {
   // when it should have gone out costs a delay; the reverse cannot be undone.
   const [commentVisibility, setCommentVisibility] = useState<CommentVisibility>('internal');
   const [statusOutcome, setStatusOutcome] = useState<StatusOutcome>({ kind: 'idle' });
+  const [dueDateError, setDueDateError] = useState<string | null>(null);
 
   // A status change has THREE outcomes and this page used to handle one. The
   // await had no try/catch and never read `.error`, so a guard refusal was an
@@ -224,6 +231,24 @@ export function TicketDetailPage() {
   async function handleAssigneeChange(assigneeId: string) {
     await assignMutation.mutateAsync(assigneeId || null);
     refetchTicket();
+  }
+
+  async function handleDueDateChange(value: string) {
+    setDueDateError(null);
+    try {
+      // An emptied input must send an explicit null. toRFC3339Date returns
+      // undefined for "", which JSON.stringify drops from the body — and an
+      // absent due_at means "leave it alone", so relying on that default would
+      // make the field impossible to clear.
+      //
+      // Nothing else goes in this body. The ticket PATCH is a true partial
+      // update, so resending title/description/priority to "be safe" would be
+      // the race, not the safeguard.
+      await updateMutation.mutateAsync({ due_at: value ? toRFC3339Date(value) : null });
+      refetchTicket();
+    } catch (e) {
+      setDueDateError(friendlyErrorMessage(e, 'The due date could not be changed.'));
+    }
   }
 
   async function handleAddComment() {
@@ -593,6 +618,21 @@ export function TicketDetailPage() {
           </DetailField>
 
           <DetailDivider />
+
+          <DetailField label="Due date">
+            <Input
+              type="date"
+              aria-label="Due date"
+              data-testid="ticket-due-date"
+              value={ticket.due_at ? formatUTCDate(ticket.due_at) : ''}
+              disabled={updateMutation.isPending}
+              onChange={(e) => handleDueDateChange(e.target.value)}
+              className={sideSelectClass}
+            />
+            {dueDateError && (
+              <p className="mt-1 text-[var(--text-xs)] text-[var(--color-danger)]">{dueDateError}</p>
+            )}
+          </DetailField>
 
           <DetailField label="Created">
             <div className="flex items-center gap-2 text-[var(--text-xs)] text-[var(--color-text-muted)]">
