@@ -41,7 +41,7 @@ const wantDisclosureRHS = "cfg.PortalLinkDisclosureAllowed()"
 
 func readMainSource(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(mainSource) //nolint:gosec // G304 — path is this file's package constant, repo-relative
+	b, err := os.ReadFile(mainSource)
 	if err != nil {
 		t.Fatalf("reading %s: %v", mainSource, err)
 	}
