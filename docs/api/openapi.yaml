@@ -1874,7 +1874,7 @@ paths:
       - auth
   /auth/logout:
     post:
-      description: Deletes all sessions for the current user.
+      description: Revokes every token and deletes every session for the current user.
       responses:
         "200":
           content:
