@@ -1,9 +1,73 @@
 name: Release
 
+# ═════════════════════════════════════════════════════════════════════════════
+# WHAT GATES THIS PIPELINE, AND IN WHAT ORDER THINGS BECOME VISIBLE
+#
+# Two defects this file used to have, both of which shipped artifacts nobody
+# had checked:
+#
+# 1. NOTHING TESTED THE TAG. ci.yml's push filter is branches-only and this
+#    workflow triggers on tags, so a tagged commit's binaries and image were
+#    built and published having never been built by CI, never vetted, linted,
+#    unit-tested, E2E'd, scanned or booted. The `ci` job below fixes that by
+#    CALLING ci.yml on the tagged ref, and every publish job `needs:` it. See
+#    the `workflow_call:` note in ci.yml for why it is a call rather than a
+#    second `push: tags:` trigger.
+#
+# 2. THE MUTABLE TAGS MOVED FIRST. `docker-release` had no `needs` at all and
+#    pushed `:latest` and `:MAJOR.MINOR` in the same step as the immutable
+#    ones, while `create-release` waited on it. So `:latest` moved to a new
+#    image before the GitHub Release existed — and if `create-release` then
+#    failed, or the binaries failed to build, every `docker pull …:latest` in
+#    the world was already serving a version with no published release, no
+#    checksums and no notes. The floating tags now move in their own job,
+#    AFTER the release object exists, by retagging the digest that was already
+#    pushed. Nothing is rebuilt to move them.
+#
+# The resulting graph — every edge is a hard `needs:`, no job carries
+# `always()`/`failure()`, and the only `if:` is a narrowing repository check,
+# so no publish step is reachable while CI is red:
+#
+#     ci  (uses ./.github/workflows/ci.yml on the tagged commit)
+#      └─> build-release ──┐
+#            └─> docker-release ──┐          pushes IMMUTABLE tags only
+#                  └─────────────> create-release        the Release object
+#                        └────────> docker-floating-tags :latest, :MAJOR.MINOR
+#
+# WHAT THIS STILL DOES NOT PROVE. CI builds one linux/amd64 binary and an image
+# from build/Dockerfile.ci; this workflow builds five platform binaries and a
+# multi-arch image from build/Dockerfile. So the gate proves the SOURCE TREE at
+# the tagged commit is good, not that these exact bytes are the bytes that were
+# tested. Closing that is artifact provenance — cosign/SBOM/attestation — and
+# is deliberately not in this change.
+# ═════════════════════════════════════════════════════════════════════════════
+
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'  # e.g. v1.2.3
+      # Release.       e.g. v1.2.3
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      # Prerelease.    e.g. v1.2.3-rc1, v0.4.1-beta.2
+      #
+      # This second pattern is new, and it makes live a prerelease path that
+      # was already written into this file but could never fire: `prerelease:`
+      # on the GitHub Release and the `latest`-suppression guard both keyed on
+      # a `-` in the version, which the release glob above cannot match. Dead
+      # conditionals in a publish pipeline are worse than absent ones — a
+      # reader cannot tell which branch is real.
+      #
+      # It also gives the pipeline a rehearsal. Most of what changed here can
+      # only be confirmed by an actual tag push, and `vX.Y.Z-rc1` exercises the
+      # whole graph without moving `:latest` or claiming a version.
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+# Never cancel a publish half-way. `cancel-in-progress: false` queues a second
+# run on the same tag behind the first instead of killing it mid-push, which
+# for this pipeline is the difference between "waits" and "left the registry
+# holding a partial multi-arch manifest".
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   GO_VERSION: '1.26.5'
@@ -13,8 +77,38 @@ env:
 
 jobs:
 
+  # ─────────────────────────────────────────────────────────────
+  # GATE: the full CI battery, on the commit this tag points at
+  #
+  # Not a re-implementation of the battery — the same file the pull request
+  # ran. A copy would drift the first time ci.yml gained a gate, and a release
+  # gate that is a stale copy of CI is the same defect one level down.
+  #
+  # DELIBERATELY NOT carrying `if: endsWith(github.repository, '/azimuthal')`,
+  # unlike every job below it. A skipped `needs` already cascade-skips its
+  # dependents, so a mirror publishes nothing either way — but keeping this job
+  # unconditional means the gate exists on every path. If somebody later
+  # loosens an `if:` on a publish job, they hit a real CI edge rather than a
+  # skipped one. The cost is runner minutes on a repository that cannot
+  # publish; the alternative cost is a hole that only opens later.
+  #
+  # `permissions` here is a CEILING, not a grant: a called workflow cannot
+  # exceed what the calling job holds, and ci.yml's jobs ask for
+  # security-events: write (gosec/trivy SARIF upload), contents: read, and
+  # pull-requests: read (gitleaks). Ask for less and the call fails to
+  # validate. No `secrets:` key — ci.yml reads no `secrets.*`.
+  # ─────────────────────────────────────────────────────────────
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: read
+
   build-release:
     name: Build Release Binaries
+    needs: ci
     runs-on: ubuntu-latest
     if: endsWith(github.repository, '/azimuthal')
     permissions:
@@ -36,7 +130,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
- 
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -55,7 +149,7 @@ jobs:
 
       - name: Build frontend assets
         run: cd web && npm ci && npm run build
- 
+
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
@@ -69,69 +163,159 @@ jobs:
               -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -o ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} \
             ./cmd/server
- 
+
       - name: Generate checksum
         run: |
           sha256sum \
             ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} \
             > ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
- 
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
           path: ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}*
           retention-days: 1
- 
+
+  # ─────────────────────────────────────────────────────────────
+  # Push the image — IMMUTABLE tags only
+  #
+  # `needs: [ci, build-release]`. The build-release edge is not ordering for
+  # its own sake: a release whose Docker image published while its binaries
+  # failed to compile is a half-release users can already pull, and the notes
+  # this pipeline writes point at both.
+  #
+  # The tag list here is version-specific and therefore safe to publish before
+  # the Release object exists — `1.2.3`, `v1.2.3` and `sha-…` name exactly one
+  # build and never move. `:latest` and `:MAJOR.MINOR` are the ones that
+  # reassign an existing name to new bytes, and they are handled after the
+  # release exists, in docker-floating-tags.
+  # ─────────────────────────────────────────────────────────────
   docker-release:
     name: Build & Push to GHCR
+    needs: [ci, build-release]
     runs-on: ubuntu-latest
     if: endsWith(github.repository, '/azimuthal')
     permissions:
       contents: read
       packages: write
- 
+    outputs:
+      # The digest of the manifest list just pushed. docker-floating-tags
+      # retags THIS, not a tag name, so the floating tags cannot end up
+      # pointing at something a different run published in between.
+      digest: ${{ steps.build.outputs.digest }}
+
     steps:
       - uses: actions/checkout@v4
- 
+
       - name: Set version from tag
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
       # Self-hosted DinD sidecar can take 10-180s to be ready. Wait before
       # setup-buildx (which immediately requires a working daemon socket).
+      # Short-circuits on GitHub-hosted runners, where the daemon is up before
+      # the job starts — same form as ci.yml's wait, so there is one of these
+      # to reason about rather than two that drift.
       - name: Wait for Docker daemon
         run: |
+          if docker info >/dev/null 2>&1; then
+            echo "Docker daemon already up — no settle needed."
+            exit 0
+          fi
+          echo "Docker daemon not ready — waiting..."
           for i in $(seq 1 90); do
             docker info >/dev/null 2>&1 && echo "Docker daemon ready after $((i*2))s" && break
             sleep 2
           done
           docker info
-          echo "Sleeping 30s for DinD bridge networking to settle..."
+          echo "Daemon needed waiting — sleeping 30s for DinD bridge networking to settle..."
           sleep 30
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
- 
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
- 
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # `latest=false` is not tidiness — it is the mechanism.
+          #
+          # metadata-action's `flavor` defaults to `latest=auto`, and auto emits
+          # a `latest` tag for any non-prerelease `type=semver,pattern=…` OR
+          # `type=ref,event=tag` entry. Both are in the list below. So deleting
+          # the old explicit `type=raw,value=latest,…` line moves nothing on its
+          # own: this job would go on pushing `:latest` before the GitHub
+          # Release exists, exactly as before, and the reordering would be
+          # decorative. The floating tags move in docker-floating-tags or they
+          # do not move at all.
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
             type=sha
- 
+
+      # …and prove it, BEFORE anything is pushed.
+      #
+      # This step exists because the obvious check does not work. Verifying
+      # `:latest` at the END of the pipeline passes either way: if this job had
+      # already pushed it, `:latest` would point at the released digest and the
+      # comparison in docker-floating-tags would come up green while the defect
+      # sat untouched. The property that actually matters is about THIS job's
+      # tag list, so that is what is asserted, and it is asserted while the
+      # registry is still unmodified.
+      #
+      # It fails on the change as originally written (before `latest=false`),
+      # which is the only reason to trust it.
+      - name: This job publishes no floating tag
+        run: |
+          set -euo pipefail
+
+          TAGS='${{ steps.meta.outputs.tags }}'
+          echo "Tags metadata-action produced:"
+          echo "$TAGS"
+
+          FAILED=0
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            REF="${t##*:}"
+            case "$REF" in
+              latest)
+                echo "❌ '$t' — :latest must not be pushed here"
+                FAILED=1
+                ;;
+              [0-9]*.[0-9]*)
+                # A version tag is immutable only if it names a patch release:
+                # 1.2.3 and 1.2.3-rc1 both carry two dots, 1.2 carries one.
+                case "$REF" in
+                  *.*.*) ;;
+                  *)
+                    echo "❌ '$t' — :MAJOR.MINOR is a floating tag and must not be pushed here"
+                    FAILED=1
+                    ;;
+                esac
+                ;;
+            esac
+          done <<< "$TAGS"
+
+          if [ "$FAILED" != 0 ]; then
+            echo ""
+            echo "Floating tags move in docker-floating-tags, after the GitHub"
+            echo "Release exists. Check the 'flavor: latest=false' above."
+            exit 1
+          fi
+          echo "✅ every tag in this push is immutable"
+
       - name: Build and push multi-arch image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -143,7 +327,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: VERSION=${{ env.VERSION }}
- 
+
+      # An empty digest here would make docker-floating-tags retag `IMAGE@`,
+      # which is not a reference — it would fail two jobs later, after the
+      # release object exists, instead of here where the value is produced.
+      - name: The push published a digest
+        run: |
+          DIGEST='${{ steps.build.outputs.digest }}'
+          case "$DIGEST" in
+            sha256:*) echo "✅ pushed $DIGEST" ;;
+            *) echo "❌ build-push-action published no usable digest: '$DIGEST'"; exit 1 ;;
+          esac
+
   create-release:
     name: Create GitHub Release
     needs: [build-release, docker-release]
@@ -151,19 +346,30 @@ jobs:
     if: endsWith(github.repository, '/azimuthal')
     permissions:
       contents: write
- 
+
     steps:
       - uses: actions/checkout@v4
- 
+
       - name: Set version from tag
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
- 
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: binary-*
           merge-multiple: true
- 
+
+      # NOTE ON THE INSTALL INSTRUCTIONS BELOW. Every URL in this body is
+      # pinned to the tag being released — including the two infra files. They
+      # used to be fetched from `main`, so somebody installing v1.0.0 six
+      # months later got today's docker-compose.yml and .env.example paired
+      # with a six-month-old image: a versioned release wired to unversioned
+      # infrastructure. raw.githubusercontent.com takes a tag in the ref
+      # position, and the tag exists before anyone can read this.
+      #
+      # README.md and docs/self-hosting.md carry the same two `curl … /main/…`
+      # lines and are NOT this workflow's to edit; they go to the docs track.
+      # If you are changing install instructions, change all three or none.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -195,9 +401,11 @@ jobs:
             persistent volumes. One command, one file.
 
             ```bash
-            # 1. Grab the compose file and env template
-            curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/build/docker-compose.yml
-            curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/.env.example
+            # 1. Grab the compose file and env template for THIS release.
+            #    Both are pinned to ${{ env.VERSION }} — fetching them from
+            #    `main` would pair tomorrow's infra with this image.
+            curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/${{ env.VERSION }}/build/docker-compose.yml
+            curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/${{ env.VERSION }}/.env.example
 
             # 2. Create your env and fill in secrets
             cp .env.example .env
@@ -375,3 +583,140 @@ jobs:
 
             Each binary in this release ships with its matching `.sha256` file —
             verify before running on production hosts.
+
+
+  # ─────────────────────────────────────────────────────────────
+  # Move the floating tags — last, and only once there is a release to point at
+  #
+  # `:latest` and `:MAJOR.MINOR` are the two names in this pipeline that
+  # reassign to new bytes. Everything a user reaches through them — release
+  # notes, checksums, the binaries — must already exist before they move, so
+  # this job sits behind create-release.
+  #
+  # Nothing is rebuilt. `imagetools create` copies the manifest list
+  # docker-release already pushed, addressed BY DIGEST rather than by tag name,
+  # so `:latest` cannot land on an image some other run pushed in between. It
+  # is a registry-side operation: no pull, no daemon build, a few seconds.
+  #
+  # Prereleases stop at the guard below. That is the behaviour the old
+  # `type=raw,value=latest,enable=…` line intended and never got to perform,
+  # because the tag glob could not match a prerelease in the first place.
+  # ─────────────────────────────────────────────────────────────
+  docker-floating-tags:
+    name: Move floating Docker tags
+    needs: [docker-release, create-release]
+    runs-on: ubuntu-latest
+    if: endsWith(github.repository, '/azimuthal')
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Wait for Docker daemon
+        run: |
+          if docker info >/dev/null 2>&1; then
+            echo "Docker daemon already up — no settle needed."
+            exit 0
+          fi
+          echo "Docker daemon not ready — waiting..."
+          for i in $(seq 1 90); do
+            docker info >/dev/null 2>&1 && echo "Docker daemon ready after $((i*2))s" && break
+            sleep 2
+          done
+          docker info
+          echo "Daemon needed waiting — sleeping 30s for DinD bridge networking to settle..."
+          sleep 30
+
+      # `imagetools` talks to the registry directly and needs no builder, but
+      # the buildx CLI plugin is only guaranteed present on GitHub-hosted
+      # runners. This costs a second and makes the job portable.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Point :latest and :MAJOR.MINOR at the released digest
+        id: retag
+        env:
+          DIGEST: ${{ needs.docker-release.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF#refs/tags/}"
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+
+          # Belt to docker-release's braces. If the digest ever fails to cross
+          # the job boundary, refuse — do NOT fall back to retagging by tag
+          # name, which silently reintroduces the race this job exists to
+          # remove.
+          case "$DIGEST" in
+            sha256:*) ;;
+            *) echo "❌ no digest from docker-release ('$DIGEST') — refusing to move floating tags"; exit 1 ;;
+          esac
+
+          case "$VERSION" in
+            *-*)
+              echo "ℹ️ $VERSION is a prerelease — :latest and :MAJOR.MINOR deliberately NOT moved."
+              echo "moved=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          MAJOR_MINOR="${VERSION#v}"
+          MAJOR_MINOR="${MAJOR_MINOR%.*}"
+
+          echo "Retagging ${IMAGE}@${DIGEST} as :latest and :${MAJOR_MINOR}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:latest" \
+            --tag "${IMAGE}:${MAJOR_MINOR}" \
+            "${IMAGE}@${DIGEST}"
+
+          echo "moved=true" >> "$GITHUB_OUTPUT"
+          echo "major_minor=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
+
+      # A retag that silently no-ops leaves :latest on the PREVIOUS release
+      # while this run reports success — the same failure this reordering is
+      # about, arriving from the other direction. So read the tags back out of
+      # the registry and compare them to what was pushed.
+      #
+      # Compared as raw manifest bytes: `imagetools create` copies an index
+      # rather than re-deriving one, so a byte diff here means the copy did not
+      # do what this job assumes, and that assumption should break loudly. The
+      # release object and the immutable tags already exist at this point, so
+      # recovery is a hand-retag, not a re-release.
+      - name: The floating tags resolve to the released image
+        if: steps.retag.outputs.moved == 'true'
+        env:
+          DIGEST: ${{ needs.docker-release.outputs.digest }}
+          MAJOR_MINOR: ${{ steps.retag.outputs.major_minor }}
+        run: |
+          set -euo pipefail
+
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+
+          docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" > released.json
+
+          for tag in latest "${MAJOR_MINOR}"; do
+            docker buildx imagetools inspect --raw "${IMAGE}:${tag}" > "tag-${tag}.json"
+            if ! diff -q released.json "tag-${tag}.json" >/dev/null; then
+              echo "❌ ${IMAGE}:${tag} does not resolve to the image this release published"
+              echo "--- expected (${DIGEST}) ---"; head -c 2000 released.json; echo
+              echo "--- got ---";                  head -c 2000 "tag-${tag}.json"; echo
+              exit 1
+            fi
+            echo "✅ ${IMAGE}:${tag} → ${DIGEST}"
+          done
+
+      - name: Prerelease — record that the floating tags were left alone
+        if: steps.retag.outputs.moved == 'false'
+        run: |
+          {
+            echo "### Prerelease ${GITHUB_REF#refs/tags/}"
+            echo ""
+            echo "\`:latest\` and \`:MAJOR.MINOR\` were not moved. Pull this build by its exact tag."
+          } >> "$GITHUB_STEP_SUMMARY"

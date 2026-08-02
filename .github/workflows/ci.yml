@@ -6,6 +6,37 @@ on:
   workflow_dispatch:
   pull_request:
 
+  # ─────────────────────────────────────────────────────────────
+  # Callable, and that is what gates a release.
+  #
+  # release.yml triggers on a tag push. This workflow's `push` filter is
+  # branches-only, so before this key existed a tagged commit's binaries and
+  # Docker image published having never been built, vetted, linted, tested,
+  # scanned or booted by CI. `workflow_call` closes that: release.yml's first
+  # job is `uses: ./.github/workflows/ci.yml`, and every publish job `needs:`
+  # it, so the battery below is a hard edge in front of the artifact rather
+  # than a status somebody is trusted to have looked at.
+  #
+  # A called workflow runs with the CALLER's `github` context — same ref, same
+  # sha, same event — so `actions/checkout` here gets the tagged commit, which
+  # is the commit whose artifacts ship. That is the whole point: CI runs on the
+  # thing being released, not on whatever main happened to be.
+  #
+  # WHY NOT `push: tags:` AS WELL. It looks like belt-and-braces and is worse
+  # than nothing. Two reasons. (1) A push-triggered run is not a `needs:` edge
+  # — release.yml would not wait for it and could not read its result, so it
+  # would gate exactly nothing while looking like it did. (2) It would land in
+  # the same `concurrency` group as the call below (both resolve
+  # `github.ref` to `refs/tags/vX.Y.Z`) with `cancel-in-progress: true`, so the
+  # two runs would race to cancel each other — and a cancelled gate is a
+  # blocked release at best and a confusing one always. One run, one edge.
+  #
+  # Nothing here reads `secrets.*`, so release.yml deliberately does not pass
+  # `secrets: inherit`. GITHUB_TOKEN reaches a called workflow regardless; the
+  # caller grants its scopes with `permissions:` on the calling job.
+  # ─────────────────────────────────────────────────────────────
+  workflow_call:
+
 concurrency:
   group: ci4-${{ github.ref }}
   cancel-in-progress: true
@@ -72,8 +103,14 @@ jobs:
       - name: Classify changed files
         id: classify
         run: |
-          # Only pull requests may skip gates. Pushes to main/develop and
-          # manual dispatches always run the full pipeline.
+          # Only pull requests may skip gates. Pushes to main/develop, manual
+          # dispatches and RELEASE CALLS always run the full pipeline.
+          #
+          # Written as `!= pull_request` rather than a list of the events that
+          # should run everything, and that is load-bearing now that release.yml
+          # calls this workflow: it holds whatever `github.event_name` resolves
+          # to under `workflow_call`, so a release can never take the docs-only
+          # fast path. Do not rewrite this as `== "push"` or as an allow-list.
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "Event is '${{ github.event_name }}' — full pipeline."
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
