@@ -10,7 +10,7 @@ import {
   DialogDescription, DialogFooter, DialogClose,
 } from '../../components/ui/dialog';
 import { RadioCardGroup } from '../../components/ui/radio-card';
-import { formatUTCDate } from '../../lib/utils';
+import { formatUTCDate, toRFC3339Date } from '../../lib/utils';
 import {
   useSprints, useActiveSprint, useCreateSprint, useStartSprint, useCompleteSprint,
   friendlyErrorMessage,
@@ -205,19 +205,16 @@ export function SprintsPage() {
 
   function resetForm() { setName(''); setGoal(''); setStartsAt(''); setEndsAt(''); }
 
-  // The API decodes starts_at/ends_at as RFC3339 timestamps; a bare
-  // YYYY-MM-DD from <input type="date"> is rejected with 400.
-  function toRFC3339(date: string): string | undefined {
-    return date ? `${date}T00:00:00Z` : undefined;
-  }
-
   async function handleCreate() {
     if (!name.trim()) return;
+    // toRFC3339Date was a local helper here until the due-date controls on the
+    // two detail pages needed the same conversion. It now lives in lib/utils
+    // beside its inverse, formatUTCDate, rather than in a second copy.
     await createMutation.mutateAsync({
       name: name.trim(),
       goal: goal.trim() || undefined,
-      starts_at: toRFC3339(startsAt),
-      ends_at: toRFC3339(endsAt),
+      starts_at: toRFC3339Date(startsAt),
+      ends_at: toRFC3339Date(endsAt),
     });
     setDialogOpen(false);
     resetForm();
