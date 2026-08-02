@@ -142,73 +142,6 @@ func (q *Queries) GetCommentByID(ctx context.Context, id uuid.UUID) (Comment, er
 	return i, err
 }
 
-const listCommentReplies = `-- name: ListCommentReplies :many
-SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
-       c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
-       c.visibility, c.author_requester_id,
-       COALESCE(u.display_name, r.display_name, '') AS author_name,
-       u.avatar_url AS author_avatar
-FROM comments c
-LEFT JOIN users u ON u.id = c.author_id
-LEFT JOIN requesters r ON r.id = c.author_requester_id
-WHERE c.parent_id = $1 AND c.deleted_at IS NULL
-ORDER BY c.created_at ASC
-`
-
-type ListCommentRepliesRow struct {
-	ID                uuid.UUID          `json:"id"`
-	EntityType        string             `json:"entity_type"`
-	EntityID          uuid.UUID          `json:"entity_id"`
-	ItemID            pgtype.UUID        `json:"item_id"`
-	PageID            pgtype.UUID        `json:"page_id"`
-	ParentID          pgtype.UUID        `json:"parent_id"`
-	AuthorID          pgtype.UUID        `json:"author_id"`
-	Body              string             `json:"body"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
-	Visibility        string             `json:"visibility"`
-	AuthorRequesterID pgtype.UUID        `json:"author_requester_id"`
-	AuthorName        string             `json:"author_name"`
-	AuthorAvatar      *string            `json:"author_avatar"`
-}
-
-func (q *Queries) ListCommentReplies(ctx context.Context, parentID pgtype.UUID) ([]ListCommentRepliesRow, error) {
-	rows, err := q.db.Query(ctx, listCommentReplies, parentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListCommentRepliesRow{}
-	for rows.Next() {
-		var i ListCommentRepliesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.EntityType,
-			&i.EntityID,
-			&i.ItemID,
-			&i.PageID,
-			&i.ParentID,
-			&i.AuthorID,
-			&i.Body,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.DeletedAt,
-			&i.Visibility,
-			&i.AuthorRequesterID,
-			&i.AuthorName,
-			&i.AuthorAvatar,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listCommentsByEntity = `-- name: ListCommentsByEntity :many
 SELECT c.id, c.entity_type, c.entity_id, c.item_id, c.page_id, c.parent_id,
        c.author_id, c.body, c.created_at, c.updated_at, c.deleted_at,
@@ -272,6 +205,26 @@ type ListCommentsByEntityRow struct {
 // have dropped every requester message from the agent's view of the
 // conversation — silently, with the agent seeing a thread that appeared to
 // have no customer in it.
+//
+// ITS SIBLING ListCommentReplies WAS DELETED RATHER THAN SCOPED. That query
+// selected a comment's children with `WHERE c.parent_id = $1` and nothing else:
+// no space, no org, no entity, no visibility filter. It was the one comment read
+// the cross-space read pass did not give a @space_id, missed because that sweep
+// followed callers and this had none - no adapter, no domain interface, no
+// service, no handler, no route, no OpenAPI schema, no frontend type. Its only
+// caller was three lines of TestComments in internal/db/queries_test.go.
+//
+// Wiring it as it stood would have reintroduced exactly the disclosure the
+// EXISTS below closes, and added a second one on top: with no visibility
+// predicate it returned internal comments, which the portal read deliberately
+// withholds. A primitive one call site away from two disclosures is not a head
+// start on the feature; it is a trap that reads as ready.
+//
+// Threaded replies ARE commissioned work - replies are written and never read
+// back today, because of the `c.parent_id IS NULL` filter below. Whoever builds
+// that read writes it then, with this query's @space_id + EXISTS shape AND a
+// visibility predicate. Neither is a modification of what stood here; both are
+// the query it should have been.
 //
 // The entity is reconciled against the space the request named. Comments carry
 // no space_id of their own — they are readable exactly when the thing they are

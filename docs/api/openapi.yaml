@@ -12323,6 +12323,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Workflow or state not found
         "500":
           content:
             application/json:

@@ -163,7 +163,17 @@ func (q *Queries) CreateWorkflowState(ctx context.Context, arg CreateWorkflowSta
 
 const createWorkflowTransition = `-- name: CreateWorkflowTransition :one
 INSERT INTO workflow_transitions (workflow_id, from_state_id, to_state_id, name)
-VALUES ($1, $2, $3, $4)
+SELECT $1::uuid, $2::uuid, $3::uuid, $4::text
+WHERE EXISTS (
+    SELECT 1 FROM workflow_states ws
+     WHERE ws.id = $2::uuid
+       AND ws.workflow_id = $1::uuid
+)
+  AND EXISTS (
+    SELECT 1 FROM workflow_states ws
+     WHERE ws.id = $3::uuid
+       AND ws.workflow_id = $1::uuid
+)
 RETURNING id, workflow_id, from_state_id, to_state_id, name, created_at
 `
 
@@ -174,6 +184,33 @@ type CreateWorkflowTransitionParams struct {
 	Name        string    `json:"name"`
 }
 
+// Add an edge to a workflow, refusing endpoints that are not its own states.
+//
+// from_state_id and to_state_id arrive in the REQUEST BODY. The only thing that
+// constrained them was migration 016's `REFERENCES workflow_states (id)` — a
+// bare foreign key to the whole table, satisfied by any state of any workflow in
+// any organisation. The handler's workflowInOrg establishes that the workflow in
+// the URL belongs to the caller's org and establishes nothing whatever about the
+// two ids in the body, so an org admin could stitch another workflow's states —
+// and so another space's, or another organisation's — into their own graph.
+//
+// The predicate lives here rather than in the handler because a load-then-compare
+// has a window between the two: a state deleted (migration 016 cascades) or a
+// workflow re-pointed after the check and before the INSERT lands an edge the
+// check would have refused. One statement has no such window, and it is the
+// shape AssignProjectItemToSprintInSpace already uses for the same reason.
+//
+// The refusal is one answer for two questions. A state id naming nothing at all
+// fails this predicate for exactly the same reason a state id naming another
+// workflow's state does — neither is a state of @workflow_id — so the route
+// cannot be used to ask whether some other workflow's state exists. Before this,
+// the two were distinguishable: an invented uuid violated the foreign key and
+// answered 500, a real state anywhere in the installation answered 201. That
+// difference was an existence oracle over every workflow state in every org,
+// which is the same defect CommentBelongsToEntity closed for comment parents.
+//
+// ws is aliased in both subqueries because sqlc's analyser flattens EXISTS into
+// the outer scope, where an unqualified `id` is ambiguous.
 func (q *Queries) CreateWorkflowTransition(ctx context.Context, arg CreateWorkflowTransitionParams) (WorkflowTransition, error) {
 	row := q.db.QueryRow(ctx, createWorkflowTransition,
 		arg.WorkflowID,

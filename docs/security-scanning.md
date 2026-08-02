@@ -460,11 +460,16 @@ is not exploitable *here* — not what the rule is:
 
 ```go
 // Production code, gosec's own directive:
-outFile, err := os.Create(backupOutput) // #nosec G304 -- user-provided CLI flag
+f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, backupArchiveMode) // #nosec G304 -- user-provided CLI flag
 
 // Test helper, golangci-lint's directive:
 f, err := os.Create(path) //nolint:gosec // G304 — a t.TempDir() path
 ```
+
+*The production example is quoted from `openBackupOutput` in
+`cmd/server/backup.go`. It read `os.Create(backupOutput)` until T3 made the
+archive owner-only — the annotation, which is what this section is about, is
+unchanged; the call it sits on is not.*
 
 "G304 is about file inclusion" is not a reason. "The path is a `t.TempDir()`
 path" is.
