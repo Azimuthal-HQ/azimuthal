@@ -34,12 +34,36 @@ name: Release
 #                  └─────────────> create-release        the Release object
 #                        └────────> docker-floating-tags :latest, :MAJOR.MINOR
 #
-# WHAT THIS STILL DOES NOT PROVE. CI builds one linux/amd64 binary and an image
-# from build/Dockerfile.ci; this workflow builds five platform binaries and a
-# multi-arch image from build/Dockerfile. So the gate proves the SOURCE TREE at
-# the tagged commit is good, not that these exact bytes are the bytes that were
-# tested. Closing that is artifact provenance — cosign/SBOM/attestation — and
-# is deliberately not in this change.
+# ─── THREE THINGS THIS STILL DOES NOT PROVE ─────────────────────────────────
+#
+# 1. THE GATE BINDS FORWARD ONLY. A push event runs the workflow file as it
+#    exists AT THE PUSHED COMMIT, and `uses: ./…` with no `@ref` resolves the
+#    callee from that same commit. So a tag cut from any commit that predates
+#    this change runs the OLD release.yml: no `ci` job, no `needs`, floating
+#    tags pushed before the Release object. Every tag through v0.4.0 is in that
+#    state, and so is any branch cut from one.
+#
+#    That makes the ordinary backport flow the dangerous one —
+#    `git checkout -b release/0.3 v0.3.0`, cherry-pick, tag — because it
+#    publishes from a commit where none of this exists. BEFORE TAGGING A
+#    BACKPORT, rebase the release branch onto a commit that contains this file,
+#    or cherry-pick this commit onto it. Nothing in-tree can enforce that: the
+#    old file is what GitHub runs.
+#
+# 2. THE IMAGE RECIPE THIS PIPELINE USES IS BUILT BY NO CI JOB. CI builds
+#    build/Dockerfile.ci, which COPYs in a binary that was already compiled.
+#    This workflow builds build/Dockerfile, which additionally carries a
+#    node:20-alpine `frontend` stage (`npm ci`, `npm run build`) and a
+#    golang:alpine `builder` stage that Dockerfile.ci does not contain at all.
+#    A break confined to those stages passes every gate above and fails here,
+#    after the whole battery and five platform binaries have been spent.
+#
+# 3. THE BYTES TESTED ARE NOT THE BYTES SHIPPED. CI builds one linux/amd64
+#    binary; this workflow builds five platform binaries and a multi-arch
+#    image. The gate proves the SOURCE TREE at the tagged commit is good, not
+#    that these artifacts are the artifacts that were tested. Closing that is
+#    provenance — cosign/SBOM/attestation — and is deliberately not in this
+#    change.
 # ═════════════════════════════════════════════════════════════════════════════
 
 on:
@@ -598,9 +622,13 @@ jobs:
   # so `:latest` cannot land on an image some other run pushed in between. It
   # is a registry-side operation: no pull, no daemon build, a few seconds.
   #
-  # Prereleases stop at the guard below. That is the behaviour the old
+  # Two guards decide whether each tag moves at all, and BOTH are needed.
+  # Prereleases never take a floating tag — the behaviour the old
   # `type=raw,value=latest,enable=…` line intended and never got to perform,
-  # because the tag glob could not match a prerelease in the first place.
+  # because the tag glob could not match a prerelease in the first place. And a
+  # floating tag never moves backwards, which is what makes a backport safe;
+  # see the comment on the retag step, because "is it a prerelease" alone gets
+  # that case wrong in the user-visible direction.
   # ─────────────────────────────────────────────────────────────
   docker-floating-tags:
     name: Move floating Docker tags
@@ -640,7 +668,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Point :latest and :MAJOR.MINOR at the released digest
+      # The tag list is what answers "is this actually the newest release?" —
+      # see the backwards-move guard below. fetch-depth: 0 brings the tags.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Point the floating tags at the released digest
         id: retag
         env:
           DIGEST: ${{ needs.docker-release.outputs.digest }}
@@ -659,30 +693,78 @@ jobs:
             *) echo "❌ no digest from docker-release ('$DIGEST') — refusing to move floating tags"; exit 1 ;;
           esac
 
-          case "$VERSION" in
-            *-*)
-              echo "ℹ️ $VERSION is a prerelease — :latest and :MAJOR.MINOR deliberately NOT moved."
-              echo "moved=false" >> "$GITHUB_OUTPUT"
-              exit 0
-              ;;
-          esac
-
+          # `1.2.3` -> `1.2`, and `1.2.3-rc1` -> `1.2` as well, because `%.*`
+          # strips the shortest `.`-suffix either way.
           MAJOR_MINOR="${VERSION#v}"
           MAJOR_MINOR="${MAJOR_MINOR%.*}"
 
-          echo "Retagging ${IMAGE}@${DIGEST} as :latest and :${MAJOR_MINOR}"
-          docker buildx imagetools create \
-            --tag "${IMAGE}:latest" \
-            --tag "${IMAGE}:${MAJOR_MINOR}" \
-            "${IMAGE}@${DIGEST}"
+          # ── A FLOATING TAG NEVER MOVES BACKWARDS ──────────────────────────
+          #
+          # "Is it a prerelease?" is not sufficient, and getting this wrong is
+          # how :latest silently regresses. Ship v1.3.0, then patch the 1.2 line
+          # a week later as v1.2.4: v1.2.4 contains no `-`, so a prerelease-only
+          # guard moves :latest onto it and every self-hoster pulling :latest is
+          # downgraded by a whole minor version. Backporting a security fix is
+          # the single most likely reason to cut a patch release, so this is the
+          # normal case, not an exotic one.
+          #
+          # So each floating tag is checked against the newest release it is
+          # supposed to track, and moves only when THIS release is that one:
+          #
+          #   :latest        tracks the newest release in the repository
+          #   :MAJOR.MINOR   tracks the newest release on its own line
+          #
+          # Prereleases are excluded from both comparisons, so an rc never
+          # becomes the newest and never takes a floating tag.
+          newest_matching() {
+            git tag --list "$1" | grep -v -- '-' | sort -V | tail -1
+          }
+          NEWEST_ANY=$(newest_matching 'v[0-9]*.[0-9]*.[0-9]*')
+          NEWEST_LINE=$(newest_matching "v${MAJOR_MINOR}.[0-9]*")
 
-          echo "moved=true" >> "$GITHUB_OUTPUT"
-          echo "major_minor=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
+          echo "this release:              $VERSION"
+          echo "newest release overall:    ${NEWEST_ANY:-<none>}"
+          echo "newest on the ${MAJOR_MINOR} line:  ${NEWEST_LINE:-<none>}"
 
-      # A retag that silently no-ops leaves :latest on the PREVIOUS release
-      # while this run reports success — the same failure this reordering is
-      # about, arriving from the other direction. So read the tags back out of
-      # the registry and compare them to what was pushed.
+          MOVE_LATEST=false
+          MOVE_LINE=false
+          if [ "$NEWEST_ANY"  = "$VERSION" ]; then MOVE_LATEST=true; fi
+          if [ "$NEWEST_LINE" = "$VERSION" ]; then MOVE_LINE=true;   fi
+
+          # Written as explicit `if`s, never `[ cond ] && cmd`: this runs under
+          # `set -e`, where a false test at the end of a chain fails the step.
+          TAGS=()
+          if [ "$MOVE_LATEST" = true ]; then TAGS+=(--tag "${IMAGE}:latest"); fi
+          if [ "$MOVE_LINE"   = true ]; then TAGS+=(--tag "${IMAGE}:${MAJOR_MINOR}"); fi
+
+          if [ ${#TAGS[@]} -eq 0 ]; then
+            echo "ℹ️ $VERSION is newer than nothing it would track — no floating tag moves."
+          else
+            echo "Retagging ${IMAGE}@${DIGEST} ->${TAGS[*]}"
+            docker buildx imagetools create "${TAGS[@]}" "${IMAGE}@${DIGEST}"
+          fi
+
+          {
+            echo "major_minor=${MAJOR_MINOR}"
+            echo "move_latest=${MOVE_LATEST}"
+            echo "move_line=${MOVE_LINE}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Read the tags back out of the registry and check them BOTH WAYS.
+      #
+      # Both ways is the whole point, and the one-way version of this step was
+      # a check that could not fail. It compared each floating tag against THIS
+      # run's digest and passed when they matched — so in the exact case where
+      # :latest had just been wrongly dragged backwards onto a backport, the
+      # two matched and it printed a tick. It asserted "the retag command ran",
+      # which was never in doubt, and read as coverage for the property that
+      # actually matters.
+      #
+      # So a tag that SHOULD have moved must now equal this digest, and a tag
+      # that should NOT have moved must differ from it. The second assertion is
+      # the one with teeth: it fails if a future edit drops the backwards-move
+      # guard, and it fails if metadata-action ever starts emitting :latest from
+      # docker-release again.
       #
       # Compared as raw manifest bytes. That is sound for exactly one reason,
       # and it is a reason that can be edited away: `imagetools create` with a
@@ -701,34 +783,80 @@ jobs:
       # The release object and the immutable tags already exist by the time
       # this runs, so recovery from a genuine failure here is a hand-retag,
       # not a re-release.
-      - name: The floating tags resolve to the released image
-        if: steps.retag.outputs.moved == 'true'
+      - name: The floating tags point where they should — and nowhere else
         env:
           DIGEST: ${{ needs.docker-release.outputs.digest }}
           MAJOR_MINOR: ${{ steps.retag.outputs.major_minor }}
+          MOVE_LATEST: ${{ steps.retag.outputs.move_latest }}
+          MOVE_LINE: ${{ steps.retag.outputs.move_line }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           IMAGE="${REGISTRY}/${IMAGE_NAME}"
-
           docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" > released.json
 
-          for tag in latest "${MAJOR_MINOR}"; do
-            docker buildx imagetools inspect --raw "${IMAGE}:${tag}" > "tag-${tag}.json"
-            if ! diff -q released.json "tag-${tag}.json" >/dev/null; then
-              echo "❌ ${IMAGE}:${tag} does not resolve to the image this release published"
-              echo "--- expected (${DIGEST}) ---"; head -c 2000 released.json; echo
-              echo "--- got ---";                  head -c 2000 "tag-${tag}.json"; echo
-              exit 1
-            fi
-            echo "✅ ${IMAGE}:${tag} → ${DIGEST}"
-          done
+          FAILED=0
 
-      - name: Prerelease — record that the floating tags were left alone
-        if: steps.retag.outputs.moved == 'false'
+          # $1 = tag, $2 = "same" if it should now be this release, else "differ"
+          check_tag() {
+            local tag="$1" want="$2" got
+
+            if ! docker buildx imagetools inspect --raw "${IMAGE}:${tag}" > "tag.json" 2>/dev/null; then
+              if [ "$want" = same ]; then
+                echo "❌ ${IMAGE}:${tag} does not exist, but this release should own it"
+                FAILED=1
+              else
+                echo "✅ ${IMAGE}:${tag} does not exist — nothing to regress"
+              fi
+              return
+            fi
+
+            if diff -q released.json tag.json >/dev/null 2>&1; then got=same; else got=differ; fi
+
+            if [ "$got" = "$want" ]; then
+              if [ "$want" = same ]; then
+                echo "✅ ${IMAGE}:${tag} → ${DIGEST}"
+              else
+                echo "✅ ${IMAGE}:${tag} left where it was, as intended"
+              fi
+              return
+            fi
+
+            if [ "$want" = same ]; then
+              echo "❌ ${IMAGE}:${tag} should resolve to ${DIGEST} and does not — the retag did not take"
+            else
+              echo "❌ ${IMAGE}:${tag} was moved onto ${DIGEST} and should NOT have been."
+              echo "   This release is not the newest that tag tracks. Something moved a"
+              echo "   floating tag backwards — check the guard in the retag step, and"
+              echo "   check that docker-release still sets 'flavor: latest=false'."
+            fi
+            FAILED=1
+          }
+
+          if [ "$MOVE_LATEST" = true ]; then check_tag latest same;  else check_tag latest differ;  fi
+          if [ "$MOVE_LINE"   = true ]; then check_tag "$MAJOR_MINOR" same; else check_tag "$MAJOR_MINOR" differ; fi
+
+          [ "$FAILED" = 0 ] || exit 1
+
+      - name: Summarise what moved
+        if: always() && steps.retag.conclusion == 'success'
+        env:
+          MAJOR_MINOR: ${{ steps.retag.outputs.major_minor }}
+          MOVE_LATEST: ${{ steps.retag.outputs.move_latest }}
+          MOVE_LINE: ${{ steps.retag.outputs.move_line }}
         run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
           {
-            echo "### Prerelease ${GITHUB_REF#refs/tags/}"
+            echo "### Floating tags for ${VERSION}"
             echo ""
-            echo "\`:latest\` and \`:MAJOR.MINOR\` were not moved. Pull this build by its exact tag."
+            if [ "$MOVE_LATEST" = true ]; then
+              echo "- \`:latest\` → ${VERSION}"
+            else
+              echo "- \`:latest\` **not moved** — ${VERSION} is not the newest release."
+            fi
+            if [ "$MOVE_LINE" = true ]; then
+              echo "- \`:${MAJOR_MINOR}\` → ${VERSION}"
+            else
+              echo "- \`:${MAJOR_MINOR}\` **not moved** — ${VERSION} is not the newest on that line."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
