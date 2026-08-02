@@ -75,6 +75,17 @@ const swaggerUIInitJS = `window.onload = function() {
         ],
         plugins: [SwaggerUIBundle.plugins.DownloadUrl],
         layout: 'StandaloneLayout',
+        // Swagger UI's validator badge defaults to
+        // https://validator.swagger.io/validator and fetches it with THIS
+        // deployment's spec URL as a query parameter — so simply opening
+        // /api/docs told a third party the hostname of a self-hosted install,
+        // and handed it the whole API surface to fetch. The vendored bundle
+        // still carries that default (grep validator.swagger.io in
+        // swaggerui/assets); null is what turns the badge off. Predates the
+        // v0.4.1 trust patch, fixed here because the initialiser was being
+        // rewritten anyway and a security patch is the wrong place to walk
+        // past it.
+        validatorUrl: null,
         deepLinking: true,
         displayRequestDuration: true,
         defaultModelsExpandDepth: 2,

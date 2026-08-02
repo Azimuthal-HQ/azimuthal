@@ -320,11 +320,13 @@ func TestSecurityHeaders_AreGlobal(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"X-Content-Type-Options":    "nosniff",
-		"Content-Security-Policy":   api.ContentSecurityPolicy,
-		"Referrer-Policy":           "strict-origin-when-cross-origin",
-		"X-Frame-Options":           "DENY",
-		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+		"X-Content-Type-Options":  "nosniff",
+		"Content-Security-Policy": api.ContentSecurityPolicy,
+		"Referrer-Policy":         "strict-origin-when-cross-origin",
+		"X-Frame-Options":         "DENY",
+		// No includeSubDomains and no preload: this binary knows only the host
+		// it was asked for, and both commit hostnames it has never seen.
+		"Strict-Transport-Security": "max-age=31536000",
 	}
 
 	for _, tc := range cases {

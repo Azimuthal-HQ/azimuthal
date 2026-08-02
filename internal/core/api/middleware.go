@@ -239,9 +239,19 @@ const ContentSecurityPolicy = "default-src 'self'; " +
 	"frame-ancestors 'none'"
 
 // strictTransportSecurity asks a browser to refuse plaintext to this host for a
-// year. No `preload`: that submits the domain to a browser-vendor list which is
-// slow to leave again, and is not a self-hosted operator's decision to have
-// made for them by a default.
+// year.
+//
+// NEITHER `preload` NOR `includeSubDomains`, and it is one reason applied
+// twice: this binary knows only the host it was asked for, and both directives
+// commit hostnames it has never seen. `preload` submits the domain to a
+// browser-vendor list that is slow to leave again. `includeSubDomains` on an
+// apex pins every sibling — an operator self-hosting at example.com would find
+// an unrelated http://legacy.example.com unreachable for a year because of a
+// header they did not write, and there is no configuration knob here to say
+// otherwise. The sibling-subdomain cookie-injection attack that directive is
+// mainly for does not apply either: the internal session is a bearer token in
+// localStorage, not a cookie. The origin this binary actually serves is still
+// protected.
 //
 // Sent unconditionally rather than only when r.TLS != nil, and that is
 // deliberate in both directions. A browser ignores HSTS received over plain
@@ -250,7 +260,7 @@ const ContentSecurityPolicy = "default-src 'self'; " +
 // TLS-terminating proxy in front of this binary, where r.TLS is nil on every
 // request; a conditional would have switched the header off in exactly the
 // deployment that needs it.
-const strictTransportSecurity = "max-age=31536000; includeSubDomains"
+const strictTransportSecurity = "max-age=31536000"
 
 // SecurityHeaders sets the response headers that hold for every route.
 //

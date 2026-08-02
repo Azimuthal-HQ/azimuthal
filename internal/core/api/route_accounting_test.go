@@ -96,8 +96,9 @@ var routeAccounting = map[string]string{
 	// it validated nothing, and the handler's nil-claims branch answered 401 to
 	// every caller including a valid one. It now sits inside RequireAuth beside
 	// /me. TestAuthLogoutIsAuthenticated asserts both directions through the
-	// wired router; note the sweep below cannot, because carries() is only
-	// consulted for the admin and portal guards, never for RequireAuth.
+	// wired router, and the sweep below now checks this row against the real
+	// middleware chain — it did not when the defect shipped, which is why the
+	// row could say `public` about an authenticated route with every gate green.
 	"POST /api/v1/auth/logout":                         "user-scoped: revokes the caller's own token generation and sessions",
 	"GET /api/v1/auth/me":                              "user-scoped",
 	"PATCH /api/v1/auth/me":                            "user-scoped",
@@ -558,6 +559,43 @@ func carries(chain []string, guard string) bool {
 	return false
 }
 
+// carriesMethodValue is carries() for a middleware supplied as a METHOD VALUE
+// rather than a package-level function.
+//
+// `r.Use(cfg.Authenticator.RequireAuth)` compiles to a frame named
+// "….auth.(*Authenticator).RequireAuth-fm" — no trailing dot — so carries()
+// cannot see it and reports every authenticated route in the product as
+// missing its guard. That is not a hypothetical: it is what happened the first
+// time the check below was written, and it looks exactly like a catastrophic
+// finding rather than a broken matcher.
+//
+// carries() is deliberately NOT loosened to cover this. Its trailing dot is
+// what keeps "RequireOrgAdmin" from matching every "RequireOrgAdmin404" frame,
+// and those two classes must stay distinguishable.
+func carriesMethodValue(chain []string, guard string) bool {
+	for _, name := range chain {
+		if strings.Contains(name, "."+guard+".") ||
+			strings.Contains(name, "."+guard+"-fm") ||
+			strings.HasSuffix(name, "."+guard) {
+			return true
+		}
+	}
+	return false
+}
+
+// unauthenticatedClasses are the two guard classes that legitimately reach a
+// handler with no internal session. Everything else must sit behind
+// RequireAuth — see the RequireAuth check in
+// TestReadPathSweep_GuardClassMatchesMiddleware.
+//
+// portal-session is authenticated, just not by RequireAuth: an external
+// requester holds no internal credential, so the portal subtree carries
+// RequirePortalSession instead and is checked against that above.
+var unauthenticatedClasses = map[string]bool{
+	"public":         true,
+	"portal-session": true,
+}
+
 // classOf returns the leading class token of an accounting value, so
 // "org-admin-404: People directory" classifies as "org-admin-404".
 func classOf(accounting string) string {
@@ -679,6 +717,28 @@ func TestReadPathSweep_GuardClassMatchesMiddleware(t *testing.T) {
 		if class == "org-admin" && !carries(chain, "RequireOrgAdmin") {
 			mismatched = append(mismatched, route+
 				": claims org-admin but its middleware chain does not include RequireOrgAdmin")
+		}
+
+		// RequireAuth, both directions. This is the check whose absence let
+		// POST /api/v1/auth/logout sit outside the RequireAuth group with a
+		// row calling it `public` and every gate green — the v0.4.1 trust
+		// patch. The sweep already refused to take the admin and portal
+		// classifications on trust; it took the authenticated/public
+		// distinction on trust, which is the coarsest one there is.
+		//
+		// The failing direction that matters is a route classified as
+		// anything but public that turns out not to be authenticated. The
+		// other direction is worth having too: a row that says `public` on a
+		// route sitting behind RequireAuth is a row nobody has reread since
+		// the route moved.
+		hasAuth := carriesMethodValue(chain, "RequireAuth")
+		if !unauthenticatedClasses[class] && !hasAuth {
+			mismatched = append(mismatched, route+
+				": classified "+class+" but its middleware chain does not include RequireAuth")
+		}
+		if unauthenticatedClasses[class] && hasAuth && class != "portal-session" {
+			mismatched = append(mismatched, route+
+				": classified "+class+" but sits behind RequireAuth")
 		}
 
 		// The customer portal, both directions. This is the same shape as the

@@ -61,6 +61,11 @@ const HOSTILE = [
   '',
   '<object data="https://evil.example.com/steal"></object>',
   '',
+  // Present because the assertion below names it. Without it in the fixture,
+  // `querySelector('embed')` returns null whatever the schema says, and
+  // widening `tagNames` to permit <embed> would not fail a single test.
+  '<embed src="https://evil.example.com/steal">',
+  '',
   '<style>body { display: none }</style>',
   '',
   // The benign half. Raw HTML is a feature of this surface; a sanitiser that

@@ -106,17 +106,26 @@ export function getCurrentOrgId(): string {
  * trust patch this function was the local clear alone, which meant a normal
  * sign-out only made the browser forget a credential that went on working.
  *
- * Two honest limits:
+ * Two limits, stated rather than glossed:
  *
- *  - A failed revocation is swallowed. There is nothing useful to tell the
- *    person at that moment — they are being signed out locally either way —
- *    and throwing would leave the caller navigating away from a rejected
- *    promise. The server-side session survives until the token expires.
- *  - The expiry timer in AuthProvider calls this with an access token that
- *    has already expired, so the request 401s and the refresh token is not
- *    revoked. Nothing can be done about that from here: revoking requires a
- *    credential the browser no longer has. A deliberate Sign out, which is the
- *    case that matters, always carries a live token.
+ *  - A FAILED REVOCATION IS SWALLOWED, AND THE PERSON IS NOT TOLD. The server
+ *    answers 500 when it could not revoke, and it does that deliberately — see
+ *    Handler.Logout, which refuses to say "logged out" to somebody who may be
+ *    signing out because they think they are compromised. That information
+ *    dies here. Throwing instead would leave the caller navigating away from a
+ *    rejected promise, and there is no surface in this app for the message, so
+ *    swallowing is what the change shipped with; it is a gap in the product,
+ *    not a considered position, and it is recorded as such rather than
+ *    dressed up. The session survives on the server until the token expires.
+ *  - THE EXPIRY-TIMER PATH USUALLY CANNOT REVOKE. AuthProvider's timer fires
+ *    when isTokenExpired says so, which is true from 30 SECONDS BEFORE expiry
+ *    onwards — so inside that window the token is still valid server-side and
+ *    the revocation succeeds; past it the request 401s and nothing is revoked.
+ *    Note the refresh token is still in storage at that moment, so a
+ *    refresh-then-revoke would close the gap. It is not done here because it
+ *    turns a timer tick into two network round trips on every idle session,
+ *    and the case that matters — a deliberate Sign out — always carries a live
+ *    token.
  */
 export async function logout(): Promise<void> {
   try {

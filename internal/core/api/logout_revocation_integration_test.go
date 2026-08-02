@@ -107,14 +107,17 @@ func TestAuthLogout_RevokesOnlyTheCaller(t *testing.T) {
 // HONEST NOTE ON WHAT THIS DOES AND DOES NOT PROVE. It does not discriminate
 // the route move, and it was measured rather than assumed: with /logout put
 // back on the public mount it still passes, because the handler's own
-// nil-claims branch answers 401 there for an unrelated reason. The test that
-// proves the move is TestAuthLogoutIsAuthenticated in router_test.go, whose
-// authenticated half fails the moment the route leaves the RequireAuth group.
+// nil-claims branch answers 401 there for an unrelated reason.
 //
-// Neither can the route sweep prove it: TestReadPathSweep_GuardClassMatches-
-// Middleware consults carries() only for the admin and portal guards, never
-// for RequireAuth, so the accounting row and the actual middleware chain could
-// disagree with every gate green.
+// Two other tests do prove the move, and they are the ones to look at if this
+// one starts failing for a reason that is not the live-state check:
+// TestAuthLogoutIsAuthenticated in router_test.go, whose authenticated half
+// fails the moment the route leaves the RequireAuth group; and
+// TestReadPathSweep_GuardClassMatchesMiddleware, which since this change reads
+// RequireAuth out of the real middleware chain and refuses a row that claims
+// anything but `public` for a route without it. That sweep check did not exist
+// when the defect shipped — which is exactly how a row saying `public` about
+// an authenticated route survived every gate.
 func TestAuthLogout_RefusesAnAlreadyRevokedToken(t *testing.T) {
 	ts := newTestServer(t)
 	person := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
