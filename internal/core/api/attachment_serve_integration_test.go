@@ -8,10 +8,13 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 )
 
 // Attachment serve-time content-type tests.
@@ -279,15 +282,26 @@ func TestAttachmentServe_ShareRecipientPathIsSafe(t *testing.T) {
 	requireServedAsDownload(t, f.ts.getAs(t, f.outsiderTok, sharedPath(hostileID)), "payload.html")
 }
 
-// TestSecurityHeaders_NosniffIsGlobal: nosniff now comes from global
-// middleware, so a route that never sets it still sends it. Before this
-// change the ONLY routes carrying it were the attachment and avatar serve
-// paths; the wiki render endpoint, which returns user-authored content as
-// text/html, carried nothing.
+// TestSecurityHeaders_AreGlobal: the security headers come from global
+// middleware, so a route that never sets them still sends them. Before that
+// middleware the ONLY routes carrying nosniff were the attachment and avatar
+// serve paths; the wiki render endpoint, which returns user-authored content
+// as text/html, carried nothing.
 //
-// This does not close the attachment hole on its own — nosniff constrains
+// nosniff does not close the attachment hole on its own — it constrains
 // sniffing, not rendering — which is why the serve path sniffs as well.
-func TestSecurityHeaders_NosniffIsGlobal(t *testing.T) {
+//
+// The other four headers are the v0.4.1 trust patch. The case that matters
+// most is "user-authored html": /wiki/{id}/render answers text/html built from
+// a page body, as a top-level document on the app's own origin. It is the one
+// route here where the CSP is doing load-bearing work rather than defence in
+// depth.
+//
+// This is the right place for the assertion because these cases go through the
+// real router. A CSP check added to docs_test.go's newDocsTestServer would
+// pass vacuously — that harness builds a bare chi.NewRouter() with no global
+// middleware at all.
+func TestSecurityHeaders_AreGlobal(t *testing.T) {
 	f := newShareFixture(t)
 	pageID, _ := f.createPage(t, "Doc", "# heading", nil)
 
@@ -296,6 +310,7 @@ func TestSecurityHeaders_NosniffIsGlobal(t *testing.T) {
 		r    httpResult
 	}{
 		{"public health", f.ts.get(t, "/health", false)},
+		{"api documentation ui", f.ts.get(t, "/api/docs", false)},
 		{"json api", f.ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s",
 			f.ts.OrgID, f.spaceID, pageID), true)},
 		{"user-authored html", f.ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/wiki/%s/render",
@@ -303,13 +318,86 @@ func TestSecurityHeaders_NosniffIsGlobal(t *testing.T) {
 		{"error response", f.ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/attachments/%s",
 			f.ts.OrgID, f.spaceID, uuid.New()), true)},
 	}
+
+	want := map[string]string{
+		"X-Content-Type-Options":  "nosniff",
+		"Content-Security-Policy": api.ContentSecurityPolicy,
+		"Referrer-Policy":         "strict-origin-when-cross-origin",
+		"X-Frame-Options":         "DENY",
+		// No includeSubDomains and no preload: this binary knows only the host
+		// it was asked for, and both commit hostnames it has never seen.
+		"Strict-Transport-Security": "max-age=31536000",
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, "nosniff", tc.r.Header.Get("X-Content-Type-Options"))
-			require.Len(t, tc.r.Header.Values("X-Content-Type-Options"), 1,
-				"set once, not appended per layer")
+			for header, value := range want {
+				require.Equal(t, value, tc.r.Header.Get(header), header)
+				require.Len(t, tc.r.Header.Values(header), 1,
+					header+" is set once, not appended per layer")
+			}
 		})
 	}
+}
+
+// TestContentSecurityPolicy_NeutersInlineScript asserts the two properties the
+// policy exists for, against the constant itself rather than against a served
+// response.
+//
+// Both are worth pinning separately from the reach test above, because the
+// reach test compares the served header to the same constant and so would
+// happily agree with a policy that had been loosened. This one would not.
+func TestContentSecurityPolicy_NeutersInlineScript(t *testing.T) {
+	directives := map[string]string{}
+	for _, d := range strings.Split(api.ContentSecurityPolicy, ";") {
+		parts := strings.Fields(strings.TrimSpace(d))
+		if len(parts) > 0 {
+			directives[parts[0]] = strings.Join(parts[1:], " ")
+		}
+	}
+
+	require.Equal(t, "'self'", directives["script-src"],
+		"script-src must stay bare 'self'. No 'unsafe-inline', no 'unsafe-eval', "+
+			"no nonce and no hash: the built SPA needs none of them, and the one page "+
+			"that did (the Swagger UI) had its initialiser moved to /api/docs/init.js "+
+			"rather than buy an exception for every response in the product.")
+
+	// The bypasses a bare script-src leaves open on its own.
+	require.Equal(t, "'none'", directives["object-src"], "object-src")
+	require.Equal(t, "'self'", directives["base-uri"], "base-uri")
+	require.Equal(t, "'none'", directives["frame-ancestors"], "frame-ancestors")
+
+	// style-src is the documented exception and is allowed to carry
+	// 'unsafe-inline'; nothing else may.
+	for name, value := range directives {
+		if name == "style-src" {
+			continue
+		}
+		require.NotContains(t, value, "unsafe-inline", name+" must not allow inline content")
+		require.NotContains(t, value, "unsafe-eval", name+" must not allow eval")
+	}
+}
+
+// TestSwaggerUI_HasNoInlineScript is the other half of the same rule, read from
+// the page instead of the policy: /api/docs must not reintroduce an inline
+// <script>, because under this CSP it would silently not run and the API
+// reference would render as a blank page with a console-only error.
+func TestSwaggerUI_HasNoInlineScript(t *testing.T) {
+	f := newShareFixture(t)
+	body := string(f.ts.get(t, "/api/docs", false).Body)
+
+	require.Contains(t, body, `<script src="/api/docs/init.js"></script>`,
+		"the initialiser must be loaded as a same-origin file")
+	// `\s*[^<\s]` and not `\S`: `\S` matches `<`, so it happily fires on the
+	// empty body of `<script src=…></script>` and the check would fail on the
+	// page it is meant to pass.
+	require.NotRegexp(t, `<script[^>]*>\s*[^<\s]`, body,
+		"a <script> tag with a body is inline script, which script-src 'self' blocks")
+
+	init := f.ts.get(t, "/api/docs/init.js", false)
+	require.Equal(t, http.StatusOK, init.StatusCode)
+	require.Contains(t, init.Header.Get("Content-Type"), "javascript")
+	require.Contains(t, string(init.Body), "SwaggerUIBundle(")
 }
 
 // TestAttachmentServe_EmptyObjectDownloads: a zero-byte object sniffs as

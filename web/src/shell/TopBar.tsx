@@ -368,9 +368,12 @@ export function TopBar() {
               <MenuLink
                 icon={LogOut}
                 label="Sign out"
-                onClick={() => {
+                onClick={async () => {
                   setAvatarOpen(false);
-                  logout();
+                  // Awaited: logout now revokes server-side before clearing
+                  // local state, and navigating first would leave the token
+                  // still in localStorage while the request is in flight.
+                  await logout();
                   navigate('/login', { replace: true });
                 }}
               />
