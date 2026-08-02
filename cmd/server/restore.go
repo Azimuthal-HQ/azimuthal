@@ -159,12 +159,28 @@ func validateManifest(entries map[string][]byte) (*backupManifest, error) {
 	return &manifest, nil
 }
 
-// restoreDatabase restores the PostgreSQL dump from the archive if present.
+// errNoDatabaseDump is returned when an archive carries no database.sql.
+//
+// There is no storage-only backup mode to accommodate: runBackup dumps
+// postgres as its first step, unconditionally, and returns an error if the
+// dump fails — every archive this tool produces contains a database.sql. So an
+// archive without one is not a partial backup, it is a corrupt or foreign one,
+// and the only honest thing to do with it is refuse.
+var errNoDatabaseDump = errors.New("invalid backup: archive contains no database.sql")
+
+// restoreDatabase restores the PostgreSQL dump from the archive.
+//
+// A missing dump is a failure, not a skip. This printed "No database dump
+// found in backup, skipping." and returned nil, so an archive that had never
+// captured a dump ran to "Restore complete" having restored nothing — the same
+// shape of defect as D105's partial restore and with the same consequence: the
+// operator believes the database is back. validateManifest cannot catch it
+// either, because it only checks that files the manifest *lists* are present,
+// and a manifest that lists no dump passes.
 func restoreDatabase(cfg *config.Config, entries map[string][]byte) error {
 	dbDump, exists := entries["database.sql"]
 	if !exists {
-		fmt.Println("No database dump found in backup, skipping.")
-		return nil
+		return errNoDatabaseDump
 	}
 
 	fmt.Println("Restoring PostgreSQL database...")
