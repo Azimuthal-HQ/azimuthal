@@ -206,7 +206,20 @@ async function requestLink(page: Page, portalKey: string, email: string, name?: 
   // A premise, not decoration. With disclosure off there is no way for a
   // browser to sign a requester in, and every assertion after this point would
   // fail somewhere far less legible.
-  expect(url, 'link-delivery mode must disclose the URL under APP_ENV=test').toBeTruthy()
+  //
+  // The message names both settings on purpose. Disclosure requires
+  // AZIMUTHAL_PORTAL_DISCLOSE_LINK=true AND a non-production APP_ENV, and the
+  // likeliest cause of seeing this locally is not a config bug at all:
+  // playwright.config.ts sets `reuseExistingServer: !process.env.CI`, so a
+  // server somebody else already started on this port is adopted as-is and
+  // never receives webServer.env. APP_ENV now defaults to production, which
+  // makes a stray `azimuthal serve` exactly the server that fails here.
+  expect(
+    url,
+    'the portal suite needs AZIMUTHAL_PORTAL_DISCLOSE_LINK=true and a non-production ' +
+      'APP_ENV, both set in playwright.config.ts webServer.env — if they are set, ' +
+      'suspect a reused server on this port that never saw them',
+  ).toBeTruthy()
   return url
 }
 

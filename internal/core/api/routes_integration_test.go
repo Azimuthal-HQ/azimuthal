@@ -242,9 +242,16 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	viewSvc := views.NewService(savedViewAdapter, savedViewAdapter, savedViewAdapter)
 
 	// Customer portal. DiscloseLink is on so tests can follow a sign-in link
-	// without a mailbox. In the real server cmd/server/main.go withholds it
-	// whenever APP_ENV=production, which is the only place it would be
-	// unsafe — config.validate does not refuse the mode itself.
+	// without a mailbox. In the real server this field comes from
+	// config.Config.PortalLinkDisclosureAllowed, which requires an explicit
+	// AZIMUTHAL_PORTAL_DISCLOSE_LINK and a non-production APP_ENV — neither of
+	// them a default, so no deployment reaches this state by accident.
+	//
+	// Setting it directly here means the harness does not exercise that rule.
+	// That is fine, but it left a real gap: with every test disclosing, deleting
+	// the guard in portal.Service.RequestLink failed nothing.
+	// TestPortal_DisclosureOffWithholdsTheURLButStillMintsTheLink builds a
+	// second, non-disclosing service over this same pool to close it.
 	portalAdapter := adapters.NewPortalAdapter(pool)
 	portalSvc := portal.NewService(
 		portalAdapter,

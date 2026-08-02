@@ -59,6 +59,14 @@ services:
       AZIMUTHAL_PORTAL_LINK_DELIVERY: ${AZIMUTHAL_PORTAL_LINK_DELIVERY}
       AZIMUTHAL_PORTAL_LINK_TTL: ${AZIMUTHAL_PORTAL_LINK_TTL}
       AZIMUTHAL_PORTAL_SESSION_TTL: ${AZIMUTHAL_PORTAL_SESSION_TTL}
+      # Forwarded because every setting internal/config reads must be reachable
+      # from an operator's .env, and inert in this stack for two independent
+      # reasons: APP_ENV is production above, and disclosure is refused in
+      # production whatever this holds
+      # (config.Config.PortalLinkDisclosureAllowed). Setting it here produces
+      # neither disclosure nor an error — see that method for why it degrades
+      # rather than refusing.
+      AZIMUTHAL_PORTAL_DISCLOSE_LINK: ${AZIMUTHAL_PORTAL_DISCLOSE_LINK}
 
       # Email. SMTP_HOST is bare for a second reason beyond the one above:
       # config.validate tests it with a RAW os.Getenv, to tell "the operator

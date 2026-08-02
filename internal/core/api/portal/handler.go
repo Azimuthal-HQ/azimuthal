@@ -94,8 +94,10 @@ type requestLinkRequest struct {
 
 // requestLinkResponse is deliberately uninformative. It says the same thing
 // for a known address, an unknown one and a deactivated one — see
-// portal.Service.RequestLink. MagicLinkURL is populated only in development
-// and test, where config permits disclosure.
+// portal.Service.RequestLink. MagicLinkURL is populated only where an operator
+// has explicitly set AZIMUTHAL_PORTAL_DISCLOSE_LINK on a non-production
+// deployment — see config.Config.PortalLinkDisclosureAllowed — and `omitempty`
+// keeps the field off the wire entirely everywhere else.
 type requestLinkResponse struct {
 	Status       string `json:"status"`
 	Delivered    bool   `json:"delivered"`

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 )
 
 // serveCmd starts the HTTP server. It is also the default action.
@@ -43,6 +45,31 @@ func newLogger(w io.Writer) (*slog.Logger, *slog.LevelVar) {
 	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level})), level
 }
 
+// warnIfDisclosureFlagIgnored tells an operator that a setting they went out of
+// their way to turn on is doing nothing.
+//
+// AZIMUTHAL_PORTAL_DISCLOSE_LINK=true on a production server is safe — the
+// portal never discloses there, by config.Config.PortalLinkDisclosureAllowed —
+// but it was also SILENT, and silence is the failure this closes. An operator
+// who set the flag, restarted, and saw a clean startup would reasonably conclude
+// it was in force. internal/config states the principle at parseLogLevel: a
+// value the server ignores is worse than one it rejects.
+//
+// A warning rather than a boot refusal, by ruling: refusing would turn an
+// already-safe misconfiguration into an outage, which is a bad trade to ship
+// inside a security patch.
+//
+// It takes the logger rather than reaching for the package default so that the
+// emission can be tested without a server or a global — the same reason
+// newLogger is its own function.
+func warnIfDisclosureFlagIgnored(logger *slog.Logger, cfg *config.Config) {
+	if !cfg.PortalDisclosureFlagIgnored() {
+		return
+	}
+	logger.Warn("AZIMUTHAL_PORTAL_DISCLOSE_LINK=true has no effect when APP_ENV=production; " +
+		"the portal sign-in URL is never disclosed on a production server")
+}
+
 // runServe loads config, connects to the DB, runs migrations, and starts the
 // HTTP server with graceful shutdown.
 func runServe(cmd *cobra.Command, _ []string) error {
@@ -63,6 +90,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// still got a startup banner would reasonably conclude the setting is
 	// inert — which is the exact bug being fixed.
 	slog.Info("configuration loaded", "env", cfg.AppEnv, "port", cfg.AppPort, "log_level", cfg.LogLevel)
+	warnIfDisclosureFlagIgnored(logger, cfg)
 
 	srv, deps, cleanup, err := newServer(cfg)
 	if err != nil {
