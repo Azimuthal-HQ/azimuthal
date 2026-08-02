@@ -19,13 +19,18 @@ interface MarkdownProps {
  * implementation of something like this a defect rather than a convenience.
  *
  * RAW HTML IS NOT ENABLED, and that is the point. react-markdown v10 escapes
- * embedded HTML by default; turning it back on means `rehype-raw`, and there
- * is no sanitiser behind it anywhere in this codebase. A note gadget's body is
- * user-authored text that lands on somebody else's dashboard when the
- * dashboard is shared, so it renders as markdown and never as markup.
+ * embedded HTML by default; turning it back on means `rehype-raw`. A note
+ * gadget's body is user-authored text that lands on somebody else's dashboard
+ * when the dashboard is shared, so it renders as markdown and never as markup.
  * `pages/codex/WikiPage.tsx` deliberately keeps its own call site because it
- * DOES pass rehype-raw for legacy wiki content; that is a Codex decision and
- * its risk is recorded in the phase report rather than spread here.
+ * DOES pass rehype-raw for legacy wiki content; that is a Codex decision.
+ *
+ * That paragraph used to continue "and there is no sanitiser behind it
+ * anywhere in this codebase". True when written; false since the v0.4.1 trust
+ * patch, which put `rehype-sanitize` immediately after `rehype-raw` at that one
+ * call site. Corrected rather than deleted, because the conclusion for THIS
+ * component is unchanged: enabling raw HTML here would mean owning a sanitiser
+ * schema for a surface with no need of markup at all.
  *
  * EVERY PROSE COLOUR IS PINNED TO A TOKEN. The app's theme is the `.dark`
  * class while `prose-invert` keys off the OS media query, so the two desync —

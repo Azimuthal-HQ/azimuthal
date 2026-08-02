@@ -31,12 +31,18 @@ import { portalRequestsHref } from './portalLinks';
  * crash on `.trim()`.
  *
  * MARKDOWN IS RENDERED WITHOUT `rehype-raw`. Every body on this page is
- * authored by an external customer or shown to one, and there is no sanitiser
- * anywhere in this codebase. `WikiPage.tsx` enables raw HTML for legacy wiki
- * content at its own call site; routing external text through that path would
- * be stored XSS aimed straight at the agent who opens the ticket. The plain
+ * authored by an external customer or shown to one, so nothing here needs to
+ * be markup and the cheapest safe answer is not to allow any. The plain
  * `<Markdown>` form escapes embedded HTML by default, which is the whole point
  * of the shared component.
+ *
+ * This paragraph used to say "and there is no sanitiser anywhere in this
+ * codebase". That stopped being true with the v0.4.1 trust patch, which put
+ * `rehype-sanitize` behind `rehype-raw` at `WikiPage.tsx`'s call site — the
+ * one place that enables raw HTML. It is corrected rather than deleted because
+ * the conclusion for THIS page is unchanged: copying that block here would
+ * mean owning a sanitiser schema for a surface whose whole content is
+ * attacker-supplied by design, to gain a feature nobody has asked for.
  */
 export function PortalRequestDetailPage() {
   const { portalKey = '', reference = '' } = useParams();
