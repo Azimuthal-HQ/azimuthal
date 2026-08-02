@@ -40,6 +40,11 @@ var testSigningKey = sync.OnceValue(func() *rsa.PrivateKey {
 
 type mockUserRepo struct {
 	users map[uuid.UUID]*auth.User
+	// revoked records every RevokeTokens call, in order. A fake that swallowed
+	// the call and returned nil would let TestLogoutRevokesTokens pass with the
+	// revocation deleted from the handler — which is the one thing that test
+	// exists to prove.
+	revoked []uuid.UUID
 }
 
 func newMockUserRepo() *mockUserRepo {
@@ -98,6 +103,17 @@ func (m *mockUserRepo) TouchLastLogin(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
+// RevokeTokens mirrors the adapter: it records the call, bumps the generation
+// when the user is known, and treats an unknown id as a no-op rather than an
+// error (the real statement filters `deleted_at IS NULL` and reports zero rows).
+func (m *mockUserRepo) RevokeTokens(_ context.Context, id uuid.UUID) error {
+	m.revoked = append(m.revoked, id)
+	if u, ok := m.users[id]; ok {
+		u.TokenGeneration++
+	}
+	return nil
+}
+
 type mockSessionRepo struct {
 	sessions map[uuid.UUID]*auth.Session
 }
@@ -152,6 +168,14 @@ func (m *failingMembershipResolver) PrimaryOrgForUser(_ context.Context, _ uuid.
 
 func setupHandler(t *testing.T) (*authapi.Handler, *auth.JWTService) {
 	t.Helper()
+	h, jwtSvc, _ := setupHandlerWithRepo(t)
+	return h, jwtSvc
+}
+
+// setupHandlerWithRepo is setupHandler plus the user repository the handler was
+// built on, for the tests that must assert what the handler wrote to it.
+func setupHandlerWithRepo(t *testing.T) (*authapi.Handler, *auth.JWTService, *mockUserRepo) {
+	t.Helper()
 	pk := testSigningKey()
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
 		PrivateKey: pk,
@@ -160,10 +184,11 @@ func setupHandler(t *testing.T) (*authapi.Handler, *auth.JWTService) {
 		RefreshTTL: 24 * time.Hour,
 		Issuer:     "test",
 	})
-	userSvc := auth.NewUserService(newMockUserRepo())
+	repo := newMockUserRepo()
+	userSvc := auth.NewUserService(repo)
 	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
 	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
-	return h, jwtSvc
+	return h, jwtSvc, repo
 }
 
 func TestLoginNilBody(t *testing.T) {
@@ -200,7 +225,7 @@ func TestRefreshNilBody(t *testing.T) {
 }
 
 func TestLogoutWithClaims(t *testing.T) {
-	h, jwtSvc := setupHandler(t)
+	h, jwtSvc, repo := setupHandlerWithRepo(t)
 	userID := uuid.New()
 	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0)
 	if err != nil {
@@ -220,6 +245,62 @@ func TestLogoutWithClaims(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
 	}
+
+	// The status alone proved nothing until the v0.4.1 trust patch: clearing
+	// database session rows revoked nothing an attacker holds, because the SPA
+	// authenticates with a bearer JWT the middleware validates without reading
+	// the session table. What ends the stolen token is the generation bump, so
+	// that is what this asserts.
+	//
+	// This is a mock repository, so it can only witness the CALL. That the call
+	// actually revokes a live token is asserted against real PostgreSQL through
+	// the wired router by TestAuthLogout_RevokesTheToken in internal/core/api.
+	if len(repo.revoked) != 1 || repo.revoked[0] != userID {
+		t.Errorf("RevokeTokens calls = %v, want exactly [%s]", repo.revoked, userID)
+	}
+}
+
+// TestLogoutReportsRevocationFailure pins the direction that is easy to get
+// wrong: a logout whose revocation failed must NOT answer 200. Somebody
+// signing out because they believe they are compromised would be told the
+// opposite of the truth.
+func TestLogoutReportsRevocationFailure(t *testing.T) {
+	pk := testSigningKey()
+	jwtSvc := auth.NewJWTService(auth.TokenConfig{
+		PrivateKey: pk, PublicKey: &pk.PublicKey,
+		AccessTTL: time.Hour, RefreshTTL: 24 * time.Hour, Issuer: "test",
+	})
+	userSvc := auth.NewUserService(&failingRevokeUserRepo{mockUserRepo: newMockUserRepo()})
+	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil)
+
+	userID := uuid.New()
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authenticator := auth.NewAuthenticator(jwtSvc, auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: time.Hour}), nil)
+	r := chi.NewRouter()
+	r.Use(authenticator.RequireAuth)
+	r.Post("/logout", h.Logout)
+
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusInternalServerError, rr.Body.String())
+	}
+}
+
+// failingRevokeUserRepo succeeds at everything except revocation.
+type failingRevokeUserRepo struct {
+	*mockUserRepo
+}
+
+func (r *failingRevokeUserRepo) RevokeTokens(_ context.Context, _ uuid.UUID) error {
+	return fmt.Errorf("the database said no")
 }
 
 func TestLoginEmptyFields(t *testing.T) {

@@ -87,6 +87,49 @@ func (r *stubUserRepo) TouchLastLogin(_ context.Context, id uuid.UUID) error {
 	return ErrNotFound
 }
 
+func (r *stubUserRepo) RevokeTokens(_ context.Context, id uuid.UUID) error {
+	for _, u := range r.users {
+		if u.ID == id {
+			u.TokenGeneration++
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func TestUserService_RevokeTokens(t *testing.T) {
+	repo := newStubUserRepo()
+	svc := NewUserService(repo)
+
+	u, err := svc.CreateUser(context.Background(), "revoked@example.com", "Rev", "password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := u.TokenGeneration
+
+	if err := svc.RevokeTokens(context.Background(), u.ID); err != nil {
+		t.Fatalf("RevokeTokens: %v", err)
+	}
+	if u.TokenGeneration != before+1 {
+		t.Errorf("token generation = %d, want %d", u.TokenGeneration, before+1)
+	}
+}
+
+func TestUserService_RevokeTokens_PropagatesRepositoryFailure(t *testing.T) {
+	// The negative half. A logout that could not revoke must report the
+	// failure rather than answering "logged out" — the caller is often
+	// somebody signing out precisely because they think they are compromised.
+	svc := NewUserService(newStubUserRepo())
+
+	err := svc.RevokeTokens(context.Background(), uuid.New())
+	if err == nil {
+		t.Fatal("RevokeTokens on an unknown user returned nil, want an error")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want it to wrap ErrNotFound", err)
+	}
+}
+
 func TestUserService_CreateUser(t *testing.T) {
 	svc := NewUserService(newStubUserRepo())
 

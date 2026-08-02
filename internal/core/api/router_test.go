@@ -99,6 +99,16 @@ func (m *mockUserRepo) TouchLastLogin(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
+// RevokeTokens bumps the in-memory generation, mirroring what
+// BumpTokenGeneration does to the column. An unknown id is a no-op, as it is
+// in the adapter.
+func (m *mockUserRepo) RevokeTokens(_ context.Context, id uuid.UUID) error {
+	if u, ok := m.users[id]; ok {
+		u.TokenGeneration++
+	}
+	return nil
+}
+
 type mockSessionRepo struct {
 	sessions map[uuid.UUID]*auth.Session
 }
@@ -1336,17 +1346,45 @@ func TestConsistentErrorFormat(t *testing.T) {
 
 // ---- Additional integration tests ----
 
-func TestAuthLogoutUnauthenticated(t *testing.T) {
-	router, _ := setupRouter(t)
+// TestAuthLogoutIsAuthenticated replaces TestAuthLogoutUnauthenticated, which
+// asserted the 401 half alone and could not fail.
+//
+// Logout used to be mounted by AuthHandler.Routes(), outside the RequireAuth
+// group, and OptionalAuth is mounted nowhere in this router. Nothing therefore
+// put claims on the context at that path, `auth.ClaimsFromContext` was always
+// nil, and the handler's first branch fired for every caller — 401 was the
+// only status the route could return, for a valid bearer token as much as for
+// an anonymous one. A test asserting "unauthenticated gets 401" could not
+// distinguish a working logout from an endpoint nobody could reach.
+//
+// Both halves are asserted here for exactly that reason: the 401 is only
+// evidence of a guard when the 200 beside it shows the guard has something to
+// let through.
+func TestAuthLogoutIsAuthenticated(t *testing.T) {
+	router, jwtSvc := setupRouter(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
+	t.Run("anonymous is refused", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+		}
+	})
 
-	// Logout route is under public auth routes, but handler checks claims
-	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
-	}
+	t.Run("a bearer token is let through", func(t *testing.T) {
+		pair, err := jwtSvc.IssueTokenPair(uuid.New(), "logout@example.com", uuid.New().String(), "member", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+		req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
+		}
+	})
 }
 
 func TestAuthRegisterDuplicateEmail(t *testing.T) {
