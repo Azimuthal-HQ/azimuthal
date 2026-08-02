@@ -620,12 +620,32 @@ func TestComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateComment reply: %v", err)
 	}
-	replies, err := q.ListCommentReplies(ctx, parentUID)
+	// This asserted `ListCommentReplies` returned the reply. That query was
+	// deleted — it was unscoped and unreachable; the note where it stood in
+	// comments.sql says why — so what is worth pinning here is the behaviour
+	// that survives it, which nothing else asserted: a reply is persisted, and
+	// ListCommentsByEntity deliberately does NOT return it.
+	//
+	// That exclusion is load-bearing rather than incidental. It is why replies
+	// are currently written and never read back, and it is the `c.parent_id IS
+	// NULL` predicate in ListCommentsByEntity that produces it. Delete that
+	// predicate and this fails, which is the point: the reply below is a real
+	// row, so a listing that returns two comments is the query having changed
+	// its contract, not an empty fixture passing by accident.
+	withReply, err := q.ListCommentsByEntity(ctx, generated.ListCommentsByEntityParams{
+		EntityType: "project_item", EntityID: item.ID, SpaceID: space.ID,
+	})
 	if err != nil {
-		t.Fatalf("ListCommentReplies: %v", err)
+		t.Fatalf("ListCommentsByEntity after reply: %v", err)
 	}
-	if len(replies) == 0 {
-		t.Error("expected at least one reply")
+	for _, c := range withReply {
+		if c.ID == reply.ID {
+			t.Error("ListCommentsByEntity returned a reply; it filters c.parent_id IS NULL")
+		}
+	}
+	if len(withReply) != len(comments) {
+		t.Errorf("adding a reply changed the top-level listing: %d before, %d after",
+			len(comments), len(withReply))
 	}
 	codexSpace := setupSpace(t, q, org.ID, user.ID, "codex")
 	page, err := q.CreatePage(ctx, generated.CreatePageParams{

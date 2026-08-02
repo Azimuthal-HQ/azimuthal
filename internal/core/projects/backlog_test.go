@@ -179,23 +179,11 @@ func TestBacklogService_MoveToBacklog(t *testing.T) {
 	}
 }
 
-func TestBacklogService_ReorderItem(t *testing.T) {
-	itemRepo := newStubItemRepo()
-	sprintRepo := newStubSprintRepo()
-	itemSvc := NewItemService(itemRepo, noopShareDeleter{})
-	backlogSvc := NewBacklogService(itemRepo, sprintRepo)
-
-	item, _ := itemSvc.CreateItem(context.Background(), makeItem(uuid.New()))
-
-	if err := backlogSvc.ReorderItem(context.Background(), item.ID, "0|zzzzzz:"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	got, _ := itemSvc.GetItem(context.Background(), item.ID)
-	if got.Rank != "0|zzzzzz:" {
-		t.Errorf("expected updated rank, got %s", got.Rank)
-	}
-}
+// TestBacklogService_ReorderItem was removed with the method it covered. It
+// asserted that an item's rank could be changed with no space supplied, which
+// was the defect rather than the requirement — see the note where ReorderItem
+// stood in backlog.go. The ranking behaviour that survives is covered by the
+// four TestBacklogService_RankItemRelative_* tests in backlog_extended_test.go.
 
 func TestBacklogService_GetBacklogByPriority(t *testing.T) {
 	itemRepo := newStubItemRepo()
