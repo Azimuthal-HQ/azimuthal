@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/portal"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
@@ -135,6 +137,82 @@ func (f *portalFixture) submit(t *testing.T, token, summary string) string {
 	}
 	require.NoError(t, json.Unmarshal(res.Body, &v))
 	return v.Reference
+}
+
+// ── Property 0: disclosure is off unless it was asked for ────────────────
+
+// TestPortal_DisclosureOffWithholdsTheURLButStillMintsTheLink is the assertion
+// that was missing while the disclosure defect shipped.
+//
+// Every other test in this file — and the whole harness — runs with
+// DiscloseLink: true, because a test needs the URL to sign anybody in. The
+// consequence is that `if s.cfg.DiscloseLink { out.URL = url }` in
+// portal.Service.RequestLink was covered in one direction only: delete the
+// guard so it ALWAYS discloses, and not one test in the tree fails. A guard no
+// test can falsify is not a control, and this one sits directly between the
+// configuration and an unauthenticated response body.
+//
+// FAILS-BEFORE: delete the `if s.cfg.DiscloseLink` guard in
+// portal.Service.RequestLink and the URL assertion below fails.
+//
+// The second half is the half that makes the first half safe to want. Withheld
+// must not mean broken: the link is still minted and persisted, so an operator
+// running email delivery still has a working portal. Assert only the withholding
+// and "fix" it by not creating the link at all, and this test would still pass.
+func TestPortal_DisclosureOffWithholdsTheURLButStillMintsTheLink(t *testing.T) {
+	f := newPortalFixture(t)
+	ctx := context.Background()
+
+	p, err := f.svc.LookupPortal(ctx, f.portalKey)
+	require.NoError(t, err)
+
+	// A second service over the SAME store and the SAME portal, differing in
+	// exactly one field. Two real code paths, so the comparison at the end can
+	// actually fail — an equivalence asserted against a single path never can.
+	key := testSigningKey()
+	quiet := portal.NewService(
+		adapters.NewPortalAdapter(f.ts.DB.Pool),
+		portal.NewTokenService(portal.TokenConfig{
+			PrivateKey: key,
+			PublicKey:  &key.PublicKey,
+			SessionTTL: 72 * time.Hour,
+			Issuer:     "azimuthal-test",
+		}),
+		nil, // link delivery wires no sender, exactly as cmd/server/main.go does
+		portal.Config{LinkTTL: time.Hour, DiscloseLink: false, BaseURL: "http://portal.test"},
+	)
+
+	const email = "withheld@example.com"
+	issued, err := quiet.RequestLink(ctx, p, email, "Withheld Customer")
+	require.NoError(t, err)
+	require.Empty(t, issued.URL,
+		"a non-disclosing service must not return the sign-in URL — the request-link "+
+			"endpoint is unauthenticated, so this field is a credential handed to anyone "+
+			"who can name an address")
+	require.False(t, issued.Delivered,
+		"nothing was sent either: link delivery wires no sender, so this address got a "+
+			"minted link and no way to receive it, which is the operator's job in link mode")
+
+	// The link exists in the database despite not being disclosed.
+	var live int
+	require.NoError(t, f.ts.DB.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM requester_magic_links l
+		JOIN requesters r ON r.id = l.requester_id
+		WHERE r.email = $1 AND l.portal_id = $2
+		  AND l.consumed_at IS NULL AND l.invalidated_at IS NULL`,
+		email, p.ID).Scan(&live))
+	require.Equal(t, 1, live,
+		"withholding the URL must not stop the link being issued — an email-delivery "+
+			"deployment depends on this row existing")
+
+	// The control. The same call on the harness's disclosing service does return
+	// a URL, which is what proves the assertion above is about DiscloseLink and
+	// not about something incidental to this portal, requester or address.
+	disclosed, err := f.svc.RequestLink(ctx, p, email, "Withheld Customer")
+	require.NoError(t, err)
+	require.NotEmpty(t, disclosed.URL,
+		"the disclosing service must still disclose, or the assertion above is passing "+
+			"for a reason that has nothing to do with the flag")
 }
 
 // ── Property 1: internal comments are invisible at the QUERY level ───────

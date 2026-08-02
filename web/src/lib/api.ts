@@ -6039,8 +6039,10 @@ export interface PortalRedeemResponse {
  * requester, because any difference would be a free oracle for testing whether
  * an address has ever contacted this service desk. `delivered` reports whether
  * mail was dispatched, not whether the address exists, and `magic_link_url` is
- * populated only where configuration permits disclosure (development and
- * test). Do not build a "we don't know that address" state out of either.
+ * populated only where an operator has explicitly opted into disclosure on a
+ * non-production deployment — absent by default, and absent in production
+ * whatever the configuration says. Do not build a "we don't know that address"
+ * state out of either field.
  */
 export interface PortalLinkResponse {
   status: string;
