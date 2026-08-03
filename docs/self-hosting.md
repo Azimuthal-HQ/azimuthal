@@ -15,9 +15,9 @@ Run Azimuthal on your own infrastructure with Docker Compose.
 ## Quick Start
 
 ```bash
-# 1. Download the compose file and env template
-curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/build/docker-compose.yml
-curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/.env.example
+# 1. Download the compose file and env template, pinned to a release
+curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/v0.4.1/build/docker-compose.yml
+curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/v0.4.1/.env.example
 
 # 2. Create your .env file
 cp .env.example .env
@@ -38,6 +38,12 @@ docker compose exec app /azimuthal admin create-user \
 ```
 
 Azimuthal is now running at http://localhost:8080.
+
+> **Why those two URLs name a tag rather than `main`.** The image you run is versioned; fetching
+> its compose file and env template from `main` pairs it with infrastructure from some later day.
+> **Every release's notes carry these same commands pinned to that release** — copy them from the
+> [release you are installing](https://github.com/Azimuthal-HQ/azimuthal/releases) instead of from
+> here, and the three can never drift apart.
 
 ## Running from a source checkout (before a release)
 
@@ -100,7 +106,7 @@ access. You can then log in at `http://localhost:8080/login` with these credenti
 |---|---|---|
 | `APP_PORT` | `8080` | Host port to expose the application on |
 | `APP_BASE_URL` | `http://localhost:8080` | Public URL of the application (used in emails and links) |
-| `AZIMUTHAL_VERSION` | `latest` | Docker image tag to run |
+| `AZIMUTHAL_VERSION` | `latest` | Docker image tag to run. `:latest` is only reassigned once the GitHub Release for that version exists, and never backwards onto an older version — so it always names a released build, and a backport release cannot walk you down a version. Pin an explicit tag if you want upgrades to be a decision rather than a `docker compose pull`. |
 | `STORAGE_BUCKET` | `azimuthal` | MinIO/S3 bucket name for file storage |
 | `JWT_EXPIRY` | `24h` | Access token lifetime (Go duration format) |
 | `SMTP_HOST` | `localhost` | SMTP relay host for outbound email. Leave it unset unless you have a relay: the server distinguishes "explicitly configured" from "defaulted" to decide whether an `email` delivery mode may start. |
@@ -140,7 +146,8 @@ All of these are forwarded by `build/docker-compose.yml` — set any of them in 
 | `AZIMUTHAL_BCRYPT_COST` | `12` | Password hashing work factor. Twelve is a floor, not just a default: a configuration asking for less is refused at startup in every environment, `APP_ENV` included. The knob exists so you can raise it as hardware gets faster — expect roughly a doubling of login CPU cost per step. Existing passwords keep verifying at the cost they were stored with, so raising it is safe and takes effect as people next change their password. |
 | `AZIMUTHAL_ALLOWED_ORIGINS` | (empty) | Comma-separated CORS allow-list. Empty means no CORS headers are emitted and the browser enforces same-origin, which is correct for this deployment — the frontend is served by the same binary on the same origin. Set it only if you serve the frontend from somewhere else. |
 | `AZIMUTHAL_QUEUE_ENABLED` | `true` | Runs the background job queue in-process. |
-| `AZIMUTHAL_PORTAL_LINK_DELIVERY` | `link` | How a customer-portal sign-in link reaches a requester. Set this to `email` for any instance with the portal exposed to real customers, and set `SMTP_HOST` and `SMTP_FROM` with it — `email` without a relay is refused at startup. `link` returns the sign-in URL in the API response, and the endpoint that issues it is necessarily unauthenticated, so a production server withholds the URL regardless; the practical effect of leaving this at `link` in production is that portal sign-in links go nowhere. An unrecognised value is refused at startup. |
+| `AZIMUTHAL_PORTAL_LINK_DELIVERY` | `link` | How a customer-portal sign-in link reaches a requester. Set this to `email` for any instance with the portal exposed to real customers, and set `SMTP_HOST` and `SMTP_FROM` with it — `email` without a relay is refused at startup. `link` means the operator is responsible for getting the URL to the requester, and on this deployment there is no way to do that, so the practical effect of leaving it at `link` in production is that portal sign-in links go nowhere. An unrecognised value is refused at startup. **This setting no longer decides disclosure** — see the row below. |
+| `AZIMUTHAL_PORTAL_DISCLOSE_LINK` | `false` | Return the portal sign-in URL in the body of the unauthenticated request-link response. Inert on this deployment for two independent reasons: `build/docker-compose.yml` sets `APP_ENV: production`, and disclosure requires this flag **and** a non-`production` environment. Setting it here is harmless and does nothing; the server logs a startup warning naming both variables rather than failing, so a working configuration is never locked out over a combination that is already safe. Leave it off in any case: `POST /portal/{key}/auth/request-link` is unauthenticated by design and accepts any address, so a disclosed URL signs the caller in as anyone they can name. |
 | `AZIMUTHAL_PORTAL_LINK_TTL` | `1h` | How long a portal sign-in link stays redeemable. Must be positive. |
 | `AZIMUTHAL_PORTAL_SESSION_TTL` | `72h` | Lifetime of the session a redeemed portal link produces. Must be positive. |
 | `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. Required when `AZIMUTHAL_INVITE_DELIVERY=email`. |

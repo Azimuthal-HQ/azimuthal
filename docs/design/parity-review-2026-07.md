@@ -386,12 +386,29 @@ reaches, with passing tests that make the feature list look complete.
 Beyond the known missing UI, the only authentication path is broken under the project's own
 `docker-compose.yml`:
 
-- `PortalLinkDeliveryLink` is refused in production by design — a sound decision, since the
+- Disclosure of the sign-in URL is refused in production by design — a sound decision, since the
   endpoint is necessarily unauthenticated and disclosing the URL would be a total bypass.
 - `build/docker-compose.yml` sets `APP_ENV: production`, so `DiscloseLink` is false
-  (`main.go:405`).
+  (`Config.PortalLinkDisclosureAllowed`, `internal/config/config.go`).
 - Delivery defaults to `link`, so no email is attempted — and `SMTP_HOST` defaults to `localhost`
   with no auth support anyway.
+
+> **Corrected 2026-08-02.** The first bullet read: "`PortalLinkDeliveryLink` is refused in
+> production by design". That was false in both halves. `link` delivery has never been refused —
+> `Config.validate` deliberately does not reject it in production, and says so in a comment — and
+> since #108 the delivery mode does not influence disclosure at all: disclosure is
+> `PortalDiscloseLink && !IsProduction()`, stated once in `Config.PortalLinkDisclosureAllowed` and
+> nowhere else. What is refused is the *disclosure*, not the *mode*, and the conclusion this
+> section draws survives the correction unchanged — the requester still receives nothing.
+>
+> The citation was `main.go:405`, which violates the symbol-and-file rule (CLAUDE.md §6) and had
+> already rotted: `main.go` calls `cfg.PortalLinkDisclosureAllowed()` and does no arithmetic of its
+> own, so there is no rule at that line to cite. Converted rather than renumbered.
+>
+> #108 fixed the code and touched no documentation, which is why this survived it. Three copies of
+> the claim existed in prose at `abedbf85` — this one, the `AZIMUTHAL_PORTAL_LINK_DELIVERY` row in
+> `docs/self-hosting.md`, and the same row in `README.md` — and all three are corrected in the same
+> pass as this note.
 
 Live, on the shipped compose file:
 
