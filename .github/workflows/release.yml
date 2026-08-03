@@ -420,12 +420,13 @@ jobs:
       # infrastructure. raw.githubusercontent.com takes a tag in the ref
       # position, and the tag exists before anyone can read this.
       #
-      # README.md and docs/self-hosting.md carry the same two `curl … /main/…`
-      # lines and are NOT pinned. They are prose, owned by the docs track, and
-      # are catalogued for it rather than edited here — so until that lands, a
-      # user who follows the README still gets `main`'s infra alongside a
-      # pinned image. Stated plainly rather than as "change all three or none",
-      # which would be a rule this hunk itself breaks.
+      # README.md and docs/self-hosting.md carried the same two `curl … /main/…`
+      # lines and were NOT pinned; that was catalogued here for the docs track,
+      # which has since landed and pinned both to a release tag. They cannot
+      # track `${{ env.VERSION }}` the way this body does — they are static
+      # prose, so they name the then-current release and go stale by one version
+      # each time — which is why both now also point the reader at the release
+      # notes, where the commands ARE pinned to whatever they are installing.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -436,8 +437,12 @@ jobs:
           body: |
             ## Azimuthal ${{ env.VERSION }}
 
-            The self-hostable, open-source alternative to Jira, Confluence,
-            and Jira Service Desk. Know exactly where your team is headed.
+            Early, actively developed software, self-hosted and built in Go,
+            working toward the ground the Atlassian suite covers — service desk,
+            wiki, and project tracking. It is not a replacement for Jira,
+            Confluence or Jira Service Desk today; the README's "What works
+            today" and "Not yet shipped" sections are the honest account of how
+            far it has got.
 
             **Free and open source for everyone — every feature, no tiers.**
             Apache 2.0 licensed.
