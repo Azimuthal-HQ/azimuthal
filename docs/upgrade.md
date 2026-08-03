@@ -124,15 +124,21 @@ Check the [releases page](https://github.com/Azimuthal-HQ/azimuthal/releases) fo
 ## Version Notes
 
 *Corrected 2026-08-02. The two example versions in this guide were `v1.2.0` (the pull step) and
-`v1.1.0` (the rollback step). Neither has ever existed — tags top out at `v0.4.1` — so an operator
-following the rollback recipe literally pinned a tag with no image behind it, at the point in the
-process where they were least able to absorb a surprise.*
+`v1.1.0` (the rollback step). Neither has ever existed — the version series has never reached 1.x —
+so an operator following the rollback recipe literally pinned a tag with no image behind it, at the
+point in the process where they were least able to absorb a surprise.*
 
 ### v0.4.1 (trust patch)
 
 **A patch release about believing what the software tells you.** Nothing here adds a feature; every
-change closes a gap between what a surface claimed and what it did. Two of them change behaviour an
-existing deployment may be relying on — read the first two items before upgrading.
+change closes a gap between what a surface claimed and what it did.
+
+Two of them can change what an existing caller sees, and neither affects a stock Docker Compose
+deployment. **The portal sign-in URL is no longer returned in an API response** unless a new flag
+is set on a non-production host — if a script or test harness of yours reads `magic_link_url`, it
+now gets nothing until you set `AZIMUTHAL_PORTAL_DISCLOSE_LINK=true`. And **ticket `PATCH` stopped
+being a full replace**, which is a fix, but it is a fix that changes what a sparse request body
+does. Both are detailed below.
 
 - **`APP_ENV` now defaults to `production` (was `development`).** This is the change most likely to
   surprise you, and it is a posture change rather than a functional one. Docker Compose deployments
