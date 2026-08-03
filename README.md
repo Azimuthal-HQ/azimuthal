@@ -1,8 +1,12 @@
 # Azimuthal
 
-A fully open-source, self-hostable alternative to the Atlassian suite (Jira, Confluence, Jira Service Desk), built in Go.
+**Early, actively developed software**, self-hosted and built in Go, working toward the ground the
+Atlassian suite covers — service desk, wiki, and project tracking. It is not a replacement for
+Jira, Confluence or Jira Service Desk today. [What works today](#what-works-today) and
+[Not yet shipped](#not-yet-shipped) below are the honest account of how far it has got.
 
-**License**: Apache 2.0 — Azimuthal is fully open source. All features are available to all users.
+**License**: Apache 2.0 — Azimuthal is fully open source. Every feature is available to every
+user: there is no paid tier, no enterprise edition, and there never will be.
 
 ## Features
 
@@ -42,9 +46,9 @@ today, and this section is the honest place for them until they are.
 The fastest way to run Azimuthal is with Docker Compose:
 
 ```bash
-# 1. Download compose file and environment template
-curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/build/docker-compose.yml
-curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/main/.env.example
+# 1. Download compose file and environment template, pinned to a release
+curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/v0.4.1/build/docker-compose.yml
+curl -O https://raw.githubusercontent.com/Azimuthal-HQ/azimuthal/v0.4.1/.env.example
 cp .env.example .env
 
 # 2. Edit .env — set POSTGRES_PASSWORD and the two MINIO_ROOT_* values
@@ -60,6 +64,11 @@ docker compose exec app /azimuthal admin create-user \
   --name "Admin" \
   --password your-secure-password
 ```
+
+Those two URLs are pinned to a tag on purpose: fetching them from `main` pairs tomorrow's
+infrastructure with the image you actually run. **Each release's notes carry the same commands
+pinned to that release** — take them from the [release you are installing](https://github.com/Azimuthal-HQ/azimuthal/releases)
+rather than from here, and they cannot drift out of step with the image.
 
 See [docs/self-hosting.md](docs/self-hosting.md) for the full guide including environment variable reference, backup/restore instructions, and troubleshooting.
 
@@ -139,7 +148,7 @@ generate.
 | Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | — (**required**) | PostgreSQL connection string. Startup fails without it. |
-| `APP_ENV` | `development` | `development`, `test`, or `production`. Selects environment-dependent behaviour; it is **not** a security exemption — see the note below. |
+| `APP_ENV` | `production` | The deployment's environment name: `development`, `test`, or `production`. Only `production` is special: it withholds the customer-portal sign-in URL from API responses. Set it to `development` or `test` only on a machine that is not serving real users. It is **not** a security exemption — see the note below. |
 | `APP_PORT` | `8080` | HTTP listen port. |
 | `APP_BASE_URL` | `http://localhost:8080` | Public URL of this instance. Used to build the links that go out in invites and portal sign-in emails, so a wrong value produces links nobody can follow. |
 | `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` (any case). An unrecognised value is refused at startup. |
@@ -170,7 +179,8 @@ generate.
 |---|---|---|
 | `AZIMUTHAL_INVITE_DELIVERY` | `link` | `link` (an admin copies the one-time URL) or `email` (Azimuthal sends it). `email` requires `SMTP_HOST` and `SMTP_FROM` to be set explicitly; startup fails loudly otherwise rather than dropping invites at send time. An unrecognised value is refused at startup. |
 | `AZIMUTHAL_INVITE_TTL` | `168h` | Invite expiry window (Go duration). Must be positive. |
-| `AZIMUTHAL_PORTAL_LINK_DELIVERY` | `link` | How a customer-portal sign-in link reaches a requester. `email` sends it; `link` returns it in the API response, which is a **development and test convenience only** — the request-link endpoint is necessarily unauthenticated, so disclosing the URL to its caller would let anybody sign in as any address they can name. Production never discloses the link regardless of this setting. |
+| `AZIMUTHAL_PORTAL_LINK_DELIVERY` | `link` | How a customer-portal sign-in link reaches a requester. `email` sends it, and requires `SMTP_HOST` and `SMTP_FROM` to be set explicitly; `link` means the operator is responsible for getting the URL to the requester. **This setting no longer decides whether the URL appears in the API response** — `AZIMUTHAL_PORTAL_DISCLOSE_LINK` does. It used to, and that was the defect: disclosure was `link` **and** non-production, and since both were the defaults, a stock install disclosed. An unrecognised value is refused at startup. |
+| `AZIMUTHAL_PORTAL_DISCLOSE_LINK` | `false` | Return the customer-portal sign-in URL in the body of the unauthenticated request-link response. Disclosure requires this flag **and** a non-`production` `APP_ENV`; setting it on a production server is harmless but does nothing, and the server says so with a startup warning naming both variables. Leave it off: the request-link endpoint is unauthenticated by design, so a disclosed URL lets anyone sign in as any address they can name. It exists so a browser test and a developer without a mailbox can follow a link. |
 | `AZIMUTHAL_PORTAL_LINK_TTL` | `1h` | How long a portal sign-in link stays redeemable. Short by design: it is a credential sitting in an inbox. Must be positive. |
 | `AZIMUTHAL_PORTAL_SESSION_TTL` | `72h` | Lifetime of the session a redeemed link produces. Must be positive. |
 
@@ -192,7 +202,7 @@ generate.
 
 > **All of these are boot-time policy, and that is the design.** Nothing in this table can be
 > changed from a settings page at runtime. For the security-bearing ones — the bcrypt floor, the
-> CORS allow-list, registration, ticket-reference enforcement, portal link delivery — that is the
+> CORS allow-list, registration, ticket-reference enforcement, portal link disclosure — that is the
 > point: a policy an administrator can flip through the web UI is a policy an attacker who reaches
 > the web UI can flip. Changing any of them costs a restart, deliberately.
 >

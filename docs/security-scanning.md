@@ -21,7 +21,16 @@ a scanner reports something that is not a real vulnerability.
 
 ## Overview
 
-All four scanners gate every code pull request **on the public repository**. Each
+All four scanners gate every code pull request **on the public repository**, and
+since #107 every release tag as well — `release.yml`'s first job is
+`uses: ./.github/workflows/ci.yml` and every publish job `needs:` it, so a tagged
+commit is scanned before any artifact is published rather than after. (What
+trivy scans on that call is the CI image, built from `build/Dockerfile.ci`, not
+the `build/Dockerfile` image the release itself pushes. The two share a
+byte-identical PostgreSQL-client stage and final base, pinned by
+`TestDockerfiles_PgClientStageIsIdentical` and `TestDockerfiles_FinalBaseAgrees`,
+so the package inventory trivy reads is the shipped one; the difference is how
+the Go binary arrives.) Each
 job carries `if: endsWith(github.repository, '/azimuthal')`, so on a
 differently-named mirror or private sandbox none of them run at all. Secret and
 vulnerability scanning protect the public repository; they are not a safety net
@@ -32,7 +41,10 @@ that they never executed.
 `*.md` anywhere, excluding the generated `docs/api/openapi.yaml`) skip gosec,
 govulncheck, and trivy along with the build/test gates — a markdown change
 cannot alter the code or dependencies those scanners examine. The skipped jobs
-still report a (skipped) status, so required checks stay satisfied.
+still report a (skipped) status, so required checks stay satisfied. **That fast
+path is available to pull requests only** — the `changes` classifier short-circuits
+on `github.event_name != 'pull_request'`, so a release call runs the full set
+whatever the tagged commit last touched.
 **gitleaks does not cascade-skip**: unlike the other three it declares no
 `needs:`, so it still runs on a docs-only PR — a credential pastes into a
 markdown file as easily as into code. It is still subject to the repository-name

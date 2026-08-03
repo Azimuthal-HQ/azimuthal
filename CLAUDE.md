@@ -358,7 +358,9 @@ sandbox.
 
 ### Security scanning
 
-Four scanners gate every code PR: gosec, govulncheck, gitleaks, trivy. The governing practice is
+Four scanners gate every code PR — and, since #107, every release tag as well, because
+`release.yml`'s first job is `uses: ./.github/workflows/ci.yml` and every publish job `needs:` it:
+gosec, govulncheck, gitleaks, trivy. The governing practice is
 that **findings are fixed, not suppressed** — govulncheck supports no suppression at all, and the
 correct response to a reachable vulnerability is to update the dependency. Where a suppression is
 genuinely unavoidable it requires a documented justification, a tracking issue, and an expiry

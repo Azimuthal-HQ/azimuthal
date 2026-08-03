@@ -1,9 +1,18 @@
 # Known Issues
 
-Documented by Agent 2E (Integration Validator) after validating Phases 0-2.
-Updated by test/backend-coverage branch with test references.
-Reviewed against the repository after P3 (post-P3 reconciliation): entries resolved by P1-P3
-struck, stale premises corrected. No new entries were added in that pass.
+Azimuthal is early software. This is the running log of defects that are known and not yet fixed,
+kept alongside the ones that have been: a resolved entry stays, struck through, with what the fix
+was and where. The list is worked down release over release rather than cleared and restarted, so
+an entry vanishing means it was wrong, not that it was quietly abandoned.
+
+Entries are corrected in place when a premise turns out to be stale, and a correction records what
+the entry used to claim. Read each as describing the repository on the date it carries; where an
+entry and the code disagree, the code wins and the entry is the defect.
+
+**Security issues do not belong here.** Report them privately — see [SECURITY.md](../SECURITY.md).
+Writing a live vulnerability into a public list is a disclosure whatever the intent, so security
+findings stay in a private GitHub Security Advisory until a fix ships, and in the published
+advisory afterwards.
 
 ---
 
