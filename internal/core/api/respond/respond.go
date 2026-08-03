@@ -102,6 +102,46 @@ func DecodeJSON(r *http.Request, dst any) error {
 	return nil
 }
 
+// OptionalField distinguishes "the client did not mention this field" from
+// "the client explicitly sent null". encoding/json only calls UnmarshalJSON
+// when the key is present, so Set is false for an absent key and true for
+// both a null and a real value.
+//
+// A nullable PATCH field needs those three states, not two. A single pointer
+// collapses absent and null, and this repository has already resolved that
+// collision as "clear it" and destroyed data with it: every project-item edit
+// wiped the stored due date, because no surface sent due_at and absent read as
+// null. See updateItemRequest in internal/core/api/projects.
+//
+// It lives here, beside DecodeJSON, because it is decode-only and both the
+// Beacon and Vector PATCH bodies need the same three states. A second copy is
+// how the two modules drift apart on the semantics that matter most.
+//
+// The json tags on fields of this type must NOT carry omitempty: it has no
+// effect on decoding, but it would wrongly suggest the field round-trips.
+type OptionalField[T any] struct {
+	// Set reports whether the key appeared in the request body at all.
+	Set bool
+	// Value is nil when the key appeared as null, or when it never appeared.
+	Value *T
+}
+
+// UnmarshalJSON records that the key was present, then decodes null as an
+// explicit clear and anything else as a value.
+func (o *OptionalField[T]) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var v T
+	if err := json.Unmarshal(b, &v); err != nil {
+		return fmt.Errorf("decoding optional field: %w", err)
+	}
+	o.Value = &v
+	return nil
+}
+
 // RequestID is middleware that assigns a unique request ID to each request and
 // sets it in the response header and context.
 func RequestID(next http.Handler) http.Handler {

@@ -21,7 +21,7 @@ function item(id: string, title: string): ProjectItem {
     id, space_id: 's1', number: Number(id), item_key: `VEC-${id}`,
     title, description: '', kind: 'task', status: 'open', priority: 'high',
     assignee_id: null, reporter_id: 'u1', sprint_id: 's', rank: '', labels: [],
-    created_at: '', updated_at: '',
+    due_at: null, created_at: '', updated_at: '',
   };
 }
 

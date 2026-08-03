@@ -181,14 +181,20 @@ type SwaggerCreateTicketRequest struct {
 	Priority    string     `json:"priority" example:"medium"`
 	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
 	Labels      []string   `json:"labels,omitempty" example:"bug,frontend"`
+	DueAt       *time.Time `json:"due_at,omitempty"`
 }
 
 // SwaggerUpdateTicketRequest matches updateTicketRequest in tickets handler.
+// The real request type uses pointers to tell "absent" from "empty"; this is
+// the documentation shape, so it keeps plain strings.
 type SwaggerUpdateTicketRequest struct {
 	Title       string   `json:"title" example:"Fix login button (updated)"`
 	Description string   `json:"description" example:"Updated description"`
 	Priority    string   `json:"priority" example:"high"`
 	Labels      []string `json:"labels,omitempty"`
+	// DueAt is RFC3339. Sending null clears the stored due date; omitting the
+	// key leaves it alone.
+	DueAt *time.Time `json:"due_at,omitempty"`
 }
 
 // SwaggerTransitionRequest matches transitionRequest in tickets handler.

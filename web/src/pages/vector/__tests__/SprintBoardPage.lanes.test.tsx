@@ -20,7 +20,7 @@ function item(id: string, over: Partial<ProjectItem> = {}): ProjectItem {
     id, space_id: 's1', number: Number(id) || 1, item_key: `VEC-${id}`,
     title: `Item ${id}`, description: '', kind: 'task', status: 'open',
     priority: 'medium', assignee_id: null, reporter_id: 'u1', sprint_id: 's',
-    rank: '', labels: [], created_at: '', updated_at: '',
+    rank: '', labels: [], due_at: null, created_at: '', updated_at: '',
     ...over,
   };
 }

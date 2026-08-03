@@ -479,6 +479,16 @@ export interface Ticket {
    */
   requester: TicketRequester | null;
   label_ids: string[];
+  /**
+   * The ticket's due date, or null. RFC3339 on the wire, but a calendar date in
+   * meaning — render it with `formatUTCDate`, not by slicing the string.
+   *
+   * A workflow transition guard can require this field (`field_required:
+   * due_at`), so a space whose workflow demands it needs a surface that can set
+   * it. Until the due-date control on ticket detail there was none, and the
+   * ticket PATCH rejected the key outright.
+   */
+  due_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -530,6 +540,16 @@ export interface ProjectItem {
   sprint_id: string | null;
   rank: string;
   labels: string[];
+  /**
+   * The item's due date, or null. RFC3339 on the wire, but a calendar date in
+   * meaning — render it with `formatUTCDate`, not by slicing the string, or a
+   * non-UTC offset shows the previous day.
+   *
+   * Served since the field existed and declared only now: the Go field is a
+   * `*time.Time` with no omitempty, so the key is always present and `null` is
+   * the wire form of "no due date".
+   */
+  due_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1479,6 +1499,21 @@ interface UpdateTicketRequest {
   assignee_id?: string | null;
   status?: string;
   labels?: string[];
+  /**
+   * The ticket's due date, RFC3339. Same three states as the item PATCH: omit
+   * to leave alone, `null` to clear, a timestamp to set.
+   *
+   * Note that `assignee_id` and `status` above are NOT accepted by the Go
+   * handler — `updateTicketRequest` has never carried them and
+   * `respond.DecodeJSON` rejects unknown fields, so sending either is a 400.
+   * They are reachable through the dedicated `/assign` and `/status` routes,
+   * which is what the two detail pages already call. Left declared rather than
+   * removed because correcting them is not this change's to make; do not send
+   * them.
+   *
+   * A bare `YYYY-MM-DD` is rejected with 400; use `toRFC3339Date`.
+   */
+  due_at?: string | null;
 }
 
 async function updateTicket(
@@ -1847,6 +1882,17 @@ interface UpdateProjectItemRequest {
    * Sending it changes the type of an existing item in place.
    */
   kind?: string;
+  /**
+   * The item's due date, RFC3339. Three states, and all three are reachable
+   * here because `JSON.stringify` drops `undefined` and keeps `null`:
+   * omit the key to leave the stored date alone, send `null` to clear it, send
+   * a timestamp to set it. The Go side reads it through
+   * `respond.OptionalField[time.Time]`, which is what keeps absent and null
+   * apart — collapsing them is what once wiped every item's due date.
+   *
+   * A bare `YYYY-MM-DD` is rejected with 400; use `toRFC3339Date`.
+   */
+  due_at?: string | null;
 }
 
 /**

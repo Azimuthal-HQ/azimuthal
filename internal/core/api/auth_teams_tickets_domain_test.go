@@ -767,6 +767,22 @@ func TestAuthTeamTicketDomain_TicketCreateRefusals(t *testing.T) {
 // it, so the client would be shown a ticket with a priority the database
 // refused to store — a phantom write that only reveals itself on the next
 // read. Re-reading the row through the API is what fails in that case.
+//
+// A6 moved one case out of the table below. `missing_title` — a body of
+// {"priority": …} with no title key — asserted 400, and that was a true
+// description of a handler which assigned every field unconditionally: an
+// omitted title decoded as "" and was refused by the title-required rule. Under
+// PATCH semantics an omitted key means "leave it alone", so it is now a 200 and
+// is asserted as such further down.
+//
+// This is not the refusal being relaxed. "A ticket must have a title" is
+// enforced exactly as before — `empty_title` below still refuses an explicitly
+// blank one, and no PATCH can write "" into the column. What changed is only
+// whether OMITTING the key is itself a validation error, which is the same
+// distinction the item side settled (see TestUpdateItem_TitleOnlyPatchKeepsOtherFields
+// and TestUpdateItem_ExplicitEmptyTitleIsStillRejected in
+// item_patch_integration_test.go). Beacon disagreed with Vector on it only
+// because nothing had ever called the ticket PATCH.
 func TestAuthTeamTicketDomain_TicketUpdateRefusesTheDomainInvalid(t *testing.T) {
 	f := attdNewTicketFixture(t)
 	ticketID := f.create(t, "Attd Update Probe")
@@ -777,7 +793,6 @@ func TestAuthTeamTicketDomain_TicketUpdateRefusesTheDomainInvalid(t *testing.T) 
 		"empty_priority":   {"title": "Still Fine", "priority": ""},
 		"cased_priority":   {"title": "Still Fine", "priority": "Medium"},
 		"empty_title":      {"title": "", "priority": "high"},
-		"missing_title":    {"priority": "high"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			requireErrorCode(t, f.ts.patch(t, path, body, true),
@@ -793,6 +808,22 @@ func TestAuthTeamTicketDomain_TicketUpdateRefusesTheDomainInvalid(t *testing.T) 
 	require.Equal(t, "medium", priority, "a refused PATCH must not have changed the priority")
 	require.Empty(t, auditRowsFor(t, f.ts, "ticket.updated"),
 		"a refused PATCH must not write a ticket.updated event")
+
+	// The case that moved. Omitting the title is not a refusal, and the stored
+	// title survives it — which is what makes a due-date-only PATCH from the
+	// ticket rail expressible at all. Ordered after the assertions above
+	// because, unlike the table, this one is expected to change the row.
+	t.Run("missing_title_is_a_partial_update", func(t *testing.T) {
+		r := f.ts.patch(t, path, map[string]any{"priority": "high"}, true)
+		require.Equal(t, http.StatusOK, r.StatusCode,
+			"a PATCH that omits the title must be a partial update, not a refusal: %s", r.Body)
+
+		var gotTitle, gotPriority string
+		require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
+			`SELECT title, priority FROM tickets WHERE id = $1`, uuid.MustParse(ticketID)).Scan(&gotTitle, &gotPriority))
+		require.Equal(t, "Attd Update Probe", gotTitle, "an omitted title must be left alone, not blanked")
+		require.Equal(t, "high", gotPriority, "the field the body did carry must have been applied")
+	})
 
 	// A valid PATCH is accepted and does change the row.
 	r := f.ts.patch(t, path, map[string]any{"title": "Attd Updated", "priority": "high"}, true)

@@ -191,46 +191,16 @@ type createItemRequest struct {
 // since no frontend surface has ever sent due_at, *every* item edit cleared
 // it: renaming an item removed it from the roadmap. The same shape meant a
 // board drag sending only {"kind": …} unassigned the item as a side effect.
-// optionalField keeps the three states apart, so absent now means absent.
+// respond.OptionalField keeps the three states apart, so absent now means
+// absent. The Beacon ticket PATCH carries the same type for the same reason.
 type updateItemRequest struct {
-	Title       *string                  `json:"title"`
-	Description *string                  `json:"description"`
-	Kind        *string                  `json:"kind"`
-	Priority    *string                  `json:"priority"`
-	AssigneeID  optionalField[uuid.UUID] `json:"assignee_id"`
-	Labels      []string                 `json:"labels,omitempty"`
-	DueAt       optionalField[time.Time] `json:"due_at"`
-}
-
-// optionalField distinguishes "the client did not mention this field" from
-// "the client explicitly sent null". encoding/json only calls UnmarshalJSON
-// when the key is present, so Set is false for an absent key and true for
-// both a null and a real value.
-//
-// Note the json tags above must NOT carry omitempty: it has no effect on
-// decoding, but it would wrongly suggest these fields round-trip, and this
-// type is decode-only.
-type optionalField[T any] struct {
-	// Set reports whether the key appeared in the request body at all.
-	Set bool
-	// Value is nil when the key appeared as null, or when it never appeared.
-	Value *T
-}
-
-// UnmarshalJSON records that the key was present, then decodes null as an
-// explicit clear and anything else as a value.
-func (o *optionalField[T]) UnmarshalJSON(b []byte) error {
-	o.Set = true
-	if string(b) == "null" {
-		o.Value = nil
-		return nil
-	}
-	var v T
-	if err := json.Unmarshal(b, &v); err != nil {
-		return fmt.Errorf("decoding optional field: %w", err)
-	}
-	o.Value = &v
-	return nil
+	Title       *string                          `json:"title"`
+	Description *string                          `json:"description"`
+	Kind        *string                          `json:"kind"`
+	Priority    *string                          `json:"priority"`
+	AssigneeID  respond.OptionalField[uuid.UUID] `json:"assignee_id"`
+	Labels      []string                         `json:"labels,omitempty"`
+	DueAt       respond.OptionalField[time.Time] `json:"due_at"`
 }
 
 type statusRequest struct {
@@ -474,8 +444,14 @@ func (h *Handler) GetItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // applyItemPatch copies only the fields the request body actually carried onto
-// the stored item. An absent field keeps its stored value; AssigneeID and DueAt
-// are the exceptions, where absent and null both mean "clear it".
+// the stored item. An absent field keeps its stored value — including
+// AssigneeID and DueAt, where only an explicit null means "clear it".
+//
+// This comment used to say the opposite of the code below it: that for
+// AssigneeID and DueAt "absent and null both mean clear it". That described
+// the defect the optionalField change fixed, not the behaviour it left, and it
+// contradicted the updateItemRequest comment twenty lines above. Corrected
+// here rather than copied onto the ticket handler alongside it.
 func applyItemPatch(existing *projects.Item, req updateItemRequest) {
 	if req.Title != nil {
 		existing.Title = *req.Title

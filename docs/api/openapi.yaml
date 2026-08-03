@@ -528,6 +528,8 @@ components:
         description:
           example: The login button does not work on mobile
           type: string
+        due_at:
+          type: string
         labels:
           example:
           - bug
@@ -884,6 +886,11 @@ components:
       properties:
         description:
           example: Updated description
+          type: string
+        due_at:
+          description: |-
+            DueAt is RFC3339. Sending null clears the stored due date; omitting the
+            key leaves it alone.
           type: string
         labels:
           items:
@@ -7974,8 +7981,9 @@ paths:
       tags:
       - tickets
     patch:
-      description: Updates an existing ticket's title, description, priority, and
-        labels.
+      description: 'Updates an existing ticket. Every field is optional: a field the
+        body omits keeps its stored value, and a null due_at clears the stored due
+        date.'
       parameters:
       - description: Organization ID (UUID)
         in: path

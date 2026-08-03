@@ -29,6 +29,10 @@ vi.mock('../../../lib/api', () => ({
   useAvailableTransitions: () => ({ data: undefined, refetch: vi.fn() }),
   useTransitionTicketStatus: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useAssignTicket: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  // A6's due-date control. Enumerated for the reason the block records: this
+  // mock replaces the module wholesale, so a dependency the page reaches for
+  // and this list omits throws rather than silently returning undefined.
+  useUpdateTicket: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useMembers: () => ({ data: members }),
   useComments: () => ({ data: state.comments, refetch: state.refetchComments }),
   useCreateComment: () => ({ mutateAsync: state.createComment, isPending: false }),
@@ -63,6 +67,7 @@ const baseTicket = {
   priority: 'high',
   assignee_id: null,
   label_ids: [],
+  due_at: null,
   created_at: '2026-07-01T00:00:00Z',
   updated_at: '2026-07-02T00:00:00Z',
 };

@@ -16,7 +16,7 @@ import { ModuleChip } from '../../shell/ModuleChip';
 import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
 import { CustomFieldsSection } from '../../components/CustomFieldsSection';
 import { PriorityPill, normalizePriority } from '../../components/priority';
-import { cn } from '../../lib/utils';
+import { cn, formatUTCDate, toRFC3339Date } from '../../lib/utils';
 import { ApprovalBlock } from '../../components/workflow/ApprovalBlock';
 import {
   runStatusChange,
@@ -123,6 +123,7 @@ export function ItemDetailPage() {
   const { data: sprints = [] } = useSprints(spaceId);
   const assignSprintMutation = useAssignItemSprint(spaceId);
   const [sprintError, setSprintError] = useState<string | null>(null);
+  const [dueDateError, setDueDateError] = useState<string | null>(null);
   const [statusOutcome, setStatusOutcome] = useState<StatusOutcome>({ kind: 'idle' });
 
   const [newComment, setNewComment] = useState('');
@@ -194,6 +195,20 @@ export function ItemDetailPage() {
       refetchItem();
     } catch (e) {
       setSprintError(friendlyErrorMessage(e, 'The sprint could not be changed.'));
+    }
+  }
+
+  async function handleDueDateChange(value: string) {
+    setDueDateError(null);
+    try {
+      // An emptied input must send an explicit null. toRFC3339Date returns
+      // undefined for "", which JSON.stringify drops from the body — and an
+      // absent due_at means "leave it alone", so relying on that default would
+      // make the field impossible to clear.
+      await updateMutation.mutateAsync({ due_at: value ? toRFC3339Date(value) : null });
+      refetchItem();
+    } catch (e) {
+      setDueDateError(friendlyErrorMessage(e, 'The due date could not be changed.'));
     }
   }
 
@@ -573,6 +588,21 @@ export function ItemDetailPage() {
             </select>
             {sprintError && (
               <p className="mt-1 text-[var(--text-xs)] text-[var(--color-danger)]">{sprintError}</p>
+            )}
+          </DetailField>
+
+          <DetailField label="Due date">
+            <Input
+              type="date"
+              aria-label="Due date"
+              data-testid="item-due-date"
+              value={item.due_at ? formatUTCDate(item.due_at) : ''}
+              disabled={updateMutation.isPending}
+              onChange={(e) => handleDueDateChange(e.target.value)}
+              className={sideSelectClass}
+            />
+            {dueDateError && (
+              <p className="mt-1 text-[var(--text-xs)] text-[var(--color-danger)]">{dueDateError}</p>
             )}
           </DetailField>
 

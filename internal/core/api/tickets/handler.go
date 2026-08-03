@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -123,13 +124,67 @@ type createTicketRequest struct {
 	Priority    tickets.Priority `json:"priority"`
 	AssigneeID  *uuid.UUID       `json:"assignee_id,omitempty"`
 	Labels      []string         `json:"labels,omitempty"`
+	// DueAt lets a ticket be born with a due date. CreateTicketParams has
+	// carried the field all along and TicketService.Create writes it to the
+	// model; nothing ever populated it from a request, so it was dead.
+	DueAt *time.Time `json:"due_at,omitempty"`
 }
 
+// updateTicketRequest is a PATCH body: every field is optional and only the
+// fields present in the JSON are applied.
+//
+// This shape is deliberately identical to updateItemRequest in
+// internal/core/api/projects, because the two modules had drifted apart on it
+// and only one of them was right.
+//
+// Title, Description and Priority are pointers because they were plain values
+// assigned unconditionally onto the stored ticket. An omitted title decoded as
+// "" and was written over the stored one, where TicketService.Update rejected
+// it with ErrTitleRequired — so a request that meant "just change the due
+// date" could not be expressed at all: every PATCH had to resend the whole
+// ticket, and any field the client did not know about was silently blanked.
+// Vector fixed exactly this on the item side; Beacon never did, and no
+// frontend surface called this route, so nothing had yet noticed.
+//
+// DueAt needs three states, not two: absent (leave it alone), explicit null
+// (clear it), and a value. respond.OptionalField keeps them apart. Sharing the
+// type with the item PATCH is what stops the two modules disagreeing about
+// what an absent due_at means — the disagreement that quietly destroyed item
+// due dates before it was found.
 type updateTicketRequest struct {
-	Title       string           `json:"title"`
-	Description string           `json:"description"`
-	Priority    tickets.Priority `json:"priority"`
-	Labels      []string         `json:"labels,omitempty"`
+	Title       *string                          `json:"title"`
+	Description *string                          `json:"description"`
+	Priority    *tickets.Priority                `json:"priority"`
+	Labels      []string                         `json:"labels,omitempty"`
+	DueAt       respond.OptionalField[time.Time] `json:"due_at"`
+}
+
+// applyTicketPatch copies only the fields the request body actually carried
+// onto the stored ticket. An absent field keeps its stored value — including
+// DueAt, where only an explicit null means "clear it".
+//
+// The mirror of applyItemPatch in internal/core/api/projects. Kept as its own
+// function for the same reason: the three-state rule is easy to state and easy
+// to get wrong inline, and a reviewer can check this in isolation.
+func applyTicketPatch(existing *tickets.Ticket, req updateTicketRequest) {
+	if req.Title != nil {
+		existing.Title = *req.Title
+	}
+	if req.Description != nil {
+		existing.Description = *req.Description
+	}
+	if req.Priority != nil {
+		existing.Priority = *req.Priority
+	}
+	if req.Labels != nil {
+		existing.Labels = req.Labels
+	}
+	// Only when the key was actually present. A nil Value with Set true is an
+	// explicit null and does mean "clear it" — that is how the due-date control
+	// on ticket detail clears a date.
+	if req.DueAt.Set {
+		existing.DueAt = req.DueAt.Value
+	}
 }
 
 type transitionRequest struct {
@@ -218,6 +273,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		ReporterID:  claims.UserID,
 		AssigneeID:  req.AssigneeID,
 		Labels:      req.Labels,
+		DueAt:       req.DueAt,
 	}
 	if h.tiers != nil {
 		if status, stateID, ok := h.tiers.InitialPosition(r.Context(), spaceID); ok {
@@ -279,7 +335,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // Update modifies an existing ticket.
 //
 // @Summary      Update ticket
-// @Description  Updates an existing ticket's title, description, priority, and labels.
+// @Description  Updates an existing ticket. Every field is optional: a field the body omits keeps its stored value, and a null due_at clears the stored due date.
 // @Tags         tickets
 // @Accept       json
 // @Produce      json
@@ -325,10 +381,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing.Title = req.Title
-	existing.Description = req.Description
-	existing.Priority = req.Priority
-	existing.Labels = req.Labels
+	applyTicketPatch(existing, req)
 
 	if err := h.svc.Update(r.Context(), existing); err != nil {
 		handleTicketError(w, r, err)
