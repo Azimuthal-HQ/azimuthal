@@ -472,6 +472,7 @@ func (h *Handler) ListTransitions(w http.ResponseWriter, r *http.Request) {
 // @Success      201         {object}  workflow.Transition         "Created transition"
 // @Failure      400         {object}  api.SwaggerErrorResponse   "Validation error"
 // @Failure      401         {object}  api.SwaggerErrorResponse   "Not authenticated"
+// @Failure      404         {object}  api.SwaggerErrorResponse   "Workflow or state not found"
 // @Failure      500         {object}  api.SwaggerErrorResponse   "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID}/transitions [post]
 func (h *Handler) CreateTransition(w http.ResponseWriter, r *http.Request) {
@@ -495,6 +496,19 @@ func (h *Handler) CreateTransition(w http.ResponseWriter, r *http.Request) {
 		Name:        req.Name,
 	}
 	if err := h.repo.CreateTransition(r.Context(), t); err != nil {
+		// workflowInOrg established that the workflow is this org's and
+		// established nothing about the two state ids, which arrived in the
+		// body. The INSERT is what reconciles them, and it refuses by matching
+		// no rows.
+		//
+		// 404 with the wording DeleteState already uses for the same class. It
+		// is deliberately the same answer for a state of another workflow and
+		// for a state that does not exist: the caller may not learn which,
+		// because "which" is exactly the question a probe would ask.
+		if errors.Is(err, workflow.ErrStateNotInWorkflow) {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "state not found")
+			return
+		}
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create transition")
 		return
 	}

@@ -219,6 +219,12 @@ func (a *WorkflowAdapter) ListAvailableTransitions(ctx context.Context, workflow
 }
 
 // CreateTransition persists a new transition.
+//
+// Returns workflow.ErrStateNotInWorkflow when either endpoint is not a state of
+// t.WorkflowID. The query refuses that case by matching no rows rather than by
+// raising an error, so pgx.ErrNoRows here is the predicate speaking, not a
+// failure — see CreateWorkflowTransition in internal/db/queries/workflows.sql
+// for why the check is in the statement rather than in front of it.
 func (a *WorkflowAdapter) CreateTransition(ctx context.Context, t *workflow.Transition) error {
 	row, err := a.q.CreateWorkflowTransition(ctx, generated.CreateWorkflowTransitionParams{
 		WorkflowID:  t.WorkflowID,
@@ -226,6 +232,9 @@ func (a *WorkflowAdapter) CreateTransition(ctx context.Context, t *workflow.Tran
 		ToStateID:   t.ToStateID,
 		Name:        t.Name,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return workflow.ErrStateNotInWorkflow
+	}
 	if err != nil {
 		return fmt.Errorf("workflow adapter create transition: %w", err)
 	}

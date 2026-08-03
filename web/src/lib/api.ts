@@ -858,6 +858,25 @@ export async function refreshAccessToken(): Promise<RefreshResponse> {
   });
 }
 
+/**
+ * revokeSession is the server half of signing out: it bumps the caller's
+ * token_generation, which is what actually ends the session.
+ *
+ * Clearing localStorage is not a sign-out. The tokens are stateless RS256
+ * JWTs; a copy taken out of the browser — by a script on a wiki page, by
+ * anything with access to the profile directory — keeps working until it
+ * expires, no matter what the tab forgets. Until the v0.4.1 trust patch the
+ * frontend never called this route at all, and the route itself always
+ * answered 401 because it was mounted outside the server's RequireAuth group.
+ *
+ * `logout()` in `./auth` is what calls this. Do not call it directly and leave
+ * the local clear to a caller: the two belong together, which is why they are
+ * one function there.
+ */
+export async function revokeSession(): Promise<void> {
+  await apiFetch<{ message: string }>('/auth/logout', { method: 'POST' });
+}
+
 // ---------------------------------------------------------------------------
 // Space API functions
 // ---------------------------------------------------------------------------
@@ -6085,8 +6104,10 @@ export interface PortalRedeemResponse {
  * requester, because any difference would be a free oracle for testing whether
  * an address has ever contacted this service desk. `delivered` reports whether
  * mail was dispatched, not whether the address exists, and `magic_link_url` is
- * populated only where configuration permits disclosure (development and
- * test). Do not build a "we don't know that address" state out of either.
+ * populated only where an operator has explicitly opted into disclosure on a
+ * non-production deployment — absent by default, and absent in production
+ * whatever the configuration says. Do not build a "we don't know that address"
+ * state out of either field.
  */
 export interface PortalLinkResponse {
   status: string;

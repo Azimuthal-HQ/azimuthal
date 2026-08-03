@@ -1,8 +1,9 @@
 import { useState, useEffect, type HTMLAttributes } from 'react';
 import { useParams } from 'react-router-dom';
 import { Edit, AlertCircle, History, PenLine, Share2, FolderInput } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Options as ReactMarkdownOptions } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Button } from '../../components/ui/button';
@@ -32,6 +33,48 @@ import { codexMeasureClasses } from '../../components/codex/editorStyles';
 // enough behaviour that leaving it inline would have made this component the
 // place both the page and its history live.
 import { RevisionsPanel } from '../../components/codex/RevisionsPanel';
+
+/**
+ * The rehype chain for the legacy markdown reading path.
+ *
+ * ORDER IS THE WHOLE SECURITY PROPERTY. `rehype-raw` parses the raw HTML a
+ * wiki author embedded into real hast nodes; `rehype-sanitize` then walks
+ * those nodes and drops everything outside its schema. Reversing the two
+ * sanitises the *escaped text* and then re-inflates the markup, which is the
+ * same as not sanitising at all. Dropping the second entry restores the hole
+ * this chain closes: a page body is untrusted markup — anyone who can write a
+ * Codex page could otherwise run script in every reader's session.
+ *
+ * Raw HTML stays a feature. The schema is `rehype-sanitize`'s default — the
+ * GitHub schema — with NOTHING WIDENED. It already permits the two things this
+ * surface needs: `className` matching /^language-./ on `<code>`, which is what
+ * the `code` component override below reads to pick a highlighter language,
+ * and relative `src`/`href` (its protocol check only fires when a URL actually
+ * carries a scheme). What it removes is `<script>`, every `on*` handler
+ * attribute, `javascript:` URLs, and `<iframe>`/`<object>`/`<embed>`.
+ *
+ * THE ONE DEVIATION IS A TIGHTENING, and it is here because the default is
+ * surprising rather than unsafe. `strip` names the elements removed with their
+ * subtree; everything else outside `tagNames` is UNWRAPPED, so its children
+ * survive. By default only `<script>` is stripped, which means a page carrying
+ * `<style>body{display:none}</style>` renders safely — the CSS is never
+ * applied — but prints its stylesheet into the middle of the document as body
+ * text. Verified in a browser before it was written down. `<style>` joins
+ * `<script>` so it goes the same way: out, with its contents. Nothing else in
+ * the schema is altered in either direction.
+ *
+ * `web/src/pages/codex/__tests__/wiki-sanitize.test.tsx` fails if this chain
+ * loses its sanitiser.
+ */
+const WIKI_SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  strip: [...(defaultSchema.strip ?? []), 'style'],
+};
+
+const WIKI_REHYPE_PLUGINS: ReactMarkdownOptions['rehypePlugins'] = [
+  rehypeRaw,
+  [rehypeSanitize, WIKI_SANITIZE_SCHEMA],
+];
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -359,7 +402,7 @@ export function WikiPage() {
                       )}
                     >
                       <ReactMarkdown
-                        rehypePlugins={[rehypeRaw]}
+                        rehypePlugins={WIKI_REHYPE_PLUGINS}
                         components={{
                           // `inline` is a react-markdown v8-era prop. It is
                           // declared here because this renderer still reads it;

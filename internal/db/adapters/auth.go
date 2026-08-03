@@ -144,6 +144,25 @@ func (a *UserAdapter) TouchLastLogin(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// RevokeTokens bumps users.token_generation, invalidating every access and
+// refresh token already issued to the user.
+//
+// It reuses BumpTokenGeneration, the same statement the administrative
+// force-logout runs (PeopleAdapter.ForceLogout). That query is not org-scoped
+// and does not need to be here: the only caller is a user revoking their own
+// tokens, and the id comes from their own verified JWT claims.
+//
+// A zero row count is not an error. The statement filters `deleted_at IS
+// NULL`, so zero means the account is gone — every token it holds is already
+// refused by the middleware's own deleted-user check, which is the outcome the
+// caller wanted.
+func (a *UserAdapter) RevokeTokens(ctx context.Context, id uuid.UUID) error {
+	if _, err := a.q.BumpTokenGeneration(ctx, id); err != nil {
+		return fmt.Errorf("user adapter revoke tokens: %w", err)
+	}
+	return nil
+}
+
 // dbUserToDomain converts a generated.User to an auth.User.
 func dbUserToDomain(u generated.User) *auth.User {
 	return &auth.User{

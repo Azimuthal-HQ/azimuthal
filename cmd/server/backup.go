@@ -38,6 +38,37 @@ func init() {
 	_ = backupCmd.MarkFlagRequired("output")
 }
 
+// backupArchiveMode is the permission the archive file is created with.
+//
+// This was os.Create, which is 0666-before-umask — 0644 on any host with the
+// default umask of 022, i.e. world-readable. The archive is the densest secret
+// this system produces: a full pg_dump (every password hash, every session and
+// portal token, every private page and ticket) plus every byte in object
+// storage, in one file that operators leave sitting in /var/backups and copy
+// around. Owner-only, and the tar entries' own 0644 modes are left alone —
+// those govern what a restore-to-another-system unpacks, not what is readable
+// on the machine the backup was taken on.
+const backupArchiveMode os.FileMode = 0o600
+
+// openBackupOutput creates the archive's destination file.
+//
+// It is a variable rather than a direct call so that
+// TestRunBackup_FlushFailureIsNotASuccess can substitute a sink whose Close
+// fails. The defect that test guards is unreachable otherwise: a truncated
+// archive is the product of writes that all *succeed* followed by a flush that
+// does not, so provoking it deterministically means controlling the sink.
+// Production has exactly one implementation, and it is this one.
+var openBackupOutput = func(path string) (io.WriteCloser, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, backupArchiveMode) // #nosec G304 -- user-provided CLI flag
+	if err != nil {
+		return nil, fmt.Errorf("creating output file: %w", err)
+	}
+	// Returned as a named value rather than forwarding os.OpenFile's results
+	// directly: on error that would hand back a typed-nil *os.File inside a
+	// non-nil io.WriteCloser, and the caller's `!= nil` check would pass.
+	return f, nil
+}
+
 // backupManifest describes the contents of a backup archive.
 type backupManifest struct {
 	AzimuthalVersion string    `json:"azimuthal_version"`
@@ -54,10 +85,20 @@ func runBackup(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	outFile, err := os.Create(backupOutput) // #nosec G304 -- user-provided CLI flag
+	outFile, err := openBackupOutput(backupOutput)
 	if err != nil {
-		return fmt.Errorf("creating output file: %w", err)
+		return err
 	}
+
+	// These three defers are cleanup for the error paths below, which return
+	// without reaching finalizeArchive — they release the descriptor and
+	// nothing more. Their errors are discarded HERE, and only here, because
+	// the path that matters — the one that prints success — goes through
+	// finalizeArchive, which closes all three and checks every error.
+	//
+	// Closing twice is defined and harmless: tar.Writer and gzip.Writer both
+	// return nil once already closed, and os.File returns ErrClosed, which is
+	// exactly what these discard.
 	defer func() { _ = outFile.Close() }()
 
 	gw := gzip.NewWriter(outFile)
@@ -99,6 +140,32 @@ func runBackup(cmd *cobra.Command, _ []string) error {
 
 	// Step 3: Write manifest
 	fmt.Println("Writing manifest...")
+	if err := writeManifest(tw, &manifest); err != nil {
+		return err
+	}
+
+	// Step 4: flush. Everything above is written; none of it is necessarily on
+	// disk. The tar footer, the gzip trailer and the file's own buffers all
+	// land here, and a failure in any of them leaves a truncated archive that
+	// restore cannot read.
+	//
+	// This used to be three deferred closes with their errors discarded, which
+	// run AFTER the success line has printed and AFTER the function has
+	// returned nil — so a backup that failed to flush reported success and the
+	// operator found out while restoring. "Backup complete" now prints only
+	// once every byte is flushed and every close has succeeded.
+	if err := finalizeArchive(tw, gw, outFile); err != nil {
+		return err
+	}
+
+	fmt.Printf("Backup complete: %s\n", backupOutput)
+	return nil
+}
+
+// writeManifest marshals the manifest and adds it to the archive as its final
+// entry. Extracted from runBackup, which the flush step pushed one statement
+// past the funlen limit; this is the step that most obviously stands alone.
+func writeManifest(tw *tar.Writer, manifest *backupManifest) error {
 	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshalling manifest: %w", err)
@@ -106,8 +173,35 @@ func runBackup(cmd *cobra.Command, _ []string) error {
 	if err := addToTar(tw, "manifest.json", manifestJSON); err != nil {
 		return fmt.Errorf("writing manifest to archive: %w", err)
 	}
+	return nil
+}
 
-	fmt.Printf("Backup complete: %s\n", backupOutput)
+// finalizeArchive closes the archive's three nested writers, innermost first,
+// and returns the first failure.
+//
+// The order is load-bearing, not stylistic: tw.Close writes the tar footer
+// *into* gw, and gw.Close writes the gzip trailer *into* out. Closing out
+// first truncates both; closing gw before tw loses the footer. Each error is
+// checked separately because each one means a different unreadable archive,
+// and because the caller must not print success after any of them.
+//
+// It short-circuits rather than closing the rest: once a layer has failed the
+// archive is already corrupt, and runBackup's deferred closes still release
+// every descriptor.
+//
+// Takes io.Closer rather than the concrete writer types so the ordering and
+// the error handling can be asserted directly, without a postgres server —
+// see TestFinalizeArchive_ClosesInOrderAndReportsEveryFailure.
+func finalizeArchive(tarWriter, gzipWriter, outFile io.Closer) error {
+	if err := tarWriter.Close(); err != nil {
+		return fmt.Errorf("finalising tar archive: %w", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return fmt.Errorf("finalising gzip stream: %w", err)
+	}
+	if err := outFile.Close(); err != nil {
+		return fmt.Errorf("closing backup file: %w", err)
+	}
 	return nil
 }
 

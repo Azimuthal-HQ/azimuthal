@@ -82,19 +82,24 @@ func (s *BacklogService) MoveToBacklog(ctx context.Context, itemID, spaceID uuid
 	return nil
 }
 
-// ReorderItem changes the rank of an item to reposition it in the backlog or sprint view.
-func (s *BacklogService) ReorderItem(ctx context.Context, itemID uuid.UUID, newRank string) error {
-	item, err := s.itemRepo.GetByID(ctx, itemID)
-	if err != nil {
-		return fmt.Errorf("reordering item: %w", err)
-	}
-
-	item.Rank = newRank
-	if err := s.itemRepo.Update(ctx, item); err != nil {
-		return fmt.Errorf("reordering item: %w", err)
-	}
-	return nil
-}
+// ReorderItem was deleted rather than scoped. It set an item's rank through
+// itemRepo.GetByID and itemRepo.Update — the unscoped variants of both — so it
+// took no space and reconciled the item against nothing. It was the only method
+// on this service that took no spaceID at all, on a service that is constructed
+// in production wiring.
+//
+// No route reached it and no production caller existed. The drag-to-reorder
+// surface it reads as backing (handleDrop in web/src/pages/vector/BacklogPage.tsx,
+// via POST .../projects/items/{itemID}/rank) goes to RankItemRelative below,
+// which bounds every id it writes with a space-scoped read. ReorderItem's only
+// caller in the tree was its own unit test, and that test could only be written
+// the way it was BECAUSE the method was unscoped: it created an item in a
+// throwaway space id and then reordered it with no space at all.
+//
+// Scoping it instead would have meant designing an unrouted write against no
+// consumer, which is how a primitive ends up looking safe without ever having
+// been exercised. Deleting it is the smaller attack surface and the honest
+// description of the state: nothing needed it.
 
 // RankItemRelative repositions an item relative to its neighbours in the space.
 // Pass beforeID to place the item immediately before that item,

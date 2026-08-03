@@ -802,8 +802,12 @@ and `..._FullErrorReachesTheServerLog` fail against the old arm, the first on th
 appearing in the body.
 
 **The wiki sibling this entry named is closed too**, by the same change in the same shape
-(`internal/core/api/notifications` — see #28; `internal/core/api/wiki/handler.go` remains and is
-the last of the family).
+(`internal/core/api/notifications` — see #28). This sentence read "`internal/core/api/wiki/handler.go`
+remains and is the last of the family" until the cross-space write-authorisation remainder pass.
+`handleWikiError`'s default arm is now `respondUnmapped`, and with it the family is closed.
+`TestUnmappedWikiError_DoesNotLeakInternalDetailToTheWire` and `..._FullErrorReachesTheServerLog`
+(`internal/core/api/wiki/unmapped_error_test.go`) fail against the old arm, the first on the
+constraint name appearing in the body. Verified in both directions.
 
 **Still open, deliberately.** The weaker sibling case: assigning an org member who holds no grant
 on the ticket's space still answers 200. This entry calls that "arguably policy" and asks for a
@@ -1191,6 +1195,23 @@ fixed message and the request id, the full error and the operation name go to th
 package has its own small `respondUnmapped` — projects, tickets and now notifications — because
 the surface name in the message differs and a shared one would need it passed in anyway. If a
 fourth copy appears, that is the point to extract it.
+
+> **The fourth copy has now appeared, and the trigger above is met.** Closing the wiki arm (#23)
+> added `respondUnmapped` to `internal/core/api/wiki/handler.go`, so there are four package-local
+> copies: projects, tickets, notifications, wiki. The pass that added it followed the local idiom
+> deliberately rather than hoisting, because it was a trust patch scoped to security and
+> data-integrity and the extraction touches three packages it otherwise does not go near — but
+> that is a scope decision, not a disagreement with this entry.
+>
+> The extraction is **not** a pure move. The four signatures have already diverged: projects takes
+> `(w, r, surface string, err)`, notifications takes `(w, r, op string, err)` and uses the operation
+> name in the *log* while the wire message is fixed, and tickets and wiki take `(w, r, err)` with
+> the surface baked in. A shared `respond.Internal` has to pick one shape, and picking it decides
+> whether the wire message stays per-surface ("wiki operation failed") or becomes uniform — which
+> is a product decision about error copy, not a refactor. **Flagged for a maintainer, not resolved
+> here.** `respondUnmapped` is not catalogued in `docs/design/shared-surfaces.md`, so the
+> non-negotiable about a second implementation of a shared surface does not currently bind it; if
+> the maintainer wants it to, adding it to that page is the enforcing move.
 
 ```
 internal/core/api/notifications/handler.go:74   fmt.Sprintf("listing notifications: %v", err)

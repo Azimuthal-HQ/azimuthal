@@ -76,13 +76,39 @@ type Config struct {
 	BcryptCost int
 
 	// Customer portal. PortalLinkDelivery mirrors InviteDelivery: "link"
-	// returns the sign-in URL in the API response (development and test
-	// only — see validate) or "email" sends it. PortalLinkTTL is how long a
+	// means the operator is responsible for getting the sign-in URL to the
+	// requester, "email" means Azimuthal sends it. PortalLinkTTL is how long a
 	// sign-in link stays redeemable; PortalSessionTTL is how long the
 	// session it produces lasts.
+	//
+	// PortalLinkDelivery NO LONGER DECIDES DISCLOSURE. It used to: the URL was
+	// returned in the response body whenever the mode was "link" and the
+	// environment was not production, and since both of those were the
+	// defaults, a stock install disclosed. Delivery and disclosure are now
+	// separate settings — see PortalDiscloseLink.
 	PortalLinkDelivery string
 	PortalLinkTTL      time.Duration
 	PortalSessionTTL   time.Duration
+
+	// PortalDiscloseLink is the operator's REQUEST that the portal's
+	// request-link response body carry the sign-in URL. It is not the answer:
+	// read PortalLinkDisclosureAllowed(), which is the answer, and which also
+	// refuses in production.
+	//
+	// Disclosure is an authentication bypass wherever it is on. POST
+	// /portal/{key}/auth/request-link is unauthenticated by necessity — an
+	// external requester has no credential yet — so a response that carries the
+	// URL signs the caller in as any address they can name. The affordance
+	// exists at all because a browser test and a developer without a mailbox
+	// have no other way to follow a link, which is a real need, but it is a need
+	// nobody has by accident. Hence: default false, and an operator who wants it
+	// has to say so in as many words.
+	//
+	// This is deliberately a flag of its own rather than a third delivery mode.
+	// A mode is a choice between alternatives and reads as one; disclosure is
+	// not an alternative to emailing a link, it is a decision to publish a
+	// credential, and it should have to be spelled that way.
+	PortalDiscloseLink bool
 
 	// App
 	AppEnv     string
@@ -125,28 +151,27 @@ const (
 
 // Customer-portal sign-in link delivery modes.
 const (
-	// PortalLinkDeliveryLink returns the sign-in URL in the API response so a
-	// developer or an E2E run can follow it without a mailbox.
+	// PortalLinkDeliveryLink means Azimuthal sends nothing and the operator is
+	// responsible for getting the sign-in URL to the requester. It requires no
+	// SMTP relay, which is why it is the default.
 	//
-	// PRODUCTION NEVER DISCLOSES THE URL — but by a runtime degrade, not a
-	// boot refusal. cmd/server/main.go gates DiscloseLink on
-	// `!cfg.IsProduction()`, so a production server left in this mode mints
-	// sign-in links and hands them to nobody: the portal is inert rather than
-	// unsafe. The disclosure has to be stopped because the request-link
-	// endpoint is unauthenticated by necessity — an external requester has no
-	// credential yet — so returning the URL to its caller would let anybody
-	// sign in as any address they can name. That is not a misconfiguration to
-	// warn about; it is a total authentication bypass.
+	// THIS MODE NO LONGER DISCLOSES ANYTHING. It used to be half of the
+	// disclosure rule — main.go set DiscloseLink when the mode was "link" AND
+	// the environment was not production — and because "link" and
+	// "development" were both defaults, a stock install returned the sign-in
+	// URL to an unauthenticated caller. Disclosure is now its own flag,
+	// PortalDiscloseLink, defaulting to false; this constant is back to
+	// meaning only what its name says.
 	//
-	// WHY validate() DOES NOT REFUSE THIS MODE IN PRODUCTION, which four
-	// comments across three packages used to assert that it did: this is the
-	// default, and the portal has no enable flag. Refusing it at startup would
-	// stop every production deployment that never set the variable from
+	// WHY validate() STILL DOES NOT REFUSE THIS MODE IN PRODUCTION, which four
+	// comments across three packages once wrongly asserted that it did: this is
+	// the default, and the portal has no enable flag. Refusing it at startup
+	// would stop every production deployment that never set the variable from
 	// booting — including the majority that run no customer portal at all —
 	// which is a breaking change to unrelated deployments in the name of a
-	// feature they do not use. The runtime gate already makes the unsafe
-	// outcome unreachable, so the boot-time policy convention is satisfied by
-	// something cheaper than a refusal.
+	// feature they do not use. There is now nothing unsafe left in the mode to
+	// refuse: the thing that was dangerous moved to a setting whose default is
+	// off. TestConfig_PortalLinkDeliveryLinkIsAcceptedInProduction pins this.
 	PortalLinkDeliveryLink = "link"
 	// PortalLinkDeliveryEmail sends the sign-in link to the address that
 	// asked for it, which is the only delivery that authenticates anything.
@@ -168,7 +193,23 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("SMTP_HOST", "localhost")
 	v.SetDefault("SMTP_PORT", 1025)
 	v.SetDefault("SMTP_FROM", "azimuthal@localhost")
-	v.SetDefault("APP_ENV", "development")
+	// APP_ENV defaults to production, not development.
+	//
+	// An unset variable must describe the deployment that actually exists when
+	// nobody set anything, and for a self-hosted product that is somebody's
+	// server, not somebody's laptop. A developer runs `docker compose -f
+	// build/docker-compose.dev.yml`, or a Makefile target, or a test harness —
+	// every one of which sets APP_ENV explicitly — so the development default
+	// was serving the case that never relied on it while the production case
+	// silently inherited a developer's safety posture.
+	//
+	// The concrete cost of the old default: IsProduction() was false on a bare
+	// `docker run`, which turned the portal's magic-link disclosure on. It is
+	// no longer the only thing standing between that endpoint and an
+	// authentication bypass — see PortalDiscloseLink — but "the environment
+	// name defaults to the safe one" should not have needed a second control to
+	// be true.
+	v.SetDefault("APP_ENV", "production")
 	v.SetDefault("APP_PORT", 8080)
 	v.SetDefault("APP_BASE_URL", "http://localhost:8080")
 	v.SetDefault("LOG_LEVEL", "info")
@@ -181,6 +222,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("AZIMUTHAL_TICKET_REF_REQUIRED", false)
 	v.SetDefault("AZIMUTHAL_BCRYPT_COST", DefaultBcryptCost)
 	v.SetDefault("AZIMUTHAL_PORTAL_LINK_DELIVERY", PortalLinkDeliveryLink)
+	v.SetDefault("AZIMUTHAL_PORTAL_DISCLOSE_LINK", false)
 	v.SetDefault("AZIMUTHAL_PORTAL_LINK_TTL", "1h")
 	v.SetDefault("AZIMUTHAL_PORTAL_SESSION_TTL", "72h")
 }
@@ -205,6 +247,7 @@ func Load() (*Config, error) {
 		InviteDelivery:     v.GetString("AZIMUTHAL_INVITE_DELIVERY"),
 		TicketRefRequired:  v.GetBool("AZIMUTHAL_TICKET_REF_REQUIRED"),
 		PortalLinkDelivery: v.GetString("AZIMUTHAL_PORTAL_LINK_DELIVERY"),
+		PortalDiscloseLink: v.GetBool("AZIMUTHAL_PORTAL_DISCLOSE_LINK"),
 		AllowedOrigins:     parseAllowedOrigins(v.GetString("AZIMUTHAL_ALLOWED_ORIGINS")),
 		SMTPHost:           v.GetString("SMTP_HOST"),
 		SMTPPort:           v.GetInt("SMTP_PORT"),
@@ -334,6 +377,58 @@ func (c *Config) IsProduction() bool {
 	return c.AppEnv == "production"
 }
 
+// PortalLinkDisclosureAllowed reports whether the customer portal may return a
+// sign-in URL in the body of its unauthenticated request-link response.
+//
+// THIS IS THE ONLY PLACE THE RULE IS STATED. cmd/server/main.go calls it and
+// does no arithmetic of its own; TestMainWiresPortalDisclosureToTheConfigRule
+// (cmd/server) fails if that stops being true, because a correct rule nobody
+// calls is exactly the shape of the defect this replaced.
+//
+// Both conjuncts are load-bearing, and they are load-bearing against different
+// mistakes:
+//
+//   - PortalDiscloseLink is what makes disclosure deliberate. The rule it
+//     replaced was a conjunction of two settings that were BOTH defaults, so
+//     the unsafe state was the one an operator reached by doing nothing.
+//   - !IsProduction() is what makes it un-footgunnable. An operator who copies
+//     a development .env onto a production host — the way this class recurs —
+//     gets the flag they did not mean to bring, and production refuses it
+//     anyway.
+//
+// A production server therefore never discloses, whatever the flag says. It is
+// still a runtime degrade rather than a boot refusal: validate() does not reject
+// the combination, on the same reasoning that keeps it from rejecting
+// PortalLinkDeliveryLink in production.
+//
+// RESOLVED — this comment used to leave the question open ("whether an operator
+// who explicitly asks for disclosure in production should instead be refused at
+// startup is a maintainer decision"). The maintainer ruled: WARN, DO NOT REFUSE.
+// The silent ignore was the real defect — this file's own philosophy, stated at
+// parseLogLevel, is that a value the server ignores is worse than one it
+// rejects — but a hard refusal shipped inside a security patch could lock an
+// operator out over a combination that is already safe, since the security
+// property is enforced here regardless. So the flag stays ignored and the
+// operator is told: see PortalDisclosureFlagIgnored.
+func (c *Config) PortalLinkDisclosureAllowed() bool {
+	return c.PortalDiscloseLink && !c.IsProduction()
+}
+
+// PortalDisclosureFlagIgnored reports the one combination
+// PortalLinkDisclosureAllowed silently discards: an operator asked for
+// disclosure and production overruled them.
+//
+// It exists to be warned about, not to be acted on — cmd/server/serve.go logs
+// one line at startup when it is true. The predicate is deliberately NARROW: it
+// is not "the flag is set" and not "we are in production", but exactly the pair
+// where the setting has no effect. A warning that also fired on dev+flag would
+// be telling an operator their working configuration is wrong, and a warning
+// that cries wolf is one operators learn to scroll past — which would leave the
+// real case no better off than the silence it replaced.
+func (c *Config) PortalDisclosureFlagIgnored() bool {
+	return c.PortalDiscloseLink && c.IsProduction()
+}
+
 // parseAllowedOrigins splits a comma-separated origin list. When the env var
 // is unset the result is empty in every environment, which means the server
 // emits no CORS headers and the browser enforces same-origin. Cross-origin
@@ -416,13 +511,19 @@ func (c *Config) validate() error {
 
 	// The portal's sign-in links run the identical rule. Before this existed an
 	// unrecognised value passed validation and then matched neither branch in
-	// cmd/server/main.go, which sets portalSender only for "email" and
-	// DiscloseLink only for "link" — so a typo left the portal minting sign-in
-	// links and delivering them nowhere, with nothing said at startup and
-	// nothing wrong in the logs. A customer simply never receives a link.
+	// cmd/server/main.go — which at the time set portalSender only for "email"
+	// and DiscloseLink only for "link" — so a typo left the portal minting
+	// sign-in links and delivering them nowhere, with nothing said at startup
+	// and nothing wrong in the logs. A customer simply never receives a link.
+	// Disclosure has since moved off the mode entirely, but the silent-nowhere
+	// outcome is unchanged for "email"-shaped typos, so the check still earns
+	// its place.
 	//
-	// Note what this deliberately does NOT do: refuse PortalLinkDeliveryLink
-	// in production. See that constant's own comment for why.
+	// Note the two things this deliberately does NOT do: refuse
+	// PortalLinkDeliveryLink in production (see that constant's own comment),
+	// and refuse AZIMUTHAL_PORTAL_DISCLOSE_LINK=true in production (see
+	// PortalLinkDisclosureAllowed — the flag is ignored there rather than
+	// rejected).
 	errs = append(errs, validateDeliveryMode(
 		"AZIMUTHAL_PORTAL_LINK_DELIVERY", c.PortalLinkDelivery, c.SMTPFrom)...)
 
