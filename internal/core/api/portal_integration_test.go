@@ -974,6 +974,234 @@ func TestPortalConfig_GetOnASpaceWithNoPortal404s(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, res.StatusCode)
 }
 
+// ── The widened PATCH (A1): a partial update with three-state fields ─────
+
+// portalConfigView reads the agent view back over the wire, so every
+// assertion below is against what the API answers rather than a row a test
+// happened to write.
+func portalConfigView(t *testing.T, f *portalFixture) struct {
+	Key     string `json:"portal_key"`
+	Name    string `json:"name"`
+	Intro   string `json:"intro"`
+	Enabled bool   `json:"enabled"`
+} {
+	t.Helper()
+	res := f.ts.get(t, "/api/v1/orgs/"+f.ts.OrgID.String()+"/spaces/"+f.spaceID.String()+"/portal", true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+	var got struct {
+		Key     string `json:"portal_key"`
+		Name    string `json:"name"`
+		Intro   string `json:"intro"`
+		Enabled bool   `json:"enabled"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body, &got))
+	return got
+}
+
+// TestPortalConfig_RenameLeavesEnabledAlone is the anti-clear regression for
+// the widened PATCH body, and the reason its fields are three-state.
+//
+// The body used to be {enabled} with a plain bool. The moment the struct grew
+// Name and Intro, a plain-typed Enabled would decode {"name":"…"} — a rename —
+// with Enabled false, and the rename would silently take a live portal off
+// the public internet. That is the class that once wiped every project item's
+// due date (see updateItemRequest in internal/core/api/projects).
+//
+// FAILS-BEFORE: re-type updatePortalRequest.Enabled as a plain bool applied
+// unconditionally — the naive widening — and the enabled assertions below
+// fail. Verified in both directions during development: mutation applied →
+// this test fails; mutation reverted → it passes.
+func TestPortalConfig_RenameLeavesEnabledAlone(t *testing.T) {
+	f := newPortalFixture(t)
+	path := "/api/v1/orgs/" + f.ts.OrgID.String() + "/spaces/" + f.spaceID.String() + "/portal"
+
+	// Premise: the portal is live before the rename.
+	require.True(t, portalConfigView(t, f).Enabled, "fixture portals start enabled")
+
+	res := f.ts.patch(t, path, map[string]string{"name": "Aurora Helpdesk"}, true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+	requireSnakeCaseKeys(t, res.Body)
+
+	got := portalConfigView(t, f)
+	require.Equal(t, "Aurora Helpdesk", got.Name)
+	require.True(t, got.Enabled, "a name-only PATCH must not touch enabled")
+	require.Equal(t, "How can we help?", got.Intro, "a name-only PATCH must not touch intro")
+
+	// The public face is the consequence that makes this matter: a disabled
+	// portal 404s to customers, so if the rename had cleared enabled, every
+	// URL already handed out would have just died.
+	pub := f.ts.get(t, "/api/v1/portal/"+f.portalKey, false)
+	require.Equal(t, http.StatusOK, pub.StatusCode,
+		"the portal must still answer customers after a rename")
+	require.Contains(t, string(pub.Body), "Aurora Helpdesk",
+		"the rename must reach the public face")
+}
+
+// TestPortalConfig_ToggleLeavesNameAndIntroAlone is the same contract read in
+// the other direction: an enabled-only PATCH touches nothing but the flag.
+func TestPortalConfig_ToggleLeavesNameAndIntroAlone(t *testing.T) {
+	f := newPortalFixture(t)
+	path := "/api/v1/orgs/" + f.ts.OrgID.String() + "/spaces/" + f.spaceID.String() + "/portal"
+
+	res := f.ts.patch(t, path, map[string]bool{"enabled": false}, true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+
+	got := portalConfigView(t, f)
+	require.False(t, got.Enabled)
+	require.Equal(t, "Acme Support", got.Name, "an enabled-only PATCH must not touch the name")
+	require.Equal(t, "How can we help?", got.Intro, "an enabled-only PATCH must not touch the intro")
+}
+
+// TestPortalConfig_RenameKeepsTheKey is the sibling of
+// TestPortalConfig_ToggleKeepsTheKey: renaming is the new way to break the
+// same contract. The key is the URL already in customers' hands, and the name
+// is only a label on it — a rename that minted a new key would be the same
+// support incident as a toggle that did.
+//
+// FAILS-BEFORE: add portal_key to the UpdatePortal statement's SET list and
+// the key assertions below fail. Verified in both directions during
+// development.
+func TestPortalConfig_RenameKeepsTheKey(t *testing.T) {
+	f := newPortalFixture(t)
+	path := "/api/v1/orgs/" + f.ts.OrgID.String() + "/spaces/" + f.spaceID.String() + "/portal"
+
+	res := f.ts.patch(t, path,
+		map[string]string{"name": "Renamed Desk", "intro": "A fresh introduction."}, true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+	var got struct {
+		Key string `json:"portal_key"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body, &got))
+	require.Equal(t, f.portalKey, got.Key,
+		"renaming must keep the key, or every URL already sent to a customer dies")
+
+	stored := portalConfigView(t, f)
+	require.Equal(t, f.portalKey, stored.Key)
+	require.Equal(t, "Renamed Desk", stored.Name)
+	require.Equal(t, "A fresh introduction.", stored.Intro)
+
+	// The old URL still works and shows the new name — the whole point of
+	// keeping the key.
+	pub := f.ts.get(t, "/api/v1/portal/"+f.portalKey, false)
+	require.Equal(t, http.StatusOK, pub.StatusCode)
+	require.Contains(t, string(pub.Body), "Renamed Desk")
+}
+
+// TestPortalConfig_EmptyNameIs400NotA500 pins where the name rule is
+// enforced. Migration 044 carries CHECK (name <> ”), so a PATCH that let an
+// empty name through would reach the database and come back as an unmapped
+// 23514 — a 500 where the answer is a 400. The handler and service refuse all
+// three spellings of "no name" through CreatePortal's existing
+// ErrPortalNameRequired path before the write.
+//
+// FAILS-BEFORE: remove the empty-name check from portal.Service.UpdatePortal
+// and the "" and whitespace cases below answer 500 off the CHECK constraint.
+// Verified in both directions during development.
+func TestPortalConfig_EmptyNameIs400NotA500(t *testing.T) {
+	f := newPortalFixture(t)
+	path := "/api/v1/orgs/" + f.ts.OrgID.String() + "/spaces/" + f.spaceID.String() + "/portal"
+
+	for name, body := range map[string]map[string]any{
+		"empty":         {"name": ""},
+		"whitespace":    {"name": "   "},
+		"explicit null": {"name": nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := f.ts.patch(t, path, body, true)
+			requireErrorCode(t, res, http.StatusBadRequest, "VALIDATION_ERROR")
+		})
+	}
+
+	// Nothing was written by any of the refused requests.
+	require.Equal(t, "Acme Support", portalConfigView(t, f).Name)
+}
+
+// TestPortalConfig_NullEnabledIs400 — a portal cannot be "neither on nor
+// off", so an explicit null enabled is a validation error rather than being
+// silently read as false (which would be the anti-clear bug wearing a
+// different hat).
+func TestPortalConfig_NullEnabledIs400(t *testing.T) {
+	f := newPortalFixture(t)
+	path := "/api/v1/orgs/" + f.ts.OrgID.String() + "/spaces/" + f.spaceID.String() + "/portal"
+
+	res := f.ts.patch(t, path, map[string]any{"enabled": nil}, true)
+	requireErrorCode(t, res, http.StatusBadRequest, "VALIDATION_ERROR")
+	require.True(t, portalConfigView(t, f).Enabled, "a refused PATCH must write nothing")
+}
+
+// TestPortalConfig_ExplicitNullIntroClears — intro is the one genuinely
+// optional field, so it takes the DueAt convention: absent leaves it alone
+// (covered by the toggle test above), explicit null clears it.
+func TestPortalConfig_ExplicitNullIntroClears(t *testing.T) {
+	f := newPortalFixture(t)
+	path := "/api/v1/orgs/" + f.ts.OrgID.String() + "/spaces/" + f.spaceID.String() + "/portal"
+
+	res := f.ts.patch(t, path, map[string]any{"intro": nil}, true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+
+	got := portalConfigView(t, f)
+	require.Equal(t, "", got.Intro, "an explicit null intro clears it")
+	require.Equal(t, "Acme Support", got.Name)
+	require.True(t, got.Enabled)
+}
+
+// TestPortalConfig_UpdateOnASpaceWithNoPortal404s pins WHERE the space
+// predicate lives: inside the UPDATE statement. An update addressed at a
+// space with no portal affects zero rows and answers 404 — and, the half that
+// makes the construction matter, it cannot touch the portal of any OTHER
+// space while doing so.
+//
+// FAILS-BEFORE: drop the space predicate from the UpdatePortal statement and
+// the cross-space assertions below fail — the bare space's PATCH lands on the
+// fixture's portal. Verified in both directions during development.
+func TestPortalConfig_UpdateOnASpaceWithNoPortal404s(t *testing.T) {
+	f := newPortalFixture(t)
+	bare := testutil.CreateTestSpace(t, f.ts.DB.Pool, f.ts.OrgID, f.ts.UserID, "beacon")
+
+	res := f.ts.patch(t,
+		"/api/v1/orgs/"+f.ts.OrgID.String()+"/spaces/"+bare.ID.String()+"/portal",
+		map[string]any{"name": "Hijacked", "enabled": false}, true)
+	require.Equal(t, http.StatusNotFound, res.StatusCode, string(res.Body))
+
+	// Zero rows means zero rows: the one portal that does exist is untouched.
+	got := portalConfigView(t, f)
+	require.Equal(t, "Acme Support", got.Name)
+	require.True(t, got.Enabled)
+}
+
+// TestPortalConfig_RenameWritesAnAuditEvent pins the audit decision for the
+// widened PATCH. The name and intro are the strings external customers see —
+// the org's public face — so a rename is recorded exactly as a toggle always
+// was: one portal.configured event, whose payload keeps the existing
+// enabled/disabled vocabulary when the flag was in the request and says
+// "updated" otherwise, plus a fields list naming what the request carried.
+func TestPortalConfig_RenameWritesAnAuditEvent(t *testing.T) {
+	f := newPortalFixture(t)
+	path := "/api/v1/orgs/" + f.ts.OrgID.String() + "/spaces/" + f.spaceID.String() + "/portal"
+
+	res := f.ts.patch(t, path, map[string]string{"name": "Recorded Desk"}, true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+
+	// The fixture creates its portal through the service, which does not
+	// audit — the handler does — so the rename's event is the first.
+	rows := auditRowsFor(t, f.ts, "portal.configured")
+	require.Len(t, rows, 1, "a rename must be recorded")
+	require.Equal(t, "space", rows[0].EntityKind)
+	require.Equal(t, f.spaceID, rows[0].EntityID)
+	require.NotNil(t, rows[0].ActorID)
+	require.Equal(t, f.ts.UserID, *rows[0].ActorID)
+	require.Equal(t, "updated", rows[0].Payload["action"])
+	require.Equal(t, "name", rows[0].Payload["fields"])
+
+	// A toggle keeps its pre-widening vocabulary, with the fields beside it.
+	res = f.ts.patch(t, path, map[string]any{"enabled": false, "intro": "New intro"}, true)
+	require.Equal(t, http.StatusOK, res.StatusCode, string(res.Body))
+	rows = auditRowsFor(t, f.ts, "portal.configured")
+	require.Len(t, rows, 2)
+	require.Equal(t, "disabled", rows[1].Payload["action"])
+	require.Equal(t, "enabled,intro", rows[1].Payload["fields"])
+}
+
 // TestPortal_SubmitValidation covers the two refusals on the write paths.
 func TestPortal_SubmitValidation(t *testing.T) {
 	f := newPortalFixture(t)

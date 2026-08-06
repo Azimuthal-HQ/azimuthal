@@ -334,12 +334,31 @@ func (s *Service) PortalForSpace(ctx context.Context, spaceID uuid.UUID) (Portal
 	return p, nil
 }
 
-// SetPortalEnabled enables or disables a space's portal without discarding
-// its key, so that re-enabling does not invalidate every URL already shared.
-func (s *Service) SetPortalEnabled(ctx context.Context, spaceID uuid.UUID, enabled bool) (Portal, error) {
-	p, err := s.store.SetPortalEnabled(ctx, spaceID, enabled)
+// UpdatePortal applies a partial update to a space's portal — enabled, name,
+// intro; nil fields keep their stored values — without discarding its key, so
+// that disabling and re-enabling does not invalidate every URL already
+// shared. A rename holds the same contract: the key is the URL, and the name
+// is only a label on it.
+//
+// The name rule is CreatePortal's, not a parallel one: trimmed, and required
+// non-empty via the same ErrPortalNameRequired sentinel — this is also what
+// keeps migration 044's name-present CHECK from ever being reached and
+// surfacing as an unmapped 500.
+func (s *Service) UpdatePortal(ctx context.Context, spaceID uuid.UUID, params UpdatePortalParams) (Portal, error) {
+	if params.Name != nil {
+		name := strings.TrimSpace(*params.Name)
+		if name == "" {
+			return Portal{}, ErrPortalNameRequired
+		}
+		params.Name = &name
+	}
+	if params.Intro != nil {
+		intro := strings.TrimSpace(*params.Intro)
+		params.Intro = &intro
+	}
+	p, err := s.store.UpdatePortal(ctx, spaceID, params)
 	if err != nil {
-		return Portal{}, fmt.Errorf("setting portal enabled: %w", err)
+		return Portal{}, fmt.Errorf("updating portal: %w", err)
 	}
 	return p, nil
 }

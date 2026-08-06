@@ -45,6 +45,17 @@ vi.mock('../../../lib/api', () => {
     useCreateGrant: vi.fn(mutationStub),
     useUpdateGrant: vi.fn(mutationStub),
     useRevokeGrant: vi.fn(mutationStub),
+    // The space above is a beacon, so PortalSection renders in EVERY test in
+    // this file — these hooks must exist or each one is undefined at render.
+    // Default to the no-portal 404, the state every fresh space is in;
+    // PortalSection's own suite drives the other states.
+    usePortalConfig: vi.fn(() => ({
+      data: undefined,
+      isLoading: false,
+      error: { status: 404, code: 'NOT_FOUND', message: 'this space has no customer portal' },
+    })),
+    useCreatePortal: vi.fn(mutationStub),
+    useUpdatePortal: vi.fn(mutationStub),
   };
 });
 
