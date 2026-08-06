@@ -41,7 +41,6 @@ func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
 		ReporterID:  item.ReporterID,
 		AssigneeID:  pgUUID(item.AssigneeID),
 		SprintID:    pgUUID(item.SprintID),
-		Labels:      coalesceLabels(item.Labels),
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
 		// See the ticket twin: written at creation so the item starts inside its
@@ -117,7 +116,6 @@ func (a *ItemAdapter) Update(ctx context.Context, item *projects.Item) error {
 		Status:      item.Status,
 		Priority:    item.Priority,
 		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      coalesceLabels(item.Labels),
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
 		// Safe for a PATCH that omitted "kind": applyItemPatch leaves the
@@ -265,7 +263,6 @@ func dbProjectItemToItem(i generated.ProjectItem) *projects.Item {
 		ReporterID:  i.ReporterID,
 		AssigneeID:  goUUIDPtr(i.AssigneeID),
 		SprintID:    goUUIDPtr(i.SprintID),
-		Labels:      i.Labels,
 		DueAt:       goTimePtr(i.DueAt),
 		ResolvedAt:  goTimePtr(i.ResolvedAt),
 		Rank:        i.Rank,

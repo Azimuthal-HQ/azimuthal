@@ -95,7 +95,7 @@ func (m *writeMatrix) item(t *testing.T, space uuid.UUID, title string) uuid.UUI
 	row, err := m.q.CreateProjectItem(context.Background(), generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: space, Kind: "task", Title: title,
 		Description: "", Status: "open", Priority: "medium",
-		ReporterID: m.ts.UserID, Labels: []string{}, Rank: "a",
+		ReporterID: m.ts.UserID, Rank: "a",
 	})
 	require.NoError(t, err)
 	return row.ID

@@ -65,7 +65,7 @@ vi.mock('../../lib/api', () => ({
   })),
   useWikiRevisions: vi.fn(() => ({ data: [], isLoading: false })),
   // WikiPage renders the page's tag chips; PageTags fetches its own.
-  usePageTags: () => ({ data: [], isLoading: false, error: null }),
+  useEntityTags: () => ({ data: [], isLoading: false, error: null }),
   // The Codex document surface (issue #15). `doc: null` above makes this page
   // a legacy markdown page, so the read path here is the markdown one and the
   // document query stays disabled — which is what keeps this a navigation

@@ -383,11 +383,6 @@ components:
         kind:
           example: task
           type: string
-        labels:
-          items:
-            type: string
-          type: array
-          uniqueItems: false
         priority:
           example: medium
           type: string
@@ -530,14 +525,6 @@ components:
           type: string
         due_at:
           type: string
-        labels:
-          example:
-          - bug
-          - frontend
-          items:
-            type: string
-          type: array
-          uniqueItems: false
         priority:
           example: medium
           type: string
@@ -733,11 +720,6 @@ components:
         id:
           example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
           type: string
-        labels:
-          items:
-            type: string
-          type: array
-          uniqueItems: false
         number:
           example: 42
           type: integer
@@ -811,11 +793,6 @@ components:
             unknown or archived values are rejected.
           example: bug
           type: string
-        labels:
-          items:
-            type: string
-          type: array
-          uniqueItems: false
         priority:
           example: high
           type: string
@@ -913,11 +890,6 @@ components:
             DueAt is RFC3339. Sending null clears the stored due date; omitting the
             key leaves it alone.
           type: string
-        labels:
-          items:
-            type: string
-          type: array
-          uniqueItems: false
         priority:
           example: high
           type: string
@@ -983,11 +955,6 @@ components:
           type: string
         kind:
           type: string
-        labels:
-          items:
-            type: string
-          type: array
-          uniqueItems: false
         number:
           type: integer
         org_id:
@@ -1030,11 +997,6 @@ components:
           $ref: '#/components/schemas/pgtype.Timestamptz'
         id:
           type: string
-        labels:
-          items:
-            type: string
-          type: array
-          uniqueItems: false
         number:
           type: integer
         priority:
@@ -1545,13 +1507,13 @@ components:
       - assignee_id
       - due_at
       - description
-      - labels
+      - tags
       type: string
       x-enum-varnames:
       - FieldAssigneeID
       - FieldDueAt
       - FieldDescription
-      - FieldLabels
+      - FieldTags
     workflow.Guard:
       properties:
         capability:
@@ -1648,11 +1610,11 @@ components:
       description: FieldKey and FieldValue are meaningful iff Kind is PostSetField.
       enum:
       - due_at
-      - labels
+      - tags
       type: string
       x-enum-varnames:
       - PostFieldDueAt
-      - PostFieldLabels
+      - PostFieldTags
     workflow.PostFunction:
       properties:
         assignee_user_id:

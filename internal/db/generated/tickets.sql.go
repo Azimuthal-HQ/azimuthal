@@ -14,9 +14,9 @@ import (
 
 const createTicket = `-- name: CreateTicket :one
 INSERT INTO tickets (id, space_id, number, title, description, status, priority,
-                     reporter_id, assignee_id, labels, due_at, rank, workflow_state_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
+                     reporter_id, assignee_id, due_at, rank, workflow_state_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
 type CreateTicketParams struct {
@@ -29,7 +29,6 @@ type CreateTicketParams struct {
 	Priority        string             `json:"priority"`
 	ReporterID      pgtype.UUID        `json:"reporter_id"`
 	AssigneeID      pgtype.UUID        `json:"assignee_id"`
-	Labels          []string           `json:"labels"`
 	DueAt           pgtype.Timestamptz `json:"due_at"`
 	Rank            string             `json:"rank"`
 	WorkflowStateID pgtype.UUID        `json:"workflow_state_id"`
@@ -60,7 +59,6 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) (Tic
 		arg.Priority,
 		arg.ReporterID,
 		arg.AssigneeID,
-		arg.Labels,
 		arg.DueAt,
 		arg.Rank,
 		arg.WorkflowStateID,
@@ -76,7 +74,6 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) (Tic
 		&i.Priority,
 		&i.ReporterID,
 		&i.AssigneeID,
-		&i.Labels,
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
@@ -91,7 +88,7 @@ func (q *Queries) CreateTicket(ctx context.Context, arg CreateTicketParams) (Tic
 }
 
 const getTicketByID = `-- name: GetTicketByID :one
-SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets WHERE id = $1 AND deleted_at IS NULL
+SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets WHERE id = $1 AND deleted_at IS NULL
 `
 
 // UNSCOPED. The legitimate callers are the entity-share read path (ADR-0008,
@@ -111,7 +108,6 @@ func (q *Queries) GetTicketByID(ctx context.Context, id uuid.UUID) (Ticket, erro
 		&i.Priority,
 		&i.ReporterID,
 		&i.AssigneeID,
-		&i.Labels,
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
@@ -126,7 +122,7 @@ func (q *Queries) GetTicketByID(ctx context.Context, id uuid.UUID) (Ticket, erro
 }
 
 const getTicketInSpace = `-- name: GetTicketInSpace :one
-SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
+SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
 WHERE id = $1 AND space_id = $2 AND deleted_at IS NULL
 `
 
@@ -152,7 +148,6 @@ func (q *Queries) GetTicketInSpace(ctx context.Context, arg GetTicketInSpacePara
 		&i.Priority,
 		&i.ReporterID,
 		&i.AssigneeID,
-		&i.Labels,
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
@@ -178,7 +173,7 @@ func (q *Queries) GetTicketMaxNumber(ctx context.Context, spaceID uuid.UUID) (in
 }
 
 const listTicketsByAssignee = `-- name: ListTicketsByAssignee :many
-SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
+SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
 WHERE space_id = $1 AND assignee_id = $2 AND deleted_at IS NULL
 ORDER BY rank ASC, created_at DESC
 `
@@ -207,7 +202,6 @@ func (q *Queries) ListTicketsByAssignee(ctx context.Context, arg ListTicketsByAs
 			&i.Priority,
 			&i.ReporterID,
 			&i.AssigneeID,
-			&i.Labels,
 			&i.DueAt,
 			&i.ResolvedAt,
 			&i.Rank,
@@ -229,7 +223,7 @@ func (q *Queries) ListTicketsByAssignee(ctx context.Context, arg ListTicketsByAs
 }
 
 const listTicketsBySpace = `-- name: ListTicketsBySpace :many
-SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
+SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
 WHERE space_id = $1 AND deleted_at IS NULL
 ORDER BY rank ASC, created_at DESC
 `
@@ -253,7 +247,6 @@ func (q *Queries) ListTicketsBySpace(ctx context.Context, spaceID uuid.UUID) ([]
 			&i.Priority,
 			&i.ReporterID,
 			&i.AssigneeID,
-			&i.Labels,
 			&i.DueAt,
 			&i.ResolvedAt,
 			&i.Rank,
@@ -275,7 +268,7 @@ func (q *Queries) ListTicketsBySpace(ctx context.Context, spaceID uuid.UUID) ([]
 }
 
 const listTicketsByStatus = `-- name: ListTicketsByStatus :many
-SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
+SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
 WHERE space_id = $1 AND status = $2 AND deleted_at IS NULL
 ORDER BY rank ASC, created_at DESC
 `
@@ -304,7 +297,6 @@ func (q *Queries) ListTicketsByStatus(ctx context.Context, arg ListTicketsByStat
 			&i.Priority,
 			&i.ReporterID,
 			&i.AssigneeID,
-			&i.Labels,
 			&i.DueAt,
 			&i.ResolvedAt,
 			&i.Rank,
@@ -326,7 +318,7 @@ func (q *Queries) ListTicketsByStatus(ctx context.Context, arg ListTicketsByStat
 }
 
 const searchTickets = `-- name: SearchTickets :many
-SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
+SELECT id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector FROM tickets
 WHERE space_id = $1
   AND deleted_at IS NULL
   AND search_vector @@ plainto_tsquery('english', $2)
@@ -359,7 +351,6 @@ func (q *Queries) SearchTickets(ctx context.Context, arg SearchTicketsParams) ([
 			&i.Priority,
 			&i.ReporterID,
 			&i.AssigneeID,
-			&i.Labels,
 			&i.DueAt,
 			&i.ResolvedAt,
 			&i.Rank,
@@ -493,10 +484,10 @@ func (q *Queries) SuggestTicketRefs(ctx context.Context, arg SuggestTicketRefsPa
 const updateTicket = `-- name: UpdateTicket :one
 UPDATE tickets
 SET title = $2, description = $3, status = $4, priority = $5,
-    assignee_id = $6, labels = $7, due_at = $8, rank = $9,
+    assignee_id = $6, due_at = $7, rank = $8,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
+RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
 type UpdateTicketParams struct {
@@ -506,7 +497,6 @@ type UpdateTicketParams struct {
 	Status      string             `json:"status"`
 	Priority    string             `json:"priority"`
 	AssigneeID  pgtype.UUID        `json:"assignee_id"`
-	Labels      []string           `json:"labels"`
 	DueAt       pgtype.Timestamptz `json:"due_at"`
 	Rank        string             `json:"rank"`
 }
@@ -519,7 +509,6 @@ func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (Tic
 		arg.Status,
 		arg.Priority,
 		arg.AssigneeID,
-		arg.Labels,
 		arg.DueAt,
 		arg.Rank,
 	)
@@ -534,7 +523,6 @@ func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (Tic
 		&i.Priority,
 		&i.ReporterID,
 		&i.AssigneeID,
-		&i.Labels,
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
@@ -552,7 +540,7 @@ const updateTicketStatus = `-- name: UpdateTicketStatus :one
 UPDATE tickets
 SET status = $2, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
+RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
 type UpdateTicketStatusParams struct {
@@ -573,7 +561,6 @@ func (q *Queries) UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatus
 		&i.Priority,
 		&i.ReporterID,
 		&i.AssigneeID,
-		&i.Labels,
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,
@@ -592,7 +579,7 @@ UPDATE tickets
 SET status = $1, workflow_state_id = $2, updated_at = now()
 WHERE id = $3 AND space_id = $4 AND deleted_at IS NULL
   AND status = $5
-RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, labels, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
+RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
 type UpdateTicketWorkflowStateParams struct {
@@ -642,7 +629,6 @@ func (q *Queries) UpdateTicketWorkflowState(ctx context.Context, arg UpdateTicke
 		&i.Priority,
 		&i.ReporterID,
 		&i.AssigneeID,
-		&i.Labels,
 		&i.DueAt,
 		&i.ResolvedAt,
 		&i.Rank,

@@ -223,7 +223,6 @@ func TestCreateTicket(t *testing.T) {
 			Description: "Cannot log in with valid credentials",
 			Priority:    PriorityHigh,
 			ReporterID:  reporterID,
-			Labels:      []string{"bug", "auth"},
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

@@ -155,7 +155,6 @@ type createTicketRequest struct {
 	Description string           `json:"description"`
 	Priority    tickets.Priority `json:"priority"`
 	AssigneeID  *uuid.UUID       `json:"assignee_id,omitempty"`
-	Labels      []string         `json:"labels,omitempty"`
 	// DueAt lets a ticket be born with a due date. CreateTicketParams has
 	// carried the field all along and TicketService.Create writes it to the
 	// model; nothing ever populated it from a request, so it was dead.
@@ -187,7 +186,6 @@ type updateTicketRequest struct {
 	Title       *string                          `json:"title"`
 	Description *string                          `json:"description"`
 	Priority    *tickets.Priority                `json:"priority"`
-	Labels      []string                         `json:"labels,omitempty"`
 	DueAt       respond.OptionalField[time.Time] `json:"due_at"`
 }
 
@@ -207,9 +205,6 @@ func applyTicketPatch(existing *tickets.Ticket, req updateTicketRequest) {
 	}
 	if req.Priority != nil {
 		existing.Priority = *req.Priority
-	}
-	if req.Labels != nil {
-		existing.Labels = req.Labels
 	}
 	// Only when the key was actually present. A nil Value with Set true is an
 	// explicit null and does mean "clear it" — that is how the due-date control
@@ -304,7 +299,6 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Priority:    req.Priority,
 		ReporterID:  claims.UserID,
 		AssigneeID:  req.AssigneeID,
-		Labels:      req.Labels,
 		DueAt:       req.DueAt,
 	}
 	if h.tiers != nil {
@@ -695,7 +689,21 @@ func (h *Handler) gateTicketTransition(
 		return workflow.TransitionDecision{}, false
 	}
 
-	gated, err := h.tiers.Evaluate(r.Context(), TicketGateRequest(orgID, spaceID, actorID, current, target))
+	// The guard snapshot carries the ticket's tag slugs: field_required on
+	// 'tags' reads entity_tags now, not a column on the row it was loaded
+	// with. A read failure refuses the transition — evaluating a tag guard
+	// against an unknowable tag set would be a silent permit or a silent
+	// refusal, and both are wrong.
+	ticketTags, err := h.tags.ForEntity(r.Context(), tags.EntityRef{
+		Type: tags.EntityTicket, ID: current.ID, SpaceID: spaceID,
+	})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"the ticket's tags could not be read")
+		return workflow.TransitionDecision{}, false
+	}
+
+	gated, err := h.tiers.Evaluate(r.Context(), TicketGateRequest(orgID, spaceID, actorID, current, target, tags.SlugsOf(ticketTags)))
 	if err != nil {
 		handleTierError(w, r, err)
 		return workflow.TransitionDecision{}, false
@@ -715,7 +723,7 @@ func (h *Handler) gateTicketTransition(
 // than the mutation it feeds, and the resulting disagreement is invisible: the
 // picker offers a move and the server refuses it, with nothing to point at.
 func TicketGateRequest(
-	orgID, spaceID, actorID uuid.UUID, current *tickets.Ticket, target tickets.Status,
+	orgID, spaceID, actorID uuid.UUID, current *tickets.Ticket, target tickets.Status, tagSlugs []string,
 ) tiergate.Request {
 	return tiergate.Request{
 		OrgID:          orgID,
@@ -730,7 +738,7 @@ func TicketGateRequest(
 			AssigneeID:  current.AssigneeID,
 			DueAt:       current.DueAt,
 			Description: current.Description,
-			Labels:      current.Labels,
+			Tags:        tagSlugs,
 		},
 	}
 }

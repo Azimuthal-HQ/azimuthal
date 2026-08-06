@@ -95,14 +95,14 @@ func TestTierCRUD_PostFunctionLifecycle(t *testing.T) {
 	f := setupTierAPI(t)
 
 	id := f.createTier(t, "post-functions", map[string]any{
-		"kind": "set_field", "field_key": "labels", "field_value": "escalated",
+		"kind": "set_field", "field_key": "tags", "field_value": "escalated",
 	})
 
 	listed := f.listTier(t, "post-functions")
 	require.Len(t, listed, 1)
 	require.Equal(t, id, listed[0]["id"])
 	require.Equal(t, "set_field", listed[0]["kind"])
-	require.Equal(t, "labels", listed[0]["field_key"])
+	require.Equal(t, "tags", listed[0]["field_key"])
 
 	r := f.ts.delete(t, f.tierBase("post-functions")+"/"+id, true)
 	require.Equal(t, http.StatusNoContent, r.StatusCode, "%s", r.Body)

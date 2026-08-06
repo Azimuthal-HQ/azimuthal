@@ -1598,7 +1598,6 @@ func TestAdapterNeg_ItemWrites_LandOnTheRowAndOnlyOnThatRow(t *testing.T) {
 	target.Priority = "high"
 	target.Kind = "bug"
 	target.AssigneeID = &assignee
-	target.Labels = []string{"regression"}
 	target.Rank = "m"
 	require.NoError(t, a.Update(ctx, target))
 
@@ -1609,7 +1608,6 @@ func TestAdapterNeg_ItemWrites_LandOnTheRowAndOnlyOnThatRow(t *testing.T) {
 	require.Equal(t, "in_progress", got.Status)
 	require.Equal(t, "high", got.Priority)
 	require.Equal(t, "bug", got.Kind)
-	require.Equal(t, []string{"regression"}, got.Labels)
 	require.Equal(t, "m", got.Rank)
 	require.NotNil(t, got.AssigneeID)
 	require.Equal(t, assignee, *got.AssigneeID)

@@ -53,13 +53,134 @@ ALTER TABLE page_tags RENAME TO entity_tags;
 ALTER INDEX page_tags_tag_idx RENAME TO entity_tags_tag_idx;
 ALTER TABLE entity_tags RENAME CONSTRAINT page_tags_tag_id_fkey TO entity_tags_tag_id_fkey;
 
+-- ── labels TEXT[] converges onto entity tags ─────────────────────────────────
+-- tickets.labels and project_items.labels (migrations 004/010/014) were a
+-- write-only field: four handlers and a workflow post-function wrote them, and
+-- no read path — no filter, no search arm, no React component — ever showed
+-- them to anybody. Their meaning moves here.
+--
+-- Backfill first: every stored label becomes an entity tag, so nothing a user
+-- typed is dropped by the convergence. The normalization rule mirrors
+-- itemtypes.Slugify — the repository's one slug helper, whose output the
+-- tags_slug_format CHECK is written against — as closely as SQL can state it:
+--
+--   * lowercase;
+--   * every run of characters outside [a-z0-9] collapses to one underscore
+--     (Slugify treats '_' itself as a separator too, so runs containing it
+--     collapse the same way);
+--   * leading and trailing underscores are trimmed;
+--   * a label that normalises to nothing — pure punctuation, pure non-ASCII —
+--     is dropped, exactly as Slugify maps it to the empty slug.
+--
+-- Labels that normalise alike collapse to ONE tag. The display name kept is
+-- the alphabetically first spelling: the array elements carry no authorship
+-- order across rows, so "first typed" is not knowable here, and a
+-- deterministic choice beats a plan-dependent one. Where the slug already
+-- exists as a tag, the existing name wins, same as UpsertTag.
+
+WITH labelled AS (
+    SELECT 'ticket'::text AS entity_type, t.id AS entity_id, s.org_id,
+           unnest(t.labels) AS label
+    FROM tickets t JOIN spaces s ON s.id = t.space_id
+    UNION ALL
+    SELECT 'project_item', pi.id, s.org_id, unnest(pi.labels)
+    FROM project_items pi JOIN spaces s ON s.id = pi.space_id
+), normalised AS (
+    SELECT entity_type, entity_id, org_id, label,
+           btrim(regexp_replace(lower(label), '[^a-z0-9]+', '_', 'g'), '_') AS slug
+    FROM labelled
+), usable AS (
+    SELECT * FROM normalised WHERE slug ~ '^[a-z0-9][a-z0-9_]*$'
+), first_spelling AS (
+    SELECT DISTINCT ON (org_id, slug) org_id, slug, label
+    FROM usable
+    ORDER BY org_id, slug, label
+), minted AS (
+    INSERT INTO tags (org_id, slug, name)
+    SELECT org_id, slug, label FROM first_spelling
+    ON CONFLICT (org_id, slug) DO NOTHING
+    RETURNING id, org_id, slug
+)
+INSERT INTO entity_tags (entity_type, entity_id, tag_id)
+SELECT DISTINCT u.entity_type, u.entity_id, tg.id
+FROM usable u
+-- A data-modifying CTE's rows are not visible to reads of the same table in
+-- the same statement, so the join takes minted's RETURNING for the tags this
+-- statement created and the table's snapshot for the ones that already
+-- existed.
+JOIN (SELECT id, org_id, slug FROM minted
+      UNION
+      SELECT id, org_id, slug FROM tags) tg
+  ON tg.org_id = u.org_id AND tg.slug = u.slug
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE tickets DROP COLUMN labels;
+ALTER TABLE project_items DROP COLUMN labels;
+
+-- The workflow vocabulary converts rather than dying with the column: a
+-- stored guard or post-function on 'labels' would otherwise become "field not
+-- present" — refusing every transition that carries it, forever, with no
+-- error a person could act on. The field key becomes 'tags', backed by
+-- entity_tags. Constraint first, rows second, constraint back third: the old
+-- CHECK does not admit 'tags' and the new one does not admit 'labels', so no
+-- ordering with the constraint in place lets the UPDATE run.
+
+ALTER TABLE workflow_transition_guards
+    DROP CONSTRAINT workflow_transition_guards_field_key_valid;
+UPDATE workflow_transition_guards SET field_key = 'tags' WHERE field_key = 'labels';
+ALTER TABLE workflow_transition_guards
+    ADD CONSTRAINT workflow_transition_guards_field_key_valid
+    CHECK (field_key IS NULL OR field_key IN (
+        'assignee_id',
+        'due_at',
+        'description',
+        'tags'
+    ));
+
+ALTER TABLE workflow_transition_post_functions
+    DROP CONSTRAINT workflow_transition_post_functions_field_key_valid;
+UPDATE workflow_transition_post_functions SET field_key = 'tags' WHERE field_key = 'labels';
+ALTER TABLE workflow_transition_post_functions
+    ADD CONSTRAINT workflow_transition_post_functions_field_key_valid
+    CHECK (field_key IS NULL OR field_key IN ('due_at', 'tags'));
+
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
 
--- Lossy: associations carried by tickets and project items have no
--- representation in the page-only shape and are dropped with the columns.
+-- LOSSY, in both halves, and deliberately stated rather than implied:
+--
+--   * ticket and project_item tag associations have no representation in the
+--     page-only shape and are deleted below;
+--   * the labels columns come back EMPTY — the up migration folded their
+--     values into org tags, and unpicking "which tag row came from which
+--     array" is not recorded anywhere. A round trip down and up therefore
+--     loses every pre-migration label value.
+
+-- The workflow vocabulary converts back first, while the rows still exist.
+ALTER TABLE workflow_transition_guards
+    DROP CONSTRAINT workflow_transition_guards_field_key_valid;
+UPDATE workflow_transition_guards SET field_key = 'labels' WHERE field_key = 'tags';
+ALTER TABLE workflow_transition_guards
+    ADD CONSTRAINT workflow_transition_guards_field_key_valid
+    CHECK (field_key IS NULL OR field_key IN (
+        'assignee_id',
+        'due_at',
+        'description',
+        'labels'
+    ));
+
+ALTER TABLE workflow_transition_post_functions
+    DROP CONSTRAINT workflow_transition_post_functions_field_key_valid;
+UPDATE workflow_transition_post_functions SET field_key = 'labels' WHERE field_key = 'tags';
+ALTER TABLE workflow_transition_post_functions
+    ADD CONSTRAINT workflow_transition_post_functions_field_key_valid
+    CHECK (field_key IS NULL OR field_key IN ('due_at', 'labels'));
+
+ALTER TABLE tickets ADD COLUMN labels TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE project_items ADD COLUMN labels TEXT[] NOT NULL DEFAULT '{}';
+
 DELETE FROM entity_tags WHERE entity_type <> 'page';
 
 ALTER TABLE entity_tags RENAME CONSTRAINT entity_tags_tag_id_fkey TO page_tags_tag_id_fkey;

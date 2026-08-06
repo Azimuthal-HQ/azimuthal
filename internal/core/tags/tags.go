@@ -251,12 +251,6 @@ func (s *Service) Resolve(ctx context.Context, orgID uuid.UUID, labels []string)
 	return s.upsertAll(ctx, orgID, wanted)
 }
 
-// labelledSlug pairs a tag's identity with the spelling that produced it.
-type labelledSlug struct {
-	slug  string
-	label string
-}
-
 // distinctTags normalises labels and drops duplicates by SLUG rather than by
 // text, reporting the first label that cannot become a tag.
 //
@@ -265,8 +259,8 @@ type labelledSlug struct {
 // Upsert three times for it and would count it three times against the
 // ceiling. The first spelling in order is the one carried forward, matching
 // what the table itself does on conflict.
-func distinctTags(labels []string) (wanted []labelledSlug, invalid string, hadInvalid bool) {
-	out := make([]labelledSlug, 0, len(labels))
+func distinctTags(labels []string) (wanted []SlugLabel, invalid string, hadInvalid bool) {
+	out := make([]SlugLabel, 0, len(labels))
 	seen := make(map[string]bool, len(labels))
 	for _, raw := range labels {
 		label := normaliseLabel(raw)
@@ -278,17 +272,17 @@ func distinctTags(labels []string) (wanted []labelledSlug, invalid string, hadIn
 			continue
 		}
 		seen[slug] = true
-		out = append(out, labelledSlug{slug: slug, label: label})
+		out = append(out, SlugLabel{Slug: slug, Label: label})
 	}
 	return out, "", false
 }
 
-func (s *Service) upsertAll(ctx context.Context, orgID uuid.UUID, wanted []labelledSlug) ([]Tag, error) {
+func (s *Service) upsertAll(ctx context.Context, orgID uuid.UUID, wanted []SlugLabel) ([]Tag, error) {
 	out := make([]Tag, 0, len(wanted))
 	for _, w := range wanted {
-		tag, err := s.repo.Upsert(ctx, orgID, w.slug, w.label)
+		tag, err := s.repo.Upsert(ctx, orgID, w.Slug, w.Label)
 		if err != nil {
-			return nil, fmt.Errorf("creating tag %q: %w", w.slug, err)
+			return nil, fmt.Errorf("creating tag %q: %w", w.Slug, err)
 		}
 		out = append(out, tag)
 	}
@@ -399,41 +393,56 @@ func (s *Service) EntitiesWithSlug(ctx context.Context, orgID uuid.UUID, slug st
 // for a publish that succeeded leaves a page missing a chip it should have. The
 // harmless failure goes outside the transaction.
 func (s *Service) ResolveForPublish(ctx context.Context, orgID uuid.UUID, labels []string) ([]uuid.UUID, error) {
-	// Labels that cannot become a tag are dropped here rather than refused. A
+	// Labels that cannot become a tag are dropped rather than refused — a
 	// publish is not the moment to reject a whole page over a stray `#!!!` in
-	// its body, and Resolve's error exists for the explicit editor path, where a
-	// person is looking at the field they typed into.
+	// its body — and the lenient normalisation is the shared helper, so this
+	// path and the workflow applier cannot drift apart. The dedupe runs before
+	// the ceiling there, and the ordering matters: counting raw labels would
+	// drop everything past the fiftieth spelling even when they named far
+	// fewer tags, silently, since a publish reports no truncation. The
+	// document walker's own ceiling (doc.maxInlineTagsPerDocument) bounds the
+	// input to the same number, so after deduping the cap cannot bite at all;
+	// it stays as the belt to that walker's braces, because the two live in
+	// different packages and only one of them is the one a hostile paste
+	// reaches first.
+	resolved, err := s.upsertAll(ctx, orgID, LenientLabelSlugs(labels))
+	if err != nil {
+		return nil, err
+	}
+	return idsOf(resolved), nil
+}
+
+// SlugLabel pairs a tag's identity with the display spelling that produced it.
+type SlugLabel struct {
+	Slug  string
+	Label string
+}
+
+// LenientLabelSlugs normalises a label list the way the lenient consumers do —
+// the workflow set_field:tags applier today, the same shape ResolveForPublish
+// uses inside its transaction split. Labels are slugified with the one helper,
+// deduplicated by slug with the first spelling kept, capped at
+// [MaxTagsPerEntity], and a label that cannot become a tag is DROPPED rather
+// than refused: the values reaching this path are stored configuration or
+// document content, and the person triggering them is not the person who can
+// fix them. The strict path for people looking at the field they typed into is
+// [Service.Resolve].
+func LenientLabelSlugs(labels []string) []SlugLabel {
 	usable := make([]string, 0, len(labels))
 	for _, label := range labels {
 		if Slugify(normaliseLabel(label)) != "" {
 			usable = append(usable, label)
 		}
 	}
-
-	// Deduped BEFORE the ceiling is applied, and the ordering matters. Counting
-	// raw labels would have dropped everything past the fiftieth spelling even
-	// when they named far fewer tags — and silently, since a publish reports no
-	// truncation. The document walker's own ceiling
-	// (doc.maxInlineTagsPerDocument) bounds the input to the same number, so
-	// after deduping this one cannot bite at all; it stays as the belt to that
-	// walker's braces, because the two live in different packages and only one
-	// of them is the one a hostile paste reaches first.
 	wanted, _, hadInvalid := distinctTags(usable)
 	if hadInvalid {
-		// Unreachable: every label was slug-checked above. Treated as no tags
-		// rather than as a failed publish, because the page's content is not in
-		// question either way.
-		return nil, nil
+		// Unreachable: every label was slug-checked above.
+		return nil
 	}
 	if len(wanted) > MaxTagsPerEntity {
 		wanted = wanted[:MaxTagsPerEntity]
 	}
-
-	resolved, err := s.upsertAll(ctx, orgID, wanted)
-	if err != nil {
-		return nil, err
-	}
-	return idsOf(resolved), nil
+	return wanted
 }
 
 // normaliseLabel trims a label and bounds its stored length. A tag's display
@@ -467,6 +476,16 @@ func idsOf(list []Tag) []uuid.UUID {
 	out := make([]uuid.UUID, 0, len(list))
 	for _, t := range list {
 		out = append(out, t.ID)
+	}
+	return out
+}
+
+// SlugsOf reduces a tag list to its slugs — the identity form the workflow
+// guard snapshot carries.
+func SlugsOf(list []Tag) []string {
+	out := make([]string, 0, len(list))
+	for _, t := range list {
+		out = append(out, t.Slug)
 	}
 	return out
 }

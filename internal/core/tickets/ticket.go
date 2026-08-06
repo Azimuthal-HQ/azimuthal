@@ -30,7 +30,6 @@ type Ticket struct {
 	ReporterID  *uuid.UUID `json:"reporter_id"`
 	RequesterID *uuid.UUID `json:"requester_id"`
 	AssigneeID  *uuid.UUID `json:"assignee_id"`
-	Labels      []string   `json:"labels"`
 	DueAt       *time.Time `json:"due_at"`
 	ResolvedAt  *time.Time `json:"resolved_at"`
 	Rank        string     `json:"rank"`
@@ -101,7 +100,6 @@ type CreateTicketParams struct {
 	Priority    Priority
 	ReporterID  uuid.UUID
 	AssigneeID  *uuid.UUID
-	Labels      []string
 	DueAt       *time.Time
 
 	// Status and WorkflowStateID place the new ticket in its space's workflow.
@@ -175,7 +173,6 @@ func (s *TicketService) Create(ctx context.Context, params CreateTicketParams) (
 		// carry a requester instead. See the Ticket doc comment.
 		ReporterID:      &params.ReporterID,
 		AssigneeID:      params.AssigneeID,
-		Labels:          params.Labels,
 		DueAt:           params.DueAt,
 		Rank:            "",
 		WorkflowStateID: params.WorkflowStateID,

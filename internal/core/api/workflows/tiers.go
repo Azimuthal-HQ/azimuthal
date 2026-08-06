@@ -13,6 +13,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
@@ -757,11 +758,15 @@ func (h *Handler) entityGateRequest(
 		}
 		req.CurrentStatus = t.Status
 		req.CurrentStateID = goUUIDPtr(t.WorkflowStateID)
+		ticketTags, ok := h.entityTagSlugs(w, r, tags.EntityTicket, entityID, spaceID)
+		if !ok {
+			return tiergate.Request{}, false
+		}
 		req.Entity = workflow.EntitySnapshot{
 			AssigneeID:  goUUIDPtr(t.AssigneeID),
 			DueAt:       goTimePtr(t.DueAt),
 			Description: t.Description,
-			Labels:      t.Labels,
+			Tags:        ticketTags,
 		}
 	case workflow.ApprovalEntityItem:
 		i, err := h.q.GetProjectItemInSpace(r.Context(), generated.GetProjectItemInSpaceParams{
@@ -773,11 +778,15 @@ func (h *Handler) entityGateRequest(
 		}
 		req.CurrentStatus = i.Status
 		req.CurrentStateID = goUUIDPtr(i.WorkflowStateID)
+		itemTags, ok := h.entityTagSlugs(w, r, tags.EntityProjectItem, entityID, spaceID)
+		if !ok {
+			return tiergate.Request{}, false
+		}
 		req.Entity = workflow.EntitySnapshot{
 			AssigneeID:  goUUIDPtr(i.AssigneeID),
 			DueAt:       goTimePtr(i.DueAt),
 			Description: i.Description,
-			Labels:      i.Labels,
+			Tags:        itemTags,
 		}
 	default:
 		// Unreachable while ParseApprovalEntityType is the only way in, and kept
@@ -1082,4 +1091,27 @@ func (h *Handler) logApprovalDecision(r *http.Request, a workflow.Approval) {
 		meta["decision"] = string(*a.Decision)
 	}
 	h.logTierEvent(r, audit.EventTypeWorkflowApprovalDecided, "approval", a.ID, meta)
+}
+
+// entityTagSlugs reads the entity's tag slugs for a guard snapshot, answering
+// the request itself on failure. field_required on 'tags' reads entity_tags
+// (migration 055), not a column on the entity row, and an unknowable tag set
+// must refuse the evaluation rather than evaluate against nothing.
+func (h *Handler) entityTagSlugs(
+	w http.ResponseWriter, r *http.Request,
+	entityType tags.EntityType, entityID, spaceID uuid.UUID,
+) ([]string, bool) {
+	rows, err := h.q.ListTagsForEntity(r.Context(), generated.ListTagsForEntityParams{
+		EntityType: string(entityType), EntityID: entityID, SpaceID: spaceID,
+	})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"the entity's tags could not be read")
+		return nil, false
+	}
+	slugs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		slugs = append(slugs, row.Slug)
+	}
+	return slugs, true
 }

@@ -180,7 +180,6 @@ type SwaggerCreateTicketRequest struct {
 	Description string     `json:"description" example:"The login button does not work on mobile"`
 	Priority    string     `json:"priority" example:"medium"`
 	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty" example:"bug,frontend"`
 	DueAt       *time.Time `json:"due_at,omitempty"`
 }
 
@@ -191,7 +190,6 @@ type SwaggerUpdateTicketRequest struct {
 	Title       string   `json:"title" example:"Fix login button (updated)"`
 	Description string   `json:"description" example:"Updated description"`
 	Priority    string   `json:"priority" example:"high"`
-	Labels      []string `json:"labels,omitempty"`
 	// DueAt is RFC3339. Sending null clears the stored due date; omitting the
 	// key leaves it alone.
 	DueAt *time.Time `json:"due_at,omitempty"`
@@ -254,7 +252,6 @@ type SwaggerTicketResponse struct {
 	RequesterID *uuid.UUID                `json:"requester_id"`
 	Requester   *SwaggerRequesterIdentity `json:"requester"`
 	AssigneeID  *uuid.UUID                `json:"assignee_id,omitempty"`
-	Labels      []string                  `json:"labels"`
 	DueAt       *time.Time                `json:"due_at,omitempty"`
 	ResolvedAt  *time.Time                `json:"resolved_at,omitempty"`
 	Rank        string                    `json:"rank" example:"0|aaaaaa:"`
@@ -301,7 +298,6 @@ type SwaggerCreateItemRequest struct {
 	Priority    string     `json:"priority" example:"medium"`
 	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
 	SprintID    *uuid.UUID `json:"sprint_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
 	DueAt       *time.Time `json:"due_at,omitempty"`
 }
 
@@ -316,7 +312,6 @@ type SwaggerUpdateItemRequest struct {
 	Kind       string     `json:"kind" example:"bug"`
 	Priority   string     `json:"priority" example:"high"`
 	AssigneeID *uuid.UUID `json:"assignee_id,omitempty"`
-	Labels     []string   `json:"labels,omitempty"`
 	DueAt      *time.Time `json:"due_at,omitempty"`
 }
 

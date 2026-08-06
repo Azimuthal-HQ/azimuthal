@@ -17,6 +17,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
@@ -694,12 +695,16 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 		return
 	}
 
+	ticketTags, ok := h.entityTagSlugs(w, r, tags.EntityTicket, ticketID, spaceID)
+	if !ok {
+		return
+	}
 	gated, ok := h.gate(w, r, spaceID, workflow.ApprovalEntityTicket, ticketID,
 		ticket.Status, targetState.Name, goUUIDPtr(ticket.WorkflowStateID), workflow.EntitySnapshot{
 			AssigneeID:  goUUIDPtr(ticket.AssigneeID),
 			DueAt:       goTimePtr(ticket.DueAt),
 			Description: ticket.Description,
-			Labels:      ticket.Labels,
+			Tags:        ticketTags,
 		})
 	if !ok {
 		return
@@ -778,12 +783,16 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	itemTags, ok := h.entityTagSlugs(w, r, tags.EntityProjectItem, itemID, spaceID)
+	if !ok {
+		return
+	}
 	gated, ok := h.gate(w, r, spaceID, workflow.ApprovalEntityItem, itemID,
 		item.Status, targetState.Name, goUUIDPtr(item.WorkflowStateID), workflow.EntitySnapshot{
 			AssigneeID:  goUUIDPtr(item.AssigneeID),
 			DueAt:       goTimePtr(item.DueAt),
 			Description: item.Description,
-			Labels:      item.Labels,
+			Tags:        itemTags,
 		})
 	if !ok {
 		return

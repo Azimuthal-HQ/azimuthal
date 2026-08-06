@@ -73,7 +73,7 @@ vi.mock('../../../lib/api', async (importOriginal) => {
     useWikiRevisions: () => ({ data: [], isLoading: false }),
     // WikiPage renders the page's tag chips under the title, and PageTags
     // fetches its own. Unmocked it reaches useQuery with no provider above it.
-    usePageTags: () => ({ data: [], isLoading: false, error: null }),
+    useEntityTags: () => ({ data: [], isLoading: false, error: null }),
     usePageDocument: usePageDocumentMock,
     useSpaceDrafts: () => ({ data: [] }),
     useMe: () => ({ data: { id: 'u1', org_id: 'org-1', display_name: 'T' } }),

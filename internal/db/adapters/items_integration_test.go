@@ -35,41 +35,10 @@ func TestCreateItem_MinimumFields(t *testing.T) {
 		Status:     tickets.StatusOpen,
 		Priority:   tickets.PriorityMedium,
 		ReporterID: &reporter,
-		// Labels intentionally nil — must not cause SQLSTATE 23502
 	}
 
 	err := adapter.Create(context.Background(), ticket)
 	require.NoError(t, err, "creating ticket with minimum fields must succeed")
-}
-
-// TestCreateItem_LabelsDefaultsToEmptyArray verifies that nil labels are stored
-// as an empty array, not null.
-func TestCreateItem_LabelsDefaultsToEmptyArray(t *testing.T) {
-	db := testutil.NewTestDB(t)
-	org := testutil.CreateTestOrg(t, db.Pool)
-	user := testutil.CreateTestUser(t, db.Pool, org.ID)
-	space := testutil.CreateTestSpace(t, db.Pool, org.ID, user.ID, "beacon")
-	queries := generated.New(db.Pool)
-	adapter := adapters.NewTicketAdapter(queries)
-
-	reporter := user.ID
-	ticket := &tickets.Ticket{
-		ID:         uuid.New(),
-		SpaceID:    space.ID,
-		Title:      "Labels test",
-		Status:     tickets.StatusOpen,
-		Priority:   tickets.PriorityMedium,
-		ReporterID: &reporter,
-		Labels:     nil, // nil — adapter must convert to []
-	}
-
-	err := adapter.Create(context.Background(), ticket)
-	require.NoError(t, err)
-
-	fetched, err := adapter.GetByID(context.Background(), ticket.ID)
-	require.NoError(t, err)
-	require.NotNil(t, fetched.Labels, "labels must not be nil")
-	require.Empty(t, fetched.Labels, "labels must be empty array, not null")
 }
 
 // TestCreateItem_PriorityStoredAsLowercase verifies priority round-trips correctly.
@@ -146,7 +115,6 @@ func TestCreateItem_AllFieldsRoundTrip(t *testing.T) {
 		Priority:    tickets.PriorityUrgent,
 		ReporterID:  &reporterID,
 		AssigneeID:  &assigneeID,
-		Labels:      []string{"bug", "critical"},
 	}
 
 	err := adapter.Create(context.Background(), ticket)
@@ -161,7 +129,6 @@ func TestCreateItem_AllFieldsRoundTrip(t *testing.T) {
 	require.Equal(t, ticket.ReporterID, fetched.ReporterID)
 	require.NotNil(t, fetched.AssigneeID)
 	require.Equal(t, assigneeID, *fetched.AssigneeID)
-	require.Equal(t, []string{"bug", "critical"}, fetched.Labels)
 }
 
 // TestCreateItem_AllThreeSpaceTypes verifies items can be created in all space types.
@@ -251,7 +218,6 @@ func TestCreateProjectItem_MinimumFields(t *testing.T) {
 		Status:     "open",
 		Priority:   "medium",
 		ReporterID: user.ID,
-		// Labels nil — must succeed
 	}
 
 	err := adapter.Create(context.Background(), item)

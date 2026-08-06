@@ -178,7 +178,6 @@ type createItemRequest struct {
 	Priority    string     `json:"priority"`
 	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
 	SprintID    *uuid.UUID `json:"sprint_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
 	DueAt       *time.Time `json:"due_at,omitempty"`
 }
 
@@ -213,7 +212,6 @@ type updateItemRequest struct {
 	Kind        *string                          `json:"kind"`
 	Priority    *string                          `json:"priority"`
 	AssigneeID  respond.OptionalField[uuid.UUID] `json:"assignee_id"`
-	Labels      []string                         `json:"labels,omitempty"`
 	DueAt       respond.OptionalField[time.Time] `json:"due_at"`
 }
 
@@ -388,7 +386,6 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		ReporterID:  claims.UserID,
 		AssigneeID:  req.AssigneeID,
 		SprintID:    req.SprintID,
-		Labels:      req.Labels,
 		DueAt:       req.DueAt,
 	}
 	// Born INSIDE the space's state machine, both position columns written
@@ -474,9 +471,6 @@ func applyItemPatch(existing *projects.Item, req updateItemRequest) {
 	}
 	if req.Priority != nil {
 		existing.Priority = *req.Priority
-	}
-	if req.Labels != nil {
-		existing.Labels = req.Labels
 	}
 	// Only when the key was actually present. A nil Value with Set true is an
 	// explicit null and does mean "clear it" — that is how item detail
@@ -712,7 +706,19 @@ func (h *Handler) gateItemTransition(
 		return workflow.TransitionDecision{}, false
 	}
 
-	gated, err := h.tiers.Evaluate(r.Context(), ItemGateRequest(orgID, spaceID, claims.UserID, current, target))
+	// See the ticket twin: the guard snapshot's tag slugs come from
+	// entity_tags, and an unreadable tag set refuses the transition rather
+	// than evaluating a tag guard against nothing.
+	itemTags, err := h.tags.ForEntity(r.Context(), tags.EntityRef{
+		Type: tags.EntityProjectItem, ID: current.ID, SpaceID: spaceID,
+	})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"the item's tags could not be read")
+		return workflow.TransitionDecision{}, false
+	}
+
+	gated, err := h.tiers.Evaluate(r.Context(), ItemGateRequest(orgID, spaceID, claims.UserID, current, target, tags.SlugsOf(itemTags)))
 	if err != nil {
 		handleTierError(w, r, err)
 		return workflow.TransitionDecision{}, false
@@ -730,7 +736,7 @@ func (h *Handler) gateItemTransition(
 // entity snapshot the mutation is checked against, or the picker and the server
 // disagree about the same item.
 func ItemGateRequest(
-	orgID, spaceID, actorID uuid.UUID, current *projects.Item, target string,
+	orgID, spaceID, actorID uuid.UUID, current *projects.Item, target string, tagSlugs []string,
 ) tiergate.Request {
 	return tiergate.Request{
 		OrgID:          orgID,
@@ -745,7 +751,7 @@ func ItemGateRequest(
 			AssigneeID:  current.AssigneeID,
 			DueAt:       current.DueAt,
 			Description: current.Description,
-			Labels:      current.Labels,
+			Tags:        tagSlugs,
 		},
 	}
 }

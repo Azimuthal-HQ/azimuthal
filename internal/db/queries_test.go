@@ -243,7 +243,7 @@ func TestItemListAndUpdate(t *testing.T) {
 		ID: uuid.New(), SpaceID: space.ID, Kind: "bug",
 		Title: "Fix regression", Description: "",
 		Status: "open", Priority: "medium", ReporterID: user.ID,
-		Labels: []string{}, Rank: "b",
+		Rank: "b",
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectItem: %v", err)
@@ -280,7 +280,7 @@ func TestItemListAndUpdate(t *testing.T) {
 	_, err = q.UpdateProjectItem(ctx, generated.UpdateProjectItemParams{
 		ID: item.ID, Title: "Fix regression v2", Description: "full update",
 		Status: "in_progress", Priority: "high",
-		AssigneeID: assigneeUID, Labels: []string{"backend"}, Rank: "b",
+		AssigneeID: assigneeUID, Rank: "b",
 	})
 	if err != nil {
 		t.Fatalf("UpdateProjectItem: %v", err)
@@ -313,7 +313,7 @@ func TestItemRelations(t *testing.T) {
 	space := setupSpace(t, q, org.ID, user.ID, "vector")
 	from, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "From",
-		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
+		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Rank: "a",
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectItem from: %v", err)
@@ -325,7 +325,7 @@ func TestItemRelations(t *testing.T) {
 	}()
 	to, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "To",
-		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "b",
+		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Rank: "b",
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectItem to: %v", err)
@@ -446,7 +446,7 @@ func TestSprints(t *testing.T) {
 	}
 	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "Sprint task",
-		Description: "", Status: "open", Priority: "medium", ReporterID: user.ID, Labels: []string{}, Rank: "a",
+		Description: "", Status: "open", Priority: "medium", ReporterID: user.ID, Rank: "a",
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectItem for sprint: %v", err)
@@ -570,7 +570,7 @@ func TestComments(t *testing.T) {
 	space := setupSpace(t, q, org.ID, user.ID, "vector")
 	item, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: space.ID, Kind: "task", Title: "Comment target",
-		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Labels: []string{}, Rank: "a",
+		Description: "", Status: "open", Priority: "low", ReporterID: user.ID, Rank: "a",
 	})
 	if err != nil {
 		t.Fatalf("CreateProjectItem: %v", err)

@@ -638,7 +638,7 @@ function PostFunctionForm({
 }) {
   const [kind, setKind] = useState<PostFunctionKind>('assign_to');
   const [assignee, setAssignee] = useState<PickedSubject | null>(null);
-  const [fieldKey, setFieldKey] = useState<PostFieldKey>('labels');
+  const [fieldKey, setFieldKey] = useState<PostFieldKey>('tags');
   const [fieldValue, setFieldValue] = useState('');
   const create = useCreateTransitionPostFunction(orgId, workflowId, transitionId);
 
@@ -707,7 +707,7 @@ function PostFunctionForm({
               value={fieldValue}
               onChange={(e) => setFieldValue(e.target.value)}
               placeholder={
-                fieldKey === 'labels' ? 'label-one, label-two' : '2026-12-31T00:00:00Z'
+                fieldKey === 'tags' ? 'tag-one, tag-two' : '2026-12-31T00:00:00Z'
               }
             />
           </>
@@ -716,8 +716,8 @@ function PostFunctionForm({
 
       {kind === 'set_field' && (
         <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">
-          {fieldKey === 'labels'
-            ? 'Comma separated. This REPLACES the item’s labels rather than adding to them.'
+          {fieldKey === 'tags'
+            ? 'Comma separated. This REPLACES the item’s tags rather than adding to them.'
             : 'RFC3339, for example 2026-12-31T00:00:00Z. Leave empty to clear the due date.'}
         </p>
       )}

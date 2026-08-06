@@ -10,10 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
-	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db"
-	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
 
@@ -423,7 +420,6 @@ func TestItemStatusUpdateAndSoftDelete(t *testing.T) {
 		Status:      "open",
 		Priority:    "high",
 		ReporterID:  user.ID,
-		Labels:      []string{"backend"},
 		Rank:        "a",
 	})
 	if err != nil {
@@ -449,136 +445,6 @@ func TestItemStatusUpdateAndSoftDelete(t *testing.T) {
 	_, err = q.GetProjectItemByID(ctx, item.ID)
 	if err == nil {
 		t.Error("expected error after soft delete")
-	}
-}
-
-func TestCreateItemWithoutLabels(t *testing.T) {
-	pool, cleanup := testPool(t)
-	defer cleanup()
-	ctx := context.Background()
-	q := generated.New(pool)
-
-	org := setupOrg(t, q, uuid.New().String()[:8])
-	user := setupUser(t, q, org.ID, "labels-test@example.com")
-	space := setupSpace(t, q, org.ID, user.ID, "vector")
-
-	// Create ticket with minimum fields — no labels provided (nil in Go → empty array).
-	item, err := q.CreateTicket(ctx, generated.CreateTicketParams{
-		ID:          uuid.New(),
-		SpaceID:     space.ID,
-		Number:      1,
-		Title:       "No labels ticket",
-		Description: "",
-		Status:      "open",
-		Priority:    "medium",
-		ReporterID:  pgtype.UUID{Bytes: user.ID, Valid: true},
-		Labels:      []string{},
-		Rank:        "a",
-	})
-	if err != nil {
-		t.Fatalf("CreateTicket without labels: %v", err)
-	}
-	if item.Labels == nil {
-		t.Error("expected non-nil labels slice, got nil")
-	}
-	if len(item.Labels) != 0 {
-		t.Errorf("expected empty labels, got %v", item.Labels)
-	}
-
-	// Create project item with labels provided.
-	withLabels, err := q.CreateProjectItem(ctx, generated.CreateProjectItemParams{
-		ID:          uuid.New(),
-		SpaceID:     space.ID,
-		Kind:        "task",
-		Title:       "Labelled task",
-		Description: "",
-		Status:      "open",
-		Priority:    "high",
-		ReporterID:  user.ID,
-		Labels:      []string{"backend", "urgent"},
-		Rank:        "b",
-	})
-	if err != nil {
-		t.Fatalf("CreateProjectItem with labels: %v", err)
-	}
-	if len(withLabels.Labels) != 2 {
-		t.Errorf("expected 2 labels, got %d", len(withLabels.Labels))
-	}
-	if withLabels.Labels[0] != "backend" || withLabels.Labels[1] != "urgent" {
-		t.Errorf("labels mismatch: got %v", withLabels.Labels)
-	}
-
-	// Verify via read-back.
-	fetched, err := q.GetTicketByID(ctx, item.ID)
-	if err != nil {
-		t.Fatalf("GetTicketByID: %v", err)
-	}
-	if len(fetched.Labels) != 0 {
-		t.Errorf("fetched ticket expected empty labels, got %v", fetched.Labels)
-	}
-}
-
-func TestCreateItemAdaptersDefaultLabels(t *testing.T) {
-	pool, cleanup := testPool(t)
-	defer cleanup()
-	ctx := context.Background()
-	q := generated.New(pool)
-
-	org := setupOrg(t, q, uuid.New().String()[:8])
-	user := setupUser(t, q, org.ID, "adapter-labels@example.com")
-	ticketSpace := setupSpace(t, q, org.ID, user.ID, "beacon")
-	projectSpace := setupSpace(t, q, org.ID, user.ID, "vector")
-
-	// Test ticket adapter with nil labels.
-	ticketAdapter := adapters.NewTicketAdapter(q)
-	reporterID := user.ID
-	tk := &tickets.Ticket{
-		ID:         uuid.New(),
-		SpaceID:    ticketSpace.ID,
-		Title:      "Ticket without labels",
-		Status:     tickets.StatusOpen,
-		Priority:   tickets.PriorityMedium,
-		ReporterID: &reporterID,
-		Rank:       "a",
-	}
-	if err := ticketAdapter.Create(ctx, tk); err != nil {
-		t.Fatalf("TicketAdapter.Create with nil labels: %v", err)
-	}
-	got, err := ticketAdapter.GetByID(ctx, tk.ID)
-	if err != nil {
-		t.Fatalf("TicketAdapter.GetByID: %v", err)
-	}
-	if got.Labels == nil {
-		t.Error("ticket: expected non-nil labels, got nil")
-	}
-	if len(got.Labels) != 0 {
-		t.Errorf("ticket: expected empty labels, got %v", got.Labels)
-	}
-
-	// Test project item adapter with nil labels.
-	itemAdapter := adapters.NewItemAdapter(q)
-	pi := &projects.Item{
-		ID:         uuid.New(),
-		SpaceID:    projectSpace.ID,
-		Kind:       "task",
-		Title:      "Task without labels",
-		Status:     "open",
-		Priority:   "medium",
-		ReporterID: user.ID,
-		Rank:       "a",
-	}
-	if err := itemAdapter.Create(ctx, pi); err != nil {
-		t.Fatalf("ItemAdapter.Create with nil labels: %v", err)
-	}
-	gotItem, err := itemAdapter.GetByID(ctx, pi.ID)
-	if err != nil {
-		t.Fatalf("ItemAdapter.GetByID: %v", err)
-	}
-	if gotItem.Labels == nil {
-		t.Error("project item: expected non-nil labels, got nil")
-	}
-	if len(gotItem.Labels) != 0 {
-		t.Errorf("project item: expected empty labels, got %v", gotItem.Labels)
 	}
 }
 

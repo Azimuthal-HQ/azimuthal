@@ -318,7 +318,6 @@ type ProjectItem struct {
 	ReporterID      uuid.UUID          `json:"reporter_id"`
 	AssigneeID      pgtype.UUID        `json:"assignee_id"`
 	SprintID        pgtype.UUID        `json:"sprint_id"`
-	Labels          []string           `json:"labels"`
 	DueAt           pgtype.Timestamptz `json:"due_at"`
 	ResolvedAt      pgtype.Timestamptz `json:"resolved_at"`
 	Rank            string             `json:"rank"`
@@ -492,7 +491,6 @@ type Ticket struct {
 	Priority        string             `json:"priority"`
 	ReporterID      pgtype.UUID        `json:"reporter_id"`
 	AssigneeID      pgtype.UUID        `json:"assignee_id"`
-	Labels          []string           `json:"labels"`
 	DueAt           pgtype.Timestamptz `json:"due_at"`
 	ResolvedAt      pgtype.Timestamptz `json:"resolved_at"`
 	Rank            string             `json:"rank"`

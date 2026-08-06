@@ -539,7 +539,6 @@ export interface ProjectItem {
   reporter_id: string;
   sprint_id: string | null;
   rank: string;
-  labels: string[];
   /**
    * The item's due date, or null. RFC3339 on the wire, but a calendar date in
    * meaning — render it with `formatUTCDate`, not by slicing the string, or a
@@ -1536,7 +1535,6 @@ interface CreateTicketRequest {
   description?: string;
   priority?: string;
   assignee_id?: string | null;
-  labels?: string[];
 }
 
 async function createTicket(spaceId: string, req: CreateTicketRequest): Promise<Ticket> {
@@ -1552,7 +1550,6 @@ interface UpdateTicketRequest {
   priority?: string;
   assignee_id?: string | null;
   status?: string;
-  labels?: string[];
   /**
    * The ticket's due date, RFC3339. Same three states as the item PATCH: omit
    * to leave alone, `null` to clear, a timestamp to set.
@@ -1910,7 +1907,6 @@ interface CreateProjectItemRequest {
   priority: string;
   assignee_id?: string | null;
   sprint_id?: string | null;
-  labels?: string[];
 }
 
 async function createProjectItem(
@@ -1928,7 +1924,6 @@ interface UpdateProjectItemRequest {
   description?: string;
   priority?: string;
   assignee_id?: string | null;
-  labels?: string[];
   /**
    * The item's type slug. Optional in the strict sense the Go contract
    * requires (`kind *string`): omitting the key leaves the kind unchanged,
@@ -4092,7 +4087,7 @@ export interface CreatePostFunctionRequest {
   /**
    * Encoding is per field and is parsed at WRITE time, so a bad value is
    * refused on this form rather than at transition time: `due_at` must be
-   * RFC3339, and `labels` is a comma-separated string, NOT a JSON array.
+   * RFC3339, and `tags` is a comma-separated label list, NOT a JSON array.
    */
   field_value?: string;
 }
@@ -5244,7 +5239,6 @@ export interface ViewResult {
    * unassigned, and also when the id names no user.
    */
   assignee_name: string | null;
-  labels: string[];
   /** Vector only. */
   kind?: string;
   /** Vector only. */
@@ -5269,22 +5263,23 @@ export interface ViewResultPage {
 export type { ViewResult as Result, ViewResultPage as ResultPage };
 
 /** The wire shape before null-coalescing. Go serialises an empty slice as null. */
-type RawViewResult = Omit<ViewResult, 'labels'> & { labels: string[] | null };
 interface RawResultPage {
-  results: RawViewResult[] | null;
+  results: ViewResult[] | null;
   next_cursor: string;
   has_more: boolean;
 }
 
 /**
- * toResultPage fills in what Go may serialise as null. `labels` is normalised
- * per row rather than trusted: a row rendering `labels.map(...)` on null takes
- * the whole page down, which is the failure class web/e2e/null-collections.spec.ts
- * exists for.
+ * toResultPage fills in what Go may serialise as null — the results array
+ * itself, since a page with no rows arrives as null and `.map` on null takes
+ * the whole page down, which is the failure class
+ * web/e2e/null-collections.spec.ts exists for. (It used to normalise a
+ * per-row `labels` array too; that field died with the entity-tags
+ * convergence.)
  */
 function toResultPage(raw: RawResultPage | null | undefined): ViewResultPage {
   return {
-    results: (raw?.results ?? []).map((r) => ({ ...r, labels: r.labels ?? [] })),
+    results: raw?.results ?? [],
     next_cursor: raw?.next_cursor ?? '',
     has_more: raw?.has_more ?? false,
   };

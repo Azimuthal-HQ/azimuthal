@@ -140,7 +140,7 @@ func (f *scopeFixture) mkItem(t *testing.T, spaceID uuid.UUID, title string) uui
 	row, err := f.q.CreateProjectItem(context.Background(), generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: spaceID, Kind: "task", Title: title,
 		Description: title + "-body", Status: "open", Priority: "medium",
-		ReporterID: f.ts.UserID, Labels: []string{}, Rank: "a",
+		ReporterID: f.ts.UserID, Rank: "a",
 	})
 	require.NoError(t, err)
 	// The item is placed on its space's sprint later by the sprint fixture.
@@ -176,7 +176,7 @@ func (f *scopeFixture) mkTicket(t *testing.T, spaceID uuid.UUID, number int32, t
 		ID: uuid.New(), SpaceID: spaceID, Number: number, Title: title,
 		Description: title + "-body", Status: "open", Priority: "medium",
 		ReporterID: pgtype.UUID{Bytes: reporter, Valid: true},
-		Labels:     []string{}, Rank: "a",
+		Rank:       "a",
 	})
 	require.NoError(t, err)
 	return row.ID
@@ -459,7 +459,7 @@ func TestEntitySpaceScoping_CrossOrgReadsDiscloseNothing(t *testing.T) {
 	foreignItem, err := f.q.CreateProjectItem(context.Background(), generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: otherSpace.ID, Kind: "task", Title: "FOREIGN-ORG-SECRET",
 		Description: "FOREIGN-ORG-BODY", Status: "open", Priority: "medium",
-		ReporterID: otherUser.ID, Labels: []string{}, Rank: "a",
+		ReporterID: otherUser.ID, Rank: "a",
 	})
 	require.NoError(t, err)
 

@@ -14,8 +14,8 @@
 -- in. That is a supported live state, not an error — see
 -- tiergate.Gate.InitialPosition.
 INSERT INTO tickets (id, space_id, number, title, description, status, priority,
-                     reporter_id, assignee_id, labels, due_at, rank, workflow_state_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                     reporter_id, assignee_id, due_at, rank, workflow_state_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING *;
 
 -- name: GetTicketInSpace :one
@@ -51,7 +51,7 @@ ORDER BY rank ASC, created_at DESC;
 -- name: UpdateTicket :one
 UPDATE tickets
 SET title = $2, description = $3, status = $4, priority = $5,
-    assignee_id = $6, labels = $7, due_at = $8, rank = $9,
+    assignee_id = $6, due_at = $7, rank = $8,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;

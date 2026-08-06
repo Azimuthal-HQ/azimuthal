@@ -137,7 +137,6 @@ type resultResponse struct {
 	// AssigneeName is joined in the fan-out so the UI never has to look a
 	// person up per row. Null when unassigned, or when the id names no user.
 	AssigneeName *string    `json:"assignee_name"`
-	Labels       []string   `json:"labels"`
 	Kind         *string    `json:"kind,omitempty"`
 	SprintID     *uuid.UUID `json:"sprint_id,omitempty"`
 	CreatedAt    string     `json:"created_at"`
@@ -157,10 +156,6 @@ func rfc3339Ptr(t *time.Time) *string {
 func toResultResponses(rows []views.Result) []resultResponse {
 	out := make([]resultResponse, 0, len(rows))
 	for _, r := range rows {
-		labels := r.Labels
-		if labels == nil {
-			labels = []string{}
-		}
 		// A share-only row carries no container: SpaceID stays nil so the
 		// field is omitted entirely rather than serialised as the zero UUID,
 		// which a client would happily build a link out of.
@@ -175,7 +170,7 @@ func toResultResponses(rows []views.Result) []resultResponse {
 			SpaceID: spaceID, SpaceKey: r.SpaceKey, SpaceName: r.SpaceName,
 			Status: r.Status, Priority: r.Priority,
 			AssigneeID: r.AssigneeID, AssigneeName: r.AssigneeName,
-			Labels: labels, Kind: r.Kind, SprintID: r.SprintID,
+			Kind: r.Kind, SprintID: r.SprintID,
 			CreatedAt:  r.CreatedAt.UTC().Format(time.RFC3339),
 			UpdatedAt:  r.UpdatedAt.UTC().Format(time.RFC3339),
 			DueAt:      rfc3339Ptr(r.DueAt),

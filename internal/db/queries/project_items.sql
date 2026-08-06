@@ -27,9 +27,9 @@ sp AS (
 -- NULL is still accepted and means the space has no workflow.
 INSERT INTO project_items (id, space_id, org_id, parent_id, number, item_key, kind,
                            title, description, status, priority, reporter_id,
-                           assignee_id, sprint_id, labels, due_at, rank, workflow_state_id)
+                           assignee_id, sprint_id, due_at, rank, workflow_state_id)
 SELECT $1, $2, sp.org_id, $3, seq.last_number, sp.key || '-' || seq.last_number,
-       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+       $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 FROM seq, sp
 RETURNING *;
 
@@ -106,7 +106,7 @@ ORDER BY pi.rank ASC;
 -- is stored verbatim.
 UPDATE project_items
 SET title = $2, description = $3, status = $4, priority = $5,
-    assignee_id = $6, labels = $7, due_at = $8, rank = $9, kind = $10,
+    assignee_id = $6, due_at = $7, rank = $8, kind = $9,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;

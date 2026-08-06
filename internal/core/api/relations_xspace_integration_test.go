@@ -124,7 +124,7 @@ func (f *relFixture) mkItemAs(t *testing.T, spaceID uuid.UUID, title string, rep
 	item, err := f.q.CreateProjectItem(context.Background(), generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: spaceID, Kind: "task", Title: title,
 		Description: "", Status: "open", Priority: "medium",
-		ReporterID: reporter, Labels: []string{}, Rank: "a",
+		ReporterID: reporter, Rank: "a",
 	})
 	require.NoError(t, err)
 	return item.ID
