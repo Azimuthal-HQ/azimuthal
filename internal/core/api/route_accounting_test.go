@@ -149,6 +149,7 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/audit-log/batches/{batchID}":  "org-admin-404: batch expansion",
 	"GET /api/v1/orgs/{orgID}/members/search":               "org-member: person picker over active members",
 	"GET /api/v1/orgs/{orgID}/tickets/suggest":              "org-member: ticket_ref typeahead, filtered to the caller's resolved readable spaces in-handler",
+	"GET /api/v1/orgs/{orgID}/pages/suggest":                "org-member: page-picker typeahead (A4), filtered to the caller's resolved readable spaces in-handler",
 
 	// Workflows: members read, admins mutate.
 	"GET /api/v1/orgs/{orgID}/workflows/":                                           "org-member",

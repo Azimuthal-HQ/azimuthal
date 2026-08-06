@@ -36,6 +36,10 @@ type Handler struct {
 	tags     *tags.Service
 	auditLog audit.Logger
 	shares   ShareQueries
+	// suggestions backs the org-scoped page-picker typeahead. Held separately
+	// from svc because it reads across every space the caller can see, which
+	// no space-scoped wiki route does — see wiki.PageSuggestionStore.
+	suggestions *wiki.PageSuggestionService
 }
 
 // NewHandler creates a wiki Handler.

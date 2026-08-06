@@ -15,11 +15,13 @@
  *
  * **Scope is the current space.** A tag is org-scoped; a page reference is not.
  * The list comes from `useWikiPages(spaceId)`, so `[[` offers pages in the space
- * being edited. Cross-space linking would need a cross-space page search, which
- * is a route-shape question ADR-0010 governs and a second search path this
- * module exists to avoid — so it is deliberately out of scope here rather than
- * half-built. Candidates still carry their space label, so the shape is already
- * right if that scope ever widens.
+ * being edited. A cross-space page search DOES exist now — the server-side
+ * `GET /orgs/{orgID}/pages/suggest` (A4), readable-set-scoped the way ADR-0010
+ * asks, feeding the relations page picker (`PageRefField`) — but this module
+ * deliberately does not call it: a wikilink or an include names a page in the
+ * space being edited, filtering an already-loaded space list needs no round
+ * trip per keystroke, and one in-space lookup with one server-side cross-space
+ * search is still one implementation of each idea, not two of one.
  */
 import type { WikiPage } from '../../lib/api';
 

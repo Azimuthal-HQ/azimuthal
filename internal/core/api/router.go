@@ -296,6 +296,14 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			// ordinary ticket list would not.
 			r.Get("/tickets/suggest", cfg.TicketHandler.SuggestRefs)
 
+			// Page typeahead (A4), beside the ticket one and org-scoped for
+			// the same reason: a relation target may be a page anywhere in
+			// the organisation, not one in whichever space the operator is
+			// looking at. The handler cuts results to the caller's own
+			// resolved readable set, so this reveals nothing a page list
+			// would not.
+			r.Get("/pages/suggest", cfg.WikiHandler.SuggestPages)
+
 			// Labels (org-scoped metadata; any member).
 			r.Route("/labels", func(r chi.Router) {
 				r.Get("/", cfg.ProjectHandler.ListLabels)

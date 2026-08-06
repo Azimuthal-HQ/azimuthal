@@ -1422,6 +1422,19 @@ components:
         title:
           type: string
       type: object
+    wiki.pageSuggestion:
+      properties:
+        page_id:
+          type: string
+        space_id:
+          type: string
+        space_key:
+          type: string
+        space_name:
+          type: string
+        title:
+          type: string
+      type: object
     workflow.Approval:
       properties:
         can_decide:
@@ -3828,6 +3841,55 @@ paths:
       summary: Search org members
       tags:
       - admin
+  /orgs/{orgID}/pages/suggest:
+    get:
+      description: Typeahead over Codex pages the caller can read, for the relation
+        page picker. Most recently updated first. Bounded result set. Any org member.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: 'Match text: part of a page title (empty returns the default
+          ordering)'
+        in: query
+        name: q
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/wiki.pageSuggestion'
+                type: array
+          description: Matches
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Org not found or caller not a member
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Suggest pages
+      tags:
+      - wiki
   /orgs/{orgID}/search:
     get:
       description: Ranked, permission-filtered results across pages, tickets and project
