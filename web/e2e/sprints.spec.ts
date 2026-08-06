@@ -215,14 +215,28 @@ test.describe('Sprints', () => {
 
     const sprintSelect = page.getByLabel('Sprint')
     await expect(sprintSelect).toHaveValue('__backlog__')
+
+    // Wait for the assignment POST to land before navigating away.
+    // selectOption resolves when the DOM event dispatches, not when the write
+    // does, and the goto right after can cancel the request in flight — the
+    // same race the due-date spec's setDueDate helper documents, surfacing
+    // here as the move intermittently never happening.
+    const moved = page.waitForResponse(
+      (r) => r.request().method() === 'POST' && /\/sprint$/.test(r.url()),
+    )
     await sprintSelect.selectOption({ label: 'Detail Sprint' })
+    expect((await moved).status(), 'the sprint assignment must land before navigating').toBe(200)
 
     await page.goto(`/vector/${spaceId}/backlog`)
     await expect.poll(() => groupOf(page, 'Detail Item'), { timeout: 10000 }).toBe('Detail Sprint')
 
     // And back off the sprint again.
     await page.click('text=Detail Item')
+    const returned = page.waitForResponse(
+      (r) => r.request().method() === 'POST' && /\/sprint$/.test(r.url()),
+    )
     await page.getByLabel('Sprint').selectOption('__backlog__')
+    expect((await returned).status(), 'the backlog return must land before navigating').toBe(200)
     await page.goto(`/vector/${spaceId}/backlog`)
     await expect.poll(() => groupOf(page, 'Detail Item'), { timeout: 10000 }).toBe('Backlog')
     await assertNoErrors(page)
