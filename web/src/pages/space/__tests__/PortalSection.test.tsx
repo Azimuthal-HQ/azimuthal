@@ -27,8 +27,14 @@ vi.mock('../../../lib/api', async (importOriginal) => {
   };
 });
 
+// The key is spelled boringly on purpose: a high-entropy 20-char literal
+// beside a field named portal_key is indistinguishable from an embedded
+// credential to gitleaks (generic-api-key), and the project fixes findings
+// rather than suppressing them — the same reasoning as portalKeyAlphabet in
+// internal/core/portal/service.go. It still matches migration 044's
+// ^[a-z0-9]{16,32}$ shape, which is all the component cares about.
 const configured: AdminPortalConfig = {
-  portal_key: 'k3y0fth3p0rtal99abcd',
+  portal_key: 'portalportalportal00',
   name: 'Acme Support',
   intro: 'How can we help?',
   enabled: true,
