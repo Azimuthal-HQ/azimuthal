@@ -585,4 +585,3 @@ func dbEntityRelationRowsToRelations(rows []generated.ListEntityRelationsForEnti
 	}
 	return result
 }
-

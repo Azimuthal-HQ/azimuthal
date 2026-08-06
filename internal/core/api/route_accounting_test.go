@@ -108,9 +108,9 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/notifications/{notificationID}/read": "user-scoped",
 
 	// Org-scoped reads (membership required; 404 for non-members).
-	"GET /api/v1/orgs/{orgID}/":                    "org-member",
-	"PATCH /api/v1/orgs/{orgID}/":                  "org-admin",
-	"GET /api/v1/orgs/{orgID}/config":              "org-member: boot-time deployment flags on an explicit code allowlist, never secrets or connection strings; the orgID authorises the read, it does not scope the values (they are process-wide)",
+	"GET /api/v1/orgs/{orgID}/":       "org-member",
+	"PATCH /api/v1/orgs/{orgID}/":     "org-admin",
+	"GET /api/v1/orgs/{orgID}/config": "org-member: boot-time deployment flags on an explicit code allowlist, never secrets or connection strings; the orgID authorises the read, it does not scope the values (they are process-wide)",
 
 	// Teams: members read (the picker groups by team); admin mutates.
 	"GET /api/v1/orgs/{orgID}/teams/":                             "org-member",

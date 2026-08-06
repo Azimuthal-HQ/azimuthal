@@ -132,4 +132,3 @@ func TestProjectWriteAdapters_MissingRow_ReturnsErrNotFound(t *testing.T) {
 		require.ErrorIs(t, err, projects.ErrNotFound)
 	})
 }
-

@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
-	"github.com/Azimuthal-HQ/azimuthal/migrations"
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
+	"github.com/Azimuthal-HQ/azimuthal/migrations"
 )
 
 // TestEntityTagsMigration_LabelValuesAndWorkflowRowsConvert is the regression
@@ -33,7 +33,7 @@ func TestEntityTagsMigration_LabelValuesAndWorkflowRowsConvert(t *testing.T) {
 	// A database/sql handle for goose, addressing this test's own database.
 	db, err := sql.Open("pgx", tdb.DSN)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	goose.SetTableName("goose_db_version")
 	goose.SetBaseFS(migrations.FS)

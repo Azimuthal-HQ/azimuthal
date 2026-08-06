@@ -472,4 +472,3 @@ func TestSprintAdapter_CreateAndRetrieve(t *testing.T) {
 	require.Equal(t, "Ship MVP", fetched.Goal)
 	require.Equal(t, "planned", fetched.Status)
 }
-

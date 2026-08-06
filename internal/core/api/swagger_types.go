@@ -187,9 +187,9 @@ type SwaggerCreateTicketRequest struct {
 // The real request type uses pointers to tell "absent" from "empty"; this is
 // the documentation shape, so it keeps plain strings.
 type SwaggerUpdateTicketRequest struct {
-	Title       string   `json:"title" example:"Fix login button (updated)"`
-	Description string   `json:"description" example:"Updated description"`
-	Priority    string   `json:"priority" example:"high"`
+	Title       string `json:"title" example:"Fix login button (updated)"`
+	Description string `json:"description" example:"Updated description"`
+	Priority    string `json:"priority" example:"high"`
 	// DueAt is RFC3339. Sending null clears the stored due date; omitting the
 	// key leaves it alone.
 	DueAt *time.Time `json:"due_at,omitempty"`
