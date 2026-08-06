@@ -649,10 +649,8 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/{ticketID}/comments", cfg.CommentHandler.ListTicketComments)
 			r.Post("/{ticketID}/comments", cfg.CommentHandler.CreateTicketComment)
 		}
-		if cfg.RelationHandler != nil {
-			r.Get("/{ticketID}/relations", cfg.RelationHandler.ListTicketRelations)
-			r.Post("/{ticketID}/relations", cfg.RelationHandler.CreateTicketRelation)
-		}
+		mountRelationRoutes(r, cfg.RelationHandler, "/{ticketID}",
+			(*relationsapi.Handler).ListTicketRelations, (*relationsapi.Handler).CreateTicketRelation, false)
 	})
 
 	// Wiki pages
@@ -665,10 +663,8 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/{pageID}/comments", cfg.CommentHandler.ListPageComments)
 			r.Post("/{pageID}/comments", cfg.CommentHandler.CreatePageComment)
 		}
-		if cfg.RelationHandler != nil {
-			r.Get("/{pageID}/relations", cfg.RelationHandler.ListPageRelations)
-			r.Post("/{pageID}/relations", cfg.RelationHandler.CreatePageRelation)
-		}
+		mountRelationRoutes(r, cfg.RelationHandler, "/{pageID}",
+			(*relationsapi.Handler).ListPageRelations, (*relationsapi.Handler).CreatePageRelation, false)
 	})
 
 	// Projects
@@ -684,17 +680,11 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/items/{itemID}/comments", cfg.CommentHandler.ListItemComments)
 			r.Post("/items/{itemID}/comments", cfg.CommentHandler.CreateItemComment)
 		}
-		if cfg.RelationHandler != nil {
-			// The item URLs predate the entity-generic mount and did not move;
-			// only their registration did, out of ProjectHandler.Routes() and
-			// into the same per-subtree convention comments use. The delete
-			// stays a single route — a relation is addressed by its own id,
-			// and the space-scoped delete already matches either endpoint of
-			// any entity type.
-			r.Get("/items/{itemID}/relations", cfg.RelationHandler.ListItemRelations)
-			r.Post("/items/{itemID}/relations", cfg.RelationHandler.CreateItemRelation)
-			r.Delete("/relations/{relationID}", cfg.RelationHandler.DeleteRelation)
-		}
+		// The item URLs predate the entity-generic mount and did not move;
+		// only their registration did, out of ProjectHandler.Routes() and
+		// into the same per-subtree convention comments use.
+		mountRelationRoutes(r, cfg.RelationHandler, "/items/{itemID}",
+			(*relationsapi.Handler).ListItemRelations, (*relationsapi.Handler).CreateItemRelation, true)
 	})
 
 	// Space workflow (read-only routes plus the transition POST above).
@@ -717,5 +707,31 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Use(writeFloor)
 			r.Mount("/", cfg.AttachmentHandler.SpaceRoutes())
 		})
+	}
+}
+
+// mountRelationRoutes registers one entity subtree's relation routes (A4):
+// the satellite is ONE handler mounted per subtree, so each call fixes only
+// the id pattern and the two wrappers. Method expressions rather than bound
+// values, because h may legitimately be nil — a nil handler leaves the
+// subtree's relation routes unmounted, exactly like a nil CommentHandler one
+// block up, and the harness's dark-dependency walk is what keeps that state
+// out of the test server. withDelete adds the single relation-addressed
+// DELETE, which the projects subtree carries for URL continuity; a relation
+// is addressed by its own id, so one delete serves all three mounts.
+func mountRelationRoutes(
+	r chi.Router,
+	h *relationsapi.Handler,
+	idPattern string,
+	list, create func(*relationsapi.Handler, http.ResponseWriter, *http.Request),
+	withDelete bool,
+) {
+	if h == nil {
+		return
+	}
+	r.Get(idPattern+"/relations", func(w http.ResponseWriter, req *http.Request) { list(h, w, req) })
+	r.Post(idPattern+"/relations", func(w http.ResponseWriter, req *http.Request) { create(h, w, req) })
+	if withDelete {
+		r.Delete("/relations/{relationID}", h.DeleteRelation)
 	}
 }
