@@ -120,8 +120,8 @@ func newFieldValueFixture(t *testing.T) *fieldValueFixture {
 
 	f.tickID = uuid.New()
 	_, err := db.Pool.Exec(context.Background(),
-		`INSERT INTO tickets (id, space_id, number, title, description, status, priority, reporter_id, labels, rank)
-		 VALUES ($1, $2, 1, 'Ticket with fields', '', 'open', 'medium', $3, '{}', 'a')`,
+		`INSERT INTO tickets (id, space_id, number, title, description, status, priority, reporter_id, rank)
+		 VALUES ($1, $2, 1, 'Ticket with fields', '', 'open', 'medium', $3, 'a')`,
 		f.tickID, f.beacon.ID, f.user.ID)
 	require.NoError(t, err)
 	return f
