@@ -282,12 +282,12 @@ var routeAccounting = map[string]string{
 	// space-scoped page routes where the page's own edit permission applies.
 	// The pages route is cross-space, so it filters against the caller's
 	// resolved readable set in-handler (ADR-0010).
-	"GET /api/v1/orgs/{orgID}/tags/":                                                    "org-read: members read the tag list for the autocomplete; a tag name is not a space's secret",
-	"GET /api/v1/orgs/{orgID}/tags/{slug}/pages":                                        "org-read: cross-space, filtered to the caller's readable spaces in-handler (ADR-0010)",
-	"GET /api/v1/orgs/{orgID}/custom-fields/":                                           "org-read: members read definitions for item forms",
-	"POST /api/v1/orgs/{orgID}/custom-fields/":                                          "org-admin: orgAdminGuard",
-	"PATCH /api/v1/orgs/{orgID}/custom-fields/{fieldID}":                                "org-admin: orgAdminGuard",
-	"DELETE /api/v1/orgs/{orgID}/custom-fields/{fieldID}":                               "org-admin: orgAdminGuard",
+	"GET /api/v1/orgs/{orgID}/tags/":                      "org-read: members read the tag list for the autocomplete; a tag name is not a space's secret",
+	"GET /api/v1/orgs/{orgID}/tags/{slug}/pages":          "org-read: cross-space, filtered to the caller's readable spaces in-handler (ADR-0010)",
+	"GET /api/v1/orgs/{orgID}/custom-fields/":             "org-read: members read definitions for item forms",
+	"POST /api/v1/orgs/{orgID}/custom-fields/":            "org-admin: orgAdminGuard",
+	"PATCH /api/v1/orgs/{orgID}/custom-fields/{fieldID}":  "org-admin: orgAdminGuard",
+	"DELETE /api/v1/orgs/{orgID}/custom-fields/{fieldID}": "org-admin: orgAdminGuard",
 	// Scopes are org-admin in BOTH directions, the read included: a scope row
 	// names a space id, so listing them to any member would disclose which
 	// private spaces a field is attached to. Forms never read raw scopes —

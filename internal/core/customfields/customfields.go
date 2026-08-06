@@ -479,7 +479,14 @@ func (s *Service) RenderForEntity(ctx context.Context, orgID, spaceID uuid.UUID,
 	if err != nil {
 		return nil, fmt.Errorf("listing entity values: %w", err)
 	}
+	return composeRendered(defs, scopes, stored), nil
+}
 
+// composeRendered merges one form's scope rows, the org's active definitions
+// and one entity's stored values into the rendered field list: scoped active
+// definitions first, in form order, then every stored value the form cannot
+// write, read-only.
+func composeRendered(defs []*FieldDef, scopes []FieldScope, stored []StoredValue) []RenderedField {
 	defByID := make(map[uuid.UUID]*FieldDef, len(defs))
 	defBySlug := make(map[string]*FieldDef, len(defs))
 	for _, d := range defs {
@@ -520,7 +527,7 @@ func (s *Service) RenderForEntity(ctx context.Context, orgID, spaceID uuid.UUID,
 			Options: options, Value: v.Value, Legacy: true,
 		})
 	}
-	return out, nil
+	return out
 }
 
 // SetValue writes an entity's value for a field attached to this
@@ -540,33 +547,14 @@ func (s *Service) SetValue(ctx context.Context, orgID, spaceID uuid.UUID, entity
 	if !ValidEntityTypes[entityType] {
 		return ErrInvalidEntityType
 	}
-	def, err := s.defs.GetByOrgSlug(ctx, orgID, slug)
-	if errors.Is(err, ErrNotFound) {
-		return ErrUndefinedField
-	}
+	def, scope, err := s.writableField(ctx, orgID, spaceID, entityType, slug)
 	if err != nil {
-		return fmt.Errorf("resolving custom field: %w", err)
-	}
-	if def.ArchivedAt != nil {
-		return ErrUndefinedField
-	}
-	scope, err := s.scopes.Get(ctx, def.ID, spaceID, entityType)
-	if errors.Is(err, ErrScopeNotFound) {
-		return ErrFieldNotInScope
-	}
-	if err != nil {
-		return fmt.Errorf("resolving custom field scope: %w", err)
+		return err
 	}
 
 	value = strings.TrimSpace(value)
 	if value == "" {
-		if scope.Required {
-			return fmt.Errorf("%w: %q must have a value on this form — detach it or clear its required flag first", ErrValueRequired, slug)
-		}
-		if err := s.values.DeleteInSpace(ctx, spaceID, entityType, entityID, slug); err != nil {
-			return fmt.Errorf("clearing custom field value: %w", err)
-		}
-		return nil
+		return s.clearValue(ctx, spaceID, entityType, entityID, slug, scope)
 	}
 	if err := validateValue(def, value); err != nil {
 		return err
@@ -577,6 +565,43 @@ func (s *Service) SetValue(ctx context.Context, orgID, spaceID uuid.UUID, entity
 	}
 	if !ok {
 		return ErrEntityNotFound
+	}
+	return nil
+}
+
+// writableField resolves the definition and attachment a value write goes
+// through: the field must exist, be active, and be attached to this
+// (space, entity type) form — anything else is read-only here.
+func (s *Service) writableField(ctx context.Context, orgID, spaceID uuid.UUID, entityType, slug string) (*FieldDef, *FieldScope, error) {
+	def, err := s.defs.GetByOrgSlug(ctx, orgID, slug)
+	if errors.Is(err, ErrNotFound) {
+		return nil, nil, ErrUndefinedField
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving custom field: %w", err)
+	}
+	if def.ArchivedAt != nil {
+		return nil, nil, ErrUndefinedField
+	}
+	scope, err := s.scopes.Get(ctx, def.ID, spaceID, entityType)
+	if errors.Is(err, ErrScopeNotFound) {
+		return nil, nil, ErrFieldNotInScope
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving custom field scope: %w", err)
+	}
+	return def, scope, nil
+}
+
+// clearValue deletes a stored value — unless the attachment marks the field
+// required, in which case the write that would leave it absent is refused,
+// naming the field.
+func (s *Service) clearValue(ctx context.Context, spaceID uuid.UUID, entityType string, entityID uuid.UUID, slug string, scope *FieldScope) error {
+	if scope.Required {
+		return fmt.Errorf("%w: %q must have a value on this form — detach it or clear its required flag first", ErrValueRequired, slug)
+	}
+	if err := s.values.DeleteInSpace(ctx, spaceID, entityType, entityID, slug); err != nil {
+		return fmt.Errorf("clearing custom field value: %w", err)
 	}
 	return nil
 }
