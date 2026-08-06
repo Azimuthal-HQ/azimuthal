@@ -133,6 +133,21 @@ type NewRequest struct {
 	Description string
 }
 
+// UpdatePortalParams is a partial update to a portal's configuration. A nil
+// field means "leave the stored value alone" — the API layer has already
+// resolved JSON presence, so by this point absent and explicit-null have been
+// collapsed into whatever each field's semantics demand (a null name is a
+// validation error, a null intro clears it).
+//
+// The portal key is deliberately not here. It is never updatable: a rename or
+// a toggle that regenerated it would invalidate every URL already handed to a
+// customer.
+type UpdatePortalParams struct {
+	Enabled *bool
+	Name    *string
+	Intro   *string
+}
+
 // Store is the persistence seam. Implemented by
 // internal/db/adapters.PortalAdapter.
 type Store interface {
@@ -146,9 +161,13 @@ type Store interface {
 	PortalByID(ctx context.Context, id uuid.UUID) (Portal, error)
 	// CreatePortal opts a Beacon space in.
 	CreatePortal(ctx context.Context, p Portal, createdBy uuid.UUID) (Portal, error)
-	// SetPortalEnabled toggles a portal without destroying its key, so that
-	// disabling and re-enabling does not orphan every link already sent.
-	SetPortalEnabled(ctx context.Context, spaceID uuid.UUID, enabled bool) (Portal, error)
+	// UpdatePortal applies a partial update — enabled, name, intro; nil means
+	// "leave it alone" — without destroying the portal's key, so that
+	// disabling and re-enabling (or renaming) does not orphan every link
+	// already sent. The space predicate lives in the UPDATE statement itself:
+	// an update addressed at a space whose portal this is not affects zero
+	// rows and returns ErrPortalNotFound.
+	UpdatePortal(ctx context.Context, spaceID uuid.UUID, params UpdatePortalParams) (Portal, error)
 
 	// UpsertRequester finds or creates the requester for (org, email). The
 	// upsert is atomic so two simultaneous first-time link requests from one

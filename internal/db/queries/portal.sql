@@ -101,8 +101,27 @@ FROM service_desk_portals p
 JOIN spaces s ON s.id = p.space_id AND s.deleted_at IS NULL
 WHERE p.space_id = $1;
 
--- name: SetPortalEnabled :one
-UPDATE service_desk_portals SET enabled = $2 WHERE space_id = $1 RETURNING *;
+-- UpdatePortal applies a partial update: a NULL argument keeps the stored
+-- value. The handler resolved JSON presence before this runs, so by the time
+-- a field reaches SQL, "the client never mentioned it" is already NULL.
+--
+-- THE SPACE PREDICATE IS IN THE WHERE CLAUSE, not in a Go check before the
+-- statement. An update addressed at a space whose portal this is not affects
+-- zero rows and surfaces as not-found — the same construction as
+-- ConsumeMagicLink's single-use guard, and for the same reason: a predicate
+-- inside the statement cannot be skipped by a second call site.
+--
+-- portal_key is deliberately absent from the SET list. A rename or a toggle
+-- must never touch the public identifier — every URL already handed to a
+-- customer dies with it. See the key-preservation comments on
+-- portal.Service.UpdatePortal and adapters.PortalAdapter.UpdatePortal.
+-- name: UpdatePortal :one
+UPDATE service_desk_portals
+SET enabled = COALESCE(sqlc.narg(enabled)::boolean, enabled),
+    name    = COALESCE(sqlc.narg(name)::text, name),
+    intro   = COALESCE(sqlc.narg(intro)::text, intro)
+WHERE space_id = sqlc.arg(space_id)
+RETURNING *;
 
 -- ── Magic links ──────────────────────────────────────────────────────────
 
