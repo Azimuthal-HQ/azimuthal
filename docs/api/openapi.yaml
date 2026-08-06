@@ -2695,6 +2695,115 @@ paths:
       summary: Update a custom field
       tags:
       - projects
+  /orgs/{orgID}/custom-fields/{fieldID}/scopes:
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Custom field ID (UUID)
+        in: path
+        name: fieldID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List a custom field's scopes
+      tags:
+      - projects
+  /orgs/{orgID}/custom-fields/{fieldID}/scopes/{spaceID}/{entityType}:
+    delete:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Custom field ID (UUID)
+        in: path
+        name: fieldID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Entity type (ticket or project_item)
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Detach a custom field from a space form
+      tags:
+      - projects
+    put:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Custom field ID (UUID)
+        in: path
+        name: fieldID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Entity type (ticket or project_item)
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: Attach a custom field to a space form
+      tags:
+      - projects
   /orgs/{orgID}/dashboards:
     get:
       description: Returns the caller's own dashboards plus those shared with them
@@ -8321,6 +8430,116 @@ paths:
       summary: Create ticket comment
       tags:
       - comments
+  /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/fields:
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+      security:
+      - BearerAuth: []
+      summary: Get ticket custom fields
+      tags:
+      - tickets
+  /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/fields/{slug}:
+    put:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      - description: Field slug
+        in: path
+        name: slug
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerMessageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Set a ticket custom field value
+      tags:
+      - tickets
   /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/status:
     post:
       description: Changes the status of a ticket (e.g. open -> in_progress -> resolved

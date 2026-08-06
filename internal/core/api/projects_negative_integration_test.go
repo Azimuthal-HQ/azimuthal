@@ -544,10 +544,12 @@ func TestProjectsNeg_ContributorCannotTouchAnotherUsersItem(t *testing.T) {
 		map[string]any{"name": "Squad", "field_type": "text"})
 	require.Equal(t, http.StatusCreated, r.StatusCode, "define custom field: %s", r.Body)
 	var def struct {
+		ID   string `json:"id"`
 		Slug string `json:"slug"`
 	}
 	require.NoError(t, json.Unmarshal(r.Body, &def))
 	require.Equal(t, "squad", def.Slug)
+	attachField(t, f.ts, def.ID, f.spaceID, "project_item", false)
 
 	contribItem := f.createItem(t, f.contribTok, "Contributor Own Item")
 

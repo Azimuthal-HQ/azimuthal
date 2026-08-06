@@ -629,7 +629,7 @@ export function ItemDetailPage() {
           </DetailField>
 
           <DetailDivider />
-          <CustomFieldsSection spaceId={spaceId} itemId={itemId} />
+          <CustomFieldsSection spaceId={spaceId} entityKind="item" entityId={itemId} />
         </DetailSide>
       </DetailLayout>
     </div>

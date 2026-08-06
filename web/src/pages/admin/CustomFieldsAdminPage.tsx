@@ -1,14 +1,19 @@
 import { useState } from 'react';
-import { AlertCircle, Plus, Archive, ArchiveRestore, Trash2 } from 'lucide-react';
+import { AlertCircle, Plus, Archive, ArchiveRestore, Trash2, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import {
   useCustomFields,
   useCreateCustomField,
   useUpdateCustomField,
   useDeleteCustomField,
+  useSpaces,
+  useFieldScopes,
+  useSetFieldScope,
+  useRemoveFieldScope,
   friendlyErrorMessage,
   type CustomFieldDef,
   type CustomFieldType,
+  type Space,
 } from '../../lib/api';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -82,7 +87,8 @@ export function CustomFieldsAdminPage() {
         <div>
           <h2 className="text-[var(--text-md)] font-semibold text-[var(--color-text)]">Custom fields</h2>
           <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
-            Fields shown on Vector items. Deleting or archiving a field keeps existing values as read-only legacy data.
+            Fields appear on the item and ticket forms they are attached to — expand a field to choose spaces and
+            mark it required there. Deleting or archiving a field keeps existing values as read-only legacy data.
           </p>
         </div>
         <Button data-testid="custom-field-create-button" onClick={() => { setActionError(null); setCreateOpen(true); }}>
@@ -177,6 +183,7 @@ function CustomFieldRow({
 }) {
   const updateMut = useUpdateCustomField(orgId);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const archived = !!field.archived_at;
 
   function toggleArchive() {
@@ -188,37 +195,149 @@ function CustomFieldRow({
   }
 
   return (
-    <li
-      data-testid="custom-field-row"
-      className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-4 py-3 last:border-b-0"
-    >
-      <div className="flex items-center gap-2">
-        <span className={archived ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]'}>{field.name}</span>
-        <Badge variant="secondary">{TYPE_LABEL[field.field_type]}</Badge>
-        {field.field_type === 'single_select' && field.options.length > 0 && (
-          <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">{field.options.join(', ')}</span>
-        )}
-        {archived && <Badge variant="secondary">Archived</Badge>}
-      </div>
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="sm" aria-label={archived ? 'Unarchive' : 'Archive'} onClick={toggleArchive}>
-          {archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
-        </Button>
-        {confirmingDelete ? (
-          <>
-            <Button variant="destructive" size="sm" data-testid="custom-field-confirm-delete" onClick={onDelete}>
-              Delete
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setConfirmingDelete(false)}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <Button variant="ghost" size="sm" aria-label="Delete" onClick={() => { onError(null); setConfirmingDelete(true); }}>
-            <Trash2 className="h-4 w-4" />
+    <li data-testid="custom-field-row" className="border-b border-[var(--color-border)] last:border-b-0">
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label={`Attachments for ${field.name}`}
+            data-testid="custom-field-expand"
+            onClick={() => setExpanded((v) => !v)}
+            className="rounded p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            <ChevronRight className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')} />
+          </button>
+          <span className={archived ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text)]'}>{field.name}</span>
+          <Badge variant="secondary">{TYPE_LABEL[field.field_type]}</Badge>
+          {field.field_type === 'single_select' && field.options.length > 0 && (
+            <span className="text-[var(--text-xs)] text-[var(--color-text-muted)]">{field.options.join(', ')}</span>
+          )}
+          {archived && <Badge variant="secondary">Archived</Badge>}
+        </div>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" aria-label={archived ? 'Unarchive' : 'Archive'} onClick={toggleArchive}>
+            {archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
           </Button>
-        )}
+          {confirmingDelete ? (
+            <>
+              <Button variant="destructive" size="sm" data-testid="custom-field-confirm-delete" onClick={onDelete}>
+                Delete
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmingDelete(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" size="sm" aria-label="Delete" onClick={() => { onError(null); setConfirmingDelete(true); }}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
+      {/* Scopes load only when opened — the list stays one request for N
+          fields, and the sub-queries fire per expansion (TransitionList's
+          rationale). */}
+      {expanded && (
+        <div className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-3">
+          <FieldScopesPanel orgId={orgId} fieldId={field.id} />
+        </div>
+      )}
     </li>
+  );
+}
+
+/**
+ * FieldScopesPanel edits one field's attachments: which spaces' item or ticket
+ * forms carry it, and whether it is required there. Requiredness lives on the
+ * attachment — a field is never required org-wide — and marking it required
+ * only governs writes from then on; entities saved before keep reading back.
+ */
+function FieldScopesPanel({ orgId, fieldId }: { orgId: string; fieldId: string }) {
+  const spacesQuery = useSpaces(orgId);
+  const scopesQuery = useFieldScopes(orgId, fieldId);
+  const setScope = useSetFieldScope(orgId, fieldId);
+  const removeScope = useRemoveFieldScope(orgId, fieldId);
+  const [error, setError] = useState<string | null>(null);
+
+  if (spacesQuery.isLoading || scopesQuery.isLoading) {
+    return <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">Loading attachments…</p>;
+  }
+  if (spacesQuery.isError || scopesQuery.isError) {
+    return (
+      <p data-testid="field-scopes-error" className="text-[var(--text-xs)] text-[var(--color-danger)]">
+        {friendlyErrorMessage(spacesQuery.error ?? scopesQuery.error, 'Attachments could not be loaded.')}
+      </p>
+    );
+  }
+
+  const spaces = spacesQuery.data ?? [];
+  const scopes = scopesQuery.data ?? [];
+  const groups: { label: string; entityType: 'project_item' | 'ticket'; spaces: Space[] }[] = [
+    { label: 'Item forms (Vector)', entityType: 'project_item', spaces: spaces.filter((s) => s.type === 'vector') },
+    { label: 'Ticket forms (Beacon)', entityType: 'ticket', spaces: spaces.filter((s) => s.type === 'beacon') },
+  ];
+  const scopeFor = (spaceId: string, entityType: string) =>
+    scopes.find((sc) => sc.space_id === spaceId && sc.entity_type === entityType);
+  const onError = (e: unknown) => setError(friendlyErrorMessage(e, 'The attachment could not be saved.'));
+
+  return (
+    <div data-testid="field-scopes-panel" className="space-y-3">
+      {groups.map((g) => (
+        <div key={g.entityType}>
+          <p className="mb-1 text-[var(--text-xs)] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+            {g.label}
+          </p>
+          {g.spaces.length === 0 ? (
+            <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">No spaces of this kind yet.</p>
+          ) : (
+            <ul className="space-y-1">
+              {g.spaces.map((s) => {
+                const scope = scopeFor(s.id, g.entityType);
+                return (
+                  <li key={s.id} className="flex items-center gap-4 text-[var(--text-sm)] text-[var(--color-text)]">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        data-testid={`scope-attach-${s.id}-${g.entityType}`}
+                        checked={!!scope}
+                        onChange={(e) => {
+                          setError(null);
+                          if (e.target.checked) {
+                            setScope.mutate({ spaceId: s.id, entityType: g.entityType, required: false }, { onError });
+                          } else {
+                            removeScope.mutate({ spaceId: s.id, entityType: g.entityType }, { onError });
+                          }
+                        }}
+                      />
+                      {s.name}
+                    </label>
+                    {scope && (
+                      <label className="flex items-center gap-1.5 text-[var(--text-xs)] text-[var(--color-text-muted)]">
+                        <input
+                          type="checkbox"
+                          data-testid={`scope-required-${s.id}-${g.entityType}`}
+                          checked={scope.required}
+                          onChange={(e) => {
+                            setError(null);
+                            setScope.mutate({ spaceId: s.id, entityType: g.entityType, required: e.target.checked }, { onError });
+                          }}
+                        />
+                        Required
+                      </label>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      ))}
+      {error && (
+        <p data-testid="field-scopes-action-error" className="text-[var(--text-xs)] text-[var(--color-danger)]">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

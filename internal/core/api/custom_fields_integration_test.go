@@ -19,11 +19,12 @@ type fieldDefDTO struct {
 }
 
 type renderedFieldDTO struct {
-	Slug   string `json:"slug"`
-	Name   string `json:"name"`
-	Type   string `json:"field_type"`
-	Value  string `json:"value"`
-	Legacy bool   `json:"legacy"`
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	Type     string `json:"field_type"`
+	Value    string `json:"value"`
+	Required bool   `json:"required"`
+	Legacy   bool   `json:"legacy"`
 }
 
 func createItem(t *testing.T, ts *testServer, itemsBase string) string {
@@ -35,6 +36,27 @@ func createItem(t *testing.T, ts *testServer, itemsBase string) string {
 	}
 	require.NoError(t, json.Unmarshal(r.Body, &it))
 	return it.ID
+}
+
+func createTicket(t *testing.T, ts *testServer, ticketsBase string) string {
+	t.Helper()
+	r := ts.post(t, ticketsBase, map[string]string{"title": "Ticket", "priority": "medium"}, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "create ticket: %s", r.Body)
+	var tk struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(r.Body, &tk))
+	return tk.ID
+}
+
+// attachField scopes a field to a (space, entity type) form — the step that
+// puts a definition on a form at all, since scopes govern rendering and
+// writes (migration 053). required rides the same call.
+func attachField(t *testing.T, ts *testServer, fieldID, spaceID, entityType string, required bool) {
+	t.Helper()
+	r := ts.put(t, fmt.Sprintf("/api/v1/orgs/%s/custom-fields/%s/scopes/%s/%s", ts.OrgID, fieldID, spaceID, entityType),
+		map[string]bool{"required": required}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "attach field: %s", r.Body)
 }
 
 // TestCustomFields_DefsValuesAndLegacy exercises the full custom-fields flow:
@@ -64,10 +86,19 @@ func TestCustomFields_DefsValuesAndLegacy(t *testing.T) {
 	r = ts.post(t, defsBase, map[string]any{"name": "Empty Select", "field_type": "single_select"}, true)
 	require.Equal(t, http.StatusBadRequest, r.StatusCode, "select without options must 400: %s", r.Body)
 
-	// The item shows both active fields, unset.
+	// A new definition appears on no form until it is attached — there is no
+	// "unscoped means everywhere" fallback.
 	r = ts.get(t, fieldsBase, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "get item fields: %s", r.Body)
 	var rendered []renderedFieldDTO
+	require.NoError(t, json.Unmarshal(r.Body, &rendered))
+	require.Empty(t, rendered, "an unattached definition must not render on any form")
+
+	// Attach both to this space's item form; now the item shows them, unset.
+	attachField(t, ts, points.ID, spaceID, "project_item", false)
+	attachField(t, ts, tier.ID, spaceID, "project_item", false)
+	r = ts.get(t, fieldsBase, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "get item fields: %s", r.Body)
 	require.NoError(t, json.Unmarshal(r.Body, &rendered))
 	require.Len(t, rendered, 2)
 
@@ -130,6 +161,23 @@ func TestCustomFields_MemberPermissions(t *testing.T) {
 	// Member cannot create a definition (org-admin only → 403).
 	r = ts.postAs(t, memTok, defsBase, map[string]any{"name": "Sneaky", "field_type": "text"})
 	require.Equal(t, http.StatusForbidden, r.StatusCode, "member create def must 403: %d %s", r.StatusCode, r.Body)
+
+	// Scopes are org-admin in both directions — the rows carry space ids, so
+	// even the read would disclose which private spaces a field is attached
+	// to. A member is refused on list and on attach alike.
+	def := ts.post(t, defsBase, map[string]any{"name": "Env", "field_type": "text"}, true)
+	require.Equal(t, http.StatusCreated, def.StatusCode, "%s", def.Body)
+	var d fieldDefDTO
+	require.NoError(t, json.Unmarshal(def.Body, &d))
+	spaceID := createScopedSpace(t, ts, "Scopes Perm", "scopes-perm", "vector")
+
+	r = ts.getAs(t, memTok, defsBase+"/"+d.ID+"/scopes")
+	require.Equal(t, http.StatusForbidden, r.StatusCode, "member list scopes must 403: %d %s", r.StatusCode, r.Body)
+	r = ts.putAs(t, memTok, fmt.Sprintf("%s/%s/scopes/%s/project_item", defsBase, d.ID, spaceID),
+		map[string]bool{"required": true})
+	require.Equal(t, http.StatusForbidden, r.StatusCode, "member attach scope must 403: %d %s", r.StatusCode, r.Body)
+	r = ts.deleteAs(t, memTok, fmt.Sprintf("%s/%s/scopes/%s/project_item", defsBase, d.ID, spaceID))
+	require.Equal(t, http.StatusForbidden, r.StatusCode, "member detach scope must 403: %d %s", r.StatusCode, r.Body)
 }
 
 // S12 — a new definition may not reuse a slug that still holds legacy values.
@@ -153,11 +201,12 @@ func TestCustomFields_NewDefCannotReuseASlugThatHoldsLegacyValues(t *testing.T) 
 	itemID := createItem(t, ts, itemsBase)
 	fieldsBase := fmt.Sprintf("%s/%s/fields", itemsBase, itemID)
 
-	// A number field, with a value on one item.
+	// A number field, attached here, with a value on one item.
 	r := ts.post(t, defsBase, map[string]any{"name": "Story Points", "field_type": "number"}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "create: %s", r.Body)
 	var points fieldDefDTO
 	require.NoError(t, json.Unmarshal(r.Body, &points))
+	attachField(t, ts, points.ID, spaceID, "project_item", false)
 
 	r = ts.put(t, fieldsBase+"/story_points", map[string]string{"value": "8"}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "set value: %s", r.Body)
@@ -216,6 +265,7 @@ func TestCustomFields_SlugIsFreeAgainOnceLegacyValuesAreGone(t *testing.T) {
 	require.Equal(t, http.StatusCreated, r.StatusCode, "%s", r.Body)
 	var tier fieldDefDTO
 	require.NoError(t, json.Unmarshal(r.Body, &tier))
+	attachField(t, ts, tier.ID, spaceID, "project_item", false)
 
 	// Clear the value BEFORE deleting the definition — an empty value deletes
 	// the row, which is the supported way to leave nothing behind.
@@ -256,7 +306,8 @@ func TestCustomFields_SlugReuseGuardIsOrgScoped(t *testing.T) {
 		 VALUES ($1, $2, 1, 'task', 'Other org item', $3, 'OTHER-1') RETURNING id`,
 		otherSpace.ID, otherOrg.ID, otherUser.ID).Scan(&otherItemID))
 	_, err := ts.DB.Pool.Exec(t.Context(),
-		`INSERT INTO item_field_values (item_id, field_slug, value) VALUES ($1, 'story_points', '99')`,
+		`INSERT INTO entity_field_values (entity_type, entity_id, field_slug, value)
+		 VALUES ('project_item', $1, 'story_points', '99')`,
 		otherItemID)
 	require.NoError(t, err)
 
@@ -266,6 +317,9 @@ func TestCustomFields_SlugReuseGuardIsOrgScoped(t *testing.T) {
 	r := ts.post(t, defsBase, map[string]any{"name": "Story Points", "field_type": "number"}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode,
 		"another org's legacy value must not block this org's field: %s", r.Body)
+	var points fieldDefDTO
+	require.NoError(t, json.Unmarshal(r.Body, &points))
+	attachField(t, ts, points.ID, spaceID, "project_item", false)
 
 	// And this org's item sees nothing of it.
 	r = ts.get(t, fmt.Sprintf("%s/%s/fields", itemsBase, itemID), true)

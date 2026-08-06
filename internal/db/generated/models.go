@@ -93,6 +93,17 @@ type CustomFieldDef struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type CustomFieldScope struct {
+	ID         uuid.UUID          `json:"id"`
+	FieldID    uuid.UUID          `json:"field_id"`
+	SpaceID    uuid.UUID          `json:"space_id"`
+	EntityType string             `json:"entity_type"`
+	Required   bool               `json:"required"`
+	Position   int32              `json:"position"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Dashboard struct {
 	ID               uuid.UUID          `json:"id"`
 	OrgID            uuid.UUID          `json:"org_id"`
@@ -118,6 +129,17 @@ type DashboardGadget struct {
 	SavedViewID pgtype.UUID        `json:"saved_view_id"`
 	Config      []byte             `json:"config"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type EntityFieldValue struct {
+	ID         uuid.UUID          `json:"id"`
+	ItemID     pgtype.UUID        `json:"item_id"`
+	FieldSlug  string             `json:"field_slug"`
+	Value      string             `json:"value"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	EntityType string             `json:"entity_type"`
+	EntityID   uuid.UUID          `json:"entity_id"`
 }
 
 type EntityRelation struct {
@@ -159,15 +181,6 @@ type Invite struct {
 	AcceptedUserID pgtype.UUID        `json:"accepted_user_id"`
 	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-}
-
-type ItemFieldValue struct {
-	ID        uuid.UUID          `json:"id"`
-	ItemID    uuid.UUID          `json:"item_id"`
-	FieldSlug string             `json:"field_slug"`
-	Value     string             `json:"value"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ItemType struct {

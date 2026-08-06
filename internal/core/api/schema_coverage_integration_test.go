@@ -42,6 +42,7 @@ func TestCustomFields_DeletePreservesLegacyValuesOverHTTP(t *testing.T) {
 	require.Equal(t, http.StatusCreated, r.StatusCode, "create field: %s", r.Body)
 	var squad fieldDefDTO
 	require.NoError(t, json.Unmarshal(r.Body, &squad))
+	attachField(t, ts, squad.ID, spaceID, "project_item", false)
 
 	r = ts.put(t, fieldsBase+"/squad", map[string]string{"value": "Falcon"}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "set value: %s", r.Body)

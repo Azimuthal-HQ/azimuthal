@@ -2110,15 +2110,30 @@ export interface CustomFieldDef {
   updated_at: string;
 }
 
-/** A custom field as rendered on an item: an active definition with its current
- * value, or a legacy value whose definition is gone (read-only). */
-export interface ItemCustomField {
+/** A custom field as rendered on an entity's form: a definition attached to
+ * this space's form with its current value and required flag, or a read-only
+ * value whose definition is gone or not attached here (legacy). */
+export interface EntityCustomField {
   slug: string;
   name: string;
   field_type: CustomFieldType;
   options: string[];
   value: string;
+  required: boolean;
   legacy: boolean;
+}
+
+/** The two entity kinds with a field surface. Wire entity_type values are
+ * 'project_item' and 'ticket'; the kind here picks the URL family. */
+export type FieldEntityKind = 'item' | 'ticket';
+
+/** One attachment of a custom field to a (space, entity type) form. */
+export interface CustomFieldScope {
+  field_id: string;
+  space_id: string;
+  entity_type: 'project_item' | 'ticket' | 'page';
+  required: boolean;
+  position: number;
 }
 
 interface CreateCustomFieldRequest {
@@ -2150,13 +2165,54 @@ async function deleteCustomField(orgId: string, fieldId: string): Promise<void> 
   await apiFetch<void>(`/orgs/${orgId}/custom-fields/${fieldId}`, { method: 'DELETE' });
 }
 
-async function fetchItemFields(spaceId: string, itemId: string): Promise<ItemCustomField[]> {
-  const data = await apiFetch<ItemCustomField[] | null>(`${spaceBase(spaceId)}/projects/items/${itemId}/fields`);
+async function fetchFieldScopes(orgId: string, fieldId: string): Promise<CustomFieldScope[]> {
+  const data = await apiFetch<CustomFieldScope[] | null>(`/orgs/${orgId}/custom-fields/${fieldId}/scopes`);
   return Array.isArray(data) ? data : [];
 }
 
-async function setItemField(spaceId: string, itemId: string, slug: string, value: string): Promise<void> {
-  await apiFetch<void>(`${spaceBase(spaceId)}/projects/items/${itemId}/fields/${slug}`, {
+async function putFieldScope(
+  orgId: string,
+  fieldId: string,
+  spaceId: string,
+  entityType: 'project_item' | 'ticket',
+  required: boolean,
+): Promise<CustomFieldScope> {
+  return apiFetch<CustomFieldScope>(`/orgs/${orgId}/custom-fields/${fieldId}/scopes/${spaceId}/${entityType}`, {
+    method: 'PUT',
+    body: JSON.stringify({ required }),
+  });
+}
+
+async function deleteFieldScope(
+  orgId: string,
+  fieldId: string,
+  spaceId: string,
+  entityType: 'project_item' | 'ticket',
+): Promise<void> {
+  await apiFetch<void>(`/orgs/${orgId}/custom-fields/${fieldId}/scopes/${spaceId}/${entityType}`, {
+    method: 'DELETE',
+  });
+}
+
+function entityFieldsBase(spaceId: string, kind: FieldEntityKind, entityId: string): string {
+  return kind === 'ticket'
+    ? `${spaceBase(spaceId)}/tickets/${entityId}/fields`
+    : `${spaceBase(spaceId)}/projects/items/${entityId}/fields`;
+}
+
+async function fetchEntityFields(spaceId: string, kind: FieldEntityKind, entityId: string): Promise<EntityCustomField[]> {
+  const data = await apiFetch<EntityCustomField[] | null>(entityFieldsBase(spaceId, kind, entityId));
+  return Array.isArray(data) ? data : [];
+}
+
+async function setEntityField(
+  spaceId: string,
+  kind: FieldEntityKind,
+  entityId: string,
+  slug: string,
+  value: string,
+): Promise<void> {
+  await apiFetch<void>(`${entityFieldsBase(spaceId, kind, entityId)}/${slug}`, {
     method: 'PUT',
     body: JSON.stringify({ value }),
   });
@@ -2513,7 +2569,9 @@ export const queryKeys = {
   labels: (orgId: string) => ['labels', orgId] as const,
   itemTypes: (orgId: string) => ['itemTypes', orgId] as const,
   customFields: (orgId: string) => ['customFields', orgId] as const,
-  itemFields: (spaceId: string, itemId: string) => ['itemFields', spaceId, itemId] as const,
+  fieldScopes: (orgId: string, fieldId: string) => ['fieldScopes', orgId, fieldId] as const,
+  entityFields: (spaceId: string, kind: FieldEntityKind, entityId: string) =>
+    ['entityFields', spaceId, kind, entityId] as const,
   members: (orgId: string, spaceId: string) => ['members', orgId, spaceId] as const,
   comments: (spaceId: string, entityType: string, entityId: string) => ['comments', spaceId, entityType, entityId] as const,
   notifications: () => ['notifications'] as const,
@@ -2885,20 +2943,50 @@ export function useDeleteCustomField(orgId: string) {
   });
 }
 
-export function useItemFields(spaceId: string, itemId: string, opts?: QueryOpts<ItemCustomField[]>) {
-  return useQuery<ItemCustomField[], APIError>({
-    queryKey: queryKeys.itemFields(spaceId, itemId),
-    queryFn: () => fetchItemFields(spaceId, itemId),
-    enabled: !!spaceId && !!itemId,
+export function useFieldScopes(orgId: string, fieldId: string, opts?: QueryOpts<CustomFieldScope[]>) {
+  return useQuery<CustomFieldScope[], APIError>({
+    queryKey: queryKeys.fieldScopes(orgId, fieldId),
+    queryFn: () => fetchFieldScopes(orgId, fieldId),
+    enabled: !!orgId && !!fieldId,
     ...opts,
   });
 }
 
-export function useSetItemField(spaceId: string, itemId: string) {
+export function useSetFieldScope(orgId: string, fieldId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<CustomFieldScope, APIError, { spaceId: string; entityType: 'project_item' | 'ticket'; required: boolean }>({
+    mutationFn: ({ spaceId, entityType, required }) => putFieldScope(orgId, fieldId, spaceId, entityType, required),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.fieldScopes(orgId, fieldId) }),
+  });
+}
+
+export function useRemoveFieldScope(orgId: string, fieldId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<void, APIError, { spaceId: string; entityType: 'project_item' | 'ticket' }>({
+    mutationFn: ({ spaceId, entityType }) => deleteFieldScope(orgId, fieldId, spaceId, entityType),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.fieldScopes(orgId, fieldId) }),
+  });
+}
+
+export function useEntityFields(
+  spaceId: string,
+  kind: FieldEntityKind,
+  entityId: string,
+  opts?: QueryOpts<EntityCustomField[]>,
+) {
+  return useQuery<EntityCustomField[], APIError>({
+    queryKey: queryKeys.entityFields(spaceId, kind, entityId),
+    queryFn: () => fetchEntityFields(spaceId, kind, entityId),
+    enabled: !!spaceId && !!entityId,
+    ...opts,
+  });
+}
+
+export function useSetEntityField(spaceId: string, kind: FieldEntityKind, entityId: string) {
   const queryClient = useQueryClient();
   return useMutation<void, APIError, { slug: string; value: string }>({
-    mutationFn: ({ slug, value }) => setItemField(spaceId, itemId, slug, value),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.itemFields(spaceId, itemId) }),
+    mutationFn: ({ slug, value }) => setEntityField(spaceId, kind, entityId, slug, value),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.entityFields(spaceId, kind, entityId) }),
   });
 }
 

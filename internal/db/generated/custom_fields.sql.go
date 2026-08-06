@@ -12,34 +12,50 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countItemFieldValuesByOrgSlug = `-- name: CountItemFieldValuesByOrgSlug :one
-SELECT count(*) FROM item_field_values v
-JOIN project_items i ON i.id = v.item_id
-WHERE i.org_id = $1
-  AND v.field_slug = $2
-  AND i.deleted_at IS NULL
+const countEntityFieldValuesByOrgSlug = `-- name: CountEntityFieldValuesByOrgSlug :one
+SELECT count(*) FROM entity_field_values v
+WHERE v.field_slug = $1
+  AND EXISTS (
+    SELECT 1 FROM project_items i
+     WHERE v.entity_type = 'project_item'
+       AND i.id = v.entity_id
+       AND i.org_id = $2
+       AND i.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM tickets t
+      JOIN spaces ts ON ts.id = t.space_id
+     WHERE v.entity_type = 'ticket'
+       AND t.id = v.entity_id
+       AND ts.org_id = $2
+       AND t.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM pages p
+      JOIN spaces ps ON ps.id = p.space_id
+     WHERE v.entity_type = 'page'
+       AND p.id = v.entity_id
+       AND ps.org_id = $2
+       AND p.deleted_at IS NULL
+  )
 `
 
-type CountItemFieldValuesByOrgSlugParams struct {
-	OrgID     uuid.UUID `json:"org_id"`
+type CountEntityFieldValuesByOrgSlugParams struct {
 	FieldSlug string    `json:"field_slug"`
+	OrgID     uuid.UUID `json:"org_id"`
 }
 
-// Counts the org's live items still holding a value under a field slug. Used to
-// refuse a NEW definition whose slug would silently adopt values left behind by
-// a deleted definition (values are stored by slug and outlive their
-// definitions, by design — migration 033).
+// Counts the org's live entities still holding a value under a field slug.
+// Used to refuse a NEW definition whose slug would silently adopt values left
+// behind by a deleted definition (values are stored by slug and outlive their
+// definitions, by design — migration 033, reconciliation D48).
 //
-// item_field_values has no org column: values hang off project items. The org
-// is read from project_items.org_id, which migration 031 denormalised onto the
-// item and made NOT NULL, and which idx_project_items_org_id indexes — rather
-// than joined through spaces, which would also have to reason about a
-// soft-deleted space whose items are still holding values.
+// entity_field_values has no org column: values hang off entities. Items
+// carry org_id directly (denormalised by migration 031); tickets and pages
+// reach it through their NOT NULL space_id.
 //
-// Soft-deleted items are excluded: their values are unreachable, so counting
-// them would refuse a legitimate field name over data nobody can see.
-func (q *Queries) CountItemFieldValuesByOrgSlug(ctx context.Context, arg CountItemFieldValuesByOrgSlugParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countItemFieldValuesByOrgSlug, arg.OrgID, arg.FieldSlug)
+// Soft-deleted entities are excluded: their values are unreachable, so
+// counting them would refuse a legitimate field name over data nobody can see.
+func (q *Queries) CountEntityFieldValuesByOrgSlug(ctx context.Context, arg CountEntityFieldValuesByOrgSlugParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countEntityFieldValuesByOrgSlug, arg.FieldSlug, arg.OrgID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -96,18 +112,72 @@ func (q *Queries) DeleteCustomFieldDef(ctx context.Context, id uuid.UUID) error 
 	return err
 }
 
-const deleteItemFieldValue = `-- name: DeleteItemFieldValue :exec
-DELETE FROM item_field_values WHERE item_id = $1 AND field_slug = $2
+const deleteCustomFieldScope = `-- name: DeleteCustomFieldScope :execrows
+DELETE FROM custom_field_scopes
+WHERE field_id = $1 AND space_id = $2 AND entity_type = $3
 `
 
-type DeleteItemFieldValueParams struct {
-	ItemID    uuid.UUID `json:"item_id"`
-	FieldSlug string    `json:"field_slug"`
+type DeleteCustomFieldScopeParams struct {
+	FieldID    uuid.UUID `json:"field_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
+	EntityType string    `json:"entity_type"`
 }
 
-func (q *Queries) DeleteItemFieldValue(ctx context.Context, arg DeleteItemFieldValueParams) error {
-	_, err := q.db.Exec(ctx, deleteItemFieldValue, arg.ItemID, arg.FieldSlug)
-	return err
+func (q *Queries) DeleteCustomFieldScope(ctx context.Context, arg DeleteCustomFieldScopeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCustomFieldScope, arg.FieldID, arg.SpaceID, arg.EntityType)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteEntityFieldValue = `-- name: DeleteEntityFieldValue :execrows
+DELETE FROM entity_field_values v
+WHERE v.entity_type = $1::text
+  AND v.entity_id = $2
+  AND v.field_slug = $3
+  AND EXISTS (
+    SELECT 1 FROM tickets t
+     WHERE $1::text = 'ticket'
+       AND t.id = v.entity_id
+       AND t.space_id = $4
+       AND t.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM project_items pi
+     WHERE $1::text = 'project_item'
+       AND pi.id = v.entity_id
+       AND pi.space_id = $4
+       AND pi.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM pages pg
+     WHERE $1::text = 'page'
+       AND pg.id = v.entity_id
+       AND pg.space_id = $4
+       AND pg.deleted_at IS NULL
+  )
+`
+
+type DeleteEntityFieldValueParams struct {
+	EntityType string    `json:"entity_type"`
+	EntityID   uuid.UUID `json:"entity_id"`
+	FieldSlug  string    `json:"field_slug"`
+	SpaceID    uuid.UUID `json:"space_id"`
+}
+
+// Same in-statement reconciliation as the upsert, for the same reason: a
+// delete addressed at an entity outside @space_id must affect zero rows
+// rather than trusting the caller to have resolved the entity first.
+func (q *Queries) DeleteEntityFieldValue(ctx context.Context, arg DeleteEntityFieldValueParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteEntityFieldValue,
+		arg.EntityType,
+		arg.EntityID,
+		arg.FieldSlug,
+		arg.SpaceID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getCustomFieldDefByID = `-- name: GetCustomFieldDefByID :one
@@ -153,6 +223,33 @@ func (q *Queries) GetCustomFieldDefByOrgSlug(ctx context.Context, arg GetCustomF
 		&i.Options,
 		&i.Position,
 		&i.ArchivedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getCustomFieldScope = `-- name: GetCustomFieldScope :one
+SELECT id, field_id, space_id, entity_type, required, position, created_at, updated_at FROM custom_field_scopes
+WHERE field_id = $1 AND space_id = $2 AND entity_type = $3
+`
+
+type GetCustomFieldScopeParams struct {
+	FieldID    uuid.UUID `json:"field_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
+	EntityType string    `json:"entity_type"`
+}
+
+func (q *Queries) GetCustomFieldScope(ctx context.Context, arg GetCustomFieldScopeParams) (CustomFieldScope, error) {
+	row := q.db.QueryRow(ctx, getCustomFieldScope, arg.FieldID, arg.SpaceID, arg.EntityType)
+	var i CustomFieldScope
+	err := row.Scan(
+		&i.ID,
+		&i.FieldID,
+		&i.SpaceID,
+		&i.EntityType,
+		&i.Required,
+		&i.Position,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -231,33 +328,129 @@ func (q *Queries) ListCustomFieldDefsByOrg(ctx context.Context, orgID uuid.UUID)
 	return items, nil
 }
 
-const listItemFieldValues = `-- name: ListItemFieldValues :many
-SELECT v.id, v.item_id, v.field_slug, v.value, v.created_at, v.updated_at FROM item_field_values v
-JOIN project_items pi ON pi.id = v.item_id
-WHERE v.item_id = $1
-  AND pi.space_id = $2
-  AND pi.deleted_at IS NULL
-ORDER BY v.field_slug
+const listCustomFieldScopesByField = `-- name: ListCustomFieldScopesByField :many
+SELECT id, field_id, space_id, entity_type, required, position, created_at, updated_at FROM custom_field_scopes WHERE field_id = $1 ORDER BY entity_type, created_at
 `
 
-type ListItemFieldValuesParams struct {
-	ItemID  uuid.UUID `json:"item_id"`
-	SpaceID uuid.UUID `json:"space_id"`
-}
-
-// An item's stored custom-field values, reconciled against the space the
-// request named. item_field_values carries no space_id — the values are
-// readable exactly when their item is — so the test joins the item, which is
-// also what makes a soft-deleted item's values stop being readable.
-func (q *Queries) ListItemFieldValues(ctx context.Context, arg ListItemFieldValuesParams) ([]ItemFieldValue, error) {
-	rows, err := q.db.Query(ctx, listItemFieldValues, arg.ItemID, arg.SpaceID)
+func (q *Queries) ListCustomFieldScopesByField(ctx context.Context, fieldID uuid.UUID) ([]CustomFieldScope, error) {
+	rows, err := q.db.Query(ctx, listCustomFieldScopesByField, fieldID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ItemFieldValue{}
+	items := []CustomFieldScope{}
 	for rows.Next() {
-		var i ItemFieldValue
+		var i CustomFieldScope
+		if err := rows.Scan(
+			&i.ID,
+			&i.FieldID,
+			&i.SpaceID,
+			&i.EntityType,
+			&i.Required,
+			&i.Position,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomFieldScopesForSpaceEntity = `-- name: ListCustomFieldScopesForSpaceEntity :many
+SELECT id, field_id, space_id, entity_type, required, position, created_at, updated_at FROM custom_field_scopes
+WHERE space_id = $1 AND entity_type = $2
+ORDER BY position, created_at
+`
+
+type ListCustomFieldScopesForSpaceEntityParams struct {
+	SpaceID    uuid.UUID `json:"space_id"`
+	EntityType string    `json:"entity_type"`
+}
+
+// The scope rows governing one form: which fields appear for this entity type
+// in this space, in what order, and which of them are required there.
+func (q *Queries) ListCustomFieldScopesForSpaceEntity(ctx context.Context, arg ListCustomFieldScopesForSpaceEntityParams) ([]CustomFieldScope, error) {
+	rows, err := q.db.Query(ctx, listCustomFieldScopesForSpaceEntity, arg.SpaceID, arg.EntityType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomFieldScope{}
+	for rows.Next() {
+		var i CustomFieldScope
+		if err := rows.Scan(
+			&i.ID,
+			&i.FieldID,
+			&i.SpaceID,
+			&i.EntityType,
+			&i.Required,
+			&i.Position,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEntityFieldValues = `-- name: ListEntityFieldValues :many
+SELECT v.id, v.item_id, v.field_slug, v.value, v.created_at, v.updated_at, v.entity_type, v.entity_id FROM entity_field_values v
+WHERE v.entity_type = $1::text
+  AND v.entity_id = $2
+  AND EXISTS (
+    SELECT 1 FROM tickets t
+     WHERE $1::text = 'ticket'
+       AND t.id = v.entity_id
+       AND t.space_id = $3
+       AND t.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM project_items pi
+     WHERE $1::text = 'project_item'
+       AND pi.id = v.entity_id
+       AND pi.space_id = $3
+       AND pi.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM pages pg
+     WHERE $1::text = 'page'
+       AND pg.id = v.entity_id
+       AND pg.space_id = $3
+       AND pg.deleted_at IS NULL
+  )
+ORDER BY v.field_slug
+`
+
+type ListEntityFieldValuesParams struct {
+	EntityType string    `json:"entity_type"`
+	EntityID   uuid.UUID `json:"entity_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
+}
+
+// An entity's stored custom-field values, reconciled against the space the
+// request named. entity_field_values carries no space_id — the values are
+// readable exactly when their entity is — so the space test resolves the
+// entity per type, which is also what makes a soft-deleted entity's values
+// stop being readable. Same three-arm discriminator shape as
+// EntityRelationTargetIsReadable in items.sql: each arm carries its own
+// deleted_at IS NULL and space predicate.
+func (q *Queries) ListEntityFieldValues(ctx context.Context, arg ListEntityFieldValuesParams) ([]EntityFieldValue, error) {
+	rows, err := q.db.Query(ctx, listEntityFieldValues, arg.EntityType, arg.EntityID, arg.SpaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EntityFieldValue{}
+	for rows.Next() {
+		var i EntityFieldValue
 		if err := rows.Scan(
 			&i.ID,
 			&i.ItemID,
@@ -265,6 +458,8 @@ func (q *Queries) ListItemFieldValues(ctx context.Context, arg ListItemFieldValu
 			&i.Value,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.EntityType,
+			&i.EntityID,
 		); err != nil {
 			return nil, err
 		}
@@ -347,29 +542,113 @@ func (q *Queries) UpdateCustomFieldDef(ctx context.Context, arg UpdateCustomFiel
 	return i, err
 }
 
-const upsertItemFieldValue = `-- name: UpsertItemFieldValue :one
-INSERT INTO item_field_values (id, item_id, field_slug, value)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (item_id, field_slug)
-DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-RETURNING id, item_id, field_slug, value, created_at, updated_at
+const upsertCustomFieldScope = `-- name: UpsertCustomFieldScope :one
+INSERT INTO custom_field_scopes (id, field_id, space_id, entity_type, required, position)
+SELECT $1, $2, $3, $4::text, $5, $6
+WHERE EXISTS (
+    SELECT 1 FROM spaces s
+     WHERE s.id = $3 AND s.org_id = $7 AND s.deleted_at IS NULL
+)
+ON CONFLICT (field_id, space_id, entity_type)
+DO UPDATE SET required = EXCLUDED.required, updated_at = now()
+RETURNING id, field_id, space_id, entity_type, required, position, created_at, updated_at
 `
 
-type UpsertItemFieldValueParams struct {
-	ID        uuid.UUID `json:"id"`
-	ItemID    uuid.UUID `json:"item_id"`
-	FieldSlug string    `json:"field_slug"`
-	Value     string    `json:"value"`
+type UpsertCustomFieldScopeParams struct {
+	ID         uuid.UUID `json:"id"`
+	FieldID    uuid.UUID `json:"field_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
+	EntityType string    `json:"entity_type"`
+	Required   bool      `json:"required"`
+	Position   int32     `json:"position"`
+	OrgID      uuid.UUID `json:"org_id"`
 }
 
-func (q *Queries) UpsertItemFieldValue(ctx context.Context, arg UpsertItemFieldValueParams) (ItemFieldValue, error) {
-	row := q.db.QueryRow(ctx, upsertItemFieldValue,
+// The org predicate is in the statement: @space_id is caller-supplied, and
+// without the EXISTS an org admin could attach their field to another
+// organisation's space (and, later, mark it required there). A space outside
+// the org — or soft-deleted — proposes zero rows and the caller answers the
+// same 404 an unknown space gets. Position is set on first attach and kept on
+// re-attach: toggling required must not reshuffle the form.
+func (q *Queries) UpsertCustomFieldScope(ctx context.Context, arg UpsertCustomFieldScopeParams) (CustomFieldScope, error) {
+	row := q.db.QueryRow(ctx, upsertCustomFieldScope,
 		arg.ID,
-		arg.ItemID,
+		arg.FieldID,
+		arg.SpaceID,
+		arg.EntityType,
+		arg.Required,
+		arg.Position,
+		arg.OrgID,
+	)
+	var i CustomFieldScope
+	err := row.Scan(
+		&i.ID,
+		&i.FieldID,
+		&i.SpaceID,
+		&i.EntityType,
+		&i.Required,
+		&i.Position,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertEntityFieldValue = `-- name: UpsertEntityFieldValue :one
+INSERT INTO entity_field_values (id, entity_type, entity_id, field_slug, value)
+SELECT $1, $2::text, $3, $4, $5
+WHERE EXISTS (
+    SELECT 1 FROM tickets t
+     WHERE $2::text = 'ticket'
+       AND t.id = $3
+       AND t.space_id = $6
+       AND t.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM project_items pi
+     WHERE $2::text = 'project_item'
+       AND pi.id = $3
+       AND pi.space_id = $6
+       AND pi.deleted_at IS NULL
+    UNION ALL
+    SELECT 1 FROM pages pg
+     WHERE $2::text = 'page'
+       AND pg.id = $3
+       AND pg.space_id = $6
+       AND pg.deleted_at IS NULL
+)
+ON CONFLICT (entity_type, entity_id, field_slug)
+DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+RETURNING id, item_id, field_slug, value, created_at, updated_at, entity_type, entity_id
+`
+
+type UpsertEntityFieldValueParams struct {
+	ID         uuid.UUID `json:"id"`
+	EntityType string    `json:"entity_type"`
+	EntityID   uuid.UUID `json:"entity_id"`
+	FieldSlug  string    `json:"field_slug"`
+	Value      string    `json:"value"`
+	SpaceID    uuid.UUID `json:"space_id"`
+}
+
+// The write carries its own space reconciliation. The predecessor
+// (UpsertItemFieldValue) had no space predicate and no org predicate at all —
+// the entire write-path authorization was the calling convention that the one
+// handler calling it resolved the item through the space first. Now the
+// statement itself refuses: an upsert addressed at an entity outside
+// @space_id, soft-deleted, or of another type proposes zero rows, so nothing
+// is inserted, no conflict fires, nothing is updated, and no row returns —
+// the caller maps that to the same 404 a nonexistent entity gets. Predicate
+// in the query, not check-after-load; unreadable == nonexistent, no oracle.
+func (q *Queries) UpsertEntityFieldValue(ctx context.Context, arg UpsertEntityFieldValueParams) (EntityFieldValue, error) {
+	row := q.db.QueryRow(ctx, upsertEntityFieldValue,
+		arg.ID,
+		arg.EntityType,
+		arg.EntityID,
 		arg.FieldSlug,
 		arg.Value,
+		arg.SpaceID,
 	)
-	var i ItemFieldValue
+	var i EntityFieldValue
 	err := row.Scan(
 		&i.ID,
 		&i.ItemID,
@@ -377,6 +656,8 @@ func (q *Queries) UpsertItemFieldValue(ctx context.Context, arg UpsertItemFieldV
 		&i.Value,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EntityType,
+		&i.EntityID,
 	)
 	return i, err
 }

@@ -11,6 +11,7 @@ import {
   DetailDivider,
 } from '../../components/layout/DetailLayout';
 import { EntityShareControl } from '../../components/EntityShareControl';
+import { CustomFieldsSection } from '../../components/CustomFieldsSection';
 import { ModuleChip } from '../../shell/ModuleChip';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { Input } from '../../components/ui/input';
@@ -646,6 +647,8 @@ export function TicketDetailPage() {
               {ticket.updated_at.slice(0, 10)}
             </div>
           </DetailField>
+          <DetailDivider />
+          <CustomFieldsSection spaceId={spaceId} entityKind="ticket" entityId={ticket.id} />
         </DetailSide>
       </DetailLayout>
     </div>

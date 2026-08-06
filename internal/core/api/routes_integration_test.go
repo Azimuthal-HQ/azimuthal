@@ -183,6 +183,15 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	tierSvc := workflow.NewTierService(tierStore, transitionTx)
 	tierGate := tiergate.New(tierSvc, tierStore, jobs.NoopNotificationEnqueuer{})
 
+	// One custom-fields service for both the project and ticket handlers,
+	// exactly as cmd/server/main.go wires it (values are polymorphic since
+	// migration 053; the scope store is what attaches fields to forms).
+	customFieldSvc := customfields.NewService(
+		adapters.NewCustomFieldDefAdapter(queries),
+		adapters.NewCustomFieldValueAdapter(queries),
+		adapters.NewCustomFieldScopeAdapter(queries),
+	)
+
 	// v0.3 access control, wired exactly as production (cmd/server/main.go),
 	// including the DB-backed audit logger so audit rows are testable.
 	teamAdapter := adapters.NewTeamAdapter(pool)
@@ -286,13 +295,14 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
 			WithSuggestions(tickets.NewSuggestionService(ticketAdapter)).
 			WithWorkflowTiers(tierGate, transitionTx).
-			WithRequesterLookup(portalAdapter),
+			WithRequesterLookup(portalAdapter).
+			WithCustomFields(customFieldSvc),
 		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
 		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
 			WithAuditLogger(auditLog).
 			WithWorkflowTiers(tierGate, transitionTx).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).
-			WithCustomFields(customfields.NewService(adapters.NewCustomFieldDefAdapter(queries), adapters.NewCustomFieldValueAdapter(queries))).
+			WithCustomFields(customFieldSvc).
 			WithBoardConfig(projects.NewBoardConfigService(
 				adapters.NewBoardConfigAdapter(pool),
 				adapters.NewWorkflowStatusAdapter(pool),

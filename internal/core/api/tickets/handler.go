@@ -18,6 +18,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
@@ -55,6 +56,12 @@ type Handler struct {
 	// moment the harness stops mirroring cmd/server/main.go. A nil lookup does
 	// NOT quietly serialise "no requester" — see resolveRequesters.
 	requesters RequesterLookup
+	// customFields backs the per-ticket field-value routes (migration 053 made
+	// values polymorphic; scopes attach fields to Beacon ticket forms). Pointer
+	// kind, so TestHarness_NoDarkDependencies fails by field name if the
+	// harness stops mirroring cmd/server/main.go. A nil service answers the
+	// conventional feature-disabled 404 — see customFieldsEnabled.
+	customFields *customfields.Service
 }
 
 // NewHandler creates a ticket Handler.
@@ -99,6 +106,15 @@ func (h *Handler) WithSuggestions(s *tickets.SuggestionService) *Handler {
 	return h
 }
 
+// WithCustomFields attaches the custom-fields service, enabling the per-ticket
+// field-value routes. The same service instance the project handler holds —
+// definitions and scopes are org-level, and two instances would still agree,
+// but one is what production wires.
+func (h *Handler) WithCustomFields(s *customfields.Service) *Handler {
+	h.customFields = s
+	return h
+}
+
 // Routes returns a chi.Router with all ticket endpoints mounted. It carries
 // the space-scoped family only — the org-scoped ticket_ref typeahead
 // (SuggestRefs) is registered directly on the org group, because it reads
@@ -115,6 +131,11 @@ func (h *Handler) Routes() chi.Router {
 	r.Post("/{ticketID}/status", h.TransitionStatus)
 	r.Post("/{ticketID}/assign", h.Assign)
 	r.Delete("/{ticketID}/assign", h.Unassign)
+
+	// Custom field values (per ticket) — the Beacon side of the polymorphic
+	// value store, mirroring the item routes in internal/core/api/projects.
+	r.Get("/{ticketID}/fields", h.GetTicketFields)
+	r.Put("/{ticketID}/fields/{slug}", h.SetTicketField)
 	return r
 }
 
@@ -955,6 +976,14 @@ func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
 	return id, nil
 }
 
+func orgIDFromURL(r *http.Request) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, "orgID"))
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("parsing org ID: %w", err)
+	}
+	return id, nil
+}
+
 // creatorOf reports the internal user who raised a ticket, for the
 // edit_own_items half of access.CanEditEntity.
 //
@@ -966,6 +995,156 @@ func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
 // is right, because nobody inside the organisation raised it and "their own"
 // does not apply to anyone. Substituting the assignee or the space creator
 // here would silently hand ownership to somebody who never asked for it.
+type setTicketFieldValueRequest struct {
+	Value string `json:"value"`
+}
+
+// GetTicketFields returns a ticket's custom fields: definitions attached to
+// this space's ticket form with their values and required flags, plus
+// read-only values whose definitions are gone or unattached here.
+//
+// @Summary      Get ticket custom fields
+// @Tags         tickets
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID     path      string  true  "Organization ID (UUID)"
+// @Param        spaceID   path      string  true  "Space ID (UUID)"
+// @Param        ticketID  path      string  true  "Ticket ID (UUID)"
+// @Success      200       {array}   map[string]interface{}
+// @Failure      400       {object}  api.SwaggerErrorResponse  "Invalid ID"
+// @Failure      401       {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/fields [get]
+func (h *Handler) GetTicketFields(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	ticketID, err := ticketIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")
+		return
+	}
+	// The space goes into the value read with the ticket id: the route proved
+	// {spaceID} readable and proved nothing about {ticketID}, so a ticket in
+	// another space contributes no values — exactly as an unknown id does.
+	fields, err := h.customFields.RenderForEntity(r.Context(), orgID, spaceID, customfields.EntityTypeTicket, ticketID)
+	if err != nil {
+		handleTicketFieldError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, fields)
+}
+
+// SetTicketField writes a ticket's value for one custom field attached to
+// this space's ticket form. An empty value clears it — unless the attachment
+// marks the field required, in which case the clear is refused with an error
+// naming the field. Legacy (undefined/archived/unattached) fields are
+// read-only.
+//
+// @Summary      Set a ticket custom field value
+// @Tags         tickets
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID     path      string  true  "Organization ID (UUID)"
+// @Param        spaceID   path      string  true  "Space ID (UUID)"
+// @Param        ticketID  path      string  true  "Ticket ID (UUID)"
+// @Param        slug      path      string  true  "Field slug"
+// @Success      200       {object}  api.SwaggerMessageResponse
+// @Failure      400       {object}  api.SwaggerErrorResponse  "Validation error"
+// @Failure      401       {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      404       {object}  api.SwaggerErrorResponse  "Not found"
+// @Router       /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/fields/{slug} [put]
+func (h *Handler) SetTicketField(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	ticketID, err := ticketIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid ticket ID")
+		return
+	}
+	slug := chi.URLParam(r, "slug")
+
+	// Setting a field value is editing the ticket — gate exactly like Update
+	// (edit_own for the reporter, edit_any otherwise).
+	//
+	// This read resolves the ticket through the space for the permission
+	// check, and a ticket outside {spaceID} leaves through the ticket's own
+	// 404 before anything is written. It is no longer the only
+	// reconciliation: the write statement itself carries the space predicate
+	// (UpsertEntityFieldValue), so the refusal holds for any caller.
+	existing, err := h.svc.GetInSpace(r.Context(), spaceID, ticketID)
+	if err != nil {
+		handleTicketError(w, r, err)
+		return
+	}
+	if !access.CanEditEntity(r.Context(), spaceID, creatorOf(existing)) {
+		respond.Error(w, r, http.StatusForbidden, respond.CodeForbidden, "insufficient permissions")
+		return
+	}
+
+	var req setTicketFieldValueRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	if err := h.customFields.SetValue(r.Context(), orgID, spaceID, customfields.EntityTypeTicket, ticketID, slug, req.Value); err != nil {
+		handleTicketFieldError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]string{"message": "field saved"})
+}
+
+// customFieldsEnabled reports whether the custom-fields service is wired,
+// answering the conventional feature-disabled 404 when it is not.
+func (h *Handler) customFieldsEnabled(w http.ResponseWriter, r *http.Request) bool {
+	if h.customFields == nil {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "custom fields are not enabled")
+		return false
+	}
+	return true
+}
+
+// handleTicketFieldError maps custom-field errors onto ticket responses. The
+// not-found family answers with the TICKET's own 404 wording, byte-identical
+// to GetInSpace's refusal, so the value routes cannot become an oracle the
+// ticket routes are not.
+func handleTicketFieldError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, customfields.ErrEntityNotFound):
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, tickets.ErrNotFound.Error())
+	case errors.Is(err, customfields.ErrUndefinedField),
+		errors.Is(err, customfields.ErrFieldNotInScope):
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
+	case errors.Is(err, customfields.ErrInvalidValue),
+		errors.Is(err, customfields.ErrInvalidEntityType),
+		errors.Is(err, customfields.ErrValueRequired):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+	default:
+		respondUnmapped(w, r, err)
+	}
+}
+
 func creatorOf(t *tickets.Ticket) uuid.UUID {
 	if t == nil || t.ReporterID == nil {
 		return uuid.Nil

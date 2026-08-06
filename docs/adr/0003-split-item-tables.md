@@ -96,3 +96,35 @@ machinery exists. It is unbuilt and tracked (item 16 of the recommendations in
 paragraph and concluding "the architecture was shaped around a feature that was never built."
 
 Catalogued as D101 in `docs/design/spec-repo-reconciliation.md`.
+
+---
+
+## Clarification — 2026-08-06 (v0.4.2 A2): the split is of entity tables, not satellites
+
+Nothing here revisits the decision. "This decision is not revisited" stands; so do the split
+tables. What follows writes down a principle the decision already contains, because A2 is the
+second time a track has had to rediscover it and the next reader should not have to.
+
+**The entity tables stay split; the satellite tables go polymorphic.** The Decision section
+above already says it in miniature: comments, relations and shares are "shared deliberately" and
+"polymorphic across both," because "sharing behaviour is not the same as sharing storage."
+Migration 015 is the executable form of the principle — it took the per-module `item_relations`
+and comment columns and made them one polymorphic satellite each, with an `entity_type`
+discriminator and the FK dropped on purpose, while the entity tables it hangs off stayed split.
+
+v0.4.2 applies the same move to custom-field values: `item_field_values` (Vector-only by one FK)
+became `entity_field_values` (migration 053), polymorphic over the same three-value
+`{ticket, project_item, page}` vocabulary, with `custom_field_scopes` attaching definitions to
+the forms that want them. The alternative — a parallel `ticket_field_values` — would have
+metastasized the two-table split into every satellite: every future cross-cutting feature would
+build its storage twice, diverge twice, and pay the migration tax twice. That is not what this
+ADR decided. The split exists because ticket ROWS and item ROWS are structurally divergent;
+a value row, a comment row, a relation row is the same shape whichever entity it hangs off.
+
+So, for the next satellite (worklogs, watchers, reactions, whatever arrives):
+
+- **One polymorphic table**, `entity_type` + `entity_id`, the shared three-value vocabulary,
+  each read/write carrying its per-type space reconciliation — 015's technique, reused by 053.
+- **Never a per-module fork** of a satellite. Forking is the unification tax paid in the other
+  direction, and it compounds.
+- **The entity tables themselves remain split**, exactly as decided above.
