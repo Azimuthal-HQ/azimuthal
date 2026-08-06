@@ -322,13 +322,22 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 				r.Get("/{slug}/pages", cfg.WikiHandler.ListPagesWithTag)
 			})
 
-			// Custom fields (org-scoped: any member reads definitions for item
-			// forms; org admins define, rename, archive, and delete).
+			// Custom fields (org-scoped: any member reads definitions for
+			// entity forms; org admins define, rename, archive, and delete).
+			// Scopes — which spaces and entity types a field is attached to,
+			// and whether it is required there — are org-admin in BOTH
+			// directions: the rows carry space ids, and listing them to any
+			// member would disclose which private spaces a field is attached
+			// to. Forms never read raw scopes; they read the composed
+			// per-entity render, which carries no space beyond the URL's own.
 			r.Route("/custom-fields", func(r chi.Router) {
 				r.Get("/", cfg.ProjectHandler.ListCustomFields)
 				r.With(orgAdminGuard(cfg)).Post("/", cfg.ProjectHandler.CreateCustomField)
 				r.With(orgAdminGuard(cfg)).Patch("/{fieldID}", cfg.ProjectHandler.UpdateCustomField)
 				r.With(orgAdminGuard(cfg)).Delete("/{fieldID}", cfg.ProjectHandler.DeleteCustomField)
+				r.With(orgAdminGuard(cfg)).Get("/{fieldID}/scopes", cfg.ProjectHandler.ListFieldScopes)
+				r.With(orgAdminGuard(cfg)).Put("/{fieldID}/scopes/{spaceID}/{entityType}", cfg.ProjectHandler.SetFieldScope)
+				r.With(orgAdminGuard(cfg)).Delete("/{fieldID}/scopes/{spaceID}/{entityType}", cfg.ProjectHandler.RemoveFieldScope)
 			})
 
 			// Workflows (org-scoped: members read, org admins mutate).

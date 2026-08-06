@@ -568,19 +568,46 @@ func (m *mockCustomFieldDefRepo) NextPosition(_ context.Context, _ uuid.UUID) (i
 
 type mockCustomFieldValueRepo struct{}
 
-func (m *mockCustomFieldValueRepo) ListByItemInSpace(_ context.Context, _, _ uuid.UUID) ([]customfields.StoredValue, error) {
+func (m *mockCustomFieldValueRepo) ListForEntityInSpace(_ context.Context, _ uuid.UUID, _ string, _ uuid.UUID) ([]customfields.StoredValue, error) {
 	return nil, nil
 }
-func (m *mockCustomFieldValueRepo) Upsert(_ context.Context, _ uuid.UUID, _, _ string) error {
+func (m *mockCustomFieldValueRepo) UpsertInSpace(_ context.Context, _ uuid.UUID, _ string, _ uuid.UUID, _, _ string) (bool, error) {
+	return true, nil
+}
+func (m *mockCustomFieldValueRepo) DeleteInSpace(_ context.Context, _ uuid.UUID, _ string, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (m *mockCustomFieldValueRepo) Delete(_ context.Context, _ uuid.UUID, _ string) error { return nil }
 
 // CountByOrgSlug reports no legacy values: this mock stores none, so any other
 // answer would be a fabrication. The slug-reuse guard it feeds is covered
 // against a real database in internal/db/adapters and internal/core/api.
 func (m *mockCustomFieldValueRepo) CountByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (int, error) {
 	return 0, nil
+}
+
+// mockCustomFieldScopeRepo holds no attachments: every scope lookup reports
+// the field unattached, which is a new definition's true state. Scope
+// behaviour is covered against a real database in the custom-fields
+// integration tests.
+type mockCustomFieldScopeRepo struct{}
+
+func (m *mockCustomFieldScopeRepo) ListByField(_ context.Context, _ uuid.UUID) ([]customfields.FieldScope, error) {
+	return nil, nil
+}
+func (m *mockCustomFieldScopeRepo) ListForSpaceEntity(_ context.Context, _ uuid.UUID, _ string) ([]customfields.FieldScope, error) {
+	return nil, nil
+}
+func (m *mockCustomFieldScopeRepo) Get(_ context.Context, _, _ uuid.UUID, _ string) (*customfields.FieldScope, error) {
+	return nil, customfields.ErrScopeNotFound
+}
+func (m *mockCustomFieldScopeRepo) Upsert(_ context.Context, _ uuid.UUID, s *customfields.FieldScope) (*customfields.FieldScope, error) {
+	return s, nil
+}
+func (m *mockCustomFieldScopeRepo) Delete(_ context.Context, _, _ uuid.UUID, _ string) (bool, error) {
+	return false, nil
+}
+func (m *mockCustomFieldScopeRepo) SpaceOrgType(_ context.Context, _ uuid.UUID) (uuid.UUID, string, error) {
+	return uuid.Nil, "", customfields.ErrSpaceNotFound
 }
 
 func (m *mockItemRepo) GetByID(_ context.Context, id uuid.UUID) (*projects.Item, error) {
@@ -812,7 +839,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	relationSvc := projects.NewRelationService(&mockRelationRepo{})
 	labelSvc := projects.NewLabelService(&mockLabelRepo{})
 	itemTypeSvc := itemtypes.NewService(&mockItemTypeRepo{})
-	customFieldSvc := customfields.NewService(&mockCustomFieldDefRepo{}, &mockCustomFieldValueRepo{})
+	customFieldSvc := customfields.NewService(&mockCustomFieldDefRepo{}, &mockCustomFieldValueRepo{}, &mockCustomFieldScopeRepo{})
 
 	authHandler := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
 	// The tier gate is wired here for the same reason it is wired in
@@ -826,7 +853,8 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		WithWorkflowTiers(
 			tiergate.New(workflow.NewTierService(&mockTierStore{}, &mockTransitionApplier{}), &mockWorkflowResolver{}, jobs.NoopNotificationEnqueuer{}),
 			&mockTransitionApplier{},
-		)
+		).
+		WithCustomFields(customFieldSvc)
 	tagSvc := tags.NewService(&mockTagRepo{})
 	wikiDocs := wiki.NewDocumentService(
 		newMockDocumentStore(mockPages),

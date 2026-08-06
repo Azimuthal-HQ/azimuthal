@@ -147,19 +147,19 @@ func NewCustomFieldValueAdapter(q *generated.Queries) *CustomFieldValueAdapter {
 	return &CustomFieldValueAdapter{q: q}
 }
 
-// ListByItemInSpace implements the repository interface. The values are
-// reconciled against the space through their item: item_field_values carries no
-// space of its own, and the route that reaches this proved {spaceID} readable
-// while proving nothing about {itemID}. An item in another space yields no
-// rows, which is what an item with no values yields too — the two are
-// indistinguishable on purpose.
-func (a *CustomFieldValueAdapter) ListByItemInSpace(ctx context.Context, spaceID, itemID uuid.UUID) ([]customfields.StoredValue, error) {
-	rows, err := a.q.ListItemFieldValues(ctx, generated.ListItemFieldValuesParams{
-		ItemID:  itemID,
-		SpaceID: spaceID,
+// ListForEntityInSpace implements the repository interface. The values are
+// reconciled against the space in the statement, per entity type: the route
+// that reaches this proved {spaceID} readable while proving nothing about the
+// entity id. An entity in another space yields no rows, which is what an
+// entity with no values yields too — the two are indistinguishable on purpose.
+func (a *CustomFieldValueAdapter) ListForEntityInSpace(ctx context.Context, spaceID uuid.UUID, entityType string, entityID uuid.UUID) ([]customfields.StoredValue, error) {
+	rows, err := a.q.ListEntityFieldValues(ctx, generated.ListEntityFieldValuesParams{
+		EntityType: entityType,
+		EntityID:   entityID,
+		SpaceID:    spaceID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("custom field value adapter list by item: %w", err)
+		return nil, fmt.Errorf("custom field value adapter list for entity: %w", err)
 	}
 	out := make([]customfields.StoredValue, len(rows))
 	for i, r := range rows {
@@ -168,25 +168,49 @@ func (a *CustomFieldValueAdapter) ListByItemInSpace(ctx context.Context, spaceID
 	return out, nil
 }
 
-// Upsert implements the repository interface.
-func (a *CustomFieldValueAdapter) Upsert(ctx context.Context, itemID uuid.UUID, slug, value string) error {
-	_, err := a.q.UpsertItemFieldValue(ctx, generated.UpsertItemFieldValueParams{
-		ID:        uuid.New(),
-		ItemID:    itemID,
-		FieldSlug: slug,
-		Value:     value,
+// UpsertInSpace implements the repository interface. The statement inserts
+// only when the entity resolves inside spaceID (live, right type); when it
+// does not, zero rows are proposed, the ON CONFLICT never fires, and
+// pgx.ErrNoRows on the RETURNING reports ok=false with nothing written.
+func (a *CustomFieldValueAdapter) UpsertInSpace(ctx context.Context, spaceID uuid.UUID, entityType string, entityID uuid.UUID, slug, value string) (bool, error) {
+	_, err := a.q.UpsertEntityFieldValue(ctx, generated.UpsertEntityFieldValueParams{
+		ID:         uuid.New(),
+		EntityType: entityType,
+		EntityID:   entityID,
+		FieldSlug:  slug,
+		Value:      value,
+		SpaceID:    spaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("custom field value adapter upsert: %w", err)
+	}
+	return true, nil
+}
+
+// DeleteInSpace implements the repository interface. Zero rows affected is not
+// an error: clearing an absent value is idempotent, and a delete refused by
+// the space predicate must answer exactly as one that found nothing.
+func (a *CustomFieldValueAdapter) DeleteInSpace(ctx context.Context, spaceID uuid.UUID, entityType string, entityID uuid.UUID, slug string) error {
+	_, err := a.q.DeleteEntityFieldValue(ctx, generated.DeleteEntityFieldValueParams{
+		EntityType: entityType,
+		EntityID:   entityID,
+		FieldSlug:  slug,
+		SpaceID:    spaceID,
 	})
 	if err != nil {
-		return fmt.Errorf("custom field value adapter upsert: %w", err)
+		return fmt.Errorf("custom field value adapter delete: %w", err)
 	}
 	return nil
 }
 
-// CountByOrgSlug implements the repository interface. It reaches the org
-// through project_items -> spaces, because item_field_values has no org column
-// of its own: values hang off items, and items hang off the org-scoped space.
+// CountByOrgSlug implements the repository interface. entity_field_values has
+// no org column of its own: items carry org_id directly (migration 031),
+// tickets and pages reach it through their space.
 func (a *CustomFieldValueAdapter) CountByOrgSlug(ctx context.Context, orgID uuid.UUID, slug string) (int, error) {
-	n, err := a.q.CountItemFieldValuesByOrgSlug(ctx, generated.CountItemFieldValuesByOrgSlugParams{
+	n, err := a.q.CountEntityFieldValuesByOrgSlug(ctx, generated.CountEntityFieldValuesByOrgSlugParams{
 		OrgID:     orgID,
 		FieldSlug: slug,
 	})
@@ -196,12 +220,121 @@ func (a *CustomFieldValueAdapter) CountByOrgSlug(ctx context.Context, orgID uuid
 	return int(n), nil
 }
 
-// Delete implements the repository interface.
-func (a *CustomFieldValueAdapter) Delete(ctx context.Context, itemID uuid.UUID, slug string) error {
-	if err := a.q.DeleteItemFieldValue(ctx, generated.DeleteItemFieldValueParams{ItemID: itemID, FieldSlug: slug}); err != nil {
-		return fmt.Errorf("custom field value adapter delete: %w", err)
+// CustomFieldScopeAdapter implements customfields.ScopeRepository.
+type CustomFieldScopeAdapter struct {
+	q *generated.Queries
+}
+
+// NewCustomFieldScopeAdapter creates a CustomFieldScopeAdapter.
+func NewCustomFieldScopeAdapter(q *generated.Queries) *CustomFieldScopeAdapter {
+	return &CustomFieldScopeAdapter{q: q}
+}
+
+// ListByField implements the repository interface.
+func (a *CustomFieldScopeAdapter) ListByField(ctx context.Context, fieldID uuid.UUID) ([]customfields.FieldScope, error) {
+	rows, err := a.q.ListCustomFieldScopesByField(ctx, fieldID)
+	if err != nil {
+		return nil, fmt.Errorf("custom field scope adapter list by field: %w", err)
 	}
-	return nil
+	return dbScopesToScopes(rows), nil
+}
+
+// ListForSpaceEntity implements the repository interface.
+func (a *CustomFieldScopeAdapter) ListForSpaceEntity(ctx context.Context, spaceID uuid.UUID, entityType string) ([]customfields.FieldScope, error) {
+	rows, err := a.q.ListCustomFieldScopesForSpaceEntity(ctx, generated.ListCustomFieldScopesForSpaceEntityParams{
+		SpaceID:    spaceID,
+		EntityType: entityType,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("custom field scope adapter list for space: %w", err)
+	}
+	return dbScopesToScopes(rows), nil
+}
+
+// Get implements the repository interface.
+func (a *CustomFieldScopeAdapter) Get(ctx context.Context, fieldID, spaceID uuid.UUID, entityType string) (*customfields.FieldScope, error) {
+	row, err := a.q.GetCustomFieldScope(ctx, generated.GetCustomFieldScopeParams{
+		FieldID:    fieldID,
+		SpaceID:    spaceID,
+		EntityType: entityType,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, customfields.ErrScopeNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("custom field scope adapter get: %w", err)
+	}
+	s := dbScopeToScope(row)
+	return &s, nil
+}
+
+// Upsert implements the repository interface. The org predicate is in the
+// statement — a space outside orgID (or soft-deleted) proposes zero rows, and
+// pgx.ErrNoRows on the RETURNING maps to ErrSpaceNotFound with nothing
+// written.
+func (a *CustomFieldScopeAdapter) Upsert(ctx context.Context, orgID uuid.UUID, scope *customfields.FieldScope) (*customfields.FieldScope, error) {
+	row, err := a.q.UpsertCustomFieldScope(ctx, generated.UpsertCustomFieldScopeParams{
+		ID:         uuid.New(),
+		FieldID:    scope.FieldID,
+		SpaceID:    scope.SpaceID,
+		EntityType: scope.EntityType,
+		Required:   scope.Required,
+		Position:   int32(scope.Position), //nolint:gosec // small positive ordinal
+		OrgID:      orgID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, customfields.ErrSpaceNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("custom field scope adapter upsert: %w", err)
+	}
+	s := dbScopeToScope(row)
+	return &s, nil
+}
+
+// Delete implements the repository interface.
+func (a *CustomFieldScopeAdapter) Delete(ctx context.Context, fieldID, spaceID uuid.UUID, entityType string) (bool, error) {
+	n, err := a.q.DeleteCustomFieldScope(ctx, generated.DeleteCustomFieldScopeParams{
+		FieldID:    fieldID,
+		SpaceID:    spaceID,
+		EntityType: entityType,
+	})
+	if err != nil {
+		return false, fmt.Errorf("custom field scope adapter delete: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SpaceOrgType implements the repository interface. GetSpaceByID already
+// excludes soft-deleted spaces, so a deleted space answers exactly as a
+// missing one.
+func (a *CustomFieldScopeAdapter) SpaceOrgType(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, string, error) {
+	row, err := a.q.GetSpaceByID(ctx, spaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, "", customfields.ErrSpaceNotFound
+	}
+	if err != nil {
+		return uuid.Nil, "", fmt.Errorf("custom field scope adapter space lookup: %w", err)
+	}
+	return row.OrgID, row.Type, nil
+}
+
+func dbScopeToScope(r generated.CustomFieldScope) customfields.FieldScope {
+	return customfields.FieldScope{
+		FieldID:    r.FieldID,
+		SpaceID:    r.SpaceID,
+		EntityType: r.EntityType,
+		Required:   r.Required,
+		Position:   int(r.Position),
+	}
+}
+
+func dbScopesToScopes(rows []generated.CustomFieldScope) []customfields.FieldScope {
+	out := make([]customfields.FieldScope, len(rows))
+	for i, r := range rows {
+		out[i] = dbScopeToScope(r)
+	}
+	return out
 }
 
 func marshalOptions(options []string) ([]byte, error) {

@@ -2043,6 +2043,9 @@ type setFieldValueRequest struct {
 // @Success      200    {array}   map[string]interface{}
 // @Router       /orgs/{orgID}/custom-fields [get]
 func (h *Handler) ListCustomFields(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
@@ -2067,6 +2070,9 @@ func (h *Handler) ListCustomFields(w http.ResponseWriter, r *http.Request) {
 // @Success      201    {object}  map[string]interface{}
 // @Router       /orgs/{orgID}/custom-fields [post]
 func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
@@ -2099,6 +2105,9 @@ func (h *Handler) CreateCustomField(w http.ResponseWriter, r *http.Request) {
 //
 //nolint:cyclop // one PATCH updates name/options and/or archive state — each is a guarded branch
 func (h *Handler) UpdateCustomField(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
@@ -2153,6 +2162,9 @@ func (h *Handler) UpdateCustomField(w http.ResponseWriter, r *http.Request) {
 // @Success      204      "No Content"
 // @Router       /orgs/{orgID}/custom-fields/{fieldID} [delete]
 func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
@@ -2170,8 +2182,130 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GetItemFields returns an item's custom fields: active definitions with their
-// values, plus legacy read-only values whose definitions are gone.
+// ListFieldScopes returns every attachment of one field: which spaces and
+// entity types it appears on, and whether it is required there.
+//
+// @Summary      List a custom field's scopes
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID    path      string  true  "Organization ID (UUID)"
+// @Param        fieldID  path      string  true  "Custom field ID (UUID)"
+// @Success      200      {array}   map[string]interface{}
+// @Router       /orgs/{orgID}/custom-fields/{fieldID}/scopes [get]
+func (h *Handler) ListFieldScopes(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	fieldID, err := uuid.Parse(chi.URLParam(r, "fieldID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid custom field ID")
+		return
+	}
+	scopes, err := h.customFields.ListScopes(r.Context(), orgID, fieldID)
+	if err != nil {
+		handleCustomFieldError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, scopes)
+}
+
+type setFieldScopeRequest struct {
+	Required bool `json:"required"`
+}
+
+// SetFieldScope attaches a field to a (space, entity type) form, or updates
+// whether it is required there. Requiredness is a property of the attachment,
+// never of the org-wide definition — see migration 053.
+//
+// @Summary      Attach a custom field to a space form
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID       path      string  true  "Organization ID (UUID)"
+// @Param        fieldID     path      string  true  "Custom field ID (UUID)"
+// @Param        spaceID     path      string  true  "Space ID (UUID)"
+// @Param        entityType  path      string  true  "Entity type (ticket or project_item)"
+// @Success      200         {object}  map[string]interface{}
+// @Router       /orgs/{orgID}/custom-fields/{fieldID}/scopes/{spaceID}/{entityType} [put]
+func (h *Handler) SetFieldScope(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
+	orgID, fieldID, spaceID, entityType, ok := scopeParamsFromURL(w, r)
+	if !ok {
+		return
+	}
+	var req setFieldScopeRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	scope, err := h.customFields.SetScope(r.Context(), orgID, fieldID, spaceID, entityType, req.Required)
+	if err != nil {
+		handleCustomFieldError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, scope)
+}
+
+// RemoveFieldScope detaches a field from a (space, entity type) form. Stored
+// values are untouched and surface read-only as legacy fields.
+//
+// @Summary      Detach a custom field from a space form
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID       path      string  true  "Organization ID (UUID)"
+// @Param        fieldID     path      string  true  "Custom field ID (UUID)"
+// @Param        spaceID     path      string  true  "Space ID (UUID)"
+// @Param        entityType  path      string  true  "Entity type (ticket or project_item)"
+// @Success      204         "No Content"
+// @Router       /orgs/{orgID}/custom-fields/{fieldID}/scopes/{spaceID}/{entityType} [delete]
+func (h *Handler) RemoveFieldScope(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
+	orgID, fieldID, spaceID, entityType, ok := scopeParamsFromURL(w, r)
+	if !ok {
+		return
+	}
+	if err := h.customFields.RemoveScope(r.Context(), orgID, fieldID, spaceID, entityType); err != nil {
+		handleCustomFieldError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func scopeParamsFromURL(w http.ResponseWriter, r *http.Request) (orgID, fieldID, spaceID uuid.UUID, entityType string, ok bool) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	fieldID, err = uuid.Parse(chi.URLParam(r, "fieldID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid custom field ID")
+		return
+	}
+	spaceID, err = uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	entityType = chi.URLParam(r, "entityType")
+	return orgID, fieldID, spaceID, entityType, true
+}
+
+// GetItemFields returns an item's custom fields: definitions attached to this
+// space's item form with their values and required flags, plus read-only
+// values whose definitions are gone or unattached here.
 //
 // @Summary      Get item custom fields
 // @Tags         projects
@@ -2183,6 +2317,9 @@ func (h *Handler) DeleteCustomField(w http.ResponseWriter, r *http.Request) {
 // @Success      200      {array}   map[string]interface{}
 // @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields [get]
 func (h *Handler) GetItemFields(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
@@ -2201,7 +2338,7 @@ func (h *Handler) GetItemFields(w http.ResponseWriter, r *http.Request) {
 	// The space goes down with the item id: the route proved {spaceID} readable
 	// and proved nothing about {itemID}, so values were rendered for any item in
 	// the installation under any space's URL.
-	fields, err := h.customFields.RenderForItem(r.Context(), orgID, spaceID, itemID)
+	fields, err := h.customFields.RenderForEntity(r.Context(), orgID, spaceID, customfields.EntityTypeProjectItem, itemID)
 	if err != nil {
 		handleCustomFieldError(w, r, err)
 		return
@@ -2209,8 +2346,10 @@ func (h *Handler) GetItemFields(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, fields)
 }
 
-// SetItemField writes an item's value for one active custom field. An empty
-// value clears it. Legacy (undefined/archived) fields are read-only.
+// SetItemField writes an item's value for one custom field attached to this
+// space's item form. An empty value clears it — unless the attachment marks
+// the field required, in which case the clear is refused with an error naming
+// the field. Legacy (undefined/archived/unattached) fields are read-only.
 //
 // @Summary      Set an item custom field value
 // @Tags         projects
@@ -2224,6 +2363,9 @@ func (h *Handler) GetItemFields(w http.ResponseWriter, r *http.Request) {
 // @Success      200      {object}  api.SwaggerMessageResponse
 // @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields/{slug} [put]
 func (h *Handler) SetItemField(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
@@ -2244,11 +2386,11 @@ func (h *Handler) SetItemField(w http.ResponseWriter, r *http.Request) {
 	// Setting a field value is editing the item — gate exactly like UpdateItem
 	// (edit_own for the reporter, edit_any otherwise).
 	//
-	// Resolving the item through the space is also what reconciles the write.
-	// The value is upserted on (item_id, field_slug) with no space column to
-	// test, so an id from another space wrote there unchallenged; this read is
-	// the reconciliation, and an item outside {spaceID} leaves through the
-	// item's own 404 before anything is written.
+	// This read resolves the item through the space for the permission check,
+	// and an item outside {spaceID} leaves through the item's own 404 before
+	// anything is written. It is no longer the only reconciliation: the write
+	// statement itself carries the space predicate (UpsertEntityFieldValue),
+	// so the refusal holds for any caller, not just this one.
 	existing, err := h.items.GetItemInSpace(r.Context(), spaceID, itemID)
 	if err != nil {
 		handleProjectError(w, r, err)
@@ -2264,22 +2406,51 @@ func (h *Handler) SetItemField(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
 		return
 	}
-	if err := h.customFields.SetValue(r.Context(), orgID, itemID, slug, req.Value); err != nil {
+	if err := h.customFields.SetValue(r.Context(), orgID, spaceID, customfields.EntityTypeProjectItem, itemID, slug, req.Value); err != nil {
+		// The write statement matching no entity answers with the item's own
+		// 404 wording — byte-identical to the resolve above, so the two paths
+		// cannot drift into an oracle. Reachable only if the item vanishes
+		// between the resolve and the write.
+		if errors.Is(err, customfields.ErrEntityNotFound) {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, projects.ErrNotFound.Error())
+			return
+		}
 		handleCustomFieldError(w, r, err)
 		return
 	}
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "field saved"})
 }
 
+// customFieldsEnabled reports whether the custom-fields service is wired,
+// answering the conventional feature-disabled 404 when it is not. The sibling
+// itemTypes collaborator had this guard from the start; customFields was
+// dereferenced bare on six handlers.
+func (h *Handler) customFieldsEnabled(w http.ResponseWriter, r *http.Request) bool {
+	if h.customFields == nil {
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "custom fields are not enabled")
+		return false
+	}
+	return true
+}
+
 func handleCustomFieldError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, customfields.ErrNotFound), errors.Is(err, customfields.ErrUndefinedField):
+	case errors.Is(err, customfields.ErrNotFound),
+		errors.Is(err, customfields.ErrUndefinedField),
+		errors.Is(err, customfields.ErrFieldNotInScope),
+		errors.Is(err, customfields.ErrScopeNotFound),
+		errors.Is(err, customfields.ErrSpaceNotFound),
+		errors.Is(err, customfields.ErrEntityNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
 	case errors.Is(err, customfields.ErrNameRequired),
 		errors.Is(err, customfields.ErrInvalidName),
 		errors.Is(err, customfields.ErrInvalidType),
 		errors.Is(err, customfields.ErrOptionsRequired),
-		errors.Is(err, customfields.ErrInvalidValue):
+		errors.Is(err, customfields.ErrInvalidValue),
+		errors.Is(err, customfields.ErrInvalidEntityType),
+		errors.Is(err, customfields.ErrUnscopableEntityType),
+		errors.Is(err, customfields.ErrScopeSpaceMismatch),
+		errors.Is(err, customfields.ErrValueRequired):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
 	case errors.Is(err, customfields.ErrDuplicate),
 		errors.Is(err, customfields.ErrSlugHeldByLegacyValues):

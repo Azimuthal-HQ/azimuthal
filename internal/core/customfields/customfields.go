@@ -1,7 +1,17 @@
-// Package customfields manages org-scoped custom field definitions over Vector
-// project items and their per-item values. Field slugs are immutable; values
-// are stored by slug so they survive a definition's archival or deletion and can
-// be surfaced read-only as "legacy" fields (zero silent data loss).
+// Package customfields manages org-scoped custom field definitions, the
+// per-space/per-entity-type scopes that attach them to forms, and the values
+// entities hold under them. Values are polymorphic over tickets, project items
+// and pages (migration 053, following 015's technique). Field slugs are
+// immutable; values are stored by slug so they survive a definition's archival
+// or deletion and can be surfaced read-only as "legacy" fields (zero silent
+// data loss — migration 033's comment, this package, reconciliation D48).
+//
+// Requiredness deliberately lives on the scope row, never the definition:
+// definitions are org-wide, and a required flag there would make the field
+// required on every form in every space at once. A field is required for one
+// (space, entity type) attachment at a time, and the requirement is enforced
+// at the write, never retroactively — rows written before the flag stay
+// readable and simply surface as incomplete.
 package customfields
 
 import (
@@ -29,6 +39,33 @@ var validTypes = map[string]bool{
 	TypeText: true, TypeNumber: true, TypeDate: true, TypeSingleSelect: true,
 }
 
+// Entity type constants for polymorphic field values. They mirror the
+// entity_field_values entity_type CHECK from migration 053 — the same
+// three-value vocabulary comments and relations use (migration 015), even
+// though no page field surface exists yet: one vocabulary, not two.
+const (
+	EntityTypeTicket      = "ticket"
+	EntityTypeProjectItem = "project_item"
+	EntityTypePage        = "page"
+)
+
+// ValidEntityTypes is the CHECK vocabulary. A value outside it reaches the
+// database only to be rejected by the constraint, surfacing as a 500 rather
+// than a 400 — so the service refuses it first.
+var ValidEntityTypes = map[string]bool{
+	EntityTypeTicket: true, EntityTypeProjectItem: true, EntityTypePage: true,
+}
+
+// scopeHostSpaceType maps an entity type to the space type that hosts its
+// forms. It doubles as the set of entity types a field can be ATTACHED to:
+// pages are in the value vocabulary (a page value, if one ever exists, renders
+// and survives like any other) but have no field surface, so attaching a field
+// to them would create scope rows nothing reads — a promise, not a feature.
+var scopeHostSpaceType = map[string]string{
+	EntityTypeProjectItem: "vector",
+	EntityTypeTicket:      "beacon",
+}
+
 // Sentinel errors.
 var (
 	ErrNameRequired    = errors.New("name is required")
@@ -39,6 +76,45 @@ var (
 	ErrDuplicate       = errors.New("a custom field with this name already exists")
 	ErrUndefinedField  = errors.New("no active custom field with this slug")
 	ErrInvalidValue    = errors.New("value does not match the field type")
+
+	// ErrInvalidEntityType refuses a value outside the migration 053 CHECK
+	// vocabulary before it reaches the database as a constraint violation.
+	ErrInvalidEntityType = errors.New("entity type must be ticket, project_item, or page")
+
+	// ErrUnscopableEntityType refuses attaching a field to an entity type with
+	// no field surface. Only the ATTACH path narrows to two of the three
+	// vocabulary values; storage and rendering keep all three.
+	ErrUnscopableEntityType = errors.New("fields can be attached to ticket or project_item forms only")
+
+	// ErrScopeSpaceMismatch refuses an attachment whose entity type has no
+	// forms in the named space — a ticket scope on a Vector space would be a
+	// row nothing reads.
+	ErrScopeSpaceMismatch = errors.New("this entity type has no forms in this space")
+
+	// ErrSpaceNotFound covers a scope space that does not exist, is deleted,
+	// or belongs to another organisation — one answer for all three, because
+	// a distinguishable "exists but not yours" is an existence oracle.
+	ErrSpaceNotFound = errors.New("space not found")
+
+	// ErrScopeNotFound is a missing attachment row.
+	ErrScopeNotFound = errors.New("this custom field is not attached to this space")
+
+	// ErrFieldNotInScope refuses a value write for a field that is defined in
+	// the org but not attached to this (space, entity type) form. Unscoped
+	// fields are read-only here, exactly like legacy fields: their stored
+	// values still render, they just cannot be written through this form.
+	ErrFieldNotInScope = errors.New("this custom field is not attached to this space")
+
+	// ErrEntityNotFound is a value write whose statement matched no entity —
+	// outside the space, soft-deleted, wrong type, or never existed. One
+	// error for all four; handlers answer it exactly as they answer an
+	// unknown entity id.
+	ErrEntityNotFound = errors.New("entity not found")
+
+	// ErrValueRequired refuses clearing (or writing empty to) a field that a
+	// scope marks required. Wrapped with the field's slug so the surface that
+	// carries the form can render the refusal against the field itself.
+	ErrValueRequired = errors.New("this field is required here")
 
 	// ErrSlugHeldByLegacyValues is returned when a new definition's slug still
 	// has values stored under it by a definition that was deleted. Values are
@@ -62,22 +138,40 @@ type FieldDef struct {
 	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
-// StoredValue is a raw per-item value keyed by field slug.
+// FieldScope is one attachment of a field to a (space, entity type) form,
+// carrying the per-attachment required flag and form position. Its identity
+// is the triple, not a surrogate id — the row dies with its definition
+// (CASCADE), unlike values, which survive theirs.
+type FieldScope struct {
+	FieldID    uuid.UUID `json:"field_id"`
+	SpaceID    uuid.UUID `json:"space_id"`
+	EntityType string    `json:"entity_type"`
+	Required   bool      `json:"required"`
+	Position   int       `json:"position"`
+}
+
+// StoredValue is a raw per-entity value keyed by field slug.
 type StoredValue struct {
 	FieldSlug string `json:"field_slug"`
 	Value     string `json:"value"`
 }
 
-// RenderedField is a field as shown on an item: an active definition with its
-// current value, or a legacy value whose definition is gone (read-only).
+// RenderedField is a field as shown on an entity: a scoped active definition
+// with its current value, or a stored value with no writable field on this
+// form (read-only).
 type RenderedField struct {
 	Slug    string   `json:"slug"`
 	Name    string   `json:"name"`
 	Type    string   `json:"field_type"`
 	Options []string `json:"options"`
 	Value   string   `json:"value"`
-	// Legacy marks a value with no active definition — surfaced read-only so no
-	// data is silently dropped.
+	// Required mirrors the scope row for this form. It is a write-side rule
+	// surfaced for the form control; a pre-existing entity missing the value
+	// still renders (with Value empty) — never an error, never a default.
+	Required bool `json:"required"`
+	// Legacy marks a value that cannot be written through this form: its
+	// definition is archived or deleted, or is not attached to this
+	// (space, entity type). Surfaced read-only so no data is silently dropped.
 	Legacy bool `json:"legacy"`
 }
 
@@ -94,37 +188,66 @@ type DefRepository interface {
 	NextPosition(ctx context.Context, orgID uuid.UUID) (int, error)
 }
 
-// ValueRepository is the data-access contract for per-item values.
+// ValueRepository is the data-access contract for per-entity values.
+//
+// Every method that touches an entity's values carries the space the request
+// named, and the SPACE PREDICATE IS IN THE STATEMENT — there is deliberately
+// no method that writes by bare entity id. The predecessor of this interface
+// documented that "the caller owes the write a space reconciliation"; that
+// unenforced calling convention was the entire write-path authorization, and
+// it held only because the one handler calling it happened to resolve the
+// entity first. Now an upsert or delete addressed at an entity outside the
+// space affects zero rows no matter who calls it.
 type ValueRepository interface {
-	// ListByItemInSpace returns an item's stored values, reconciled against the
-	// space the request named. The route that reaches this proved the caller may
-	// read {spaceID} and proved nothing whatever about {itemID}, so reading by
-	// item id alone surfaced every item's custom-field values in the
-	// installation, across organizations included. An item in another space
-	// returns no values, exactly as an unknown item does.
-	ListByItemInSpace(ctx context.Context, spaceID, itemID uuid.UUID) ([]StoredValue, error)
-	// Upsert and Delete write by bare item id: item_field_values has no space
-	// column and the upsert conflicts on (item_id, field_slug). The space
-	// reconciliation for the write path therefore happens before the call —
-	// SetItemField resolves the item through the space first, and refuses with
-	// the item's own 404 when it belongs to another one.
-	Upsert(ctx context.Context, itemID uuid.UUID, slug, value string) error
-	Delete(ctx context.Context, itemID uuid.UUID, slug string) error
-	// CountByOrgSlug counts the org's live items holding a value under slug.
-	// It is what makes an orphaned legacy value visible to a definition that
-	// does not exist yet.
+	// ListForEntityInSpace returns an entity's stored values, reconciled
+	// against the space in the statement. An entity in another space returns
+	// no values, exactly as an unknown entity does.
+	ListForEntityInSpace(ctx context.Context, spaceID uuid.UUID, entityType string, entityID uuid.UUID) ([]StoredValue, error)
+	// UpsertInSpace writes one value. ok=false reports that the statement
+	// matched no entity — outside the space, soft-deleted, wrong type, or
+	// nonexistent, indistinguishably — and nothing was written.
+	UpsertInSpace(ctx context.Context, spaceID uuid.UUID, entityType string, entityID uuid.UUID, slug, value string) (ok bool, err error)
+	// DeleteInSpace clears one value, with the same in-statement
+	// reconciliation. Deleting an absent value is not an error (clearing is
+	// idempotent), and neither is a delete refused by the predicate — both
+	// affect zero rows and disclose nothing.
+	DeleteInSpace(ctx context.Context, spaceID uuid.UUID, entityType string, entityID uuid.UUID, slug string) error
+	// CountByOrgSlug counts the org's live entities holding a value under
+	// slug, across all entity types. It is what makes an orphaned legacy
+	// value visible to a definition that does not exist yet.
 	CountByOrgSlug(ctx context.Context, orgID uuid.UUID, slug string) (int, error)
+}
+
+// ScopeRepository is the data-access contract for field scopes.
+type ScopeRepository interface {
+	ListByField(ctx context.Context, fieldID uuid.UUID) ([]FieldScope, error)
+	// ListForSpaceEntity returns the scope rows governing one form, in form
+	// order (position, then attach time).
+	ListForSpaceEntity(ctx context.Context, spaceID uuid.UUID, entityType string) ([]FieldScope, error)
+	// Get returns the attachment row for the triple, or ErrScopeNotFound.
+	Get(ctx context.Context, fieldID, spaceID uuid.UUID, entityType string) (*FieldScope, error)
+	// Upsert attaches (or re-flags) a field. The org predicate is in the
+	// statement: a space outside orgID — or soft-deleted — matches nothing
+	// and returns ErrSpaceNotFound. Position is kept on re-attach.
+	Upsert(ctx context.Context, orgID uuid.UUID, scope *FieldScope) (*FieldScope, error)
+	// Delete detaches a field; found=false reports there was no row.
+	Delete(ctx context.Context, fieldID, spaceID uuid.UUID, entityType string) (found bool, err error)
+	// SpaceOrgType resolves a live space's org and type, or ErrSpaceNotFound.
+	// It backs the attach-time validation that a scope's entity type has
+	// forms in the named space at all.
+	SpaceOrgType(ctx context.Context, spaceID uuid.UUID) (uuid.UUID, string, error)
 }
 
 // Service holds custom-field business logic.
 type Service struct {
 	defs   DefRepository
 	values ValueRepository
+	scopes ScopeRepository
 }
 
 // NewService creates a custom-fields Service.
-func NewService(defs DefRepository, values ValueRepository) *Service {
-	return &Service{defs: defs, values: values}
+func NewService(defs DefRepository, values ValueRepository, scopes ScopeRepository) *Service {
+	return &Service{defs: defs, values: values, scopes: scopes}
 }
 
 // ListDefs returns all definitions (active and archived) for an org.
@@ -137,7 +260,10 @@ func (s *Service) ListDefs(ctx context.Context, orgID uuid.UUID) ([]*FieldDef, e
 }
 
 // CreateDef defines a new custom field. The slug is derived once from the name
-// and is immutable.
+// and is immutable. A new definition starts with no scopes — it appears on no
+// form until an admin attaches it to the spaces that want it. (Existing
+// definitions were attached to every Vector space by migration 053's backfill,
+// preserving the pre-scopes behaviour for them.)
 func (s *Service) CreateDef(ctx context.Context, orgID uuid.UUID, name, fieldType string, options []string) (*FieldDef, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -223,7 +349,9 @@ func (s *Service) UpdateDef(ctx context.Context, orgID, id uuid.UUID, name strin
 }
 
 // SetDefArchived archives or unarchives a field. Archiving keeps existing
-// values but removes the field from item forms (they become legacy read-only).
+// values AND scope rows but removes the field from entity forms (values become
+// legacy read-only); unarchiving restores it to exactly the forms its scopes
+// name.
 func (s *Service) SetDefArchived(ctx context.Context, orgID, id uuid.UUID, archived bool) (*FieldDef, error) {
 	if _, err := s.getOwned(ctx, orgID, id); err != nil {
 		return nil, err
@@ -235,8 +363,9 @@ func (s *Service) SetDefArchived(ctx context.Context, orgID, id uuid.UUID, archi
 	return d, nil
 }
 
-// DeleteDef removes a definition. Stored values are intentionally left behind
-// and surfaced read-only as legacy fields — no silent data loss.
+// DeleteDef removes a definition. Its scope rows die with it (CASCADE — an
+// attachment of nothing governs nothing); its stored values are intentionally
+// left behind and surfaced read-only as legacy fields — no silent data loss.
 func (s *Service) DeleteDef(ctx context.Context, orgID, id uuid.UUID) error {
 	if _, err := s.getOwned(ctx, orgID, id); err != nil {
 		return err
@@ -247,60 +376,170 @@ func (s *Service) DeleteDef(ctx context.Context, orgID, id uuid.UUID) error {
 	return nil
 }
 
-// RenderForItem composes the fields shown on an item: every active definition
-// (with its current value), followed by any stored value whose definition is no
-// longer active — the legacy, read-only fields.
+// ListScopes returns every attachment of one field, for the admin surface.
+func (s *Service) ListScopes(ctx context.Context, orgID, fieldID uuid.UUID) ([]FieldScope, error) {
+	if _, err := s.getOwned(ctx, orgID, fieldID); err != nil {
+		return nil, err
+	}
+	out, err := s.scopes.ListByField(ctx, fieldID)
+	if err != nil {
+		return nil, fmt.Errorf("listing custom field scopes: %w", err)
+	}
+	return out, nil
+}
+
+// SetScope attaches a field to a (space, entity type) form, or updates the
+// attachment's required flag. Position is taken from the definition on first
+// attach — the same rule migration 053's backfill applied — and kept on
+// re-attach, so toggling required does not reshuffle the form.
+func (s *Service) SetScope(ctx context.Context, orgID, fieldID, spaceID uuid.UUID, entityType string, required bool) (*FieldScope, error) {
+	def, err := s.getOwned(ctx, orgID, fieldID)
+	if err != nil {
+		return nil, err
+	}
+	hostType, ok := scopeHostSpaceType[entityType]
+	if !ok {
+		if ValidEntityTypes[entityType] {
+			return nil, ErrUnscopableEntityType
+		}
+		return nil, ErrInvalidEntityType
+	}
+	spaceOrg, spaceType, err := s.scopes.SpaceOrgType(ctx, spaceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving scope space: %w", err)
+	}
+	// Another org's space answers exactly as a nonexistent one — the org
+	// check happens before the type check so a mismatch message cannot become
+	// a probe for what kind of space a foreign id is.
+	if spaceOrg != orgID {
+		return nil, fmt.Errorf("resolving scope space: %w", ErrSpaceNotFound)
+	}
+	if spaceType != hostType {
+		return nil, fmt.Errorf("%w: %s forms live in %s spaces and this space is %s",
+			ErrScopeSpaceMismatch, entityType, hostType, spaceType)
+	}
+
+	scope := &FieldScope{
+		FieldID:    def.ID,
+		SpaceID:    spaceID,
+		EntityType: entityType,
+		Required:   required,
+		Position:   def.Position,
+	}
+	saved, err := s.scopes.Upsert(ctx, orgID, scope)
+	if err != nil {
+		return nil, fmt.Errorf("saving custom field scope: %w", err)
+	}
+	return saved, nil
+}
+
+// RemoveScope detaches a field from a (space, entity type) form. Values
+// entities hold under it are untouched — they surface read-only as legacy
+// until the field is re-attached.
+func (s *Service) RemoveScope(ctx context.Context, orgID, fieldID, spaceID uuid.UUID, entityType string) error {
+	if _, err := s.getOwned(ctx, orgID, fieldID); err != nil {
+		return err
+	}
+	found, err := s.scopes.Delete(ctx, fieldID, spaceID, entityType)
+	if err != nil {
+		return fmt.Errorf("removing custom field scope: %w", err)
+	}
+	if !found {
+		return ErrScopeNotFound
+	}
+	return nil
+}
+
+// RenderForEntity composes the fields shown on an entity: every active
+// definition attached to this (space, entity type) form, in form order, with
+// its current value and required flag — followed by any stored value that
+// cannot be written through this form (definition archived, deleted, or not
+// attached here), read-only.
 //
-// spaceID is the space the request named, and the values are read through it.
-// The route proved that space readable; it proved nothing about itemID, so an
-// item id on its own was enough to read another space's — or another org's —
-// custom-field values. An item outside the space renders the org's active
-// definitions with empty values and no legacy fields, which is what an item
-// that has never been given a value renders.
-func (s *Service) RenderForItem(ctx context.Context, orgID, spaceID, itemID uuid.UUID) ([]RenderedField, error) {
+// A required field with no stored value renders with an empty value and
+// Required true. That is the never-retroactively rule on the read side: rows
+// that predate the flag are incomplete, not erroneous.
+//
+// spaceID is the space the request named, and the values are read through it
+// in the statement. An entity outside the space contributes no values, which
+// is what an entity that has never been given a value contributes.
+func (s *Service) RenderForEntity(ctx context.Context, orgID, spaceID uuid.UUID, entityType string, entityID uuid.UUID) ([]RenderedField, error) {
+	if !ValidEntityTypes[entityType] {
+		return nil, ErrInvalidEntityType
+	}
 	defs, err := s.defs.ListActiveByOrg(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("listing active defs: %w", err)
 	}
-	stored, err := s.values.ListByItemInSpace(ctx, spaceID, itemID)
+	scopes, err := s.scopes.ListForSpaceEntity(ctx, spaceID, entityType)
 	if err != nil {
-		return nil, fmt.Errorf("listing item values: %w", err)
+		return nil, fmt.Errorf("listing field scopes: %w", err)
+	}
+	stored, err := s.values.ListForEntityInSpace(ctx, spaceID, entityType, entityID)
+	if err != nil {
+		return nil, fmt.Errorf("listing entity values: %w", err)
+	}
+
+	defByID := make(map[uuid.UUID]*FieldDef, len(defs))
+	defBySlug := make(map[string]*FieldDef, len(defs))
+	for _, d := range defs {
+		defByID[d.ID] = d
+		defBySlug[d.Slug] = d
 	}
 	valueBySlug := make(map[string]string, len(stored))
 	for _, v := range stored {
 		valueBySlug[v.FieldSlug] = v.Value
 	}
 
-	out := make([]RenderedField, 0, len(defs)+len(stored))
-	activeSlugs := make(map[string]bool, len(defs))
-	for _, d := range defs {
-		activeSlugs[d.Slug] = true
+	out := make([]RenderedField, 0, len(scopes)+len(stored))
+	onForm := make(map[string]bool, len(scopes))
+	for _, sc := range scopes {
+		d, ok := defByID[sc.FieldID]
+		if !ok {
+			continue // archived definition: its value, if any, renders legacy below
+		}
+		onForm[d.Slug] = true
 		out = append(out, RenderedField{
 			Slug: d.Slug, Name: d.Name, Type: d.Type, Options: d.Options,
-			Value: valueBySlug[d.Slug], Legacy: false,
+			Value: valueBySlug[d.Slug], Required: sc.Required, Legacy: false,
 		})
 	}
 	for _, v := range stored {
-		if !activeSlugs[v.FieldSlug] {
-			out = append(out, RenderedField{
-				Slug: v.FieldSlug, Name: v.FieldSlug, Type: TypeText,
-				Options: []string{}, Value: v.Value, Legacy: true,
-			})
+		if onForm[v.FieldSlug] {
+			continue
 		}
+		// Read-only value. If an active definition still exists (field defined
+		// but not attached here), render its real name and type; otherwise the
+		// slug stands in, as it always has for deleted definitions.
+		name, fieldType, options := v.FieldSlug, TypeText, []string{}
+		if d, ok := defBySlug[v.FieldSlug]; ok {
+			name, fieldType, options = d.Name, d.Type, d.Options
+		}
+		out = append(out, RenderedField{
+			Slug: v.FieldSlug, Name: name, Type: fieldType,
+			Options: options, Value: v.Value, Legacy: true,
+		})
 	}
 	return out, nil
 }
 
-// SetValue writes an item's value for an active field, validating it against the
-// field type. An empty value clears the field. Values for undefined/archived
-// (legacy) fields cannot be written — they are read-only (ErrUndefinedField).
+// SetValue writes an entity's value for a field attached to this
+// (space, entity type) form, validating it against the field type. An empty
+// value clears the field — unless the scope marks it required, in which case
+// the clear is refused with an error naming the field: required is enforced at
+// the write, and a required field cannot be written back to absent. Values for
+// undefined, archived, or unattached fields cannot be written — they are
+// read-only (ErrUndefinedField / ErrFieldNotInScope).
 //
-// itemID arrives without a space deliberately, and the caller owes it one: the
-// write is keyed on (item_id, field_slug) and there is no space column to test
-// against, so this cannot reconcile the item itself. Every caller must resolve
-// the item through the request's space before calling — SetItemField does, via
-// ItemService.GetItemInSpace, which is the same read its permission gate needs.
-func (s *Service) SetValue(ctx context.Context, orgID, itemID uuid.UUID, slug, value string) error {
+// The space predicate travels INTO the statement (UpsertEntityFieldValue /
+// DeleteEntityFieldValue): an entity outside spaceID matches zero rows and
+// returns ErrEntityNotFound, which callers answer exactly as an unknown id.
+// Handlers still resolve the entity first for their permission checks; the
+// statement no longer trusts them to have done so.
+func (s *Service) SetValue(ctx context.Context, orgID, spaceID uuid.UUID, entityType string, entityID uuid.UUID, slug, value string) error {
+	if !ValidEntityTypes[entityType] {
+		return ErrInvalidEntityType
+	}
 	def, err := s.defs.GetByOrgSlug(ctx, orgID, slug)
 	if errors.Is(err, ErrNotFound) {
 		return ErrUndefinedField
@@ -311,10 +550,20 @@ func (s *Service) SetValue(ctx context.Context, orgID, itemID uuid.UUID, slug, v
 	if def.ArchivedAt != nil {
 		return ErrUndefinedField
 	}
+	scope, err := s.scopes.Get(ctx, def.ID, spaceID, entityType)
+	if errors.Is(err, ErrScopeNotFound) {
+		return ErrFieldNotInScope
+	}
+	if err != nil {
+		return fmt.Errorf("resolving custom field scope: %w", err)
+	}
 
 	value = strings.TrimSpace(value)
 	if value == "" {
-		if err := s.values.Delete(ctx, itemID, slug); err != nil {
+		if scope.Required {
+			return fmt.Errorf("%w: %q must have a value on this form — detach it or clear its required flag first", ErrValueRequired, slug)
+		}
+		if err := s.values.DeleteInSpace(ctx, spaceID, entityType, entityID, slug); err != nil {
 			return fmt.Errorf("clearing custom field value: %w", err)
 		}
 		return nil
@@ -322,8 +571,12 @@ func (s *Service) SetValue(ctx context.Context, orgID, itemID uuid.UUID, slug, v
 	if err := validateValue(def, value); err != nil {
 		return err
 	}
-	if err := s.values.Upsert(ctx, itemID, slug, value); err != nil {
+	ok, err := s.values.UpsertInSpace(ctx, spaceID, entityType, entityID, slug, value)
+	if err != nil {
 		return fmt.Errorf("saving custom field value: %w", err)
+	}
+	if !ok {
+		return ErrEntityNotFound
 	}
 	return nil
 }

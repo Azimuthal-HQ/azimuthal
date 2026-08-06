@@ -102,11 +102,15 @@ func (m *mockFieldDefRepo) NextPosition(context.Context, uuid.UUID) (int, error)
 
 type mockFieldValueRepo struct{}
 
-func (m *mockFieldValueRepo) ListByItemInSpace(context.Context, uuid.UUID, uuid.UUID) ([]customfields.StoredValue, error) {
+func (m *mockFieldValueRepo) ListForEntityInSpace(context.Context, uuid.UUID, string, uuid.UUID) ([]customfields.StoredValue, error) {
 	return nil, nil
 }
-func (m *mockFieldValueRepo) Upsert(context.Context, uuid.UUID, string, string) error { return nil }
-func (m *mockFieldValueRepo) Delete(context.Context, uuid.UUID, string) error         { return nil }
+func (m *mockFieldValueRepo) UpsertInSpace(context.Context, uuid.UUID, string, uuid.UUID, string, string) (bool, error) {
+	return true, nil
+}
+func (m *mockFieldValueRepo) DeleteInSpace(context.Context, uuid.UUID, string, uuid.UUID, string) error {
+	return nil
+}
 
 // CountByOrgSlug reports no legacy values: this mock stores none, so any other
 // answer would be a fabrication.
@@ -114,7 +118,45 @@ func (m *mockFieldValueRepo) CountByOrgSlug(context.Context, uuid.UUID, string) 
 	return 0, nil
 }
 
+// mockFieldScopeRepo is configurable the same way mockFieldDefRepo is: the
+// branch tests below need "attached" and "not attached" both reachable.
+type mockFieldScopeRepo struct {
+	get       *customfields.FieldScope
+	deleted   bool
+	spaceOrg  uuid.UUID
+	spaceType string
+}
+
+func (m *mockFieldScopeRepo) ListByField(context.Context, uuid.UUID) ([]customfields.FieldScope, error) {
+	return nil, nil
+}
+func (m *mockFieldScopeRepo) ListForSpaceEntity(context.Context, uuid.UUID, string) ([]customfields.FieldScope, error) {
+	return nil, nil
+}
+func (m *mockFieldScopeRepo) Get(context.Context, uuid.UUID, uuid.UUID, string) (*customfields.FieldScope, error) {
+	if m.get != nil {
+		return m.get, nil
+	}
+	return nil, customfields.ErrScopeNotFound
+}
+func (m *mockFieldScopeRepo) Upsert(_ context.Context, _ uuid.UUID, s *customfields.FieldScope) (*customfields.FieldScope, error) {
+	return s, nil
+}
+func (m *mockFieldScopeRepo) Delete(context.Context, uuid.UUID, uuid.UUID, string) (bool, error) {
+	return m.deleted, nil
+}
+func (m *mockFieldScopeRepo) SpaceOrgType(context.Context, uuid.UUID) (uuid.UUID, string, error) {
+	if m.spaceType == "" {
+		return uuid.Nil, "", customfields.ErrSpaceNotFound
+	}
+	return m.spaceOrg, m.spaceType, nil
+}
+
 func schemaHandler(types *mockTypeRepo, defs *mockFieldDefRepo) *projectsapi.Handler {
+	return schemaHandlerWithScopes(types, defs, &mockFieldScopeRepo{})
+}
+
+func schemaHandlerWithScopes(types *mockTypeRepo, defs *mockFieldDefRepo, scopes *mockFieldScopeRepo) *projectsapi.Handler {
 	ir := &mockItemRepo{}
 	sr := &mockSprintRepo{}
 	h := projectsapi.NewHandler(
@@ -127,7 +169,7 @@ func schemaHandler(types *mockTypeRepo, defs *mockFieldDefRepo) *projectsapi.Han
 	)
 	return h.
 		WithItemTypes(itemtypes.NewService(types)).
-		WithCustomFields(customfields.NewService(defs, &mockFieldValueRepo{}))
+		WithCustomFields(customfields.NewService(defs, &mockFieldValueRepo{}, scopes))
 }
 
 func req(t *testing.T, method, body string, params map[string]string) *http.Request {
@@ -347,6 +389,116 @@ func TestCustomFieldHandlers_Branches(t *testing.T) {
 			t.Errorf("got %d", code)
 		}
 	})
+}
+
+// --- Custom field scope handler branches ---
+
+func TestCustomFieldScopeHandlers_Branches(t *testing.T) {
+	org := uuid.New()
+	fid := uuid.New()
+	sid := uuid.New()
+	owned := &customfields.FieldDef{ID: fid, OrgID: org, Slug: "squad", Type: customfields.TypeText, Position: 2}
+	params := func(entityType string) map[string]string {
+		return map[string]string{"orgID": org.String(), "fieldID": fid.String(), "spaceID": sid.String(), "entityType": entityType}
+	}
+
+	t.Run("list scopes unknown field -> 404", func(t *testing.T) {
+		h := schemaHandler(&mockTypeRepo{}, &mockFieldDefRepo{})
+		if code := run(t, h, h.ListFieldScopes, req(t, http.MethodGet, "", map[string]string{"orgID": org.String(), "fieldID": fid.String()})); code != http.StatusNotFound {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("list scopes ok", func(t *testing.T) {
+		h := schemaHandler(&mockTypeRepo{}, &mockFieldDefRepo{getByID: owned})
+		if code := run(t, h, h.ListFieldScopes, req(t, http.MethodGet, "", map[string]string{"orgID": org.String(), "fieldID": fid.String()})); code != http.StatusOK {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("set scope ok", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{getByID: owned},
+			&mockFieldScopeRepo{spaceOrg: org, spaceType: "vector"})
+		if code := run(t, h, h.SetFieldScope, req(t, http.MethodPut, `{"required":true}`, params("project_item"))); code != http.StatusOK {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("set scope on a page -> 400", func(t *testing.T) {
+		// page is in the value vocabulary but has no field surface; attaching
+		// would create rows nothing reads.
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{getByID: owned},
+			&mockFieldScopeRepo{spaceOrg: org, spaceType: "codex"})
+		if code := run(t, h, h.SetFieldScope, req(t, http.MethodPut, `{"required":false}`, params("page"))); code != http.StatusBadRequest {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("set scope unknown entity type -> 400", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{getByID: owned},
+			&mockFieldScopeRepo{spaceOrg: org, spaceType: "vector"})
+		if code := run(t, h, h.SetFieldScope, req(t, http.MethodPut, `{"required":false}`, params("epic"))); code != http.StatusBadRequest {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("set scope module mismatch -> 400", func(t *testing.T) {
+		// A ticket scope needs a beacon space; this one is vector.
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{getByID: owned},
+			&mockFieldScopeRepo{spaceOrg: org, spaceType: "vector"})
+		if code := run(t, h, h.SetFieldScope, req(t, http.MethodPut, `{"required":false}`, params("ticket"))); code != http.StatusBadRequest {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("set scope on another org's space -> 404, not 400", func(t *testing.T) {
+		// The org check must come before the type check: a mismatch message on
+		// a foreign space would be a probe for what kind of space an id is.
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{getByID: owned},
+			&mockFieldScopeRepo{spaceOrg: uuid.New(), spaceType: "beacon"})
+		if code := run(t, h, h.SetFieldScope, req(t, http.MethodPut, `{"required":false}`, params("ticket"))); code != http.StatusNotFound {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("remove scope absent -> 404", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{getByID: owned},
+			&mockFieldScopeRepo{deleted: false})
+		if code := run(t, h, h.RemoveFieldScope, req(t, http.MethodDelete, "", params("project_item"))); code != http.StatusNotFound {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("remove scope ok", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{getByID: owned},
+			&mockFieldScopeRepo{deleted: true})
+		if code := run(t, h, h.RemoveFieldScope, req(t, http.MethodDelete, "", params("project_item"))); code != http.StatusNoContent {
+			t.Errorf("got %d", code)
+		}
+	})
+}
+
+// A handler built without WithCustomFields answers the conventional
+// feature-disabled 404 on every custom-field route. Before the guard existed
+// this was a nil-pointer dereference: the sibling itemTypes collaborator was
+// checked, customFields never was. (Fails before the fix by panicking here.)
+func TestCustomFieldHandlers_NilServiceAnswers404(t *testing.T) {
+	ir := &mockItemRepo{}
+	sr := &mockSprintRepo{}
+	h := projectsapi.NewHandler(
+		projects.NewItemService(ir, noopShareDeleter{}),
+		projects.NewSprintService(sr),
+		projects.NewBacklogService(ir, sr),
+		projects.NewRoadmapService(ir, sr),
+		projects.NewRelationService(&mockRelationRepo{}),
+		projects.NewLabelService(&mockLabelRepo{}),
+	) // deliberately no WithCustomFields
+	org := uuid.New().String()
+
+	if code := run(t, h, h.ListCustomFields, req(t, http.MethodGet, "", map[string]string{"orgID": org})); code != http.StatusNotFound {
+		t.Errorf("ListCustomFields: got %d, want 404", code)
+	}
+	if code := run(t, h, h.GetItemFields, req(t, http.MethodGet, "", map[string]string{"orgID": org, "spaceID": uuid.New().String(), "itemID": uuid.New().String()})); code != http.StatusNotFound {
+		t.Errorf("GetItemFields: got %d, want 404", code)
+	}
+	if code := run(t, h, h.SetItemField, req(t, http.MethodPut, `{"value":"x"}`, map[string]string{"orgID": org, "spaceID": uuid.New().String(), "itemID": uuid.New().String(), "slug": "s"})); code != http.StatusNotFound {
+		t.Errorf("SetItemField: got %d, want 404", code)
+	}
+	if code := run(t, h, h.ListFieldScopes, req(t, http.MethodGet, "", map[string]string{"orgID": org, "fieldID": uuid.New().String()})); code != http.StatusNotFound {
+		t.Errorf("ListFieldScopes: got %d, want 404", code)
+	}
 }
 
 // --- ResolveItem branches ---
