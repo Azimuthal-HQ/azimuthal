@@ -167,6 +167,7 @@ describe('portal query keys separate requesters, not just portals', () => {
       queryKeys.dashboard(portalKey, ref),
       queryKeys.homeDashboard(portalKey),
       queryKeys.search(portalKey, alice, 0, '', false),
+      queryKeys.portalAdmin(portalKey, portalKey),
     ].map(key);
 
     for (const mine of [
@@ -195,5 +196,62 @@ describe('portal query keys separate requesters, not just portals', () => {
     // And that the prefix does NOT cover another portal.
     const other = queryKeys.portalRequests(otherPortal, alice);
     expect(other.slice(0, prefix.length)).not.toEqual([...prefix]);
+  });
+});
+
+/**
+ * The agent-side configuration family (v0.4.2 A1) is the same portal seen
+ * from the other side of the fence, and the fence is the assertion: it must
+ * never share the customer family's root. The customer cache is dropped
+ * wholesale on portal sign-out (queryKeys.portal(key) as a prefix removal),
+ * and an agent testing their own service desk signs in and out of it on the
+ * same machine they configure it from — a shared root would let that
+ * sign-out silently discard the settings page's state, and a customer-side
+ * refetch storm invalidate the agent's view.
+ *
+ * These tests fail if portalAdmin is ever moved under the 'portal' root, or
+ * keyed by the portal key instead of (org, space).
+ */
+describe('the agent-side portal config family is isolated from the customer family', () => {
+  const org = '44444444-4444-4444-4444-444444444444';
+  const space = '55555555-5555-5555-5555-555555555555';
+
+  it('never nests under the prefix portal sign-out invalidates', () => {
+    const prefix = queryKeys.portal(portalKey);
+    // The pathological case: an org and space id that literally equal the
+    // portal key string. Even then the families must not collide, which is
+    // what "told apart by root, not by argument shapes" means.
+    for (const admin of [
+      queryKeys.portalAdmin(org, space),
+      queryKeys.portalAdmin(portalKey, portalKey),
+    ]) {
+      expect(admin.slice(0, prefix.length)).not.toEqual([...prefix]);
+    }
+  });
+
+  it('keeps the admin family disjoint from every customer-family key', () => {
+    const admin = key(queryKeys.portalAdmin(portalKey, portalKey));
+    for (const customer of [
+      key(queryKeys.portal(portalKey)),
+      key(queryKeys.portalDescribe(portalKey)),
+      key(queryKeys.portalRequests(portalKey, alice)),
+      key(queryKeys.portalRequest(portalKey, alice, ref)),
+    ]) {
+      expect(customer).not.toBe(admin);
+    }
+  });
+
+  it('collides with no other org- and space-keyed family', () => {
+    // The families an agent-side space surface actually sits beside, all
+    // evaluated at the same (org, space) pair.
+    const admin = key(queryKeys.portalAdmin(org, space));
+    for (const sibling of [
+      key(queryKeys.spaceGrants(org, space)),
+      key(queryKeys.queues(org, space)),
+      key(queryKeys.boardConfig(space)),
+      key(queryKeys.space(space)),
+    ]) {
+      expect(sibling).not.toBe(admin);
+    }
   });
 });

@@ -844,6 +844,27 @@ components:
           example: Getting Started (updated)
           type: string
       type: object
+    api.SwaggerUpdatePortalRequest:
+      properties:
+        enabled:
+          description: |-
+            Enabled toggles the portal without discarding its key, so re-enabling
+            does not invalidate URLs already handed out. Omit to leave unchanged.
+          example: true
+          type: boolean
+        intro:
+          description: |-
+            Intro is the sign-in page's introduction text. Sending null clears it;
+            omitting the key leaves it alone.
+          example: How can we help?
+          type: string
+        name:
+          description: |-
+            Name is the portal's public display name. Required non-empty when sent;
+            omit to leave unchanged. Renaming never changes the portal key.
+          example: Acme Support
+          type: string
+      type: object
     api.SwaggerUpdateSpaceRequest:
       properties:
         description:
@@ -1329,11 +1350,6 @@ components:
           $ref: '#/components/schemas/portal.requesterV'
         session_token:
           type: string
-      type: object
-    portal.setEnabledRequest:
-      properties:
-        enabled:
-          type: boolean
       type: object
     projects.boardColumnRequest:
       properties:
@@ -5275,6 +5291,8 @@ paths:
       tags:
       - portal
     patch:
+      description: Partial update. Absent fields are left alone; enabled, name and
+        intro can change independently. The portal key never changes.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -5292,10 +5310,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/portal.setEnabledRequest'
-              description: Desired state
+              $ref: '#/components/schemas/api.SwaggerUpdatePortalRequest'
+              description: Fields to change
               summary: request
-        description: Desired state
+        description: Fields to change
         required: true
       responses:
         "200":
@@ -5304,6 +5322,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/portal.adminPortalView'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Empty or null name, or null enabled
         "403":
           content:
             application/json:
@@ -5318,7 +5342,7 @@ paths:
           description: No portal on this space
       security:
       - BearerAuth: []
-      summary: Enable or disable a space's customer portal
+      summary: Update a space's customer portal configuration
       tags:
       - portal
     post:

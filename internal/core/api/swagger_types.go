@@ -207,6 +207,21 @@ type SwaggerAssignRequest struct {
 	AssigneeID uuid.UUID `json:"assignee_id" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
 }
 
+// SwaggerUpdatePortalRequest matches updatePortalRequest in the portal admin
+// handler. The real type uses respond.OptionalField to tell "absent" from
+// "explicit null"; this is the documentation shape, so it keeps plain values.
+type SwaggerUpdatePortalRequest struct {
+	// Enabled toggles the portal without discarding its key, so re-enabling
+	// does not invalidate URLs already handed out. Omit to leave unchanged.
+	Enabled bool `json:"enabled" example:"true"`
+	// Name is the portal's public display name. Required non-empty when sent;
+	// omit to leave unchanged. Renaming never changes the portal key.
+	Name string `json:"name" example:"Acme Support"`
+	// Intro is the sign-in page's introduction text. Sending null clears it;
+	// omitting the key leaves it alone.
+	Intro string `json:"intro" example:"How can we help?"`
+}
+
 // SwaggerRequesterIdentity is the external requester behind a portal-raised
 // ticket, as the agent surface sees them. Null on a ticket raised inside the
 // product — see SwaggerTicketResponse.Requester.

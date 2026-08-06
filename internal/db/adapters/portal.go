@@ -100,15 +100,23 @@ func (a *PortalAdapter) CreatePortal(ctx context.Context, p portal.Portal, creat
 	return a.PortalBySpace(ctx, row.SpaceID)
 }
 
-// SetPortalEnabled toggles a portal without discarding its key, so that
-// re-enabling does not invalidate every URL already shared.
-func (a *PortalAdapter) SetPortalEnabled(ctx context.Context, spaceID uuid.UUID, enabled bool) (portal.Portal, error) {
-	_, err := a.q.SetPortalEnabled(ctx, generated.SetPortalEnabledParams{SpaceID: spaceID, Enabled: enabled})
+// UpdatePortal applies a partial update — nil fields keep their stored values
+// — without discarding the portal's key, so that re-enabling (or renaming)
+// does not invalidate every URL already shared. The space predicate is inside
+// the UPDATE statement: zero rows affected means the space has no portal, and
+// that is ErrPortalNotFound rather than a Go-side pre-check.
+func (a *PortalAdapter) UpdatePortal(ctx context.Context, spaceID uuid.UUID, params portal.UpdatePortalParams) (portal.Portal, error) {
+	_, err := a.q.UpdatePortal(ctx, generated.UpdatePortalParams{
+		SpaceID: spaceID,
+		Enabled: params.Enabled,
+		Name:    params.Name,
+		Intro:   params.Intro,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return portal.Portal{}, portal.ErrPortalNotFound
 	}
 	if err != nil {
-		return portal.Portal{}, fmt.Errorf("portal adapter set enabled: %w", err)
+		return portal.Portal{}, fmt.Errorf("portal adapter update: %w", err)
 	}
 	return a.PortalBySpace(ctx, spaceID)
 }

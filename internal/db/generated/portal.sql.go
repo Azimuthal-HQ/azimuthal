@@ -619,17 +619,43 @@ func (q *Queries) ListPortalTicketComments(ctx context.Context, entityID uuid.UU
 	return items, nil
 }
 
-const setPortalEnabled = `-- name: SetPortalEnabled :one
-UPDATE service_desk_portals SET enabled = $2 WHERE space_id = $1 RETURNING id, space_id, portal_key, name, intro, enabled, created_by, created_at, updated_at
+const updatePortal = `-- name: UpdatePortal :one
+UPDATE service_desk_portals
+SET enabled = COALESCE($1::boolean, enabled),
+    name    = COALESCE($2::text, name),
+    intro   = COALESCE($3::text, intro)
+WHERE space_id = $4
+RETURNING id, space_id, portal_key, name, intro, enabled, created_by, created_at, updated_at
 `
 
-type SetPortalEnabledParams struct {
+type UpdatePortalParams struct {
+	Enabled *bool     `json:"enabled"`
+	Name    *string   `json:"name"`
+	Intro   *string   `json:"intro"`
 	SpaceID uuid.UUID `json:"space_id"`
-	Enabled bool      `json:"enabled"`
 }
 
-func (q *Queries) SetPortalEnabled(ctx context.Context, arg SetPortalEnabledParams) (ServiceDeskPortal, error) {
-	row := q.db.QueryRow(ctx, setPortalEnabled, arg.SpaceID, arg.Enabled)
+// UpdatePortal applies a partial update: a NULL argument keeps the stored
+// value. The handler resolved JSON presence before this runs, so by the time
+// a field reaches SQL, "the client never mentioned it" is already NULL.
+//
+// THE SPACE PREDICATE IS IN THE WHERE CLAUSE, not in a Go check before the
+// statement. An update addressed at a space whose portal this is not affects
+// zero rows and surfaces as not-found — the same construction as
+// ConsumeMagicLink's single-use guard, and for the same reason: a predicate
+// inside the statement cannot be skipped by a second call site.
+//
+// portal_key is deliberately absent from the SET list. A rename or a toggle
+// must never touch the public identifier — every URL already handed to a
+// customer dies with it. See the key-preservation comments on
+// portal.Service.UpdatePortal and adapters.PortalAdapter.UpdatePortal.
+func (q *Queries) UpdatePortal(ctx context.Context, arg UpdatePortalParams) (ServiceDeskPortal, error) {
+	row := q.db.QueryRow(ctx, updatePortal,
+		arg.Enabled,
+		arg.Name,
+		arg.Intro,
+		arg.SpaceID,
+	)
 	var i ServiceDeskPortal
 	err := row.Scan(
 		&i.ID,
