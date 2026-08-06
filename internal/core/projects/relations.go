@@ -79,7 +79,15 @@ type Relation struct {
 	FarID       *uuid.UUID `json:"far_id"`
 	FarType     *string    `json:"far_type"`
 	FarTitle    *string    `json:"far_title"`
-	FarStatus   *string    `json:"far_status"`
+	// FarStatus is nil for an unreadable far side like every other far field —
+	// and ALSO for a readable page, which has no status to report. A client
+	// must key on FarReadable, never on a non-nil status.
+	FarStatus *string `json:"far_status"`
+	// FarSpaceID is what makes a resolved far side navigable: relations link
+	// across spaces by design, so the near entity's space cannot be used to
+	// build the far entity's URL. Populated only when FarReadable — it names a
+	// space already in the viewer's own readable set, never a new fact.
+	FarSpaceID *uuid.UUID `json:"far_space_id"`
 }
 
 // NewRelation is a request to create a link. It is a separate type from

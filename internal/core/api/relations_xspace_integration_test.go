@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -47,6 +48,10 @@ type relFixture struct {
 	itemA1, itemA2 uuid.UUID
 	// itemB lives in space B, which member may not read.
 	itemB uuid.UUID
+	// pageA lives in space A; pageB in space B. Pages are the third entity
+	// type the relations schema has always stored and the read path resolved
+	// last, so the battery carries one on each side of the boundary.
+	pageA, pageB uuid.UUID
 	// foreignItem lives in a different organization entirely.
 	foreignItem uuid.UUID
 }
@@ -77,6 +82,8 @@ func newRelFixture(t *testing.T) *relFixture {
 	f.itemA1 = f.mkItem(t, f.spaceA.ID, "Readable A1")
 	f.itemA2 = f.mkItem(t, f.spaceA.ID, "Readable A2")
 	f.itemB = f.mkItem(t, f.spaceB.ID, "SECRET-TITLE-IN-B")
+	f.pageA = f.mkPage(t, f.spaceA.ID, "Readable Page A")
+	f.pageB = f.mkPage(t, f.spaceB.ID, "SECRET-PAGE-TITLE-IN-B")
 
 	// A whole separate organization, to prove the org boundary as well as the
 	// space one. The direct read of this item correctly 404s for our member;
@@ -105,16 +112,35 @@ func (f *relFixture) mkItemAs(t *testing.T, spaceID uuid.UUID, title string, rep
 	return item.ID
 }
 
+func (f *relFixture) mkPage(t *testing.T, spaceID uuid.UUID, title string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
+		`INSERT INTO pages (id, space_id, title, content, author_id, path)
+		 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+		uuid.New(), spaceID, title, title+"-body", f.ts.UserID,
+		"/"+strings.ToLower(strings.ReplaceAll(title, " ", "-"))).Scan(&id))
+	return id
+}
+
 // link writes a relation row directly, bypassing the API. The write path is
 // itself under test elsewhere in this file, and several of the read cases below
 // describe rows that the fixed write path would now refuse to create — which is
 // exactly why they must be plantable: existing databases already contain them.
 func (f *relFixture) link(t *testing.T, fromID, toID uuid.UUID, kind string) uuid.UUID {
 	t.Helper()
+	return f.linkTyped(t, fromID, "project_item", toID, "project_item", kind)
+}
+
+// linkTyped is link with both endpoint types named — the satellite table is
+// polymorphic, and the page and ticket cases need rows the item-shaped helper
+// cannot write.
+func (f *relFixture) linkTyped(t *testing.T, fromID uuid.UUID, fromType string, toID uuid.UUID, toType, kind string) uuid.UUID {
+	t.Helper()
 	id := uuid.New()
 	_, err := f.q.CreateEntityRelation(context.Background(), generated.CreateEntityRelationParams{
-		ID: id, FromID: fromID, FromType: "project_item",
-		ToID: toID, ToType: "project_item", Kind: kind, CreatedBy: f.ts.UserID,
+		ID: id, FromID: fromID, FromType: fromType,
+		ToID: toID, ToType: toType, Kind: kind, CreatedBy: f.ts.UserID,
 	})
 	require.NoError(t, err)
 	return id
@@ -139,6 +165,7 @@ type wireRelation struct {
 	FarType     *string    `json:"far_type"`
 	FarTitle    *string    `json:"far_title"`
 	FarStatus   *string    `json:"far_status"`
+	FarSpaceID  *uuid.UUID `json:"far_space_id"`
 }
 
 func decodeRelations(t *testing.T, body []byte) []wireRelation {
@@ -157,6 +184,7 @@ func requireNoIdentity(t *testing.T, rel wireRelation, forbidden ...string) {
 	require.Nil(t, rel.FarType, "an unreadable far side must not disclose its type")
 	require.Nil(t, rel.FarTitle, "an unreadable far side must not disclose its title")
 	require.Nil(t, rel.FarStatus, "an unreadable far side must not disclose its status")
+	require.Nil(t, rel.FarSpaceID, "an unreadable far side must not disclose its space")
 	raw, err := json.Marshal(rel)
 	require.NoError(t, err)
 	for _, s := range forbidden {
@@ -226,6 +254,8 @@ func TestRelations_ReadableFarSideStillResolves(t *testing.T) {
 	require.Equal(t, "open", *rels[0].FarStatus)
 	require.Equal(t, f.itemA2, *rels[0].FarID)
 	require.Equal(t, "project_item", *rels[0].FarType)
+	require.NotNil(t, rels[0].FarSpaceID, "a readable far side carries its space, so the client can build its URL")
+	require.Equal(t, f.spaceA.ID, *rels[0].FarSpaceID)
 }
 
 // TestRelations_SoftDeletedFarSideIsRedacted covers the row that escapes a
@@ -244,6 +274,78 @@ func TestRelations_SoftDeletedFarSideIsRedacted(t *testing.T) {
 	rels := decodeRelations(t, res.Body)
 	require.Len(t, rels, 1)
 	requireNoIdentity(t, rels[0], "Readable A2", f.itemA2.String())
+}
+
+// TestRelations_PageFarSideResolvesWithTitle is the A4 pages arm, positive
+// direction — and it is created through the API, because the write path has
+// accepted page targets since the readable-target check landed. Only the read
+// was missing.
+//
+// FAILS BEFORE THE FIX: readable_target had a tickets arm and a project_items
+// arm and no pages arm, so a stored relation to a page — legal to create —
+// rendered as an unresolvable placeholder forever.
+func TestRelations_PageFarSideResolvesWithTitle(t *testing.T) {
+	f := newRelFixture(t)
+
+	created := f.ts.postAs(t, f.memberTok, f.relationsPath(f.itemA1), map[string]any{
+		"to_id":   f.pageA.String(),
+		"to_type": "page",
+		"kind":    "relates_to",
+	})
+	require.Equal(t, http.StatusCreated, created.StatusCode,
+		"the write path is already page-capable; body: %s", string(created.Body))
+
+	res := f.ts.getAs(t, f.memberTok, f.relationsPath(f.itemA1))
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	rels := decodeRelations(t, res.Body)
+	require.Len(t, rels, 1)
+	require.True(t, rels[0].FarReadable, "a readable page target must resolve")
+	require.Equal(t, "page", *rels[0].FarType)
+	require.Equal(t, "Readable Page A", *rels[0].FarTitle)
+	require.Equal(t, f.pageA, *rels[0].FarID)
+	require.Equal(t, f.spaceA.ID, *rels[0].FarSpaceID)
+	// Pages have no status column and no workflow; the query's page arm says
+	// NULL::text explicitly. Anything non-nil here would be an invented value.
+	require.Nil(t, rels[0].FarStatus, "a page has no status to report")
+}
+
+// TestRelations_PageFarSideInUnreadableSpaceRendersAbsent is the pages arm,
+// negative direction: the far side must be ABSENT — indistinguishable from a
+// target that never existed — not an error, and not a redacted-but-typed
+// placeholder that reveals a page is there.
+//
+// The row itself still appears, exactly as it does for items and tickets
+// (D82): the panel may say "a link exists here" while carrying nothing that
+// identifies the far entity. What must not exist is any daylight between
+// "page you cannot read" and "id that names nothing".
+func TestRelations_PageFarSideInUnreadableSpaceRendersAbsent(t *testing.T) {
+	f := newRelFixture(t)
+	// A page in a space the member cannot read, and an id that exists nowhere.
+	// Same kind on both, so the far side is the only thing that could differ.
+	f.linkTyped(t, f.itemA1, "project_item", f.pageB, "page", "relates_to")
+	f.linkTyped(t, f.itemA1, "project_item", uuid.New(), "page", "relates_to")
+
+	res := f.ts.getAs(t, f.memberTok, f.relationsPath(f.itemA1))
+	require.Equal(t, http.StatusOK, res.StatusCode, "an unreadable far side is not an error")
+
+	rels := decodeRelations(t, res.Body)
+	require.Len(t, rels, 2)
+	for _, rel := range rels {
+		requireNoIdentity(t, rel, "SECRET-PAGE-TITLE-IN-B", f.pageB.String(), f.spaceB.ID.String())
+	}
+
+	// Byte-level: with the relation ids cleared, the unreadable-page row and
+	// the never-existed row must serialize identically, so no future far-side
+	// field can quietly become the oracle.
+	a, b := rels[0], rels[1]
+	a.ID, b.ID = uuid.Nil, uuid.Nil
+	aJSON, err := json.Marshal(a)
+	require.NoError(t, err)
+	bJSON, err := json.Marshal(b)
+	require.NoError(t, err)
+	require.Equal(t, string(aJSON), string(bJSON),
+		"an unreadable page and a nonexistent target must be the same absence")
 }
 
 // TestRelations_BlockedItemSeesTheRelation is the reciprocal-visibility fix
