@@ -35,10 +35,11 @@ const (
 	DirectionIncoming = "incoming"
 )
 
-// ValidEntityTypes are the entity kinds a relation may point at. It mirrors
-// the entity_relations to_type/from_type CHECK constraint from migration 015 —
-// a value outside this set reaches the database only to be rejected by the
-// constraint, which surfaces to the caller as a 500 rather than a 400.
+// ValidEntityTypes are the entity kinds a relation may point at — and, since
+// the entity-generic routes, originate from. It mirrors the entity_relations
+// to_type/from_type CHECK constraint from migration 015 — a value outside this
+// set reaches the database only to be rejected by the constraint, which
+// surfaces to the caller as a 500 rather than a 400.
 var ValidEntityTypes = map[string]bool{
 	EntityTypeTicket:      true,
 	EntityTypeProjectItem: true,
@@ -282,14 +283,28 @@ func filterByDirectedKind(rels []*Relation, outgoingKind, incomingKind string) [
 }
 
 // validateNewRelation checks that a relation request has valid fields.
+//
+// FromType gets the same enumeration and the same sentinel as ToType. For as
+// long as the only mount hardcoded EntityTypeProjectItem the check could not
+// fire, which made it look unnecessary — but "the handler constrains it" is a
+// property of one call site, not of this function, and the entity-generic
+// routes are exactly the change that stops it being true. An unvalidated
+// FromType reaches the CHECK constraint and comes back as an unmapped 500.
 func validateNewRelation(rel *NewRelation) error {
 	if !ValidRelationKinds[rel.Kind] {
 		return ErrInvalidRelationKind
 	}
+	if !ValidEntityTypes[rel.FromType] {
+		return ErrInvalidEntityType
+	}
 	if !ValidEntityTypes[rel.ToType] {
 		return ErrInvalidEntityType
 	}
-	if rel.FromID == rel.ToID {
+	// A self-relation is the same (type, id) PAIR on both ends, not the same
+	// id. Ids are unique only within an entity type's own table, so a ticket
+	// and a page sharing a UUID are two different entities — comparing ids
+	// alone would refuse that pair while asserting something it never checked.
+	if rel.FromID == rel.ToID && rel.FromType == rel.ToType {
 		return ErrSelfRelation
 	}
 	return nil

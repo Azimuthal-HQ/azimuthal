@@ -38,9 +38,14 @@ var (
 	// blocks, is_blocked_by, duplicates, relates_to, or wiki_link.
 	ErrInvalidRelationKind = errors.New("relation kind must be blocks, is_blocked_by, duplicates, relates_to, or wiki_link")
 
-	// ErrSelfRelation is returned when attempting to create a relation from
-	// an item to itself.
-	ErrSelfRelation = errors.New("cannot create a relation from an item to itself")
+	// ErrSelfRelation is returned when a relation names the same entity on
+	// both ends — the same (type, id) PAIR, not merely the same id. The pair
+	// is the identity: ids are unique only within one entity type's table, so
+	// a ticket and a page that happened to share a UUID are two different
+	// entities, and a relation between them is legal. With a single hardcoded
+	// from-type the id comparison was accidentally equivalent; entity-generic
+	// routes are what made the difference observable.
+	ErrSelfRelation = errors.New("cannot create a relation from an entity to itself")
 
 	// ErrInvalidEntityType is returned when a relation endpoint names an entity
 	// kind outside the entity_relations CHECK constraint set. Without this the

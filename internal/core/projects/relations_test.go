@@ -182,6 +182,53 @@ func TestRelationService_CreateRelation_SelfRelation(t *testing.T) {
 	}
 }
 
+// TestRelationService_CreateRelation_SameIDAcrossTypesIsNotSelf pins what
+// ErrSelfRelation now means: the same (type, id) pair, not the same id. Two
+// entities of different types sharing a UUID are distinct, and the relation
+// between them must be allowed — under the id-only comparison this test fails
+// with ErrSelfRelation, which is exactly the over-refusal being removed.
+func TestRelationService_CreateRelation_SameIDAcrossTypesIsNotSelf(t *testing.T) {
+	repo := newStubRelationRepo()
+	svc := NewRelationService(repo)
+	space := uuid.New()
+	id := uuid.New()
+	repo.place(id, space)
+
+	rel := makeNewRelation(id, id)
+	rel.FromType = EntityTypeProjectItem
+	rel.ToType = EntityTypePage
+
+	created, err := svc.CreateRelation(context.Background(), rel, space, []uuid.UUID{space})
+	if err != nil {
+		t.Fatalf("a same-id pair across two types is not a self-relation, got %v", err)
+	}
+	if created == nil || len(repo.stored) != 1 {
+		t.Errorf("the cross-type relation must be persisted, %d stored", len(repo.stored))
+	}
+}
+
+// TestRelationService_CreateRelation_InvalidFromType is the from-side twin of
+// the ToType test above, and exists because the entity-generic routes ended
+// the era in which every handler hardcoded FromType. Deleting the FromType arm
+// in validateNewRelation makes this fail by storing the row.
+func TestRelationService_CreateRelation_InvalidFromType(t *testing.T) {
+	repo := newStubRelationRepo()
+	svc := NewRelationService(repo)
+	space := uuid.New()
+	rel := makeNewRelation(uuid.New(), uuid.New())
+	rel.FromType = "space"
+	repo.place(rel.FromID, space)
+	repo.place(rel.ToID, space)
+
+	_, err := svc.CreateRelation(context.Background(), rel, space, []uuid.UUID{space})
+	if !errors.Is(err, ErrInvalidEntityType) {
+		t.Errorf("expected ErrInvalidEntityType, got %v", err)
+	}
+	if len(repo.stored) != 0 {
+		t.Error("a from-type outside the CHECK constraint set must not reach the database")
+	}
+}
+
 // TestRelationService_CreateRelation_UnresolvableTarget is the service-level
 // half of the write fix: a target the repository will not vouch for is refused,
 // and — the part that matters — nothing is written.
