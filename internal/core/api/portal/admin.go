@@ -199,35 +199,10 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var params portal.UpdatePortalParams
-	if req.Enabled.Set {
-		if req.Enabled.Value == nil {
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
-				"enabled must be true or false, not null")
-			return
-		}
-		params.Enabled = req.Enabled.Value
-	}
-	if req.Name.Set {
-		// A null name is the same defect as an empty one — the name is
-		// required, and migration 044's name-present CHECK would otherwise
-		// refuse it as a raw constraint error long after this handler could
-		// answer 400. The empty and whitespace spellings take the same exit
-		// through the service's ErrPortalNameRequired below, so the two ways
-		// of saying "no name" cannot drift apart.
-		if req.Name.Value == nil {
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "a portal name is required")
-			return
-		}
-		params.Name = req.Name.Value
-	}
-	if req.Intro.Set {
-		// Intro is the one genuinely optional field: explicit null clears it.
-		intro := ""
-		if req.Intro.Value != nil {
-			intro = *req.Intro.Value
-		}
-		params.Intro = &intro
+	params, problem := resolveUpdatePortalParams(req)
+	if problem != "" {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, problem)
+		return
 	}
 
 	p, err := h.svc.UpdatePortal(r.Context(), spaceID, params)
@@ -243,33 +218,73 @@ func (h *Handler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A rename is auditable for the same reason a toggle always was: the name
-	// and intro are the strings external customers see, and a change to the
-	// org's public face with no record is what the audit log exists to catch.
-	// The action keeps the existing enabled/disabled vocabulary when the flag
-	// was in the request, and "fields" says exactly what the request carried.
-	if claims := auth.ClaimsFromContext(r.Context()); claims != nil && len(auditedFields(req)) > 0 {
-		action := "updated"
-		if params.Enabled != nil {
-			if *params.Enabled {
-				action = "enabled"
-			} else {
-				action = "disabled"
-			}
-		}
-		_ = h.auditLog.Log(r.Context(), audit.Event{
-			Type: audit.EventTypePortalConfigured, ActorID: claims.UserID.String(),
-			OrgID: claims.OrgID, ResourceType: "space", ResourceID: spaceID.String(),
-			Metadata: map[string]string{"action": action, "fields": strings.Join(auditedFields(req), ",")},
-		})
-	}
-
+	h.auditConfigUpdate(r, spaceID, req, params)
 	respond.JSON(w, http.StatusOK, toAdminView(p))
 }
 
+// resolveUpdatePortalParams turns the three-state request body into domain
+// params. A non-empty problem is the message for a 400.
+//
+// A null name is the same defect as an empty one — the name is required, and
+// migration 044's name-present CHECK would otherwise refuse it as a raw
+// constraint error long after the handler could answer 400. The empty and
+// whitespace spellings take the same exit through the service's
+// ErrPortalNameRequired, so the ways of saying "no name" cannot drift apart.
+// Intro is the one genuinely optional field: explicit null clears it.
+func resolveUpdatePortalParams(req updatePortalRequest) (portal.UpdatePortalParams, string) {
+	var params portal.UpdatePortalParams
+	if req.Enabled.Set {
+		if req.Enabled.Value == nil {
+			return params, "enabled must be true or false, not null"
+		}
+		params.Enabled = req.Enabled.Value
+	}
+	if req.Name.Set {
+		if req.Name.Value == nil {
+			return params, "a portal name is required"
+		}
+		params.Name = req.Name.Value
+	}
+	if req.Intro.Set {
+		intro := ""
+		if req.Intro.Value != nil {
+			intro = *req.Intro.Value
+		}
+		params.Intro = &intro
+	}
+	return params, ""
+}
+
+// auditConfigUpdate records a successful PATCH. A rename is auditable for the
+// same reason a toggle always was: the name and intro are the strings
+// external customers see, and a change to the org's public face with no
+// record is what the audit log exists to catch. The action keeps the existing
+// enabled/disabled vocabulary when the flag was in the request, and "fields"
+// says exactly what the request carried. A no-op PATCH logs nothing — nothing
+// was configured.
+func (h *Handler) auditConfigUpdate(r *http.Request, spaceID uuid.UUID, req updatePortalRequest, params portal.UpdatePortalParams) {
+	claims := auth.ClaimsFromContext(r.Context())
+	fields := auditedFields(req)
+	if claims == nil || len(fields) == 0 {
+		return
+	}
+	action := "updated"
+	if params.Enabled != nil {
+		if *params.Enabled {
+			action = "enabled"
+		} else {
+			action = "disabled"
+		}
+	}
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypePortalConfigured, ActorID: claims.UserID.String(),
+		OrgID: claims.OrgID, ResourceType: "space", ResourceID: spaceID.String(),
+		Metadata: map[string]string{"action": action, "fields": strings.Join(fields, ",")},
+	})
+}
+
 // auditedFields names the fields a PATCH actually carried, in a fixed order,
-// for the audit trail. An empty result means the request was a no-op and
-// nothing is logged — nothing was configured.
+// for the audit trail.
 func auditedFields(req updatePortalRequest) []string {
 	fields := make([]string, 0, 3)
 	if req.Enabled.Set {

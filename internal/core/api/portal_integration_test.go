@@ -1088,7 +1088,7 @@ func TestPortalConfig_RenameKeepsTheKey(t *testing.T) {
 }
 
 // TestPortalConfig_EmptyNameIs400NotA500 pins where the name rule is
-// enforced. Migration 044 carries CHECK (name <> ''), so a PATCH that let an
+// enforced. Migration 044 carries CHECK (name <> ”), so a PATCH that let an
 // empty name through would reach the database and come back as an unmapped
 // 23514 — a 500 where the answer is a 400. The handler and service refuse all
 // three spellings of "no name" through CreatePortal's existing
