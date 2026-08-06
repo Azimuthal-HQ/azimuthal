@@ -12,6 +12,7 @@ import {
 } from '../../components/layout/DetailLayout';
 import { EntityShareControl } from '../../components/EntityShareControl';
 import { CustomFieldsSection } from '../../components/CustomFieldsSection';
+import { RelationsSection } from '../../components/RelationsSection';
 import { ModuleChip } from '../../shell/ModuleChip';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { Input } from '../../components/ui/input';
@@ -385,6 +386,15 @@ export function TicketDetailPage() {
               onDecided={() => refetchTicket()}
             />
           </div>
+
+          {/* Relations (A4): the same shared surface project items carry —
+              tickets are a from-side now, not only a target. */}
+          <RelationsSection
+            orgId={orgId}
+            spaceId={spaceId}
+            entityType="ticket"
+            entityId={ticket.id}
+          />
 
           {/* Comments section */}
           <div className="mt-6 border-t border-[var(--color-border)] pt-5">
