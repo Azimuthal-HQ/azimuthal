@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { SegmentedControl } from '../../components/ui/segmented';
 import { PersonTeamPicker, type PickedSubject } from '../../components/PersonTeamPicker';
 import { BoardConfigSection } from './BoardConfigSection';
+import { PortalSection } from './PortalSection';
 import { MODULES } from '../../shell/modules';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../lib/auth';
@@ -261,6 +262,11 @@ export function SpaceSettingsPage() {
 
       {/* Board customization is Vector-only: Beacon's kanban is untouched. */}
       {spaceQuery.data?.type === 'vector' && <BoardConfigSection spaceId={spaceId} />}
+
+      {/* The customer portal is Beacon-only: it attaches to a service desk
+          (the create route refuses any other module), so the section renders
+          nowhere else rather than rendering disabled. */}
+      {spaceQuery.data?.type === 'beacon' && <PortalSection orgId={orgId} spaceId={spaceId} />}
     </div>
   );
 }
