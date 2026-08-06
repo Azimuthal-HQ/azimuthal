@@ -356,7 +356,19 @@ with a previously registered address and no longer depends on issue #11's behavi
 ## 14. Labels: Two Parallel Label Stores (deferral target stale — see below)
 
 **Severity**: Medium
-**Status**: Documented — fix deferred to Phase 5 (Items Table Split)
+**Status**: RESOLVED (v0.4.2, A5) — by convergence onto entity tags, not by the join-table fix
+sketched below.
+
+**Resolution**: Migration 055 converged all three labelling mechanisms onto one entity-generic
+tag system. The `page_tags` association became `entity_tags` (pages, tickets and project items);
+the `labels TEXT[]` columns were backfilled into entity tags under a stated normalization rule
+and dropped; the orphan `labels` table was deleted whole — no admin surface was ever built for
+it and nothing ever read it. Tickets and items now carry the same org-scoped tags pages do,
+editable on their detail surfaces, filterable in search with `tag:`, and browsable cross-module.
+The `/labels` route survives as the tags index, so the "coming soon" page this entry described
+now opens the delivered feature. The two-halves fix below was therefore overtaken: the join
+table exists (`entity_tags`, referencing `tags`), and the surface that uses it is the tag
+editor, not a labels admin page. The original entry is kept below for the history.
 
 Two label mechanisms exist in parallel and are not linked:
 

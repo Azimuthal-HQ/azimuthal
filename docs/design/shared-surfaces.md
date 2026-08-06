@@ -460,8 +460,8 @@ registeredTypes(exts): {nodes, marks}    // derived from a real ProseMirror sche
 filterPages / findPageByTitle            // pageSearch.ts — the one page lookup
 codexMeasureClasses                      // editorStyles.ts — the one document measure
 markdownPasteContent(text)               // lib/codex/markdownPaste.ts — the one paste converter
-tagBrowsePath(spaceId, label)            // tagLinks.ts — where a tag chip goes
-<PageTags …>                             // the only tag chip and tag editor
+tagBrowsePath(module, spaceId, label)    // components/tags/tagLinks.ts — where a tag chip goes
+<EntityTags …>                           // the only tag chip and tag editor (pages, tickets, items)
 ```
 
 Built for issue #15 PR-B on the model in section 9.
