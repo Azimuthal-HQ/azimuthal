@@ -216,15 +216,27 @@ func TestProjectsNeg_MalformedPathIDsAre400(t *testing.T) {
 			{"status", http.MethodPost, f.base + "/items/" + bad + "/status", map[string]any{"status": "done"}},
 			{"assign sprint", http.MethodPost, f.base + "/items/" + bad + "/sprint", map[string]any{"sprint_id": nil}},
 			{"rank", http.MethodPost, f.base + "/items/" + bad + "/rank", map[string]any{}},
-			{"list relations", http.MethodGet, f.base + "/items/" + bad + "/relations", nil},
-			{"create relation", http.MethodPost, f.base + "/items/" + bad + "/relations",
-				map[string]any{"to_id": uuid.NewString(), "kind": "relates_to"}},
 			{"get fields", http.MethodGet, f.base + "/items/" + bad + "/fields", nil},
 			{"set field", http.MethodPut, f.base + "/items/" + bad + "/fields/squad", map[string]any{"value": "x"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				projNegRequireError(t, f.as(t, f.ts.Token, tc.method, tc.path, tc.body),
 					http.StatusBadRequest, "BAD_REQUEST", "invalid item ID")
+			})
+		}
+
+		// The relation routes moved onto the entity-generic satellite (A4),
+		// whose shared core answers the same "invalid entity ID" the comments
+		// core does for all three subtrees. The assertion still pins the exact
+		// message — only the expected literal moved with the handler.
+		for _, tc := range []projNegRoute{
+			{"list relations", http.MethodGet, f.base + "/items/" + bad + "/relations", nil},
+			{"create relation", http.MethodPost, f.base + "/items/" + bad + "/relations",
+				map[string]any{"to_id": uuid.NewString(), "kind": "relates_to"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				projNegRequireError(t, f.as(t, f.ts.Token, tc.method, tc.path, tc.body),
+					http.StatusBadRequest, "BAD_REQUEST", "invalid entity ID")
 			})
 		}
 	})

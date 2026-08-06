@@ -217,6 +217,8 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/comments":       "space-write: comment capability",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/fields":          "space-read",
 	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/fields/{slug}":   "space-write: edit_own/edit_any in-handler",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/relations":       "space-read",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/relations":      "space-write",
 
 	// Wiki.
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/":                             "space-read",
@@ -234,6 +236,8 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/render":              "space-read",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/comments":            "space-read",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/comments":           "space-write: comment capability",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/relations":           "space-read",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/relations":          "space-write",
 
 	// The Codex document surface (issue #15, ADR-0012). Reading a page's document
 	// is a read of the page, so space-read is the whole guard — the write floor
@@ -304,25 +308,28 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/sprint":         "space-write: edit_any_item in-handler",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/rank":           "space-write: edit_any_item in-handler",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/workflow-state": "space-write: transition_any_item in-handler",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/relations":       "space-read",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/relations":      "space-write",
-	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/relations/{relationID}":      "space-write",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/comments":        "space-read",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/comments":       "space-write: comment capability",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints":                        "space-read",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints":                       "space-write: edit_any_item in-handler",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/active":                 "space-read",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}":             "space-read",
-	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}":             "space-write: edit_any_item in-handler",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}/start":      "space-write: edit_any_item in-handler",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}/complete":   "space-write: edit_any_item in-handler",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}/items":       "space-read",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/backlog":                        "space-read",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/backlog/move-to-sprint":        "space-write: edit_any_item in-handler",
-	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/backlog/move-to-backlog":       "space-write: edit_any_item in-handler",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/roadmap":                        "space-read",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/roadmap/overdue":                "space-read",
-	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/roadmap/sprints":                "space-read",
+	// Relations are one entity-generic satellite mounted per subtree (A4);
+	// the ticket and page rows are below with their own subtrees. One delete
+	// serves all three mounts — a relation is addressed by its own id.
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/relations":     "space-read",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/relations":    "space-write",
+	"DELETE /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/relations/{relationID}":    "space-write",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/comments":      "space-read",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/comments":     "space-write: comment capability",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints":                      "space-read",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints":                     "space-write: edit_any_item in-handler",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/active":               "space-read",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}":           "space-read",
+	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}":           "space-write: edit_any_item in-handler",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}/start":    "space-write: edit_any_item in-handler",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}/complete": "space-write: edit_any_item in-handler",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/sprints/{sprintID}/items":     "space-read",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/backlog":                      "space-read",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/backlog/move-to-sprint":      "space-write: edit_any_item in-handler",
+	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/backlog/move-to-backlog":     "space-write: edit_any_item in-handler",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/roadmap":                      "space-read",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/roadmap/overdue":              "space-read",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/roadmap/sprints":              "space-read",
 
 	// Board configuration (W4). Reading the board's shape follows ordinary
 	// space read access; every write follows space admin through the existing

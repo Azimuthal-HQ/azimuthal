@@ -209,10 +209,31 @@ func (s *RelationService) CreateRelation(
 	}, nil
 }
 
-// ListRelations returns every relation touching the entity — both the ones it
-// declares and the ones declared about it — with far sides resolved only where
-// the caller may read them.
-func (s *RelationService) ListRelations(ctx context.Context, entityID uuid.UUID, entityType string, readableSpaceIDs []uuid.UUID) ([]*Relation, error) {
+// ListRelationsInSpace returns every relation touching the entity — both the
+// ones it declares and the ones declared about it, far sides resolved only
+// where the caller may read them — after reconciling the entity itself against
+// the space the route named.
+//
+// The reconciliation is the same TargetIsReadable the write path runs on its
+// near side, against the URL's space alone, for the same reason: the route
+// proved the caller may read {spaceID} and proved nothing at all about
+// {entityID}, so without it an entity anywhere in the installation answered
+// through whichever space the caller could name. This replaced an unreconciled
+// ListRelations rather than joining it, so no ungated variant survives to be
+// called by mistake — the same reshaping the repository interface had.
+//
+// A miss is an empty list, not an error: a collection hanging off an entity
+// outside this space answers exactly as one hanging off an entity that never
+// existed, which is the no-oracle shape the scoping battery pins for every
+// list route in the family.
+func (s *RelationService) ListRelationsInSpace(ctx context.Context, entityID uuid.UUID, entityType string, spaceID uuid.UUID, readableSpaceIDs []uuid.UUID) ([]*Relation, error) {
+	near, err := s.repo.TargetIsReadable(ctx, entityID, entityType, []uuid.UUID{spaceID})
+	if err != nil {
+		return nil, fmt.Errorf("listing relations: %w", err)
+	}
+	if !near {
+		return []*Relation{}, nil
+	}
 	rels, err := s.repo.ListForEntity(ctx, entityID, entityType, readableSpaceIDs)
 	if err != nil {
 		return nil, fmt.Errorf("listing relations: %w", err)

@@ -17,6 +17,7 @@ import (
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	relationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/relations"
 	searchapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/search"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -31,13 +32,20 @@ import (
 
 // RouterConfig holds all the dependencies needed to build the API router.
 type RouterConfig struct {
-	Authenticator       *auth.Authenticator
-	AuthHandler         *authapi.Handler
-	TicketHandler       *ticketsapi.Handler
-	WikiHandler         *wikiapi.Handler
-	ProjectHandler      *projectsapi.Handler
-	SpaceHandler        *spacesapi.Handler
-	CommentHandler      *commentsapi.Handler
+	Authenticator  *auth.Authenticator
+	AuthHandler    *authapi.Handler
+	TicketHandler  *ticketsapi.Handler
+	WikiHandler    *wikiapi.Handler
+	ProjectHandler *projectsapi.Handler
+	SpaceHandler   *spacesapi.Handler
+	CommentHandler *commentsapi.Handler
+	// RelationHandler serves the entity-generic relation satellite: one core,
+	// mounted per entity subtree (projects items, tickets, wiki pages) the way
+	// comments are — the from side of a relation comes from which route was
+	// hit. nil leaves every relation route unmounted, including the item ones
+	// that used to live inside ProjectHandler.Routes(); the harness wires it,
+	// and TestHarness_NoDarkDependencies fails on a nil.
+	RelationHandler     *relationsapi.Handler
 	NotificationHandler *notificationsapi.Handler
 	WorkflowHandler     *workflowsapi.Handler
 	TeamHandler         *teamsapi.Handler
@@ -633,6 +641,10 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/{ticketID}/comments", cfg.CommentHandler.ListTicketComments)
 			r.Post("/{ticketID}/comments", cfg.CommentHandler.CreateTicketComment)
 		}
+		if cfg.RelationHandler != nil {
+			r.Get("/{ticketID}/relations", cfg.RelationHandler.ListTicketRelations)
+			r.Post("/{ticketID}/relations", cfg.RelationHandler.CreateTicketRelation)
+		}
 	})
 
 	// Wiki pages
@@ -644,6 +656,10 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 		if cfg.CommentHandler != nil {
 			r.Get("/{pageID}/comments", cfg.CommentHandler.ListPageComments)
 			r.Post("/{pageID}/comments", cfg.CommentHandler.CreatePageComment)
+		}
+		if cfg.RelationHandler != nil {
+			r.Get("/{pageID}/relations", cfg.RelationHandler.ListPageRelations)
+			r.Post("/{pageID}/relations", cfg.RelationHandler.CreatePageRelation)
 		}
 	})
 
@@ -659,6 +675,17 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 		if cfg.CommentHandler != nil {
 			r.Get("/items/{itemID}/comments", cfg.CommentHandler.ListItemComments)
 			r.Post("/items/{itemID}/comments", cfg.CommentHandler.CreateItemComment)
+		}
+		if cfg.RelationHandler != nil {
+			// The item URLs predate the entity-generic mount and did not move;
+			// only their registration did, out of ProjectHandler.Routes() and
+			// into the same per-subtree convention comments use. The delete
+			// stays a single route — a relation is addressed by its own id,
+			// and the space-scoped delete already matches either endpoint of
+			// any entity type.
+			r.Get("/items/{itemID}/relations", cfg.RelationHandler.ListItemRelations)
+			r.Post("/items/{itemID}/relations", cfg.RelationHandler.CreateItemRelation)
+			r.Delete("/relations/{relationID}", cfg.RelationHandler.DeleteRelation)
 		}
 	})
 

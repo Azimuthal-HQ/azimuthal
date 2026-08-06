@@ -18,6 +18,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api"
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	relationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/relations"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
 	ticketsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
@@ -865,7 +866,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		tagSvc,
 	)
 	wikiHandler := wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc)
-	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
+	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, labelSvc).
 		WithItemTypes(itemTypeSvc).
 		WithCustomFields(customFieldSvc).
 		WithWorkflowTiers(
@@ -876,12 +877,13 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	spaceHandler := spacesapi.NewHandler(nil)
 
 	router := api.NewRouter(api.RouterConfig{
-		Authenticator:  authenticator,
-		AuthHandler:    authHandler,
-		TicketHandler:  ticketHandler,
-		WikiHandler:    wikiHandler,
-		ProjectHandler: projectHandler,
-		SpaceHandler:   spaceHandler,
+		Authenticator:   authenticator,
+		AuthHandler:     authHandler,
+		TicketHandler:   ticketHandler,
+		WikiHandler:     wikiHandler,
+		ProjectHandler:  projectHandler,
+		SpaceHandler:    spaceHandler,
+		RelationHandler: relationsapi.NewHandler(relationSvc),
 	})
 
 	// This harness runs without an AccessResolver (no DB), so the in-handler

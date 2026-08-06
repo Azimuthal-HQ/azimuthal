@@ -256,21 +256,60 @@ func TestRelationService_CreateRelation_UnresolvableTarget(t *testing.T) {
 	}
 }
 
-func TestRelationService_ListRelations(t *testing.T) {
+func TestRelationService_ListRelationsInSpace(t *testing.T) {
 	repo := newStubRelationRepo()
 	svc := NewRelationService(repo)
+	space := uuid.New()
+	entity := uuid.New()
+	repo.place(entity, space)
 	repo.listing = []*Relation{
 		{ID: uuid.New(), Kind: RelationRelatesTo, Direction: DirectionOutgoing},
 		{ID: uuid.New(), Kind: RelationBlocks, Direction: DirectionIncoming},
 	}
 
-	rels, err := svc.ListRelations(context.Background(), uuid.New(), EntityTypeProjectItem, nil)
+	rels, err := svc.ListRelationsInSpace(context.Background(), entity, EntityTypeProjectItem, space, []uuid.UUID{space})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(rels) != 2 {
 		t.Errorf("expected 2 relations, got %d", len(rels))
 	}
+}
+
+// TestRelationService_ListRelationsInSpace_EntityOutsideSpaceIsEmpty pins the
+// near-side reconciliation on the read: an entity that is not in the space the
+// route named answers an empty list — the same empty list an entity that never
+// existed produces — never its relations and never an error. Deleting the
+// near-side TargetIsReadable call in ListRelationsInSpace fails both subtests.
+func TestRelationService_ListRelationsInSpace_EntityOutsideSpaceIsEmpty(t *testing.T) {
+	repo := newStubRelationRepo()
+	svc := NewRelationService(repo)
+	owning, urlSpace := uuid.New(), uuid.New()
+	entity := uuid.New()
+	repo.place(entity, owning)
+	repo.listing = []*Relation{
+		{ID: uuid.New(), Kind: RelationRelatesTo, Direction: DirectionOutgoing},
+	}
+
+	t.Run("entity in another space", func(t *testing.T) {
+		rels, err := svc.ListRelationsInSpace(context.Background(), entity, EntityTypeProjectItem, urlSpace, []uuid.UUID{urlSpace, owning})
+		if err != nil {
+			t.Fatalf("a cross-space list must not error: %v", err)
+		}
+		if len(rels) != 0 {
+			t.Errorf("an entity outside the URL's space must list nothing, got %d", len(rels))
+		}
+	})
+
+	t.Run("entity that never existed", func(t *testing.T) {
+		rels, err := svc.ListRelationsInSpace(context.Background(), uuid.New(), EntityTypeProjectItem, urlSpace, []uuid.UUID{urlSpace})
+		if err != nil {
+			t.Fatalf("an absent entity must not error: %v", err)
+		}
+		if len(rels) != 0 {
+			t.Errorf("an absent entity must list nothing, got %d", len(rels))
+		}
+	})
 }
 
 func TestRelationService_DeleteRelation(t *testing.T) {

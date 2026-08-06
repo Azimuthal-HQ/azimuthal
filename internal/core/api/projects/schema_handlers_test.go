@@ -164,7 +164,6 @@ func schemaHandlerWithScopes(types *mockTypeRepo, defs *mockFieldDefRepo, scopes
 		projects.NewSprintService(sr),
 		projects.NewBacklogService(ir, sr),
 		projects.NewRoadmapService(ir, sr),
-		projects.NewRelationService(&mockRelationRepo{}),
 		projects.NewLabelService(&mockLabelRepo{}),
 	)
 	return h.
