@@ -2663,6 +2663,15 @@ export const queryKeys = {
     ['portal', portalKey, requesterEmail, 'requests', 'list'] as const,
   portalRequest: (portalKey: string, requesterEmail: string, reference: string) =>
     ['portal', portalKey, requesterEmail, 'requests', 'one', reference] as const,
+  // The AGENT-side portal configuration (v0.4.2 A1). Its own root,
+  // deliberately NOT nested under ['portal', …]: that family is the CUSTOMER
+  // cache, keyed by portal key and removed wholesale on portal sign-out —
+  // nesting the agent's view under it would let a customer-side sign-out (or
+  // any customer prefix invalidation) blow away agent state, and vice versa.
+  // Keyed by org and space because that is how the agent addresses the
+  // resource; the portal key is something this query LEARNS, so it cannot be
+  // in the key. queryKeys.test.ts pins the isolation.
+  portalAdmin: (orgId: string, spaceId: string) => ['portalAdmin', orgId, spaceId] as const,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -6000,6 +6009,120 @@ export function splitSnippet(snippet: string): Array<{ text: string; match: bool
     rest = rest.slice(end + 1);
   }
   return out.filter((p) => p.text.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Customer portal — the agent-side configuration surface (v0.4.2 A1)
+// ---------------------------------------------------------------------------
+//
+// These are ORDINARY INTERNAL routes (/orgs/{orgId}/spaces/{spaceId}/portal)
+// on the default internal credential — nothing here touches the portal
+// session machinery in the requester section below, and the two cache
+// families are deliberately disjoint (see queryKeys.portalAdmin).
+//
+// manage_space is enforced in the handler, so 403 is a stable answer for a
+// member without it. GET answers 404 for a space that simply has no portal
+// yet — that 404 is the "offer to create one" signal, not an error state.
+
+/** The agent's view of a portal: unlike the customer's, it carries the key. */
+export interface AdminPortalConfig {
+  portal_key: string;
+  name: string;
+  intro: string;
+  enabled: boolean;
+  portal_id: string;
+}
+
+export interface CreatePortalRequest {
+  name: string;
+  intro?: string;
+}
+
+/**
+ * A partial update: omit a field to leave it unchanged. The server treats
+ * every field as three-state (absent / explicit null / value), and
+ * JSON.stringify dropping undefined keys is exactly that wire contract.
+ * `intro: null` clears the introduction; name and enabled are never null —
+ * the server answers 400 rather than guessing.
+ */
+export interface UpdatePortalRequest {
+  enabled?: boolean;
+  name?: string;
+  intro?: string | null;
+}
+
+function portalAdminBase(orgId: string, spaceId: string): string {
+  return `/orgs/${orgId}/spaces/${spaceId}/portal`;
+}
+
+async function fetchPortalConfig(orgId: string, spaceId: string): Promise<AdminPortalConfig> {
+  return apiFetch<AdminPortalConfig>(portalAdminBase(orgId, spaceId));
+}
+
+async function createPortal(
+  orgId: string,
+  spaceId: string,
+  req: CreatePortalRequest,
+): Promise<AdminPortalConfig> {
+  return apiFetch<AdminPortalConfig>(portalAdminBase(orgId, spaceId), {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+async function updatePortal(
+  orgId: string,
+  spaceId: string,
+  req: UpdatePortalRequest,
+): Promise<AdminPortalConfig> {
+  return apiFetch<AdminPortalConfig>(portalAdminBase(orgId, spaceId), {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+}
+
+export function usePortalConfig(
+  orgId: string,
+  spaceId: string,
+  opts?: QueryOpts<AdminPortalConfig>,
+) {
+  return useQuery<AdminPortalConfig, APIError>({
+    queryKey: queryKeys.portalAdmin(orgId, spaceId),
+    queryFn: () => fetchPortalConfig(orgId, spaceId),
+    enabled: !!orgId && !!spaceId,
+    retry: (failureCount, error) => {
+      // Both are stable answers, not flakes: 404 is "no portal yet" (the
+      // create affordance) and 403 is a caller without manage_space.
+      if (error?.status === 403 || error?.status === 404) return false;
+      return failureCount < 2;
+    },
+    ...opts,
+  });
+}
+
+export function useCreatePortal(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<AdminPortalConfig, APIError, CreatePortalRequest>({
+    mutationFn: (req) => createPortal(orgId, spaceId, req),
+    onSuccess: (cfg) => {
+      // Write through rather than only invalidating: the settings section
+      // re-renders from this immediately — the board-config shape.
+      queryClient.setQueryData(queryKeys.portalAdmin(orgId, spaceId), cfg);
+      queryClient.invalidateQueries({ queryKey: queryKeys.portalAdmin(orgId, spaceId) });
+    },
+  });
+}
+
+/** One hook for the whole partial update — enabled, name and intro together. */
+export function useUpdatePortal(orgId: string, spaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<AdminPortalConfig, APIError, UpdatePortalRequest>({
+    mutationFn: (req) => updatePortal(orgId, spaceId, req),
+    onSuccess: (cfg) => {
+      queryClient.setQueryData(queryKeys.portalAdmin(orgId, spaceId), cfg);
+      queryClient.invalidateQueries({ queryKey: queryKeys.portalAdmin(orgId, spaceId) });
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
