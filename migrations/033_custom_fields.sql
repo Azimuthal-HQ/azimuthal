@@ -3,8 +3,11 @@
 
 -- ── Vector custom fields ─────────────────────────────────────────────────────
 -- No custom-field storage existed in the repository (the phase brief assumed an
--- `item_fields` table; there was none — see spec-repo-reconciliation.md D46), so
+-- `item_fields` table; there was none — see spec-repo-reconciliation.md D48), so
 -- this migration introduces both the definition schema and the value storage.
+-- (This comment cited D46 until v0.4.2; D46 is the cross-space query-shape
+-- entry and says nothing about custom fields. Comment-only correction — goose
+-- never re-runs an applied migration, and nothing checksums migration files.)
 --
 -- Definitions are org-scoped (matching item_types, and keeping the admin surface
 -- in one place). A field's slug is its immutable identity; the display name is
