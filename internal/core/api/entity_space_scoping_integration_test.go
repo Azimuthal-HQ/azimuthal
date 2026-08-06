@@ -66,12 +66,13 @@ type scopeFixture struct {
 
 // Secrets are distinct per entity so a leak names which read produced it.
 const (
-	secretItem   = "XSPACE-SECRET-ITEM"
-	secretSprint = "XSPACE-SECRET-SPRINT"
-	secretPage   = "XSPACE-SECRET-PAGE"
-	secretTicket = "XSPACE-SECRET-TICKET"
-	secretNote   = "XSPACE-SECRET-COMMENT"
-	secretField  = "XSPACE-SECRET-FIELDVALUE"
+	secretItem        = "XSPACE-SECRET-ITEM"
+	secretSprint      = "XSPACE-SECRET-SPRINT"
+	secretPage        = "XSPACE-SECRET-PAGE"
+	secretTicket      = "XSPACE-SECRET-TICKET"
+	secretNote        = "XSPACE-SECRET-COMMENT"
+	secretField       = "XSPACE-SECRET-FIELDVALUE"
+	secretTicketField = "XSPACE-SECRET-TICKETFIELDVALUE"
 	// Tag slugs are constrained to ^[a-z0-9][a-z0-9_]*$ (migration 040).
 	secretTag = "xspace_secret_tag"
 )
@@ -106,12 +107,14 @@ func newScopeFixture(t *testing.T) *scopeFixture {
 
 	// Dependents hanging off the space-B entities.
 	f.mkComment(t, "project_item", f.itemB, secretNote)
-	f.mkFieldValue(t, f.itemB, secretField)
+	f.mkFieldValue(t, "project_item", f.itemB, secretField)
+	f.mkFieldValue(t, "ticket", f.ticketB, secretTicketField)
 	f.mkTag(t, f.pageB, secretTag)
 	// And the matching dependents in A, so the positive direction has something
 	// to find.
 	f.mkComment(t, "project_item", f.itemA, "Ordinary comment in A")
-	f.mkFieldValue(t, f.itemA, "ordinary-value")
+	f.mkFieldValue(t, "project_item", f.itemA, "ordinary-value")
+	f.mkFieldValue(t, "ticket", f.ticketA, "ordinary-ticket-value")
 	f.mkTag(t, f.pageA, "ordinary_tag")
 
 	return f
@@ -173,12 +176,12 @@ func (f *scopeFixture) mkComment(t *testing.T, entityType string, entityID uuid.
 	require.NoError(t, err)
 }
 
-func (f *scopeFixture) mkFieldValue(t *testing.T, itemID uuid.UUID, value string) {
+func (f *scopeFixture) mkFieldValue(t *testing.T, entityType string, entityID uuid.UUID, value string) {
 	t.Helper()
 	_, err := f.ts.DB.Pool.Exec(context.Background(),
-		`INSERT INTO item_field_values (id, item_id, field_slug, value)
-		 VALUES ($1,$2,'probe',$3)`,
-		uuid.New(), itemID, value)
+		`INSERT INTO entity_field_values (id, entity_type, entity_id, field_slug, value)
+		 VALUES ($1,$2,$3,'probe',$4)`,
+		uuid.New(), entityType, entityID, value)
 	require.NoError(t, err)
 }
 
@@ -270,6 +273,19 @@ var scopeCases = []scopeCase{
 		legit:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketA },
 		crossed: func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketB },
 		secret:  secretTicket,
+	},
+	{
+		// The Beacon sibling of ItemFields: migration 053 made field values
+		// polymorphic, so the ticket surface joins the table and inherits all
+		// four drivers.
+		name: "TicketFields",
+		path: func(f *scopeFixture, s, e uuid.UUID) string {
+			return f.base(s) + "/tickets/" + e.String() + "/fields"
+		},
+		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketA },
+		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketB },
+		secret:    secretTicketField,
+		listRoute: true,
 	},
 	{
 		name:    "GetPage",

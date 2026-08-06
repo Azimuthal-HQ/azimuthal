@@ -215,6 +215,8 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/workflow-state": "space-write: transition_any_item in-handler",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/comments":        "space-read",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/comments":       "space-write: comment capability",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/fields":          "space-read",
+	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/fields/{slug}":   "space-write: edit_own/edit_any in-handler",
 
 	// Wiki.
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/":                             "space-read",
@@ -286,6 +288,13 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/custom-fields/":                                          "org-admin: orgAdminGuard",
 	"PATCH /api/v1/orgs/{orgID}/custom-fields/{fieldID}":                                "org-admin: orgAdminGuard",
 	"DELETE /api/v1/orgs/{orgID}/custom-fields/{fieldID}":                               "org-admin: orgAdminGuard",
+	// Scopes are org-admin in BOTH directions, the read included: a scope row
+	// names a space id, so listing them to any member would disclose which
+	// private spaces a field is attached to. Forms never read raw scopes —
+	// they read the composed per-entity render on the space-scoped routes.
+	"GET /api/v1/orgs/{orgID}/custom-fields/{fieldID}/scopes":                           "org-admin: orgAdminGuard",
+	"PUT /api/v1/orgs/{orgID}/custom-fields/{fieldID}/scopes/{spaceID}/{entityType}":    "org-admin: orgAdminGuard",
+	"DELETE /api/v1/orgs/{orgID}/custom-fields/{fieldID}/scopes/{spaceID}/{entityType}": "org-admin: orgAdminGuard",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields":          "space-read",
 	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields/{slug}":   "space-write: edit_own/edit_any in-handler",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}":                 "space-read",

@@ -49,6 +49,12 @@ vi.mock('../../../lib/api', () => ({
   // dependency throws, which is what makes the block a real inventory of what
   // the page reaches for.
   useEntityApprovals: () => ({ data: [], isLoading: false, error: null }),
+  // The A2 custom-fields section. Empty data renders nothing, keeping the
+  // field surface out of this page's assertions; isError is enumerated
+  // because the section reads it (a failed fetch renders an error, not
+  // silence).
+  useEntityFields: () => ({ data: [], isLoading: false, isError: false, error: null }),
+  useSetEntityField: () => ({ mutate: vi.fn(), isPending: false }),
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 

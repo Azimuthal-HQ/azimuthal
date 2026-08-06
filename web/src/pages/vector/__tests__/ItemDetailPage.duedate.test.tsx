@@ -54,8 +54,8 @@ vi.mock('../../../lib/api', () => ({
   // Reached through CustomFieldsSection, which the rail renders below the
   // timestamps — not imported by the page itself. The wholesale mock does not
   // care where in the tree the call comes from.
-  useItemFields: () => ({ data: [], isLoading: false, error: null }),
-  useSetItemField: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useEntityFields: () => ({ data: [], isLoading: false, isError: false, error: null }),
+  useSetEntityField: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 

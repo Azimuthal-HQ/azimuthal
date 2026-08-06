@@ -46,6 +46,7 @@ type projDomFixture struct {
 	ts      *testServer
 	base    string
 	orgBase string
+	spaceID string
 }
 
 func newProjDomFixture(t *testing.T, slug string) *projDomFixture {
@@ -56,6 +57,7 @@ func newProjDomFixture(t *testing.T, slug string) *projDomFixture {
 		ts:      ts,
 		base:    fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects", ts.OrgID, spaceID),
 		orgBase: fmt.Sprintf("/api/v1/orgs/%s", ts.OrgID),
+		spaceID: spaceID,
 	}
 }
 
@@ -388,10 +390,12 @@ func TestProjectsDomain_SetFieldOnAMissingItemIs404(t *testing.T) {
 		map[string]any{"name": "Squad", "field_type": "text"}, true)
 	require.Equal(t, http.StatusCreated, r.StatusCode, "define custom field: %s", r.Body)
 	var def struct {
+		ID   string `json:"id"`
 		Slug string `json:"slug"`
 	}
 	require.NoError(t, json.Unmarshal(r.Body, &def))
 	require.Equal(t, "squad", def.Slug)
+	attachField(t, f.ts, def.ID, f.spaceID, "project_item", false)
 
 	projNegRequireError(t, f.ts.putAs(t, f.ts.Token,
 		f.base+"/items/"+uuid.NewString()+"/fields/"+def.Slug, map[string]any{"value": "platform"}),

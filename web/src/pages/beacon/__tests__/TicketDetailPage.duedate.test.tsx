@@ -43,6 +43,8 @@ vi.mock('../../../lib/api', () => ({
   useEffectiveAccess: () => ({ data: undefined }),
   useEntityShares: () => ({ data: undefined }),
   useEntityApprovals: () => ({ data: [], isLoading: false, error: null }),
+  useEntityFields: () => ({ data: [], isLoading: false, isError: false, error: null }),
+  useSetEntityField: () => ({ mutate: vi.fn(), isPending: false }),
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
