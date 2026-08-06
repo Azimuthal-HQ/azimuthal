@@ -29,6 +29,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/people"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	coreteams "github.com/Azimuthal-HQ/azimuthal/internal/core/teams"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
@@ -654,7 +655,7 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 		// the whole ticket subtree, and a nil one here would be a dark
 		// dependency TestHarness_NoDarkDependencies cannot see, because that
 		// test walks newTestServer only.
-		TicketHandler: ticketsapi.NewHandler(ticketSvc).
+		TicketHandler: ticketsapi.NewHandler(ticketSvc, tags.NewService(adapters.NewTagAdapter(queries, pool))).
 			WithAuditLogger(auditLog).
 			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
 			WithSuggestions(tickets.NewSuggestionService(adapters.NewTicketAdapter(queries))).

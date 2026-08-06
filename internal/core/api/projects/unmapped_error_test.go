@@ -66,6 +66,7 @@ func handlerWithFailingItems() *projectsapi.Handler {
 		projects.NewBacklogService(ir, sr),
 		projects.NewRoadmapService(ir, sr),
 		projects.NewLabelService(&mockLabelRepo{}),
+		nil,
 	)
 }
 

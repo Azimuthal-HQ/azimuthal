@@ -1,7 +1,14 @@
 /**
- * A page's tags — the one surface, in both of its modes (U4).
+ * An entity's tags — the one surface, in both of its modes (U4, generalized by
+ * the entity-tags convergence).
  *
- * ## Why one component and not two
+ * One component for all three taggable kinds. Pages, tickets and project items
+ * carry the same org-scoped tags (migration 055), and a chip that changed
+ * shape between a page and the ticket it links to would read as a different
+ * feature. The kind decides only which API route the hooks call — nothing
+ * visual.
+ *
+ * ## Why one component and not two per mode
  *
  * The reading view and the editor show the same list of the same tags, and the
  * chips have to look identical in both: a tag that changes shape when you press
@@ -13,22 +20,22 @@
  * in this one, and that is a hook question, not a style question. React runs
  * every hook in a component unconditionally, so writing the editor inline would
  * make a reading surface fetch the org's entire tag list and construct a
- * mutation it can never fire — on every page view, for every reader, including
- * ones with no right to edit anything. Nesting keeps that work in the subtree
- * that actually needs it.
+ * mutation it can never fire — on every view, for every reader, including ones
+ * with no right to edit anything. Nesting keeps that work in the subtree that
+ * actually needs it.
  *
  * ## Why a whole-set PUT and no local copy of the list
  *
- * `useSetPageTags` replaces the page's entire tag set, so every edit here — add
- * or remove — computes the complete list it wants and sends that. There is no
- * add endpoint and no remove endpoint to reach for.
+ * `useSetEntityTags` replaces the entity's entire tag set, so every edit here —
+ * add or remove — computes the complete list it wants and sends that. There is
+ * no add endpoint and no remove endpoint to reach for.
  *
- * The chips are rendered straight from `usePageTags`, with no optimistic
+ * The chips are rendered straight from `useEntityTags`, with no optimistic
  * mirror, and that is deliberate rather than lazy. A tag's display name is the
  * first spelling anybody used, decided server-side: type `Runbook` for a tag
  * already known as `runbook` and the server returns `runbook`. Echoing the
  * typed text would show a name that is not the tag's, until the refetch
- * silently corrected it. The mutation invalidates the page's tags on success,
+ * silently corrected it. The mutation invalidates the entity's tags on success,
  * so the row updates from the server or not at all.
  *
  * ## Why creating a tag is just typing one
@@ -39,11 +46,16 @@
  * convenience, never a whitelist.
  */
 import { useMemo, useState, type KeyboardEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Tag as TagIcon, X } from 'lucide-react';
 
-import { friendlyErrorMessage, useOrgTags, usePageTags, useSetPageTags } from '../../lib/api';
-import type { CodexTag } from '../../lib/api';
+import {
+  friendlyErrorMessage,
+  useEntityTags,
+  useOrgTags,
+  useSetEntityTags,
+} from '../../lib/api';
+import type { CodexTag, TagEntityType } from '../../lib/api';
 import { getCurrentOrgId } from '../../lib/auth';
 import { tagBrowsePath } from './tagLinks';
 
@@ -53,23 +65,38 @@ const MAX_SUGGESTIONS = 8;
 const chipClasses =
   'inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--module-codex)_12%,transparent)] px-2 py-0.5 text-[var(--text-xs)] text-[var(--color-text)]';
 
-interface PageTagsProps {
+/** The module whose chrome a tag browse opens in when the URL names none. */
+const homeModule: Record<TagEntityType, string> = {
+  page: 'codex',
+  ticket: 'beacon',
+  project_item: 'vector',
+};
+
+interface EntityTagsProps {
+  entityType: TagEntityType;
   spaceId: string;
-  pageId: string;
+  entityId: string;
   /** Reading surfaces pass false: chips only, and nothing at all when empty. */
   editable: boolean;
 }
 
-export function PageTags({ spaceId, pageId, editable }: PageTagsProps) {
-  const { data: tags = [] } = usePageTags(spaceId, pageId);
+export function EntityTags({ entityType, spaceId, entityId, editable }: EntityTagsProps) {
+  const { data: tags = [] } = useEntityTags(entityType, spaceId, entityId);
+  // The browse chip links keep the reader's current module chrome — the tag
+  // browse route exists under every module. Outside a module route (no
+  // :module param), fall back to the entity's own module.
+  const { module } = useParams<{ module: string }>();
+  const browseModule = module ?? homeModule[entityType];
 
   if (editable) {
-    return <TagEditor spaceId={spaceId} pageId={pageId} tags={tags} />;
+    return (
+      <TagEditor entityType={entityType} spaceId={spaceId} entityId={entityId} tags={tags} />
+    );
   }
 
   // A reading surface with nothing to say says nothing. An empty "Tags:" label
-  // on every untagged page is chrome that carries no information, and most
-  // pages are untagged.
+  // on every untagged entity is chrome that carries no information, and most
+  // entities are untagged.
   if (tags.length === 0) return null;
 
   return (
@@ -78,7 +105,7 @@ export function PageTags({ spaceId, pageId, editable }: PageTagsProps) {
       {tags.map((tag) => (
         <Link
           key={tag.id}
-          to={tagBrowsePath(spaceId, tag.name)}
+          to={tagBrowsePath(browseModule, spaceId, tag.name)}
           data-testid="codex-page-tag"
           data-slug={tag.slug}
           className={`${chipClasses} transition-colors hover:border-[var(--module-codex)] hover:bg-[color-mix(in_srgb,var(--module-codex)_22%,transparent)]`}
@@ -91,17 +118,18 @@ export function PageTags({ spaceId, pageId, editable }: PageTagsProps) {
 }
 
 interface TagEditorProps {
+  entityType: TagEntityType;
   spaceId: string;
-  pageId: string;
+  entityId: string;
   tags: CodexTag[];
 }
 
-function TagEditor({ spaceId, pageId, tags }: TagEditorProps) {
+function TagEditor({ entityType, spaceId, entityId, tags }: TagEditorProps) {
   const orgId = getCurrentOrgId();
   // The opts spread REPLACES the hook's own `enabled: !!orgId` rather than
   // adding to it, so that guard has to be restated here.
   const { data: orgTags = [] } = useOrgTags(orgId, { enabled: !!orgId });
-  const setTags = useSetPageTags(spaceId, pageId);
+  const setTags = useSetEntityTags(entityType, spaceId, entityId);
 
   const [input, setInput] = useState('');
   /**
@@ -114,10 +142,10 @@ function TagEditor({ spaceId, pageId, tags }: TagEditorProps) {
 
   const names = useMemo(() => tags.map((t) => t.name), [tags]);
 
-  // The suggestions: org tags this page does not already carry, matched on what
-  // has been typed. Filtered here rather than server-side because the org's tag
-  // list is one small query the browse surface wants anyway, and a request per
-  // keystroke would buy nothing.
+  // The suggestions: org tags this entity does not already carry, matched on
+  // what has been typed. Filtered here rather than server-side because the
+  // org's tag list is one small query the browse surface wants anyway, and a
+  // request per keystroke would buy nothing.
   const suggestions = useMemo(() => {
     const typed = input.trim().toLowerCase();
     if (!typed) return [] as CodexTag[];
@@ -132,7 +160,7 @@ function TagEditor({ spaceId, pageId, tags }: TagEditorProps) {
     const trimmed = label.trim();
     setInput('');
     if (!trimmed) return;
-    // A duplicate is not an error and not a write: the page already carries
+    // A duplicate is not an error and not a write: the entity already carries
     // this tag, so the whole-set PUT would send the list it already has.
     if (names.some((n) => n.toLowerCase() === trimmed.toLowerCase())) return;
     setRejected(trimmed);
@@ -191,11 +219,11 @@ function TagEditor({ spaceId, pageId, tags }: TagEditorProps) {
         ))}
 
         <span className="relative">
-          <label className="sr-only" htmlFor={`codex-tag-input-${pageId}`}>
+          <label className="sr-only" htmlFor={`codex-tag-input-${entityId}`}>
             Add a tag
           </label>
           <input
-            id={`codex-tag-input-${pageId}`}
+            id={`codex-tag-input-${entityId}`}
             data-testid="codex-tag-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -223,17 +251,20 @@ function TagEditor({ spaceId, pageId, tags }: TagEditorProps) {
         </span>
       </div>
 
-      {/* The inline-tag semantic, stated where the tags are edited. Publishing
-          a page adds every #tag in its body to this list, and the list is the
-          authority afterwards — the body is an input to it, not a mirror of it.
-          Somebody who deletes a #tag from their prose and expects the tag to
-          disappear needs to be told here rather than to discover it on the
-          browse page a week later. */}
-      <p className="mt-1.5 max-w-[52ch] text-[var(--text-xs)] leading-[1.5] text-[var(--color-text-muted)]">
-        Any #tag you write in the page body is added to this list when you publish. This list is
-        what counts from then on: deleting the #tag from the body will not take the tag off the page
-        — remove it here.
-      </p>
+      {/* The inline-tag semantic is a Codex fact, stated where page tags are
+          edited. Publishing a page adds every #tag in its body to this list,
+          and the list is the authority afterwards — the body is an input to
+          it, not a mirror of it. Somebody who deletes a #tag from their prose
+          and expects the tag to disappear needs to be told here rather than to
+          discover it on the browse page a week later. Tickets and items have
+          no document body, so the sentence would be noise there. */}
+      {entityType === 'page' && (
+        <p className="mt-1.5 max-w-[52ch] text-[var(--text-xs)] leading-[1.5] text-[var(--color-text-muted)]">
+          Any #tag you write in the page body is added to this list when you publish. This list is
+          what counts from then on: deleting the #tag from the body will not take the tag off the
+          page — remove it here.
+        </p>
+      )}
 
       {setTags.isPending && (
         <p className="mt-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">Saving tags…</p>

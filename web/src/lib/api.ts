@@ -732,7 +732,7 @@ export interface WikiRevisionDiff {
   content_segments: WikiDiffSegment[] | null;
 }
 
-/** An org-scoped Codex tag. */
+/** An org-scoped tag, carried by pages, tickets and project items alike. */
 export interface CodexTag {
   id: string;
   org_id: string;
@@ -743,25 +743,35 @@ export interface CodexTag {
   created_at: string;
 }
 
-/** One row of the tag browse: a page carrying a tag, with its space context. */
-export interface TaggedPage {
-  page_id: string;
+/** The three entity kinds that carry tags (migration 055). */
+export type TagEntityType = 'page' | 'ticket' | 'project_item';
+
+/**
+ * One row of the tag browse: an entity carrying a tag, with its space context.
+ */
+export interface TaggedEntity {
+  entity_type: TagEntityType;
+  entity_id: string;
   space_id: string;
   space_name: string;
   space_key: string;
   title: string;
-  path: string;
+  /**
+   * The kind's one human-readable reference, composed server-side: a page's
+   * path, a ticket's ref ("BEA-42"), a project item's item_key ("VEC-14").
+   */
+  ref: string;
   updated_at: string;
 }
 
-export interface TaggedPages {
+export interface TaggedEntities {
   tag: CodexTag;
-  pages: TaggedPage[] | null;
+  entities: TaggedEntity[] | null;
   /**
    * The answer was cut short.
    *
    * A list capped without saying so looks exactly like a complete one, and
-   * because the order is most-recent-first the pages that disappear are the
+   * because the order is most-recent-first the entities that disappear are the
    * oldest — so a reader is shown the wrong nothing and told nothing. The
    * surface must say when this is set.
    */
@@ -2449,7 +2459,7 @@ async function restoreWikiRevision(
 }
 
 // ---------------------------------------------------------------------------
-// Codex tags (migration 040)
+// Entity tags (migrations 040, 055)
 // ---------------------------------------------------------------------------
 
 async function fetchOrgTags(orgId: string): Promise<CodexTag[]> {
@@ -2457,24 +2467,45 @@ async function fetchOrgTags(orgId: string): Promise<CodexTag[]> {
   return data ?? [];
 }
 
-async function fetchPagesWithTag(orgId: string, label: string): Promise<TaggedPages> {
+async function fetchEntitiesWithTag(orgId: string, label: string): Promise<TaggedEntities> {
   // The LABEL, not a slug. The server slugifies whatever it is given and
   // Slugify is idempotent, so both forms work — and the client never has to
   // reimplement a slug convention that has a database CHECK written against it.
-  return apiFetch<TaggedPages>(`/orgs/${orgId}/tags/${encodeURIComponent(label)}/pages`);
+  return apiFetch<TaggedEntities>(`/orgs/${orgId}/tags/${encodeURIComponent(label)}/entities`);
 }
 
-async function fetchPageTags(spaceId: string, pageId: string): Promise<CodexTag[]> {
-  const data = await apiFetch<CodexTag[] | null>(`${spaceBase(spaceId)}/wiki/${pageId}/tags`);
+/**
+ * The one place an entity kind maps to its tag route. All three kinds carry
+ * the same GET/PUT pair under their own resource path — the polymorphic
+ * comments routes follow the same convention.
+ */
+function entityTagsPath(entityType: TagEntityType, spaceId: string, entityId: string): string {
+  switch (entityType) {
+    case 'ticket':
+      return `${spaceBase(spaceId)}/tickets/${entityId}/tags`;
+    case 'project_item':
+      return `${spaceBase(spaceId)}/projects/items/${entityId}/tags`;
+    case 'page':
+      return `${spaceBase(spaceId)}/wiki/${entityId}/tags`;
+  }
+}
+
+async function fetchEntityTags(
+  entityType: TagEntityType,
+  spaceId: string,
+  entityId: string,
+): Promise<CodexTag[]> {
+  const data = await apiFetch<CodexTag[] | null>(entityTagsPath(entityType, spaceId, entityId));
   return data ?? [];
 }
 
-async function setPageTags(
+async function setEntityTags(
+  entityType: TagEntityType,
   spaceId: string,
-  pageId: string,
+  entityId: string,
   labels: string[],
 ): Promise<CodexTag[]> {
-  const data = await apiFetch<CodexTag[] | null>(`${spaceBase(spaceId)}/wiki/${pageId}/tags`, {
+  const data = await apiFetch<CodexTag[] | null>(entityTagsPath(entityType, spaceId, entityId), {
     method: 'PUT',
     body: JSON.stringify({ tags: labels }),
   });
@@ -2650,14 +2681,15 @@ export const queryKeys = {
   wikiRevision: (spaceId: string, pageId: string, version: number) => ['wikiRevision', spaceId, pageId, version] as const,
   wikiDiff: (spaceId: string, pageId: string, from: number, to: number) => ['wikiDiff', spaceId, pageId, from, to] as const,
   orgTags: (orgId: string) => ['orgTags', orgId] as const,
-  pagesWithTag: (orgId: string, label: string) => ['pagesWithTag', orgId, label] as const,
+  entitiesWithTag: (orgId: string, label: string) => ['entitiesWithTag', orgId, label] as const,
   // Cross-module search (P6). Every input that changes the ANSWER is in the
   // key: the same text with a different limit, cursor or snippet flag is a
   // different response, and sharing a cache entry between them is the
   // whichever-resolved-last bug queryKeys.test.ts exists to stop.
   search: (orgId: string, q: string, limit: number, cursor: string, snippet: boolean) =>
     ['search', orgId, q, limit, cursor, snippet] as const,
-  pageTags: (spaceId: string, pageId: string) => ['pageTags', spaceId, pageId] as const,
+  entityTags: (spaceId: string, entityType: string, entityId: string) =>
+    ['entityTags', spaceId, entityType, entityId] as const,
   /** The Codex document surface (issue #15). */
   pageDocument: (spaceId: string, pageId: string) => ['pageDocument', spaceId, pageId] as const,
   spaceDrafts: (spaceId: string) => ['spaceDrafts', spaceId] as const,
@@ -3331,7 +3363,7 @@ export function usePublishPage(spaceId: string, pageId: string) {
       // the reading surface remounts against the cached pre-publish list —
       // which is empty, so it renders nothing at all and looks like the
       // aggregation never ran.
-      queryClient.invalidateQueries({ queryKey: queryKeys.pageTags(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.entityTags(spaceId, 'page', pageId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.orgTags(getCurrentOrgId()) });
     },
   });
@@ -3495,13 +3527,13 @@ export function useRestoreWikiRevision(spaceId: string, pageId: string) {
       queryClient.invalidateQueries({ queryKey: queryKeys.wikiTree(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.pageDocument(spaceId, pageId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.wikiRevisions(spaceId, pageId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.pageTags(spaceId, pageId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.entityTags(spaceId, 'page', pageId) });
     },
   });
 }
 
 // ---------------------------------------------------------------------------
-// Codex tags (migration 040)
+// Entity tags (migrations 040, 055)
 // ---------------------------------------------------------------------------
 
 export function useOrgTags(orgId: string, opts?: QueryOpts<CodexTag[]>) {
@@ -3513,37 +3545,44 @@ export function useOrgTags(orgId: string, opts?: QueryOpts<CodexTag[]>) {
   });
 }
 
-export function usePagesWithTag(orgId: string, label: string, opts?: QueryOpts<TaggedPages>) {
-  return useQuery<TaggedPages, APIError>({
-    queryKey: queryKeys.pagesWithTag(orgId, label),
-    queryFn: () => fetchPagesWithTag(orgId, label),
+export function useEntitiesWithTag(orgId: string, label: string, opts?: QueryOpts<TaggedEntities>) {
+  return useQuery<TaggedEntities, APIError>({
+    queryKey: queryKeys.entitiesWithTag(orgId, label),
+    queryFn: () => fetchEntitiesWithTag(orgId, label),
     enabled: !!orgId && !!label,
     ...opts,
   });
 }
 
-export function usePageTags(spaceId: string, pageId: string, opts?: QueryOpts<CodexTag[]>) {
+export function useEntityTags(
+  entityType: TagEntityType,
+  spaceId: string,
+  entityId: string,
+  opts?: QueryOpts<CodexTag[]>,
+) {
   return useQuery<CodexTag[], APIError>({
-    queryKey: queryKeys.pageTags(spaceId, pageId),
-    queryFn: () => fetchPageTags(spaceId, pageId),
-    enabled: !!spaceId && !!pageId,
+    queryKey: queryKeys.entityTags(spaceId, entityType, entityId),
+    queryFn: () => fetchEntityTags(entityType, spaceId, entityId),
+    enabled: !!spaceId && !!entityId,
     ...opts,
   });
 }
 
 /**
- * Setting a page's tags — the authoritative path, which can remove.
+ * Setting an entity's tags — the authoritative path, which can remove.
  *
  * The org tag list is invalidated too, because setting a tag nobody has used
  * before creates it: tags have no administration surface and come into
  * existence by use, so this mutation is also the only constructor there is.
  */
-export function useSetPageTags(spaceId: string, pageId: string) {
+export function useSetEntityTags(entityType: TagEntityType, spaceId: string, entityId: string) {
   const queryClient = useQueryClient();
   return useMutation<CodexTag[], APIError, string[]>({
-    mutationFn: (labels) => setPageTags(spaceId, pageId, labels),
+    mutationFn: (labels) => setEntityTags(entityType, spaceId, entityId, labels),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.pageTags(spaceId, pageId) });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.entityTags(spaceId, entityType, entityId),
+      });
       queryClient.invalidateQueries({ queryKey: queryKeys.orgTags(getCurrentOrgId()) });
     },
   });

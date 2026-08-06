@@ -198,9 +198,10 @@ func TestSearchEndpoint_StatesAreDistinctOnTheWire(t *testing.T) {
 }
 
 // TestSearchEndpoint_OperatorsNarrowTheWireResponse covers the two operators
-// end to end, including that the response ECHOES the effective module set — so a
-// tag filter's implicit narrowing to Codex is visible to the client rather than
-// silent.
+// end to end, including that the response ECHOES the effective module set. (A
+// tag filter no longer narrows the fan-out — entity_tags is entity-generic —
+// so the echo's remaining job is the type: operator; the cross-module tag
+// answer itself is covered by TestEntityTags_TagSearchReturnsAllThreeKinds.)
 func TestSearchEndpoint_OperatorsNarrowTheWireResponse(t *testing.T) {
 	ts := newTestServer(t)
 	codex := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "codex")

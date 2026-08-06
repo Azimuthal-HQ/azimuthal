@@ -140,12 +140,19 @@ func (m *mockTagRepo) GetByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (ta
 func (m *mockTagRepo) Upsert(_ context.Context, orgID uuid.UUID, slug, name string) (tags.Tag, error) {
 	return tags.Tag{ID: uuid.New(), OrgID: orgID, Slug: slug, Name: name}, nil
 }
-func (m *mockTagRepo) ForPage(_ context.Context, _, _ uuid.UUID) ([]tags.Tag, error) { return nil, nil }
-func (m *mockTagRepo) ReplacePageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error {
+func (m *mockTagRepo) ForEntity(_ context.Context, _ tags.EntityRef) ([]tags.Tag, error) {
+	return nil, nil
+}
+func (m *mockTagRepo) EntityInSpace(_ context.Context, _ tags.EntityRef) (bool, error) {
+	return true, nil
+}
+func (m *mockTagRepo) ReplaceEntityTags(_ context.Context, _ tags.EntityRef, _ []uuid.UUID) error {
 	return nil
 }
-func (m *mockTagRepo) AddPageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error { return nil }
-func (m *mockTagRepo) PagesWithTag(_ context.Context, _ uuid.UUID, _ []uuid.UUID) ([]tags.TaggedPage, error) {
+func (m *mockTagRepo) AddEntityTags(_ context.Context, _ tags.EntityRef, _ []uuid.UUID) error {
+	return nil
+}
+func (m *mockTagRepo) EntitiesWithTag(_ context.Context, _ uuid.UUID, _ []uuid.UUID) ([]tags.TaggedEntity, error) {
 	return nil, nil
 }
 

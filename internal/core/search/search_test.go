@@ -185,7 +185,11 @@ func TestSearch_TypeFilterSkipsWholeBranches(t *testing.T) {
 		{"widget", []Module{ModuleCodex, ModuleBeacon, ModuleVector}},
 		{"type:beacon widget", []Module{ModuleBeacon}},
 		{"type:page type:item widget", []Module{ModuleCodex, ModuleVector}},
-		{"tag:runbooks widget", []Module{ModuleCodex}},
+		// A tag filter is not a module filter (migration 055): every kind
+		// carries tags, so a bare tag: query fans out to every branch and a
+		// type: beside it narrows exactly as it would without the tag.
+		{"tag:runbooks widget", []Module{ModuleCodex, ModuleBeacon, ModuleVector}},
+		{"type:ticket tag:runbooks widget", []Module{ModuleBeacon}},
 	} {
 		st := &fakeStore{}
 		req := readableReq(sp)

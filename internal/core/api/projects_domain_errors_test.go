@@ -519,7 +519,7 @@ func TestProjectsDomain_BoardSurfaceRefusesWhenUnwiredOrUnresolved(t *testing.T)
 
 	t.Run("board configuration was never wired", func(t *testing.T) {
 		// No WithBoardConfig: the feature is off in this build.
-		h := projDomBoardRoutes(projectsapi.NewHandler(nil, nil, nil, nil, nil))
+		h := projDomBoardRoutes(projectsapi.NewHandler(nil, nil, nil, nil, nil, nil))
 		for _, tc := range projDomBoardRoutesTable(columnID) {
 			t.Run(tc.name, func(t *testing.T) {
 				projNegRequireError(t, projDomServe(t, h, tc.method, base+tc.suffix, tc.body),
@@ -533,7 +533,7 @@ func TestProjectsDomain_BoardSurfaceRefusesWhenUnwiredOrUnresolved(t *testing.T)
 		// is what answers. Its repositories are nil on purpose: if a guard
 		// were removed the handler would reach them and panic, so this test
 		// cannot pass with the checks deleted.
-		h := projDomBoardRoutes(projectsapi.NewHandler(nil, nil, nil, nil, nil).
+		h := projDomBoardRoutes(projectsapi.NewHandler(nil, nil, nil, nil, nil, nil).
 			WithBoardConfig(projects.NewBoardConfigService(nil, nil)))
 		for _, tc := range projDomBoardRoutesTable(columnID) {
 			t.Run(tc.name, func(t *testing.T) {

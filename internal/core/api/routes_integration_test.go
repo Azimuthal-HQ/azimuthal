@@ -291,7 +291,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipAdapter, orgProvisioner, userAdapter).
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(true),
-		TicketHandler: ticketsapi.NewHandler(ticketSvc).
+		TicketHandler: ticketsapi.NewHandler(ticketSvc, tagSvc).
 			WithAuditLogger(auditLog).
 			WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).
 			WithSuggestions(tickets.NewSuggestionService(ticketAdapter)).
@@ -299,7 +299,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithRequesterLookup(portalAdapter).
 			WithCustomFields(customFieldSvc),
 		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter).WithPageSuggestions(wiki.NewPageSuggestionService(queries)),
-		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, labelSvc).
+		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, labelSvc, tagSvc).
 			WithAuditLogger(auditLog).
 			WithWorkflowTiers(tierGate, transitionTx).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).

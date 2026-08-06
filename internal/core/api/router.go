@@ -320,22 +320,23 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 				r.With(orgAdminGuard(cfg)).Delete("/{typeID}", cfg.ProjectHandler.DeleteItemType)
 			})
 
-			// Codex tags (org-scoped; migration 040). Read-only here, and
-			// deliberately so: tags have no administration surface in this
-			// phase — one comes into existence because somebody tagged a page
-			// or typed `#foo` into a body, and both of those happen on the
-			// space-scoped write routes where the page's own edit permission
-			// already applies. Renaming and merging are future work, and will
-			// want the org-admin guard the item-type routes carry.
+			// Entity tags (org-scoped; migrations 040, 055). Read-only here,
+			// and deliberately so: tags have no administration surface in
+			// this phase — one comes into existence because somebody tagged a
+			// page, a ticket or a project item, or typed `#foo` into a page
+			// body, and all of those happen on the space-scoped write routes
+			// where the entity's own edit permission already applies.
+			// Renaming and merging are future work, and will want the
+			// org-admin guard the item-type routes carry.
 			//
 			// Any member reads the tag list; it backs the tag autocomplete and
-			// a tag NAME reveals nothing about which pages carry it. The pages
-			// carrying a tag are a cross-space read, so that route filters
-			// against the caller's own resolved readable set in-handler —
-			// ADR-0010's rule for every cross-space endpoint.
+			// a tag NAME reveals nothing about which entities carry it. The
+			// entities carrying a tag are a cross-space read, so that route
+			// filters against the caller's own resolved readable set
+			// in-handler — ADR-0010's rule for every cross-space endpoint.
 			r.Route("/tags", func(r chi.Router) {
 				r.Get("/", cfg.WikiHandler.ListOrgTags)
-				r.Get("/{slug}/pages", cfg.WikiHandler.ListPagesWithTag)
+				r.Get("/{slug}/entities", cfg.WikiHandler.ListEntitiesWithTag)
 			})
 
 			// Custom fields (org-scoped: any member reads definitions for

@@ -441,9 +441,9 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner, userAdapter).
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
-		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc).WithWorkflowTiers(tierGate, transitionTx).WithRequesterLookup(portalAdapter).WithCustomFields(customFieldSvc),
+		TicketHandler:       ticketsapi.NewHandler(ticketSvc, tagSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc).WithWorkflowTiers(tierGate, transitionTx).WithRequesterLookup(portalAdapter).WithCustomFields(customFieldSvc),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter).WithPageSuggestions(wiki.NewPageSuggestionService(queries)),
-		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
+		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewLabelService(adapters.NewLabelAdapter(queries)), tagSvc).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
 		RelationHandler:     relationsapi.NewHandler(projects.NewRelationService(adapters.NewRelationAdapter(queries))),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),

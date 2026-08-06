@@ -6706,6 +6706,124 @@ paths:
       summary: Update item status
       tags:
       - projects
+  /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/tags:
+    get:
+      description: 'The tags this item carries. Tags are org-scoped and entity-generic
+        (migration 055): the same vocabulary a page is tagged with, filterable in
+        search with tag: and browsable across modules.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Tags
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+      security:
+      - BearerAuth: []
+      summary: List a project item's tags
+      tags:
+      - projects
+    put:
+      description: Replaces the item's tag list with exactly the tags given. Tags
+        that do not exist yet are created. Requires the same permission as editing
+        the item.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: The item's tags
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: The item's tags
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: A tag name that cannot become a tag, or too many tags
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Insufficient permissions
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Set a project item's tags
+      tags:
+      - projects
   /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/workflow-state:
     post:
       description: Validates and applies a workflow state transition to a project
@@ -8811,6 +8929,124 @@ paths:
       security:
       - BearerAuth: []
       summary: Transition ticket status
+      tags:
+      - tickets
+  /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/tags:
+    get:
+      description: 'The tags this ticket carries. Tags are org-scoped and entity-generic
+        (migration 055): the same vocabulary a page is tagged with, filterable in
+        search with tag: and browsable across modules.'
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: Tags
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+      security:
+      - BearerAuth: []
+      summary: List a ticket's tags
+      tags:
+      - tickets
+    put:
+      description: Replaces the ticket's tag list with exactly the tags given. Tags
+        that do not exist yet are created. Requires the same permission as editing
+        the ticket.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - additionalProperties: {}
+                title: body
+                type: object
+        description: The ticket's tags
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: The ticket's tags
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: A tag name that cannot become a tag, or too many tags
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Insufficient permissions
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not found
+      security:
+      - BearerAuth: []
+      summary: Set a ticket's tags
       tags:
       - tickets
   /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/workflow-state:
@@ -10979,10 +11215,10 @@ paths:
     get:
       description: 'Every tag in the organisation, ordered by display name. Tags are
         org-scoped and are created by use — publishing a page whose body contains
-        an inline #tag, or adding one to a page''s tag list, creates it. There is
-        no administration surface, so this list is the whole vocabulary. Any org member
-        may read it: it backs the tag autocomplete, and a tag name is not itself sensitive
-        — the pages carrying a tag are filtered separately.'
+        an inline #tag, or adding one to an entity''s tag list, creates it. There
+        is no administration surface, so this list is the whole vocabulary. Any org
+        member may read it: it backs the tag autocomplete, and a tag name is not itself
+        sensitive — the entities carrying a tag are filtered separately.'
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -11014,16 +11250,16 @@ paths:
           description: Not authenticated
       security:
       - BearerAuth: []
-      summary: List the organisation's Codex tags
+      summary: List the organisation's tags
       tags:
       - wiki
-  /orgs/{orgID}/tags/{slug}/pages:
+  /orgs/{orgID}/tags/{slug}/entities:
     get:
-      description: Every page in the organisation carrying this tag that the caller
-        can read. Cross-space by nature — a tag is org-scoped — so the result is filtered
-        against the caller's resolved readable space set (ADR-0010). A page in a space
-        the caller cannot read is absent, not refused, so the response never reports
-        whether such a page exists.
+      description: Every page, ticket and project item in the organisation carrying
+        this tag that the caller can read. Cross-space by nature — a tag is org-scoped
+        — so the result is filtered against the caller's resolved readable space set
+        (ADR-0010). An entity in a space the caller cannot read is absent, not refused,
+        so the response never reports whether such an entity exists.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -11044,7 +11280,7 @@ paths:
               schema:
                 additionalProperties: {}
                 type: object
-          description: The tag and its readable pages
+          description: The tag and its readable entities
         "400":
           content:
             application/json:
@@ -11065,7 +11301,7 @@ paths:
           description: No such tag
       security:
       - BearerAuth: []
-      summary: List the pages carrying a tag
+      summary: List the entities carrying a tag
       tags:
       - wiki
   /orgs/{orgID}/teams:

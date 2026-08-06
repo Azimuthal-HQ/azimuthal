@@ -47,8 +47,9 @@ WHERE p.deleted_at IS NULL
              AND p.path LIKE root.pattern
        ))
   AND (NOT $7::boolean
-       OR EXISTS (SELECT 1 FROM page_tags pt
-                  WHERE pt.page_id = p.id AND pt.tag_id = $8::uuid))
+       OR EXISTS (SELECT 1 FROM entity_tags et
+                  WHERE et.entity_type = 'page' AND et.entity_id = p.id
+                    AND et.tag_id = $8::uuid))
   AND ($9::text = ''
        OR k.sort_key < $9::text
        OR (k.sort_key = $9::text AND p.id < $10::uuid))
@@ -160,11 +161,12 @@ type GlobalSearchPagesRow struct {
 // cascade roots included, is in SharedEntities.direct, and the patterns from
 // CascadeSubtreeArrays are strict-descendant.
 //
-// `tag:` narrows to tagged pages by joining page_tags — never by adding a term
-// to the tsquery. A tag's slug does not survive tokenization as one lexeme
-// (`#design_docs` becomes 'design' and 'doc'), page-level tags set through the
-// tags endpoint never touch the pages row at all, and a generated column cannot
-// reference another table. So the tag model is reachable only as a join.
+// `tag:` narrows to tagged pages by joining entity_tags — never by adding a
+// term to the tsquery. A tag's slug does not survive tokenization as one lexeme
+// (`#design_docs` becomes 'design' and 'doc'), tags set through the tags
+// endpoints never touch the pages row at all, and a generated column cannot
+// reference another table. So the tag model is reachable only as a join. The
+// ticket and item queries below carry the same arm over their own entity_type.
 func (q *Queries) GlobalSearchPages(ctx context.Context, arg GlobalSearchPagesParams) ([]GlobalSearchPagesRow, error) {
 	rows, err := q.db.Query(ctx, globalSearchPages,
 		arg.Query,
@@ -229,11 +231,15 @@ WHERE i.deleted_at IS NULL
   AND i.search_vector @@ websearch_to_tsquery('english', $1::text)
   AND (i.space_id = ANY($3::uuid[])
        OR i.id = ANY($4::uuid[]))
-  AND ($5::text = ''
-       OR k.sort_key < $5::text
-       OR (k.sort_key = $5::text AND i.id < $6::uuid))
+  AND (NOT $5::boolean
+       OR EXISTS (SELECT 1 FROM entity_tags et
+                  WHERE et.entity_type = 'project_item' AND et.entity_id = i.id
+                    AND et.tag_id = $6::uuid))
+  AND ($7::text = ''
+       OR k.sort_key < $7::text
+       OR (k.sort_key = $7::text AND i.id < $8::uuid))
 ORDER BY k.sort_key DESC, i.id DESC
-LIMIT $7
+LIMIT $9
 `
 
 type GlobalSearchProjectItemsParams struct {
@@ -241,6 +247,8 @@ type GlobalSearchProjectItemsParams struct {
 	OrgID            uuid.UUID   `json:"org_id"`
 	ReadableSpaceIds []uuid.UUID `json:"readable_space_ids"`
 	SharedItemIds    []uuid.UUID `json:"shared_item_ids"`
+	FilterTag        bool        `json:"filter_tag"`
+	TagID            uuid.UUID   `json:"tag_id"`
 	CursorKey        string      `json:"cursor_key"`
 	CursorID         uuid.UUID   `json:"cursor_id"`
 	RowLimit         int32       `json:"row_limit"`
@@ -274,6 +282,8 @@ func (q *Queries) GlobalSearchProjectItems(ctx context.Context, arg GlobalSearch
 		arg.OrgID,
 		arg.ReadableSpaceIds,
 		arg.SharedItemIds,
+		arg.FilterTag,
+		arg.TagID,
 		arg.CursorKey,
 		arg.CursorID,
 		arg.RowLimit,
@@ -330,11 +340,15 @@ WHERE t.deleted_at IS NULL
   AND t.search_vector @@ websearch_to_tsquery('english', $1::text)
   AND (t.space_id = ANY($3::uuid[])
        OR t.id = ANY($4::uuid[]))
-  AND ($5::text = ''
-       OR k.sort_key < $5::text
-       OR (k.sort_key = $5::text AND t.id < $6::uuid))
+  AND (NOT $5::boolean
+       OR EXISTS (SELECT 1 FROM entity_tags et
+                  WHERE et.entity_type = 'ticket' AND et.entity_id = t.id
+                    AND et.tag_id = $6::uuid))
+  AND ($7::text = ''
+       OR k.sort_key < $7::text
+       OR (k.sort_key = $7::text AND t.id < $8::uuid))
 ORDER BY k.sort_key DESC, t.id DESC
-LIMIT $7
+LIMIT $9
 `
 
 type GlobalSearchTicketsParams struct {
@@ -342,6 +356,8 @@ type GlobalSearchTicketsParams struct {
 	OrgID            uuid.UUID   `json:"org_id"`
 	ReadableSpaceIds []uuid.UUID `json:"readable_space_ids"`
 	SharedTicketIds  []uuid.UUID `json:"shared_ticket_ids"`
+	FilterTag        bool        `json:"filter_tag"`
+	TagID            uuid.UUID   `json:"tag_id"`
 	CursorKey        string      `json:"cursor_key"`
 	CursorID         uuid.UUID   `json:"cursor_id"`
 	RowLimit         int32       `json:"row_limit"`
@@ -376,6 +392,8 @@ func (q *Queries) GlobalSearchTickets(ctx context.Context, arg GlobalSearchTicke
 		arg.OrgID,
 		arg.ReadableSpaceIds,
 		arg.SharedTicketIds,
+		arg.FilterTag,
+		arg.TagID,
 		arg.CursorKey,
 		arg.CursorID,
 		arg.RowLimit,

@@ -99,7 +99,7 @@ func (noopShareDeleter) DeleteTicketAndRevokeShares(_ context.Context, _, _, _ u
 
 func setupTicketHandler() *ticketsapi.Handler {
 	svc := tickets.NewTicketService(newMockTicketRepo(), noopShareDeleter{})
-	return ticketsapi.NewHandler(svc)
+	return ticketsapi.NewHandler(svc, nil)
 }
 
 func withChiParam(r *http.Request, key, value string) *http.Request {

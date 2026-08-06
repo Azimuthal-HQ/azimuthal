@@ -18,7 +18,7 @@ import { Link } from 'react-router-dom';
 
 import { TAG_ATTRS } from '../../../lib/codex/schema';
 import { useCodexDocumentContext } from '../CodexDocumentContext';
-import { tagBrowsePath } from '../tagLinks';
+import { tagBrowsePath } from '../../tags/tagLinks';
 
 const CHIP_CLASSES = [
   'inline-flex items-center rounded-[var(--radius-full)] px-1.5 py-0.5 align-baseline',
@@ -38,7 +38,7 @@ export function InlineTagView({ node, editor, selected }: NodeViewProps) {
           <span className={CHIP_CLASSES + ring}>#{label}</span>
         ) : (
           <Link
-            to={tagBrowsePath(spaceId, label)}
+            to={tagBrowsePath('codex', spaceId, label)}
             className={CHIP_CLASSES + ' no-underline hover:bg-[color-mix(in_srgb,var(--module-codex)_28%,transparent)]'}
           >
             #{label}

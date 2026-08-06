@@ -59,6 +59,7 @@ func (f *failingTicketRepo) GetByID(context.Context, uuid.UUID) (*tickets.Ticket
 func handlerWithFailingTickets() *ticketsapi.Handler {
 	return ticketsapi.NewHandler(
 		tickets.NewTicketService(&failingTicketRepo{}, noopShareDeleter{}),
+		nil,
 	)
 }
 

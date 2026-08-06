@@ -14,7 +14,10 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
-// The Codex tag surface, end to end against real PostgreSQL (migration 040).
+// The tag surface, end to end against real PostgreSQL (migrations 040, 055).
+// The page-flavoured half lives here; the ticket and project-item siblings and
+// the cross-entity browse live in entity_tags_integration_test.go on the same
+// fixture.
 //
 // Two of these carry more weight than the rest.
 //
@@ -39,19 +42,23 @@ type tagDTO struct {
 	Name  string `json:"name"`
 }
 
-// taggedPageDTO is one row of the tag browse.
-type taggedPageDTO struct {
-	PageID   string `json:"page_id"`
-	SpaceID  string `json:"space_id"`
-	SpaceKey string `json:"space_key"`
-	Title    string `json:"title"`
-	Path     string `json:"path"`
+// taggedEntityDTO is one row of the tag browse: any of the three kinds, with
+// its space context and its kind's own composed ref.
+type taggedEntityDTO struct {
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+	SpaceID    string `json:"space_id"`
+	SpaceKey   string `json:"space_key"`
+	Title      string `json:"title"`
+	Ref        string `json:"ref"`
 }
 
-// tagBrowse is the {"tag": …, "pages": […]} envelope of the browse endpoint.
+// tagBrowse is the {"tag": …, "entities": […]} envelope of the browse
+// endpoint.
 type tagBrowse struct {
-	Tag   tagDTO          `json:"tag"`
-	Pages []taggedPageDTO `json:"pages"`
+	Tag       tagDTO            `json:"tag"`
+	Entities  []taggedEntityDTO `json:"entities"`
+	Truncated bool              `json:"truncated"`
 }
 
 // tagFixture is a Codex space with one page, plus the two personas the
@@ -105,7 +112,7 @@ func (f *tagFixture) orgTagsPath() string {
 // typed as well as by the slug — which is a behaviour of the handler, not an
 // accident of the path.
 func (f *tagFixture) browsePath(segment string) string {
-	return fmt.Sprintf("/api/v1/orgs/%s/tags/%s/pages", f.ts.OrgID, url.PathEscape(segment))
+	return fmt.Sprintf("/api/v1/orgs/%s/tags/%s/entities", f.ts.OrgID, url.PathEscape(segment))
 }
 
 func (f *tagFixture) pageTagsPath(spaceID, pageID string) string {
@@ -191,10 +198,10 @@ func tagSlugs(list []tagDTO) []string {
 	return out
 }
 
-func pageIDsOf(pages []taggedPageDTO) []string {
-	out := make([]string, 0, len(pages))
-	for _, p := range pages {
-		out = append(out, p.PageID)
+func entityIDsOf(entities []taggedEntityDTO) []string {
+	out := make([]string, 0, len(entities))
+	for _, e := range entities {
+		out = append(out, e.EntityID)
 	}
 	return out
 }
@@ -294,7 +301,7 @@ func TestWikiTags_EmptyListClearsThePage(t *testing.T) {
 	// reads those rows rather than that handler.
 	var associations int
 	require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
-		`SELECT count(*) FROM page_tags WHERE page_id = $1`, uuid.MustParse(f.pageID)).Scan(&associations))
+		`SELECT count(*) FROM entity_tags WHERE entity_type = 'page' AND entity_id = $1`, uuid.MustParse(f.pageID)).Scan(&associations))
 	require.Zero(t, associations)
 
 	// The vocabulary is untouched — clearing a page does not unmake its tags.
@@ -359,7 +366,7 @@ func TestWikiTags_MoreTagsThanOnePageCanCarryIsRefused(t *testing.T) {
 
 	f.mustSetTags(t, f.authorTok, f.spaceID, f.pageID, []string{"keeper"})
 
-	// One past tags.MaxTagsPerPage.
+	// One past tags.MaxTagsPerEntity.
 	tooMany := make([]string, 51)
 	for i := range tooMany {
 		tooMany[i] = fmt.Sprintf("bulk%d", i)
@@ -533,9 +540,9 @@ func TestWikiTags_BrowseIsFilteredToTheCallersReadableSpaces(t *testing.T) {
 	var browse tagBrowse
 	require.NoError(t, json.Unmarshal(r.Body, &browse))
 	require.Equal(t, "design_docs", browse.Tag.Slug)
-	require.Equal(t, []string{f.pageID}, pageIDsOf(browse.Pages),
+	require.Equal(t, []string{f.pageID}, entityIDsOf(browse.Entities),
 		"the page in the space the caller cannot read must be absent")
-	require.Equal(t, f.spaceID, browse.Pages[0].SpaceID,
+	require.Equal(t, f.spaceID, browse.Entities[0].SpaceID,
 		"the row carries its space, so a same-titled page elsewhere is tellable apart")
 
 	// The admin, who reads every space in the org, sees both — so the filter
@@ -543,7 +550,7 @@ func TestWikiTags_BrowseIsFilteredToTheCallersReadableSpaces(t *testing.T) {
 	r = f.ts.get(t, f.browsePath("design_docs"), true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
 	require.NoError(t, json.Unmarshal(r.Body, &browse))
-	require.ElementsMatch(t, []string{f.pageID, otherPage}, pageIDsOf(browse.Pages))
+	require.ElementsMatch(t, []string{f.pageID, otherPage}, entityIDsOf(browse.Entities))
 
 	// The path segment is slugified rather than taken verbatim, so a client can
 	// link to a tag it only knows the label of without reimplementing the slug
@@ -552,7 +559,7 @@ func TestWikiTags_BrowseIsFilteredToTheCallersReadableSpaces(t *testing.T) {
 	require.Equal(t, http.StatusOK, r.StatusCode, "browsing by label: %s", r.Body)
 	require.NoError(t, json.Unmarshal(r.Body, &browse))
 	require.Equal(t, "design_docs", browse.Tag.Slug)
-	require.Equal(t, []string{f.pageID}, pageIDsOf(browse.Pages),
+	require.Equal(t, []string{f.pageID}, entityIDsOf(browse.Entities),
 		"browsing by label must be the same filtered answer as browsing by slug")
 }
 

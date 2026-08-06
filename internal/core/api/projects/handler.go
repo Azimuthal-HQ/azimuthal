@@ -22,6 +22,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 )
 
@@ -32,11 +33,16 @@ import (
 // router.go the way comments are. The item relation URLs did not move — only
 // their registration did.
 type Handler struct {
-	items        *projects.ItemService
-	sprints      *projects.SprintService
-	backlog      *projects.BacklogService
-	roadmap      *projects.RoadmapService
-	labels       *projects.LabelService
+	items   *projects.ItemService
+	sprints *projects.SprintService
+	backlog *projects.BacklogService
+	roadmap *projects.RoadmapService
+	labels  *projects.LabelService
+	// tags is the entity tag model (migration 055): project items carry the
+	// same org-scoped tags pages do, and the tag routes in Routes() are
+	// unconditional, so the service is a required constructor argument rather
+	// than a With* option — a missing one does not compile.
+	tags         *tags.Service
 	itemTypes    *itemtypes.Service
 	customFields *customfields.Service
 	boardConfig  *projects.BoardConfigService
@@ -64,6 +70,7 @@ func NewHandler(
 	backlog *projects.BacklogService,
 	roadmap *projects.RoadmapService,
 	labels *projects.LabelService,
+	tagSvc *tags.Service,
 ) *Handler {
 	return &Handler{
 		items:    items,
@@ -71,6 +78,7 @@ func NewHandler(
 		backlog:  backlog,
 		roadmap:  roadmap,
 		labels:   labels,
+		tags:     tagSvc,
 		auditLog: audit.NewLogger(),
 	}
 }
@@ -121,6 +129,11 @@ func (h *Handler) Routes() chi.Router {
 	// Custom field values (per item)
 	r.Get("/items/{itemID}/fields", h.GetItemFields)
 	r.Put("/items/{itemID}/fields/{slug}", h.SetItemField)
+
+	// Entity tags (migration 055). Read is the space's, writing is the same
+	// permission as editing the item.
+	r.Get("/items/{itemID}/tags", h.ListItemTags)
+	r.Put("/items/{itemID}/tags", h.SetItemTags)
 
 	// Relations are mounted in router.go beside this subtree's comment routes,
 	// not here: the satellite is entity-generic and every entity subtree

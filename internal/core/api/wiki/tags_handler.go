@@ -25,8 +25,8 @@ type setPageTagsRequest struct {
 
 // ListOrgTags returns every tag in the org.
 //
-// @Summary      List the organisation's Codex tags
-// @Description  Every tag in the organisation, ordered by display name. Tags are org-scoped and are created by use — publishing a page whose body contains an inline #tag, or adding one to a page's tag list, creates it. There is no administration surface, so this list is the whole vocabulary. Any org member may read it: it backs the tag autocomplete, and a tag name is not itself sensitive — the pages carrying a tag are filtered separately.
+// @Summary      List the organisation's tags
+// @Description  Every tag in the organisation, ordered by display name. Tags are org-scoped and are created by use — publishing a page whose body contains an inline #tag, or adding one to an entity's tag list, creates it. There is no administration surface, so this list is the whole vocabulary. Any org member may read it: it backs the tag autocomplete, and a tag name is not itself sensitive — the entities carrying a tag are filtered separately.
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
@@ -49,21 +49,21 @@ func (h *Handler) ListOrgTags(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, list)
 }
 
-// ListPagesWithTag returns the readable pages carrying a tag.
+// ListEntitiesWithTag returns the readable entities carrying a tag.
 //
-// @Summary      List the pages carrying a tag
-// @Description  Every page in the organisation carrying this tag that the caller can read. Cross-space by nature — a tag is org-scoped — so the result is filtered against the caller's resolved readable space set (ADR-0010). A page in a space the caller cannot read is absent, not refused, so the response never reports whether such a page exists.
+// @Summary      List the entities carrying a tag
+// @Description  Every page, ticket and project item in the organisation carrying this tag that the caller can read. Cross-space by nature — a tag is org-scoped — so the result is filtered against the caller's resolved readable space set (ADR-0010). An entity in a space the caller cannot read is absent, not refused, so the response never reports whether such an entity exists.
 // @Tags         wiki
 // @Produce      json
 // @Security     BearerAuth
 // @Param        orgID  path      string  true  "Organization ID (UUID)"
 // @Param        slug   path      string  true  "Tag slug"
-// @Success      200    {object}  map[string]interface{}    "The tag and its readable pages"
+// @Success      200    {object}  map[string]interface{}    "The tag and its readable entities"
 // @Failure      400    {object}  api.SwaggerErrorResponse  "Invalid ID"
 // @Failure      401    {object}  api.SwaggerErrorResponse  "Not authenticated"
 // @Failure      404    {object}  api.SwaggerErrorResponse  "No such tag"
-// @Router       /orgs/{orgID}/tags/{slug}/pages [get]
-func (h *Handler) ListPagesWithTag(w http.ResponseWriter, r *http.Request) {
+// @Router       /orgs/{orgID}/tags/{slug}/entities [get]
+func (h *Handler) ListEntitiesWithTag(w http.ResponseWriter, r *http.Request) {
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
@@ -89,7 +89,7 @@ func (h *Handler) ListPagesWithTag(w http.ResponseWriter, r *http.Request) {
 		readable = res.ReadableSpaceIDs()
 	}
 
-	result, err := h.tags.PagesWithSlug(r.Context(), orgID, slug, readable)
+	result, err := h.tags.EntitiesWithSlug(r.Context(), orgID, slug, readable)
 	if err != nil {
 		handleTagError(w, r, err)
 		return
@@ -126,7 +126,9 @@ func (h *Handler) ListPageTags(w http.ResponseWriter, r *http.Request) {
 	// other: the route proved {spaceID} readable and proved nothing about
 	// {pageID}. A page in another space carries no tags here rather than being
 	// refused, so the answer never says whether such a page exists.
-	list, err := h.tags.ForPage(r.Context(), pageID, spaceID)
+	list, err := h.tags.ForEntity(r.Context(), tags.EntityRef{
+		Type: tags.EntityPage, ID: pageID, SpaceID: spaceID,
+	})
 	if err != nil {
 		handleTagError(w, r, err)
 		return
@@ -161,12 +163,19 @@ func (h *Handler) SetPageTags(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
 		return
 	}
+	spaceID, err := spaceIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
 	var req setPageTagsRequest
 	if err := respond.DecodeJSON(r, &req); err != nil {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
 		return
 	}
-	list, err := h.tags.SetPageTags(r.Context(), orgID, pageID, req.Tags)
+	list, err := h.tags.SetEntityTags(r.Context(), orgID, tags.EntityRef{
+		Type: tags.EntityPage, ID: pageID, SpaceID: spaceID,
+	}, req.Tags)
 	if err != nil {
 		handleTagError(w, r, err)
 		return
@@ -179,12 +188,16 @@ func handleTagError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, tags.ErrNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "no tag by that name")
+	case errors.Is(err, tags.ErrEntityNotFound):
+		// The same 404 whether the entity never existed or sits in a space the
+		// caller cannot reach — the two must not be distinguishable.
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "not found")
 	case errors.Is(err, tags.ErrInvalidName):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
 			"A tag needs at least one letter or digit.")
 	case errors.Is(err, tags.ErrTooManyTags):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
-			"That is more tags than one page can carry.")
+			"That is more tags than one entity can carry.")
 	default:
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "the tags could not be read")
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
@@ -31,7 +32,12 @@ type NotificationEnqueuer interface {
 
 // Handler holds the dependencies for ticket HTTP handlers.
 type Handler struct {
-	svc      *tickets.TicketService
+	svc *tickets.TicketService
+	// tags is the entity tag model (migration 055): tickets carry the same
+	// org-scoped tags pages do, and the tag routes in Routes() are
+	// unconditional, so the service is a required constructor argument rather
+	// than a With* option — a missing one does not compile.
+	tags     *tags.Service
 	auditLog audit.Logger
 	notifs   NotificationEnqueuer
 	// suggestions backs the org-scoped ticket_ref typeahead. Held separately
@@ -65,8 +71,8 @@ type Handler struct {
 }
 
 // NewHandler creates a ticket Handler.
-func NewHandler(svc *tickets.TicketService) *Handler {
-	return &Handler{svc: svc, auditLog: audit.NewLogger()}
+func NewHandler(svc *tickets.TicketService, tagSvc *tags.Service) *Handler {
+	return &Handler{svc: svc, tags: tagSvc, auditLog: audit.NewLogger()}
 }
 
 // WithWorkflowTiers attaches the ADR-0011 tier gate and the transactional
@@ -136,6 +142,11 @@ func (h *Handler) Routes() chi.Router {
 	// value store, mirroring the item routes in internal/core/api/projects.
 	r.Get("/{ticketID}/fields", h.GetTicketFields)
 	r.Put("/{ticketID}/fields/{slug}", h.SetTicketField)
+
+	// Entity tags (migration 055). Read is the space's, writing is the same
+	// permission as editing the ticket.
+	r.Get("/{ticketID}/tags", h.ListTicketTags)
+	r.Put("/{ticketID}/tags", h.SetTicketTags)
 	return r
 }
 
@@ -976,6 +987,9 @@ func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
 	return id, nil
 }
 
+// orgIDFromURL reads the org from the path rather than from the JWT. The URL
+// is the scoping convention every space-scoped route follows, and the
+// middleware has already established that the space belongs to it.
 func orgIDFromURL(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {

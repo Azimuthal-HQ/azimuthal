@@ -168,6 +168,14 @@ type EntityShare struct {
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type EntityTag struct {
+	PageID     pgtype.UUID        `json:"page_id"`
+	TagID      uuid.UUID          `json:"tag_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	EntityType string             `json:"entity_type"`
+	EntityID   uuid.UUID          `json:"entity_id"`
+}
+
 type Invite struct {
 	ID             uuid.UUID          `json:"id"`
 	OrgID          uuid.UUID          `json:"org_id"`
@@ -295,12 +303,6 @@ type PageRevision struct {
 	AuthorID  uuid.UUID          `json:"author_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	Doc       json.RawMessage    `json:"doc"`
-}
-
-type PageTag struct {
-	PageID    uuid.UUID          `json:"page_id"`
-	TagID     uuid.UUID          `json:"tag_id"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type ProjectItem struct {

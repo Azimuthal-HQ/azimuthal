@@ -791,14 +791,19 @@ func (m *mockTagRepo) GetByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (ta
 func (m *mockTagRepo) Upsert(_ context.Context, orgID uuid.UUID, slug, name string) (tags.Tag, error) {
 	return tags.Tag{ID: uuid.New(), OrgID: orgID, Slug: slug, Name: name}, nil
 }
-func (m *mockTagRepo) ForPage(_ context.Context, _, _ uuid.UUID) ([]tags.Tag, error) {
+func (m *mockTagRepo) ForEntity(_ context.Context, _ tags.EntityRef) ([]tags.Tag, error) {
 	return nil, nil
 }
-func (m *mockTagRepo) ReplacePageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error {
+func (m *mockTagRepo) EntityInSpace(_ context.Context, _ tags.EntityRef) (bool, error) {
+	return true, nil
+}
+func (m *mockTagRepo) ReplaceEntityTags(_ context.Context, _ tags.EntityRef, _ []uuid.UUID) error {
 	return nil
 }
-func (m *mockTagRepo) AddPageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error { return nil }
-func (m *mockTagRepo) PagesWithTag(_ context.Context, _ uuid.UUID, _ []uuid.UUID) ([]tags.TaggedPage, error) {
+func (m *mockTagRepo) AddEntityTags(_ context.Context, _ tags.EntityRef, _ []uuid.UUID) error {
+	return nil
+}
+func (m *mockTagRepo) EntitiesWithTag(_ context.Context, _ uuid.UUID, _ []uuid.UUID) ([]tags.TaggedEntity, error) {
 	return nil, nil
 }
 
@@ -850,13 +855,13 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	// database and therefore no workflow, so WorkflowIDForSpace reports none and
 	// the gate resolves to "nothing applies" — which is exactly what an
 	// unconfigured space must do.
-	ticketHandler := ticketsapi.NewHandler(ticketSvc).
+	tagSvc := tags.NewService(&mockTagRepo{})
+	ticketHandler := ticketsapi.NewHandler(ticketSvc, tagSvc).
 		WithWorkflowTiers(
 			tiergate.New(workflow.NewTierService(&mockTierStore{}, &mockTransitionApplier{}), &mockWorkflowResolver{}, jobs.NoopNotificationEnqueuer{}),
 			&mockTransitionApplier{},
 		).
 		WithCustomFields(customFieldSvc)
-	tagSvc := tags.NewService(&mockTagRepo{})
 	wikiDocs := wiki.NewDocumentService(
 		newMockDocumentStore(mockPages),
 		&mockDocumentTx{},
@@ -866,7 +871,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		tagSvc,
 	)
 	wikiHandler := wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc)
-	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, labelSvc).
+	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, labelSvc, tagSvc).
 		WithItemTypes(itemTypeSvc).
 		WithCustomFields(customFieldSvc).
 		WithWorkflowTiers(
