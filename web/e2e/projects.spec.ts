@@ -116,17 +116,20 @@ test.describe('Projects', () => {
     await expect(medium).toHaveAttribute('aria-checked', 'false')
   })
 
-  test('Labels view renders content — regression: blank screen', async ({ page }) => {
+  test('Tags view renders content — regression: blank screen', async ({ page }) => {
     // P0 defect: the sidebar linked to /spaces/:id/labels but no route existed,
-    // so React Router rendered nothing — an entirely blank document body.
+    // so React Router rendered nothing — an entirely blank document body. The
+    // route is /labels to this day (bookmarks), the surface it opens is the
+    // entity-tags index, and the assertion stays: never a blank body.
     await createUserAndLogin(page)
     await createSpace(page, 'Labels Project', 'vector')
 
-    await page.getByTestId('space-sidebar').getByRole('link', { name: 'Labels', exact: true }).click()
+    await page.getByTestId('space-sidebar').getByRole('link', { name: 'Tags', exact: true }).click()
     await expect(page).toHaveURL(/\/vector\/.*\/labels/, { timeout: 10000 })
 
     // The route must render non-empty content — a blank body is never acceptable.
-    await expect(page.locator('h1:has-text("Labels")')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByTestId('tags-index-page')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('h1:has-text("Tags")')).toBeVisible({ timeout: 5000 })
     expect((await page.locator('body').innerText()).trim()).not.toBe('')
     await assertNoErrors(page)
   })

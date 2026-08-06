@@ -359,32 +359,6 @@ func TestItemRelations(t *testing.T) {
 	}
 }
 
-// TestLabels verifies label create, list, and delete.
-func TestLabels(t *testing.T) {
-	q, cleanup := testQ(t)
-	defer cleanup()
-	ctx := context.Background()
-	org := setupOrg(t, q, uuid.New().String()[:8])
-	label, err := q.CreateLabel(ctx, generated.CreateLabelParams{
-		ID: uuid.New(), OrgID: org.ID, Name: "backend", Color: "#3b82f6",
-	})
-	if err != nil {
-		t.Fatalf("CreateLabel: %v", err)
-	}
-	labels, err := q.ListLabelsByOrg(ctx, org.ID)
-	if err != nil {
-		t.Fatalf("ListLabelsByOrg: %v", err)
-	}
-	if len(labels) == 0 {
-		t.Error("expected at least one label")
-	}
-	if err := q.DeleteLabelInOrg(ctx, generated.DeleteLabelInOrgParams{
-		LabelID: label.ID, OrgID: org.ID,
-	}); err != nil {
-		t.Fatalf("DeleteLabelInOrg: %v", err)
-	}
-}
-
 // TestSprints verifies sprint lifecycle including item assignment.
 func TestSprints(t *testing.T) {
 	q, cleanup := testQ(t)

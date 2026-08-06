@@ -364,7 +364,7 @@ func TestPortal_WireCarriesNoContainerContext(t *testing.T) {
 	// the assertion is made against a ticket that HAS something to leak.
 	q := generated.New(f.ts.DB.Pool)
 	_, err := f.ts.DB.Pool.Exec(context.Background(),
-		`UPDATE tickets SET assignee_id = $2, labels = ARRAY['vip','escalated'], rank = '0|zzz:'
+		`UPDATE tickets SET assignee_id = $2, rank = '0|zzz:'
 		 WHERE id = $1`, uuid.MustParse(ref), f.ts.UserID)
 	require.NoError(t, err)
 

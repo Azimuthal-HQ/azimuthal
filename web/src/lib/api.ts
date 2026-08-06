@@ -597,15 +597,6 @@ export interface BoardConfig {
   customized: boolean;
 }
 
-export interface Label {
-  id: string;
-  org_id: string;
-  name: string;
-  color: string;
-  created_at: string;
-  updated_at: string;
-}
-
 /**
  * Who a comment is for. Mirrors migration 045's `comments_visibility_valid`.
  *
@@ -2074,26 +2065,6 @@ async function fetchSprintItems(spaceId: string, sprintId: string): Promise<Proj
 }
 
 // ---------------------------------------------------------------------------
-// Label API functions
-// ---------------------------------------------------------------------------
-
-async function fetchLabels(orgId: string): Promise<Label[]> {
-  return apiFetch<Label[]>(`/orgs/${orgId}/labels`);
-}
-
-interface CreateLabelRequest {
-  name: string;
-  color: string;
-}
-
-async function createLabel(orgId: string, req: CreateLabelRequest): Promise<Label> {
-  return apiFetch<Label>(`/orgs/${orgId}/labels`, {
-    method: 'POST',
-    body: JSON.stringify(req),
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Item type API functions
 // ---------------------------------------------------------------------------
 
@@ -2661,7 +2632,6 @@ export const queryKeys = {
   sprints: (spaceId: string) => ['sprints', spaceId] as const,
   activeSprint: (spaceId: string) => ['sprints', spaceId, 'active'] as const,
   sprintItems: (spaceId: string, sprintId: string) => ['sprints', spaceId, sprintId, 'items'] as const,
-  labels: (orgId: string) => ['labels', orgId] as const,
   itemTypes: (orgId: string) => ['itemTypes', orgId] as const,
   customFields: (orgId: string) => ['customFields', orgId] as const,
   fieldScopes: (orgId: string, fieldId: string) => ['fieldScopes', orgId, fieldId] as const,
@@ -2956,15 +2926,6 @@ export function useSprintItems(spaceId: string, sprintId: string, opts?: QueryOp
     queryKey: queryKeys.sprintItems(spaceId, sprintId),
     queryFn: () => fetchSprintItems(spaceId, sprintId),
     enabled: !!spaceId && !!sprintId,
-    ...opts,
-  });
-}
-
-export function useLabels(orgId: string, opts?: QueryOpts<Label[]>) {
-  return useQuery<Label[], APIError>({
-    queryKey: queryKeys.labels(orgId),
-    queryFn: () => fetchLabels(orgId),
-    enabled: !!orgId,
     ...opts,
   });
 }
@@ -6065,7 +6026,6 @@ export {
   createWikiPage,
   createProjectItem,
   createSprint,
-  createLabel,
   updateOrganization,
   type UpdateOrganizationRequest,
   type CreateSpaceRequest,
@@ -6076,7 +6036,6 @@ export {
   type CreateProjectItemRequest,
   type UpdateProjectItemRequest,
   type CreateSprintRequest,
-  type CreateLabelRequest,
   type LoginRequest,
   type RegisterRequest,
   type AuthResponse,

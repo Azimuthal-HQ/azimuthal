@@ -13,6 +13,7 @@ import {
 } from '../../components/layout/DetailLayout';
 import { EntityShareControl } from '../../components/EntityShareControl';
 import { RelationsSection } from '../../components/RelationsSection';
+import { EntityTags } from '../../components/tags/EntityTags';
 import { ModuleChip } from '../../shell/ModuleChip';
 import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
 import { CustomFieldsSection } from '../../components/CustomFieldsSection';
@@ -336,6 +337,11 @@ export function ItemDetailPage() {
               >
                 {item.description ?? ''}
               </Markdown>
+
+              {/* Entity tags (migration 055): the same org vocabulary pages
+                  and tickets carry, editable in place. The server enforces the
+                  edit permission; a refused write surfaces its words. */}
+              <EntityTags entityType="project_item" spaceId={spaceId} entityId={item.id} editable />
             </>
           )}
 

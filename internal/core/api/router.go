@@ -304,13 +304,6 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			// would not.
 			r.Get("/pages/suggest", cfg.WikiHandler.SuggestPages)
 
-			// Labels (org-scoped metadata; any member).
-			r.Route("/labels", func(r chi.Router) {
-				r.Get("/", cfg.ProjectHandler.ListLabels)
-				r.Post("/", cfg.ProjectHandler.CreateLabel)
-				r.Delete("/{labelID}", cfg.ProjectHandler.DeleteLabel)
-			})
-
 			// Item types (org-scoped: any member reads for pickers/filters;
 			// org admins define, rename, archive, and delete).
 			r.Route("/item-types", func(r chi.Router) {

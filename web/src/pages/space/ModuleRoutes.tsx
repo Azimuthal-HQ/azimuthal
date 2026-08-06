@@ -6,7 +6,7 @@ import { QueueDetailPage } from '../beacon/queues/QueueDetailPage';
 import { QueuesPage } from '../beacon/queues/QueuesPage';
 import { WikiPage } from '../codex/WikiPage';
 import { BacklogPage } from '../vector/BacklogPage';
-import { LabelsPage } from '../vector/LabelsPage';
+import { TagsPage } from '../tags/TagsPage';
 import { RoadmapPage } from '../vector/RoadmapPage';
 import { SprintBoardPage } from '../vector/SprintBoardPage';
 import { SprintsPage } from '../vector/SprintsPage';
@@ -87,10 +87,18 @@ export function ModuleQueueBuilderRoute() {
   return <SpacePlaceholderPage feature="queues" />;
 }
 
-/** ModuleLabelsRoute: Vector's labels page, placeholder elsewhere. */
+/**
+ * ModuleLabelsRoute: the tags index, in ANY module's chrome.
+ *
+ * The path still says labels because Vector's sidebar and people's bookmarks
+ * have pointed at /labels since P1 — but the page it opened promised a label
+ * manager that was never built, and the entity-tags convergence delivered the
+ * feature under its real name. Tags are module-neutral (pages, tickets and
+ * items share one vocabulary), so unlike the other dispatchers in this file
+ * there is no per-module fork: every module gets the real surface.
+ */
 export function ModuleLabelsRoute() {
   const { module } = useParams<{ module: string }>();
-  if (module === 'vector') return <LabelsPage />;
-  if (isModuleKey(module)) return <SpacePlaceholderPage feature="labels" />;
+  if (isModuleKey(module)) return <TagsPage />;
   return <SpacePlaceholderPage feature="unknown" />;
 }

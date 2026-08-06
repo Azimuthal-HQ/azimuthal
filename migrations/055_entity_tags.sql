@@ -144,6 +144,17 @@ ALTER TABLE workflow_transition_post_functions
     ADD CONSTRAINT workflow_transition_post_functions_field_key_valid
     CHECK (field_key IS NULL OR field_key IN ('due_at', 'tags'));
 
+-- ── The org labels table dies ────────────────────────────────────────────────
+-- Migration 004's third label system: org-scoped CRUD with a name and a
+-- colour, an adapter, a service, three handlers, a route block, a nav item and
+-- a page — where the page was a hard-coded coming-soon and nothing ever joined
+-- this table to an item. It never held meaning the entity tables' labels
+-- arrays didn't, and both converge onto tags above. Its rows are org-wide
+-- metadata that nothing references (no FK ever pointed at it), so the drop
+-- orphans nothing; any names an administrator seeded here were never
+-- attached to any entity and have no tag to become.
+DROP TABLE labels;
+
 -- +goose StatementEnd
 
 -- +goose Down
@@ -157,6 +168,18 @@ ALTER TABLE workflow_transition_post_functions
 --     values into org tags, and unpicking "which tag row came from which
 --     array" is not recorded anywhere. A round trip down and up therefore
 --     loses every pre-migration label value.
+
+-- The org labels table comes back empty, in migration 004's exact shape. Any
+-- rows it held before the up migration are gone — nothing referenced them, and
+-- nothing recorded them.
+CREATE TABLE labels (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id     UUID        NOT NULL REFERENCES organizations (id),
+    name       TEXT        NOT NULL,
+    color      TEXT        NOT NULL DEFAULT '#6b7280',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, name)
+);
 
 -- The workflow vocabulary converts back first, while the rows still exist.
 ALTER TABLE workflow_transition_guards

@@ -133,35 +133,3 @@ func TestProjectWriteAdapters_MissingRow_ReturnsErrNotFound(t *testing.T) {
 	})
 }
 
-// The duplicate-label 409 that handleProjectError has always had an arm for and
-// nothing could ever reach: LabelAdapter.Create did not map the unique
-// violation, so projects.ErrLabelDuplicate had no producer in the tree and a
-// repeated name answered 500 (known-issues #24).
-//
-// It asserts the sentinel AND that unrelated writes still succeed, because a
-// mapping that turned every write error into ErrLabelDuplicate would pass the
-// first assertion on its own.
-func TestLabelAdapter_DuplicateName_ReturnsErrLabelDuplicate(t *testing.T) {
-	ctx := context.Background()
-	db := testutil.NewTestDB(t)
-	org := testutil.CreateTestOrg(t, db.Pool)
-	labels := adapters.NewLabelAdapter(generated.New(db.Pool))
-
-	require.NoError(t, labels.Create(ctx,
-		&projects.Label{ID: uuid.New(), OrgID: org.ID, Name: "urgent", Color: "#ff0000"}))
-
-	require.ErrorIs(t, labels.Create(ctx,
-		&projects.Label{ID: uuid.New(), OrgID: org.ID, Name: "urgent", Color: "#00ff00"}),
-		projects.ErrLabelDuplicate, "the constraint name must match, or the arm stays dead")
-
-	require.NoError(t, labels.Create(ctx,
-		&projects.Label{ID: uuid.New(), OrgID: org.ID, Name: "later", Color: "#0000ff"}),
-		"only the clash is a duplicate")
-
-	// The same name in another org is not a duplicate — the constraint is
-	// (org_id, name), and matching on the constraint name is what keeps that
-	// true rather than assuming it.
-	otherOrg := testutil.CreateTestOrg(t, db.Pool)
-	require.NoError(t, labels.Create(ctx,
-		&projects.Label{ID: uuid.New(), OrgID: otherOrg.ID, Name: "urgent", Color: "#ff0000"}))
-}

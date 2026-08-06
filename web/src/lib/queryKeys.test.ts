@@ -155,7 +155,6 @@ describe('portal query keys separate requesters, not just portals', () => {
       queryKeys.wikiPages(portalKey),
       queryKeys.projectItems(portalKey),
       queryKeys.sprints(portalKey),
-      queryKeys.labels(portalKey),
       queryKeys.members(portalKey, portalKey),
       queryKeys.comments(portalKey, 'ticket', ref),
       queryKeys.notifications(),

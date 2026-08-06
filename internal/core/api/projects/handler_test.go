@@ -76,14 +76,6 @@ func (m *mockSprintRepo) ListBySpace(_ context.Context, _ uuid.UUID) ([]*project
 	return nil, nil
 }
 
-type mockLabelRepo struct{}
-
-func (m *mockLabelRepo) Create(_ context.Context, _ *projects.Label) error { return nil }
-func (m *mockLabelRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*projects.Label, error) {
-	return nil, nil
-}
-func (m *mockLabelRepo) DeleteInOrg(_ context.Context, _, _ uuid.UUID) error { return nil }
-
 // noopShareDeleter satisfies projects.ShareRevokingDeleter for handler tests.
 type noopShareDeleter struct{}
 
@@ -99,7 +91,6 @@ func setupHandler() *projectsapi.Handler {
 		projects.NewSprintService(sr),
 		projects.NewBacklogService(ir, sr),
 		projects.NewRoadmapService(ir, sr),
-		projects.NewLabelService(&mockLabelRepo{}),
 		nil,
 	)
 }
@@ -308,36 +299,6 @@ func TestGetSprintRoadmapInvalidSpaceID(t *testing.T) {
 	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "spaceID", "bad")
 	rr := httptest.NewRecorder()
 	h.GetSprintRoadmap(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
-	}
-}
-
-func TestListLabelsInvalidOrgID(t *testing.T) {
-	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "orgID", "bad")
-	rr := httptest.NewRecorder()
-	h.ListLabels(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
-	}
-}
-
-func TestCreateLabelInvalidOrgID(t *testing.T) {
-	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodPost, "/", nil), "orgID", "bad")
-	rr := httptest.NewRecorder()
-	h.CreateLabel(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
-	}
-}
-
-func TestDeleteLabelInvalidID(t *testing.T) {
-	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "labelID", "bad")
-	rr := httptest.NewRecorder()
-	h.DeleteLabel(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
 	}
@@ -754,38 +715,5 @@ func TestGetSprintRoadmapSuccess(t *testing.T) {
 	h.GetSprintRoadmap(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("got %d, want %d", rr.Code, http.StatusOK)
-	}
-}
-
-func TestListLabelsSuccess(t *testing.T) {
-	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodGet, "/", nil), "orgID", uuid.New().String())
-	rr := httptest.NewRecorder()
-	h.ListLabels(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusOK)
-	}
-}
-
-func TestCreateLabelInvalidBody(t *testing.T) {
-	h := setupHandler()
-	req := withParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "orgID", uuid.New().String())
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.CreateLabel(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusBadRequest)
-	}
-}
-
-func TestDeleteLabelSuccess(t *testing.T) {
-	h := setupHandler()
-	req := withParam(
-		withParam(httptest.NewRequest(http.MethodDelete, "/", nil), "labelID", uuid.New().String()),
-		"orgID", uuid.New().String())
-	rr := httptest.NewRecorder()
-	h.DeleteLabel(rr, req)
-	if rr.Code != http.StatusNoContent {
-		t.Errorf("got %d, want %d", rr.Code, http.StatusNoContent)
 	}
 }

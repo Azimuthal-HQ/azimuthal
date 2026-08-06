@@ -315,42 +315,6 @@ func TestWriteMatrix_CreateRelation_NearSideIsScopedToTheSpace(t *testing.T) {
 	require.Equal(t, 1, countFor(myItem), "a relation within the caller's own space must still be created")
 }
 
-// ─── Labels: the boundary is the ORGANISATION, not a space ────────────────────
-
-// The route is open to any org member by design, so nothing above it constrains
-// the id at all and the org predicate is the only thing there is.
-func TestWriteMatrix_DeleteLabel_IsScopedToTheOrganisation(t *testing.T) {
-	m := newWriteMatrix(t)
-	ctx := context.Background()
-
-	otherOrg := testutil.CreateTestOrg(t, m.ts.DB.Pool)
-	foreign, err := m.q.CreateLabel(ctx, generated.CreateLabelParams{
-		ID: uuid.New(), OrgID: otherOrg.ID, Name: "their-label", Color: "#ff0000",
-	})
-	require.NoError(t, err)
-	own, err := m.q.CreateLabel(ctx, generated.CreateLabelParams{
-		ID: uuid.New(), OrgID: m.ts.OrgID, Name: "my-label", Color: "#00ff00",
-	})
-	require.NoError(t, err)
-
-	labelExists := func(id uuid.UUID) bool {
-		var n int
-		require.NoError(t, m.ts.DB.Pool.QueryRow(ctx,
-			`SELECT count(*) FROM labels WHERE id = $1`, id).Scan(&n))
-		return n == 1
-	}
-
-	path := fmt.Sprintf("/api/v1/orgs/%s/labels/%s", m.ts.OrgID, foreign.ID)
-	r := m.ts.deleteAs(t, m.token, path)
-	require.Equal(t, http.StatusNoContent, r.StatusCode, "%s", r.Body)
-	require.True(t, labelExists(foreign.ID),
-		"a label belonging to another organisation must survive; labels have no soft delete")
-
-	r = m.ts.deleteAs(t, m.token, fmt.Sprintf("/api/v1/orgs/%s/labels/%s", m.ts.OrgID, own.ID))
-	require.Equal(t, http.StatusNoContent, r.StatusCode, "%s", r.Body)
-	require.False(t, labelExists(own.ID), "the caller's own organisation's label must still delete")
-}
-
 // ─── Comments: the parent id from the request body ────────────────────────────
 
 func TestWriteMatrix_CommentParentIsReconciledAgainstTheEntity(t *testing.T) {

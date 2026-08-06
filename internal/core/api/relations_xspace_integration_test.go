@@ -136,7 +136,7 @@ func (f *relFixture) mkTicket(t *testing.T, spaceID uuid.UUID, number int32, tit
 		ID: uuid.New(), SpaceID: spaceID, Number: number, Title: title,
 		Description: title + "-body", Status: "open", Priority: "medium",
 		ReporterID: pgtype.UUID{Bytes: f.ts.UserID, Valid: true},
-		Labels:     []string{}, Rank: "a",
+		Rank:       "a",
 	})
 	require.NoError(t, err)
 	return row.ID

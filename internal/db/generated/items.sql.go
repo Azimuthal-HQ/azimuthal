@@ -74,35 +74,6 @@ func (q *Queries) CreateEntityRelation(ctx context.Context, arg CreateEntityRela
 	return i, err
 }
 
-const createLabel = `-- name: CreateLabel :one
-INSERT INTO labels (id, org_id, name, color) VALUES ($1, $2, $3, $4) RETURNING id, org_id, name, color, created_at
-`
-
-type CreateLabelParams struct {
-	ID    uuid.UUID `json:"id"`
-	OrgID uuid.UUID `json:"org_id"`
-	Name  string    `json:"name"`
-	Color string    `json:"color"`
-}
-
-func (q *Queries) CreateLabel(ctx context.Context, arg CreateLabelParams) (Label, error) {
-	row := q.db.QueryRow(ctx, createLabel,
-		arg.ID,
-		arg.OrgID,
-		arg.Name,
-		arg.Color,
-	)
-	var i Label
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.Name,
-		&i.Color,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const createSprint = `-- name: CreateSprint :one
 INSERT INTO sprints (id, space_id, name, goal, status, starts_at, ends_at, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -200,33 +171,6 @@ type DeleteEntityRelationInSpaceParams struct {
 // maintainer rather than something to settle in passing.
 func (q *Queries) DeleteEntityRelationInSpace(ctx context.Context, arg DeleteEntityRelationInSpaceParams) error {
 	_, err := q.db.Exec(ctx, deleteEntityRelationInSpace, arg.RelationID, arg.SpaceID)
-	return err
-}
-
-const deleteLabelInOrg = `-- name: DeleteLabelInOrg :exec
-DELETE FROM labels WHERE id = $1 AND org_id = $2
-`
-
-type DeleteLabelInOrgParams struct {
-	LabelID uuid.UUID `json:"label_id"`
-	OrgID   uuid.UUID `json:"org_id"`
-}
-
-// Delete a label belonging to this organisation, and no other.
-//
-// Labels are org-wide metadata that any member may manage, so the route carries
-// no space and no admin guard — which left the org itself as the only boundary,
-// and the predecessor did not carry it. `WHERE id = $1` meant any authenticated
-// member of any organisation could hard-delete any label row in the
-// installation, and labels have no soft delete to recover from.
-//
-// Its sibling ListLabelsByOrg above has always been org-scoped. This is the
-// same predicate on the write.
-//
-// :exec, so a label in another organisation and a label that never existed are
-// the same 204 and nothing is disclosed either way.
-func (q *Queries) DeleteLabelInOrg(ctx context.Context, arg DeleteLabelInOrgParams) error {
-	_, err := q.db.Exec(ctx, deleteLabelInOrg, arg.LabelID, arg.OrgID)
 	return err
 }
 
@@ -519,36 +463,6 @@ func (q *Queries) ListEntityRelationsForEntity(ctx context.Context, arg ListEnti
 			&i.FarStatus,
 			&i.FarSpaceID,
 			&i.FarType,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listLabelsByOrg = `-- name: ListLabelsByOrg :many
-SELECT id, org_id, name, color, created_at FROM labels WHERE org_id = $1 ORDER BY name ASC
-`
-
-func (q *Queries) ListLabelsByOrg(ctx context.Context, orgID uuid.UUID) ([]Label, error) {
-	rows, err := q.db.Query(ctx, listLabelsByOrg, orgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Label{}
-	for rows.Next() {
-		var i Label
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.Name,
-			&i.Color,
-			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

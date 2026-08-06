@@ -166,7 +166,6 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	backlogSvc := projects.NewBacklogService(itemAdapter, sprintAdapter)
 	roadmapSvc := projects.NewRoadmapService(itemAdapter, sprintAdapter)
 	relationSvc := projects.NewRelationService(adapters.NewRelationAdapter(queries))
-	labelSvc := projects.NewLabelService(adapters.NewLabelAdapter(queries))
 
 	wikiSvc := wiki.NewService(queries, contentTx)
 
@@ -299,7 +298,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithRequesterLookup(portalAdapter).
 			WithCustomFields(customFieldSvc),
 		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter).WithPageSuggestions(wiki.NewPageSuggestionService(queries)),
-		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, labelSvc, tagSvc).
+		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, tagSvc).
 			WithAuditLogger(auditLog).
 			WithWorkflowTiers(tierGate, transitionTx).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).
@@ -1927,25 +1926,6 @@ func TestIntegration_Ticket_AssignToUser(t *testing.T) {
 		"assignee_id": user.ID.String(),
 	}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "assign: %s", r.Body)
-}
-
-// TestIntegration_Labels_CreateAndList tests creating and listing labels.
-func TestIntegration_Labels_CreateAndList(t *testing.T) {
-	ts := newTestServer(t)
-
-	// Create a label.
-	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/labels", ts.OrgID), map[string]any{
-		"name":  "Bug",
-		"color": "#ff0000",
-	}, true)
-	require.Equal(t, http.StatusCreated, r.StatusCode, "create label: %s", r.Body)
-	var label map[string]any
-	require.NoError(t, json.Unmarshal(r.Body, &label))
-	require.Equal(t, "Bug", label["name"])
-
-	// List labels.
-	r = ts.get(t, fmt.Sprintf("/api/v1/orgs/%s/labels", ts.OrgID), true)
-	require.Equal(t, http.StatusOK, r.StatusCode, "list: %s", r.Body)
 }
 
 // --- Workflow state endpoints ---

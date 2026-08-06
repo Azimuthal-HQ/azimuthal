@@ -41,8 +41,6 @@
 // @tag.description Comments — unified comment system across tickets and wiki pages
 // @tag.name        members
 // @tag.description Members — space membership management
-// @tag.name        labels
-// @tag.description Labels — organization-scoped labels for items
 // @tag.name        notifications
 // @tag.description Notifications — in-app notification delivery and read state
 package main
@@ -443,7 +441,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 			WithRegistrationPolicy(cfg.AllowRegistration),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc, tagSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc).WithWorkflowTiers(tierGate, transitionTx).WithRequesterLookup(portalAdapter).WithCustomFields(customFieldSvc),
 		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter).WithPageSuggestions(wiki.NewPageSuggestionService(queries)),
-		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewLabelService(adapters.NewLabelAdapter(queries)), tagSvc).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
+		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), tagSvc).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
 		RelationHandler:     relationsapi.NewHandler(projects.NewRelationService(adapters.NewRelationAdapter(queries))),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),

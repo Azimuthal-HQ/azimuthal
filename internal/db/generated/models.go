@@ -225,14 +225,6 @@ type ItemsArchive struct {
 	Number       *int32             `json:"number"`
 }
 
-type Label struct {
-	ID        uuid.UUID          `json:"id"`
-	OrgID     uuid.UUID          `json:"org_id"`
-	Name      string             `json:"name"`
-	Color     string             `json:"color"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-}
-
 type Membership struct {
 	ID        uuid.UUID          `json:"id"`
 	OrgID     uuid.UUID          `json:"org_id"`

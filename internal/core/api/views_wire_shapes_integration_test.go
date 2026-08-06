@@ -65,7 +65,6 @@ func TestViewWireShapes_OptionalResultFieldsAreOmittedNotZeroed(t *testing.T) {
 			ResolvedAt   *string `json:"resolved_at"`
 			AssigneeID   *string `json:"assignee_id"`
 			AssigneeName *string `json:"assignee_name"`
-			Labels       []any   `json:"labels"`
 		} `json:"results"`
 	}
 	vwsBody(t, res, &page)
@@ -74,7 +73,6 @@ func TestViewWireShapes_OptionalResultFieldsAreOmittedNotZeroed(t *testing.T) {
 	byTitle := map[string]int{}
 	for i, r := range page.Results {
 		byTitle[r.Title] = i
-		require.NotNil(t, r.Labels, "labels is always an array, never null — a client maps over it")
 	}
 
 	dated := page.Results[byTitle["Dated item"]]

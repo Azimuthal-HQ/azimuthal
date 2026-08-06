@@ -23,7 +23,7 @@ var (
 	// ErrTitleRequired is returned when creating or updating an item with an empty title.
 	ErrTitleRequired = errors.New("title is required")
 
-	// ErrNameRequired is returned when creating or updating a sprint or label with an empty name.
+	// ErrNameRequired is returned when creating or updating a sprint with an empty name.
 	ErrNameRequired = errors.New("name is required")
 
 	// ErrInvalidPriority is returned when a priority value is not one of

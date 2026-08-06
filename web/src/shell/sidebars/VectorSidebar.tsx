@@ -22,7 +22,7 @@ export function VectorSidebar({ space, spaceId }: { space: Space | undefined; sp
         <SidebarNavItem to={spacePath('vector', spaceId, 'roadmap')} icon={Map} label="Roadmap" />
       </nav>
       <SidebarSection label="Configure">
-        <SidebarNavItem to={spacePath('vector', spaceId, 'labels')} icon={Tags} label="Labels" />
+        <SidebarNavItem to={spacePath('vector', spaceId, 'labels')} icon={Tags} label="Tags" />
       </SidebarSection>
     </SidebarChrome>
   );

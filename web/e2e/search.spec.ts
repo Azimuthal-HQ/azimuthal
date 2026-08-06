@@ -116,4 +116,55 @@ test.describe('Cross-module search', () => {
 
     await assertNoErrors(page)
   })
+
+  test('a tag set on a ticket through its detail page is findable with tag:', async ({ page }) => {
+    // The entity-tags convergence, end to end: tags stopped being page-only,
+    // so the whole journey — the editor on a TICKET detail page, the
+    // association write, the Beacon search arm's tag filter, the cross-module
+    // browse — has to hold together for a kind that had no tag surface at all
+    // before migration 055.
+    await createUserAndLogin(page)
+    const { orgId } = await getCurrentUser(page)
+
+    const term = `fenchur${Math.random().toString(36).slice(2, 7)}`
+    const tag = `etag${Math.random().toString(36).slice(2, 7)}`
+    const beacon = await createSpace(page, orgId, 'beacon', 'Tagged Beacon')
+
+    const taggedRes = await page.request.post(`/api/v1/orgs/${orgId}/spaces/${beacon}/tickets`, {
+      headers: await jsonHeaders(page),
+      data: { title: `${term} incident`, priority: 'medium' },
+    })
+    expect(taggedRes.status()).toBe(201)
+    const taggedId = ((await taggedRes.json()) as { id: string }).id
+    // A second ticket matching the TEXT but never tagged — the row that proves
+    // tag: filters rather than merely fanning out.
+    const bystanderRes = await page.request.post(`/api/v1/orgs/${orgId}/spaces/${beacon}/tickets`, {
+      headers: await jsonHeaders(page),
+      data: { title: `${term} bystander`, priority: 'medium' },
+    })
+    expect(bystanderRes.status()).toBe(201)
+
+    // Tag the first ticket through its own detail surface, not the API: the
+    // editor being wired on a ticket is half of what this journey checks.
+    await page.goto(`/beacon/${beacon}/tickets/${taggedId}`)
+    await page.getByTestId('codex-tag-input').fill(tag)
+    await page.getByTestId('codex-tag-input').press('Enter')
+    await expect(page.getByTestId('codex-page-tag')).toHaveText(tag, { timeout: 10000 })
+
+    // tag: narrows to entities CARRYING the tag — one hit, the ticket, found
+    // through Beacon's own search arm.
+    await page.goto(`/search?q=${encodeURIComponent(`tag:${tag} ${term}`)}`)
+    await expect(page.getByTestId('search-result')).toHaveCount(1)
+    await expect(page.locator('[data-testid="search-result"][data-module="beacon"]')).toHaveCount(1)
+    await expect(page.getByTestId('search-result')).toContainText(`${term} incident`)
+
+    // And the chip's browse lists the ticket under the tag, cross-module.
+    await page.goto(`/beacon/${beacon}/tags/${tag}`)
+    const row = page.getByTestId('codex-tag-page-row')
+    await expect(row).toHaveCount(1)
+    await expect(row).toHaveAttribute('data-entity-type', 'ticket')
+    await expect(row).toContainText(`${term} incident`)
+
+    await assertNoErrors(page)
+  })
 })
