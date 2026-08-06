@@ -2840,6 +2840,24 @@ against being the wrong one.
 Not fixed here: it is a constraint decision with a data question attached (what to do with any
 existing mismatched rows), which is a maintainer's call rather than a phase's.
 
+### D153 — migration 033's header cited D46 where it means D48 — **CORRECTED** (v0.4.2 A2)
+
+The comment atop `migrations/033_custom_fields.sql` attributed the "no custom-field storage
+existed" finding to *D46*. D46 is the cross-space query-shape entry and says nothing about custom
+fields; the finding it means is **D48** ("`item_fields` storage did not exist"). The rule that
+values survive their definitions lives in three real places — migration 033's own comment, the
+`customfields` package doc, and D48 — and a mis-cited ledger number sends a reader to the wrong
+one.
+
+Corrected in the file, in place, with a dated note beside it. Editing an applied migration's
+comment is safe here and was verified before the edit rather than assumed: goose keys on version
+numbers and never re-runs an applied migration, no CI step or script checksums migration files,
+and the one fingerprint over the migration set (`internal/testutil`, template naming) exists to
+trigger a clean test-template rebuild on any change — which is behaviour, not a gate. The related
+mis-citation the v0.4.2 planning notes carried — attributing the values-survive-definitions rule
+to ADR-0012, which is the Codex content-fidelity decision — is recorded here so it is not
+repeated; ADR-0012 is silent on custom fields.
+
 ---
 
 ## 7. What this pass deliberately did not touch
