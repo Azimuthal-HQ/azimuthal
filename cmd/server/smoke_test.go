@@ -244,7 +244,6 @@ func TestSmoke(t *testing.T) {
 			"title":       "Smoke test ticket",
 			"description": "Created by automated smoke test",
 			"priority":    "medium",
-			"labels":      []string{},
 		}
 		url := fmt.Sprintf("%s/api/v1/orgs/%s/spaces/%s/tickets", base, orgID, spaceID)
 		body := doPost(t, client, url, payload, accessToken, http.StatusCreated)
