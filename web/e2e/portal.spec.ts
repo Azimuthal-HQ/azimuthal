@@ -183,6 +183,38 @@ async function createDesk(page: Page, orgId: string): Promise<Desk> {
   }
 }
 
+/**
+ * Creates a Beacon space WITHOUT a portal, for the journey that creates one
+ * through the settings UI (A1). The type read-back mirrors createDesk's: a
+ * portal cannot attach to a space whose `type` silently defaulted, and the
+ * failure would otherwise surface as a 400 deep inside the create click.
+ */
+async function createBeaconSpace(page: Page, orgId: string): Promise<{ spaceId: string }> {
+  const stamp = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+  const headers = await jsonHeaders(page)
+  const created = await page.request.post(`/api/v1/orgs/${orgId}/spaces`, {
+    headers,
+    data: {
+      name: `Portal Desk ${stamp}`,
+      slug: `portal-desk-${stamp}`,
+      key: ('PD' + Math.random().toString(36).replace(/[^a-z0-9]/g, '').toUpperCase()).slice(0, 8),
+      type: 'beacon',
+    },
+  })
+  if (created.status() !== 201) {
+    throw new Error(`create beacon space: ${created.status()} ${await created.text()}`)
+  }
+  const spaceId = ((await created.json()) as { id: string }).id
+
+  const check = await page.request.get(`/api/v1/orgs/${orgId}/spaces/${spaceId}`, { headers })
+  if (check.status() !== 200) throw new Error(`read back space: ${check.status()}`)
+  const space = (await check.json()) as { type?: string }
+  if (space.type !== 'beacon') {
+    throw new Error(`space seeded as type ${space.type}, wanted beacon — a portal cannot attach to it`)
+  }
+  return { spaceId }
+}
+
 // ---------------------------------------------------------------------------
 // The requester's side
 // ---------------------------------------------------------------------------
@@ -687,6 +719,101 @@ test.describe('The customer portal', () => {
       agentMarkup,
       'the agent surface must show the space id — otherwise the customer-side sweep proves nothing',
     ).toContain(desk.spaceId.toLowerCase())
+
+    await agentCtx.close()
+    await customerCtx.close()
+  })
+
+  test('the portal is created and run entirely from space settings, and the URL on the page is the customer door', async ({
+    browser,
+  }: {
+    browser: Browser
+  }) => {
+    test.setTimeout(120_000)
+
+    // A1. Until this phase, every test above seeded its portal by RAW REQUEST
+    // because there was no UI path — the capability existed and was
+    // undiscoverable. This journey is the proof that it now isn't: the portal
+    // is created in space settings, the key is read off the page (never from
+    // an API response), and the URL the page displays is what a customer
+    // reaches the sign-in through. The rename and toggle legs drive the
+    // widened PATCH through the browser: each travels alone on the wire, so a
+    // rename that disabled the portal — the anti-clear defect the three-state
+    // body exists to prevent — would fail the sign-in reload below.
+    const agentCtx = await browser.newContext()
+    const agent = await agentCtx.newPage()
+    const customerCtx = await browser.newContext()
+    const customer = await customerCtx.newPage()
+
+    await createUserAndLogin(agent)
+    const { orgId } = await getCurrentUser(agent)
+    const { spaceId } = await createBeaconSpace(agent, orgId)
+
+    // ── No portal yet: settings offers to create one, name required ──────
+    await agent.goto(`/beacon/${spaceId}/settings`)
+    await expect(agent.getByTestId('portal-section')).toBeVisible({ timeout: 15000 })
+    await expect(agent.getByTestId('portal-create')).toBeVisible()
+    await expect(
+      agent.getByTestId('portal-create-button'),
+      'the create button must hold until a name is typed',
+    ).toBeDisabled()
+
+    const portalName = 'Meridian Support'
+    await agent.getByTestId('portal-create-name').fill(portalName)
+    await agent.getByTestId('portal-create-intro').fill('Tell us what broke and we will chase it.')
+    await agent.getByTestId('portal-create-button').click()
+
+    // ── The key is read FROM THE PAGE — the discoverability claim itself ──
+    await expect(agent.getByTestId('portal-configured')).toBeVisible({ timeout: 15000 })
+    const portalKey = ((await agent.getByTestId('portal-config-key').textContent()) ?? '').trim()
+    expect(portalKey, 'the page must show a real portal key').toMatch(/^[a-z0-9]{16,32}$/)
+
+    // The displayed URL is the FULL customer URL for exactly that key, not a
+    // bare key an agent would have to know what to do with.
+    const shownUrl = ((await agent.getByTestId('portal-config-url').textContent()) ?? '').trim()
+    expect(new URL(shownUrl).pathname, 'the shown URL must be the customer door for the shown key').toBe(
+      `/portal/${portalKey}`,
+    )
+
+    // ── A customer who was handed that URL reaches the sign-in ───────────
+    // Navigation by pathname, the invite idiom: port-correct by construction.
+    await customer.goto(`/portal/${portalKey}`)
+    await expect(customer.getByTestId('portal-signin-page')).toBeVisible({ timeout: 15000 })
+    await expect(customer.getByTestId('portal-name')).toHaveText(portalName)
+
+    // ── Rename in settings: the public face follows, the key does not ────
+    await agent.getByTestId('portal-config-name').fill('Meridian Helpdesk')
+    await agent.getByTestId('portal-config-save').click()
+    await expect(
+      agent.getByTestId('portal-config-save'),
+      'a completed save returns the form to clean',
+    ).toBeDisabled({ timeout: 15000 })
+    await expect(agent.getByTestId('portal-config-key')).toHaveText(portalKey)
+
+    await customer.reload()
+    await expect(customer.getByTestId('portal-name')).toHaveText('Meridian Helpdesk')
+
+    // ── Disable: the same URL goes dark for customers, not for settings ──
+    // A disabled portal renders PortalLayout's unavailable state — the frame
+    // answers once for every child page, and its copy deliberately does not
+    // distinguish "no such portal" from "switched off" (the server refuses
+    // to distinguish them too).
+    await agent.getByTestId('portal-config-toggle').click()
+    await expect(agent.getByTestId('portal-config-state')).toHaveText('The portal is disabled', {
+      timeout: 15000,
+    })
+    await customer.reload()
+    await expect(customer.getByText(/This portal isn.t available/)).toBeVisible({ timeout: 15000 })
+    await expect(customer.getByTestId('portal-signin-page')).toHaveCount(0)
+
+    // ── Re-enable: the SAME URL comes back — the key survived the round trip
+    await agent.getByTestId('portal-config-toggle').click()
+    await expect(agent.getByTestId('portal-config-state')).toHaveText('The portal is live', {
+      timeout: 15000,
+    })
+    await customer.reload()
+    await expect(customer.getByTestId('portal-signin-page')).toBeVisible({ timeout: 15000 })
+    await expect(customer.getByTestId('portal-name')).toHaveText('Meridian Helpdesk')
 
     await agentCtx.close()
     await customerCtx.close()
