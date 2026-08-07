@@ -6437,7 +6437,8 @@ paths:
       - projects
   /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/relations:
     get:
-      description: Returns all relations for a project item
+      description: Returns all relations touching a project item, in both directions,
+        with far sides resolved only where the caller may read them.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -6451,7 +6452,7 @@ paths:
         required: true
         schema:
           type: string
-      - description: Item ID (UUID)
+      - description: Project item ID (UUID)
         in: path
         name: itemID
         required: true
@@ -6487,11 +6488,12 @@ paths:
           description: Internal Server Error
       security:
       - BearerAuth: []
-      summary: List item relations
+      summary: List project item relations
       tags:
-      - projects
+      - relations
     post:
-      description: Creates a new relation from a project item to another item
+      description: Creates a relation from a project item to another entity (project
+        item, ticket, or page).
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -6505,7 +6507,7 @@ paths:
         required: true
         schema:
           type: string
-      - description: Item ID (UUID)
+      - description: Project item ID (UUID)
         in: path
         name: itemID
         required: true
@@ -6542,6 +6544,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
         "500":
           content:
             application/json:
@@ -6550,9 +6558,9 @@ paths:
           description: Internal Server Error
       security:
       - BearerAuth: []
-      summary: Create item relation
+      summary: Create project item relation
       tags:
-      - projects
+      - relations
   /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/sprint:
     post:
       description: Assigns a project item to a sprint
@@ -6896,7 +6904,8 @@ paths:
       - projects
   /orgs/{orgID}/spaces/{spaceID}/projects/relations/{relationID}:
     delete:
-      description: Removes a relation between project items
+      description: Removes a relation one of whose endpoints lives in the named space.
+        Answers 204 whether or not a row matched.
       parameters:
       - description: Organization ID (UUID)
         in: path
@@ -6941,7 +6950,7 @@ paths:
       - BearerAuth: []
       summary: Delete a relation
       tags:
-      - projects
+      - relations
   /orgs/{orgID}/spaces/{spaceID}/projects/roadmap:
     get:
       description: Returns items with due dates in a date range
@@ -8602,6 +8611,132 @@ paths:
       summary: Set a ticket custom field value
       tags:
       - tickets
+  /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/relations:
+    get:
+      description: Returns all relations touching a ticket, in both directions, with
+        far sides resolved only where the caller may read them.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List ticket relations
+      tags:
+      - relations
+    post:
+      description: Creates a relation from a ticket to another entity (project item,
+        ticket, or page).
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateRelationRequest'
+                description: Relation details
+                summary: body
+        description: Relation details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create ticket relation
+      tags:
+      - relations
   /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/status:
     post:
       description: Changes the status of a ticket (e.g. open -> in_progress -> resolved
@@ -9733,6 +9868,132 @@ paths:
       summary: Publish a page document
       tags:
       - wiki
+  /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/relations:
+    get:
+      description: Returns all relations touching a wiki page, in both directions,
+        with far sides resolved only where the caller may read them.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Wiki page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List wiki page relations
+      tags:
+      - relations
+    post:
+      description: Creates a relation from a wiki page to another entity (project
+        item, ticket, or page).
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Wiki page ID (UUID)
+        in: path
+        name: pageID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/api.SwaggerCreateRelationRequest'
+                description: Relation details
+                summary: body
+        description: Relation details
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: {}
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create wiki page relation
+      tags:
+      - relations
   /orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/render:
     get:
       description: Renders a page's markdown content as HTML.
