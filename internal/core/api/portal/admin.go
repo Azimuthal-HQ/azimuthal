@@ -91,6 +91,7 @@ func (h *Handler) AdminRoutes() chi.Router {
 // @Success      200  {object}  portal.adminPortalView
 // @Failure      403  {object}  api.SwaggerErrorResponse  "Missing manage_space"
 // @Failure      404  {object}  api.SwaggerErrorResponse  "No portal on this space"
+// @Failure      500  {object}  api.SwaggerErrorResponse  "Store failure — NOT answered as 404"
 // @Router       /orgs/{orgID}/spaces/{spaceID}/portal [get]
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	spaceID, ok := h.requireManageSpace(w, r)
@@ -98,8 +99,16 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := h.svc.PortalForSpace(r.Context(), spaceID)
-	if err != nil {
+	switch {
+	case errors.Is(err, portal.ErrPortalNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "this space has no customer portal")
+		return
+	case err != nil:
+		// Anything else is a store failure, and it must not wear the 404:
+		// the UI reads 404 as "no portal yet" and renders the CREATE form,
+		// so a transient database error would offer to create a portal over
+		// a space that has a live one. Same split UpdateConfig makes.
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "could not load the portal configuration")
 		return
 	}
 	respond.JSON(w, http.StatusOK, toAdminView(p))
@@ -260,8 +269,11 @@ func resolveUpdatePortalParams(req updatePortalRequest) (portal.UpdatePortalPara
 // external customers see, and a change to the org's public face with no
 // record is what the audit log exists to catch. The action keeps the existing
 // enabled/disabled vocabulary when the flag was in the request, and "fields"
-// says exactly what the request carried. A no-op PATCH logs nothing — nothing
-// was configured.
+// says exactly what the request CARRIED — not what changed. An empty PATCH
+// ({}) logs nothing; a PATCH restating a field at its existing value does
+// log, because auditedFields reports presence, not difference. That is
+// deliberate: "who asked to set the public name, and when" is an audit
+// question whether or not the value moved.
 func (h *Handler) auditConfigUpdate(r *http.Request, spaceID uuid.UUID, req updatePortalRequest, params portal.UpdatePortalParams) {
 	claims := auth.ClaimsFromContext(r.Context())
 	fields := auditedFields(req)

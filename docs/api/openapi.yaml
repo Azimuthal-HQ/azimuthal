@@ -5235,6 +5235,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: No portal on this space
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Store failure — NOT answered as 404
       security:
       - BearerAuth: []
       summary: Get a space's customer portal configuration
