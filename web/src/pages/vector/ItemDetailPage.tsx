@@ -521,6 +521,12 @@ export function ItemDetailPage() {
 
           <DetailDivider />
 
+          {/* Live, editable, sometimes required data — above the Created/
+              Updated metadata footer, not below it. The section renders its
+              own trailing divider only when it has content, so an empty form
+              leaves this rail exactly as it was before custom fields. */}
+          <CustomFieldsSection spaceId={spaceId} entityKind="item" entityId={itemId} />
+
           <DetailField label="Created">
             <div className="flex items-center gap-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">
               <Clock className="h-3 w-3" /> {item.created_at.slice(0, 10)}
@@ -531,9 +537,6 @@ export function ItemDetailPage() {
               <Clock className="h-3 w-3" /> {item.updated_at.slice(0, 10)}
             </div>
           </DetailField>
-
-          <DetailDivider />
-          <CustomFieldsSection spaceId={spaceId} entityKind="item" entityId={itemId} />
         </DetailSide>
       </DetailLayout>
     </div>

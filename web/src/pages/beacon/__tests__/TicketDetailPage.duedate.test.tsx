@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   ticket: null as Record<string, unknown> | null,
   updateTicket: vi.fn(),
   refetchTicket: vi.fn(),
+  entityFields: [] as Record<string, unknown>[],
 }));
 
 vi.mock('../../../lib/api', () => ({
@@ -46,7 +47,9 @@ vi.mock('../../../lib/api', () => ({
   useEffectiveAccess: () => ({ data: undefined }),
   useEntityShares: () => ({ data: undefined }),
   useEntityApprovals: () => ({ data: [], isLoading: false, error: null }),
-  useEntityFields: () => ({ data: [], isLoading: false, isError: false, error: null }),
+  // Steerable so the placement test below can give the section something to
+  // render; the due-date cases keep the empty default.
+  useEntityFields: () => ({ data: state.entityFields, isLoading: false, isError: false, error: null }),
   useSetEntityField: () => ({ mutate: vi.fn(), isPending: false }),
   useRelations: () => ({ data: [], refetch: vi.fn() }),
   useCreateRelation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
@@ -91,6 +94,7 @@ beforeEach(() => {
   state.ticket = { ...baseTicket };
   state.updateTicket = vi.fn().mockResolvedValue({});
   state.refetchTicket = vi.fn();
+  state.entityFields = [];
 });
 
 afterEach(() => {
@@ -173,5 +177,23 @@ describe('ticket due-date control', () => {
     expect(await screen.findByText('The due date could not be changed.')).toBeInTheDocument();
     // Refused, so there is nothing new to read back.
     expect(state.refetchTicket).not.toHaveBeenCalled();
+  });
+});
+
+describe('detail rail placement', () => {
+  // Custom fields are live, editable, sometimes required data; Created/Updated
+  // are a metadata footer. The section must render ABOVE the timestamps —
+  // this fails against the pre-A3 rail, which mounted it at the very bottom.
+  it('renders the custom fields section above the Created timestamp', () => {
+    state.entityFields = [
+      { slug: 'environment', name: 'Environment', field_type: 'text', options: [], value: 'prod', required: false, legacy: false },
+    ];
+    renderDetail();
+
+    const section = screen.getByTestId('custom-fields-section');
+    const created = screen.getByText('Created');
+    expect(
+      section.compareDocumentPosition(created) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });
