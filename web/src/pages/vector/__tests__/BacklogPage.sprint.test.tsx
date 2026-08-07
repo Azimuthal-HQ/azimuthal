@@ -14,8 +14,7 @@ function item(id: string, title: string, sprintId: string | null): ProjectItem {
   return {
     id, space_id: 's1', number: 1, item_key: `VEC-${id}`,
     title, description: '', kind: 'task', status: 'open', priority: 'medium',
-    assignee_id: null, reporter_id: 'u1', sprint_id: sprintId, rank: `0|${id}:`,
-    labels: [], due_at: null, created_at: '', updated_at: '',
+    assignee_id: null, reporter_id: 'u1', sprint_id: sprintId, rank: `0|${id}:`, due_at: null, created_at: '', updated_at: '',
   };
 }
 

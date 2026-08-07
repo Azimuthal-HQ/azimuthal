@@ -133,22 +133,20 @@ func Parse(raw string) Query {
 	}
 
 	q.Text = strings.Join(kept, " ")
-	q.Modules = resolveModules(q.Modules, q.TagSlug)
+	q.Modules = resolveModules(q.Modules)
 	return q
 }
 
 // resolveModules turns the requested set into the effective fan-out.
 //
-// A tag filter IS a module filter. Tags exist only on pages — tickets and
-// project items carry `labels`, a text array that no read path filters on — so
-// `tag:foo` narrowed to Beacon can only ever return nothing. Answering with
-// Codex alone is more useful than a 400 and avoids inventing a labels
-// predicate, and the response echoes the effective set so the narrowing is
-// visible rather than silent.
-func resolveModules(requested []Module, tagSlug string) []Module {
-	if tagSlug != "" {
-		return []Module{ModuleCodex}
-	}
+// A tag filter is NOT a module filter. Tags are entity-generic (migration
+// 055): pages, tickets and project items all carry them, and every module's
+// search query has a tag arm — so `tag:foo` is meaningful against any module
+// and must not narrow the fan-out. This function narrowed `tag:` queries to
+// Codex until v0.4.2, when that was true of the data model; a `tag:` search
+// that silently returned only pages today would look like it worked and be
+// wrong.
+func resolveModules(requested []Module) []Module {
 	if len(requested) == 0 {
 		return AllModules()
 	}

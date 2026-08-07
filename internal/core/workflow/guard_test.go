@@ -56,7 +56,7 @@ func TestEvaluate_UnknownKindFailsClosed(t *testing.T) {
 			AssigneeID:  ptr(actor.UserID),
 			DueAt:       ptr(time.Now()),
 			Description: "filled in",
-			Labels:      []string{"a"},
+			Tags:        []string{"a"},
 		}
 
 		refusal := Evaluate([]Guard{g}, class, actor, entity)
@@ -77,7 +77,7 @@ func TestFieldPresent_UnknownFieldKeyIsAbsent(t *testing.T) {
 		AssigneeID:  ptr(uuid.New()),
 		DueAt:       ptr(time.Now()),
 		Description: "filled in",
-		Labels:      []string{"a"},
+		Tags:        []string{"a"},
 	}
 	require.False(t, fieldPresent(FieldKey("story_points"), full),
 		"an unknown field key must read as absent, so the guard refuses rather than waives")
@@ -194,7 +194,7 @@ func TestEvaluate_FieldRequired(t *testing.T) {
 		AssigneeID:  ptr(uuid.New()),
 		DueAt:       ptr(time.Now()),
 		Description: "a real description",
-		Labels:      []string{"needs-review"},
+		Tags:        []string{"needs_review"},
 	}
 
 	cases := []struct {
@@ -202,10 +202,10 @@ func TestEvaluate_FieldRequired(t *testing.T) {
 		empty   EntitySnapshot
 		inWords string
 	}{
-		{FieldAssigneeID, EntitySnapshot{AssigneeID: nil, DueAt: full.DueAt, Description: full.Description, Labels: full.Labels}, "assignee"},
-		{FieldDueAt, EntitySnapshot{AssigneeID: full.AssigneeID, DueAt: nil, Description: full.Description, Labels: full.Labels}, "due date"},
-		{FieldDescription, EntitySnapshot{AssigneeID: full.AssigneeID, DueAt: full.DueAt, Description: "   \t\n ", Labels: full.Labels}, "description"},
-		{FieldLabels, EntitySnapshot{AssigneeID: full.AssigneeID, DueAt: full.DueAt, Description: full.Description, Labels: nil}, "label"},
+		{FieldAssigneeID, EntitySnapshot{AssigneeID: nil, DueAt: full.DueAt, Description: full.Description, Tags: full.Tags}, "assignee"},
+		{FieldDueAt, EntitySnapshot{AssigneeID: full.AssigneeID, DueAt: nil, Description: full.Description, Tags: full.Tags}, "due date"},
+		{FieldDescription, EntitySnapshot{AssigneeID: full.AssigneeID, DueAt: full.DueAt, Description: "   \t\n ", Tags: full.Tags}, "description"},
+		{FieldTags, EntitySnapshot{AssigneeID: full.AssigneeID, DueAt: full.DueAt, Description: full.Description, Tags: nil}, "tag"},
 	}
 
 	for _, tc := range cases {
@@ -264,7 +264,7 @@ func TestEvaluate_ReturnsTheFirstFailingGuardInOrder(t *testing.T) {
 	t.Parallel()
 
 	first := Guard{ID: uuid.New(), Class: GuardValidatorClass, Kind: GuardFieldRequired, FieldKey: ptr(FieldDueAt), Position: 0}
-	second := Guard{ID: uuid.New(), Class: GuardValidatorClass, Kind: GuardFieldRequired, FieldKey: ptr(FieldLabels), Position: 1}
+	second := Guard{ID: uuid.New(), Class: GuardValidatorClass, Kind: GuardFieldRequired, FieldKey: ptr(FieldTags), Position: 1}
 
 	r := Evaluate([]Guard{first, second}, GuardValidatorClass, actorWith(uuid.New(), nil), EntitySnapshot{})
 	require.NotNil(t, r)
@@ -318,7 +318,7 @@ func TestValidateGuard_RefusesParameterMismatch(t *testing.T) {
 	require.NoError(t, ValidateGuard(Guard{Class: GuardConditionClass, Kind: GuardActorIsAssignee}))
 	require.NoError(t, ValidateGuard(Guard{Class: GuardValidatorClass, Kind: GuardActorInTeam, TeamID: &team}))
 	require.NoError(t, ValidateGuard(Guard{Class: GuardConditionClass, Kind: GuardActorHasCapability, Capability: ptr(access.CapManageSpace)}))
-	require.NoError(t, ValidateGuard(Guard{Class: GuardValidatorClass, Kind: GuardFieldRequired, FieldKey: ptr(FieldLabels)}))
+	require.NoError(t, ValidateGuard(Guard{Class: GuardValidatorClass, Kind: GuardFieldRequired, FieldKey: ptr(FieldTags)}))
 }
 
 // ─── Exhaustiveness ───────────────────────────────────────────────────────────
@@ -359,7 +359,7 @@ func TestGuardVocabulary_EveryKindIsEvaluableAndWritable(t *testing.T) {
 			AssigneeID:  ptr(actor.UserID),
 			DueAt:       ptr(time.Now()),
 			Description: "x",
-			Labels:      []string{"x"},
+			Tags:        []string{"x"},
 		}
 		require.Nil(t, Evaluate([]Guard{g}, GuardValidatorClass, actor, entity),
 			"guard kind %q fell through to the fail-closed default instead of being evaluated", kind)

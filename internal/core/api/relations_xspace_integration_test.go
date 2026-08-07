@@ -124,7 +124,7 @@ func (f *relFixture) mkItemAs(t *testing.T, spaceID uuid.UUID, title string, rep
 	item, err := f.q.CreateProjectItem(context.Background(), generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: spaceID, Kind: "task", Title: title,
 		Description: "", Status: "open", Priority: "medium",
-		ReporterID: reporter, Labels: []string{}, Rank: "a",
+		ReporterID: reporter, Rank: "a",
 	})
 	require.NoError(t, err)
 	return item.ID
@@ -136,7 +136,7 @@ func (f *relFixture) mkTicket(t *testing.T, spaceID uuid.UUID, number int32, tit
 		ID: uuid.New(), SpaceID: spaceID, Number: number, Title: title,
 		Description: title + "-body", Status: "open", Priority: "medium",
 		ReporterID: pgtype.UUID{Bytes: f.ts.UserID, Valid: true},
-		Labels:     []string{}, Rank: "a",
+		Rank:       "a",
 	})
 	require.NoError(t, err)
 	return row.ID

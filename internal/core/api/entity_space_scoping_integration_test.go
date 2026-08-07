@@ -74,7 +74,11 @@ const (
 	secretField       = "XSPACE-SECRET-FIELDVALUE"
 	secretTicketField = "XSPACE-SECRET-TICKETFIELDVALUE"
 	// Tag slugs are constrained to ^[a-z0-9][a-z0-9_]*$ (migration 040).
-	secretTag = "xspace_secret_tag"
+	// One per entity kind, so a leak names which arm of the entity_tags
+	// reconciliation produced it.
+	secretTag       = "xspace_secret_tag"
+	secretTicketTag = "xspace_secret_ticket_tag"
+	secretItemTag   = "xspace_secret_item_tag"
 )
 
 func newScopeFixture(t *testing.T) *scopeFixture {
@@ -109,7 +113,9 @@ func newScopeFixture(t *testing.T) *scopeFixture {
 	f.mkComment(t, "project_item", f.itemB, secretNote)
 	f.mkFieldValue(t, "project_item", f.itemB, secretField)
 	f.mkFieldValue(t, "ticket", f.ticketB, secretTicketField)
-	f.mkTag(t, f.pageB, secretTag)
+	f.mkTag(t, "page", f.pageB, secretTag)
+	f.mkTag(t, "ticket", f.ticketB, secretTicketTag)
+	f.mkTag(t, "project_item", f.itemB, secretItemTag)
 	// Relations touching every space-B entity type, so the relations rows'
 	// crossed direction has rows to withhold: an unreconciled list leaks the
 	// rows' existence (count, kinds, directions) even with far sides redacted.
@@ -120,7 +126,9 @@ func newScopeFixture(t *testing.T) *scopeFixture {
 	f.mkComment(t, "project_item", f.itemA, "Ordinary comment in A")
 	f.mkFieldValue(t, "project_item", f.itemA, "ordinary-value")
 	f.mkFieldValue(t, "ticket", f.ticketA, "ordinary-ticket-value")
-	f.mkTag(t, f.pageA, "ordinary_tag")
+	f.mkTag(t, "page", f.pageA, "ordinary_tag")
+	f.mkTag(t, "ticket", f.ticketA, "ordinary_ticket_tag")
+	f.mkTag(t, "project_item", f.itemA, "ordinary_item_tag")
 	f.mkRelation(t, f.itemA, "project_item", f.pageA, "page")
 	f.mkRelation(t, f.ticketA, "ticket", f.itemA, "project_item")
 
@@ -132,7 +140,7 @@ func (f *scopeFixture) mkItem(t *testing.T, spaceID uuid.UUID, title string) uui
 	row, err := f.q.CreateProjectItem(context.Background(), generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: spaceID, Kind: "task", Title: title,
 		Description: title + "-body", Status: "open", Priority: "medium",
-		ReporterID: f.ts.UserID, Labels: []string{}, Rank: "a",
+		ReporterID: f.ts.UserID, Rank: "a",
 	})
 	require.NoError(t, err)
 	// The item is placed on its space's sprint later by the sprint fixture.
@@ -168,7 +176,7 @@ func (f *scopeFixture) mkTicket(t *testing.T, spaceID uuid.UUID, number int32, t
 		ID: uuid.New(), SpaceID: spaceID, Number: number, Title: title,
 		Description: title + "-body", Status: "open", Priority: "medium",
 		ReporterID: pgtype.UUID{Bytes: reporter, Valid: true},
-		Labels:     []string{}, Rank: "a",
+		Rank:       "a",
 	})
 	require.NoError(t, err)
 	return row.ID
@@ -201,7 +209,7 @@ func (f *scopeFixture) mkRelation(t *testing.T, fromID uuid.UUID, fromType strin
 	require.NoError(t, err)
 }
 
-func (f *scopeFixture) mkTag(t *testing.T, pageID uuid.UUID, slug string) {
+func (f *scopeFixture) mkTag(t *testing.T, entityType string, entityID uuid.UUID, slug string) {
 	t.Helper()
 	var tagID uuid.UUID
 	require.NoError(t, f.ts.DB.Pool.QueryRow(context.Background(),
@@ -210,8 +218,8 @@ func (f *scopeFixture) mkTag(t *testing.T, pageID uuid.UUID, slug string) {
 		 RETURNING id`,
 		uuid.New(), f.ts.OrgID, slug, slug).Scan(&tagID))
 	_, err := f.ts.DB.Pool.Exec(context.Background(),
-		`INSERT INTO page_tags (page_id, tag_id) VALUES ($1,$2)
-		 ON CONFLICT DO NOTHING`, pageID, tagID)
+		`INSERT INTO entity_tags (entity_type, entity_id, tag_id) VALUES ($1,$2,$3)
+		 ON CONFLICT DO NOTHING`, entityType, entityID, tagID)
 	require.NoError(t, err)
 }
 
@@ -360,6 +368,27 @@ var scopeCases = []scopeCase{
 		secret:    secretTag,
 		listRoute: true,
 	},
+	// The two sibling rows of PageTags: the entity_tags reconciliation is one
+	// three-arm query (migration 055), and each arm has to be proven
+	// separately — a working page arm says nothing about the ticket arm.
+	{
+		name:      "TicketTags",
+		path:      func(f *scopeFixture, s, e uuid.UUID) string { return f.base(s) + "/tickets/" + e.String() + "/tags" },
+		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketA },
+		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketB },
+		secret:    secretTicketTag,
+		listRoute: true,
+	},
+	{
+		name: "ItemTags",
+		path: func(f *scopeFixture, s, e uuid.UUID) string {
+			return f.base(s) + "/projects/items/" + e.String() + "/tags"
+		},
+		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.itemA },
+		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.itemB },
+		secret:    secretItemTag,
+		listRoute: true,
+	},
 	{
 		// A4: the page-mounted relations list, same reconciliation as
 		// ItemRelations above.
@@ -430,7 +459,7 @@ func TestEntitySpaceScoping_CrossOrgReadsDiscloseNothing(t *testing.T) {
 	foreignItem, err := f.q.CreateProjectItem(context.Background(), generated.CreateProjectItemParams{
 		ID: uuid.New(), SpaceID: otherSpace.ID, Kind: "task", Title: "FOREIGN-ORG-SECRET",
 		Description: "FOREIGN-ORG-BODY", Status: "open", Priority: "medium",
-		ReporterID: otherUser.ID, Labels: []string{}, Rank: "a",
+		ReporterID: otherUser.ID, Rank: "a",
 	})
 	require.NoError(t, err)
 

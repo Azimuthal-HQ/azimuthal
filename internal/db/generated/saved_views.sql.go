@@ -1119,7 +1119,7 @@ func (q *Queries) ListSpaceWorkflowStatuses(ctx context.Context, spaceID uuid.UU
 const listViewProjectItems = `-- name: ListViewProjectItems :many
 SELECT pi.id, pi.number, pi.title, pi.space_id, pi.status, pi.priority,
        pi.assignee_id, pi.created_at, pi.updated_at, pi.due_at,
-       pi.resolved_at, pi.labels, pi.kind, pi.sprint_id, pi.item_key,
+       pi.resolved_at, pi.kind, pi.sprint_id, pi.item_key,
        s.key  AS space_key,
        s.name AS space_name,
        au.display_name AS assignee_name,
@@ -1228,7 +1228,6 @@ type ListViewProjectItemsRow struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	DueAt        pgtype.Timestamptz `json:"due_at"`
 	ResolvedAt   pgtype.Timestamptz `json:"resolved_at"`
-	Labels       []string           `json:"labels"`
 	Kind         string             `json:"kind"`
 	SprintID     pgtype.UUID        `json:"sprint_id"`
 	ItemKey      string             `json:"item_key"`
@@ -1305,7 +1304,6 @@ func (q *Queries) ListViewProjectItems(ctx context.Context, arg ListViewProjectI
 			&i.UpdatedAt,
 			&i.DueAt,
 			&i.ResolvedAt,
-			&i.Labels,
 			&i.Kind,
 			&i.SprintID,
 			&i.ItemKey,
@@ -1327,7 +1325,6 @@ func (q *Queries) ListViewProjectItems(ctx context.Context, arg ListViewProjectI
 const listViewTickets = `-- name: ListViewTickets :many
 SELECT tk.id, tk.number, tk.title, tk.space_id, tk.status, tk.priority,
        tk.assignee_id, tk.created_at, tk.updated_at, tk.due_at, tk.resolved_at,
-       tk.labels,
        s.key  AS space_key,
        s.name AS space_name,
        au.display_name AS assignee_name,
@@ -1442,7 +1439,6 @@ type ListViewTicketsRow struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	DueAt        pgtype.Timestamptz `json:"due_at"`
 	ResolvedAt   pgtype.Timestamptz `json:"resolved_at"`
-	Labels       []string           `json:"labels"`
 	SpaceKey     string             `json:"space_key"`
 	SpaceName    string             `json:"space_name"`
 	AssigneeName *string            `json:"assignee_name"`
@@ -1552,7 +1548,6 @@ func (q *Queries) ListViewTickets(ctx context.Context, arg ListViewTicketsParams
 			&i.UpdatedAt,
 			&i.DueAt,
 			&i.ResolvedAt,
-			&i.Labels,
 			&i.SpaceKey,
 			&i.SpaceName,
 			&i.AssigneeName,

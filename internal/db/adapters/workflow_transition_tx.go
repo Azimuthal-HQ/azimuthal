@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
@@ -180,14 +181,12 @@ func (a *WorkflowTransitionTxAdapter) writeEffects(ctx context.Context, qtx *gen
 	f := foldEffects(in.Effects)
 	setAssignee, assignee := f.setAssignee, f.assignee
 	setDueAt, dueAt := f.setDueAt, f.dueAt
-	setLabels, labels := f.setLabels, f.labels
 
 	switch in.EntityType {
 	case workflow.ApprovalEntityTicket:
 		if err := qtx.ApplyTicketEffects(ctx, generated.ApplyTicketEffectsParams{
 			SetAssignee: setAssignee, AssigneeID: assignee,
 			SetDueAt: setDueAt, DueAt: dueAt,
-			SetLabels: setLabels, Labels: labels,
 			ID: in.EntityID, SpaceID: in.SpaceID,
 		}); err != nil {
 			return fmt.Errorf("apply transition: applying ticket post-functions: %w", err)
@@ -196,7 +195,6 @@ func (a *WorkflowTransitionTxAdapter) writeEffects(ctx context.Context, qtx *gen
 		if err := qtx.ApplyProjectItemEffects(ctx, generated.ApplyProjectItemEffectsParams{
 			SetAssignee: setAssignee, AssigneeID: assignee,
 			SetDueAt: setDueAt, DueAt: dueAt,
-			SetLabels: setLabels, Labels: labels,
 			ID: in.EntityID, SpaceID: in.SpaceID,
 		}); err != nil {
 			return fmt.Errorf("apply transition: applying item post-functions: %w", err)
@@ -204,33 +202,90 @@ func (a *WorkflowTransitionTxAdapter) writeEffects(ctx context.Context, qtx *gen
 	default:
 		return fmt.Errorf("apply transition: unknown entity type %q", in.EntityType)
 	}
+
+	if f.setTags {
+		if err := replaceEntityTagsTx(ctx, qtx, in, f.tags); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// effectFold is the collapsed set of column writes for one transition.
-type effectFold struct {
-	setAssignee, setDueAt, setLabels bool
-	assignee                         pgtype.UUID
-	dueAt                            pgtype.Timestamptz
-	labels                           []string
+// replaceEntityTagsTx makes the entity's tag set exactly the post-function's
+// labels, inside the transition's own transaction — a set_field:tags effect
+// that landed while the status write rolled back would be an effect with no
+// cause, same as any other post-function.
+//
+// The labels resolve LENIENTLY (tags.LenientLabelSlugs): a stored label that
+// cannot become a tag is dropped rather than refusing the transition, because
+// the value may predate the entity-tags convergence and the person
+// mid-transition cannot fix the workflow's configuration. Tag rows minted here
+// roll back with the transition, which is tidier than the publish path's
+// deliberate outside-the-transaction minting — the difference is that publish
+// wants its tag rows to survive a failed publish, while a refused transition
+// should leave nothing.
+//
+// The association statements carry the same space reconciliation every tag
+// write does, against the space the status write just matched under its CAS.
+func replaceEntityTagsTx(ctx context.Context, qtx *generated.Queries, in workflow.ApplyInput, labels []string) error {
+	entityType := string(tags.EntityTicket)
+	if in.EntityType == workflow.ApprovalEntityItem {
+		entityType = string(tags.EntityProjectItem)
+	}
+
+	resolved := tags.LenientLabelSlugs(labels)
+	keep := make([]uuid.UUID, 0, len(resolved))
+	for _, sl := range resolved {
+		row, err := qtx.UpsertTag(ctx, generated.UpsertTagParams{
+			OrgID: in.OrgID, Slug: sl.Slug, Name: sl.Label,
+		})
+		if err != nil {
+			return fmt.Errorf("apply transition: resolving tag %q: %w", sl.Slug, err)
+		}
+		keep = append(keep, row.ID)
+	}
+
+	if err := qtx.DeleteEntityTagsExcept(ctx, generated.DeleteEntityTagsExceptParams{
+		EntityType: entityType, EntityID: in.EntityID, SpaceID: in.SpaceID,
+		KeepIds: keep,
+	}); err != nil {
+		return fmt.Errorf("apply transition: clearing entity tags: %w", err)
+	}
+	for _, tagID := range keep {
+		if err := qtx.AddEntityTag(ctx, generated.AddEntityTagParams{
+			EntityType: entityType, EntityID: in.EntityID, SpaceID: in.SpaceID,
+			TagID: tagID,
+		}); err != nil {
+			return fmt.Errorf("apply transition: tagging: %w", err)
+		}
+	}
+	return nil
 }
 
-// foldEffects collapses the planned effects into one write per column.
+// effectFold is the collapsed set of writes for one transition.
+type effectFold struct {
+	setAssignee, setDueAt, setTags bool
+	assignee                       pgtype.UUID
+	dueAt                          pgtype.Timestamptz
+	tags                           []string
+}
+
+// foldEffects collapses the planned effects into one write per field.
 //
 // Later effects win over earlier ones writing the same field — the ordinary
 // meaning of a sequence, and why the read is ordered by (position, id).
 func foldEffects(effects []workflow.Effect) effectFold {
-	f := effectFold{labels: []string{}}
+	f := effectFold{tags: []string{}}
 	for _, e := range effects {
 		switch {
 		case e.SetAssignee != nil:
 			f.setAssignee, f.assignee = true, pgUUID(*e.SetAssignee)
 		case e.SetDueAt != nil:
 			f.setDueAt, f.dueAt = true, pgTimestampPtr(*e.SetDueAt)
-		case e.SetLabels != nil:
-			f.setLabels = true
-			if *e.SetLabels != nil {
-				f.labels = *e.SetLabels
+		case e.SetTags != nil:
+			f.setTags = true
+			if *e.SetTags != nil {
+				f.tags = *e.SetTags
 			}
 		}
 	}
@@ -290,8 +345,8 @@ func describeEffects(effects []workflow.Effect) string {
 			names = append(names, "assign_to")
 		case e.SetDueAt != nil:
 			names = append(names, "set_field:due_at")
-		case e.SetLabels != nil:
-			names = append(names, "set_field:labels")
+		case e.SetTags != nil:
+			names = append(names, "set_field:tags")
 		}
 	}
 	return strings.Join(names, ",")

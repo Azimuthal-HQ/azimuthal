@@ -54,7 +54,7 @@ import {
   DialogTitle,
 } from '../ui/dialog';
 import { CodexEditor } from './CodexEditor';
-import { PageTags } from './PageTags';
+import { EntityTags } from '../tags/EntityTags';
 import {
   LostContentDialog,
   PublishConflictDialog,
@@ -340,7 +340,7 @@ export function PageEditor({
           so a reader sees a tag as soon as it is added even while the body is
           still being written. The alternative, holding tags in the draft, would
           make the two halves of a page publish on different schedules. */}
-      <PageTags spaceId={spaceId} pageId={pageId} editable />
+      <EntityTags entityType="page" spaceId={spaceId} entityId={pageId} editable />
 
       {restoredDraft && (
         <p

@@ -16,9 +16,8 @@ const applyProjectItemEffects = `-- name: ApplyProjectItemEffects :exec
 UPDATE project_items SET
     assignee_id = CASE WHEN $1::boolean THEN $2::uuid ELSE assignee_id END,
     due_at      = CASE WHEN $3::boolean   THEN $4::timestamptz ELSE due_at END,
-    labels      = CASE WHEN $5::boolean   THEN $6::text[] ELSE labels END,
     updated_at  = now()
-WHERE id = $7 AND space_id = $8 AND deleted_at IS NULL
+WHERE id = $5 AND space_id = $6 AND deleted_at IS NULL
 `
 
 type ApplyProjectItemEffectsParams struct {
@@ -26,8 +25,6 @@ type ApplyProjectItemEffectsParams struct {
 	AssigneeID  pgtype.UUID        `json:"assignee_id"`
 	SetDueAt    bool               `json:"set_due_at"`
 	DueAt       pgtype.Timestamptz `json:"due_at"`
-	SetLabels   bool               `json:"set_labels"`
-	Labels      []string           `json:"labels"`
 	ID          uuid.UUID          `json:"id"`
 	SpaceID     uuid.UUID          `json:"space_id"`
 }
@@ -39,8 +36,6 @@ func (q *Queries) ApplyProjectItemEffects(ctx context.Context, arg ApplyProjectI
 		arg.AssigneeID,
 		arg.SetDueAt,
 		arg.DueAt,
-		arg.SetLabels,
-		arg.Labels,
 		arg.ID,
 		arg.SpaceID,
 	)
@@ -53,9 +48,8 @@ const applyTicketEffects = `-- name: ApplyTicketEffects :exec
 UPDATE tickets SET
     assignee_id = CASE WHEN $1::boolean THEN $2::uuid ELSE assignee_id END,
     due_at      = CASE WHEN $3::boolean   THEN $4::timestamptz ELSE due_at END,
-    labels      = CASE WHEN $5::boolean   THEN $6::text[] ELSE labels END,
     updated_at  = now()
-WHERE id = $7 AND space_id = $8 AND deleted_at IS NULL
+WHERE id = $5 AND space_id = $6 AND deleted_at IS NULL
 `
 
 type ApplyTicketEffectsParams struct {
@@ -63,8 +57,6 @@ type ApplyTicketEffectsParams struct {
 	AssigneeID  pgtype.UUID        `json:"assignee_id"`
 	SetDueAt    bool               `json:"set_due_at"`
 	DueAt       pgtype.Timestamptz `json:"due_at"`
-	SetLabels   bool               `json:"set_labels"`
-	Labels      []string           `json:"labels"`
 	ID          uuid.UUID          `json:"id"`
 	SpaceID     uuid.UUID          `json:"space_id"`
 }
@@ -83,15 +75,16 @@ type ApplyTicketEffectsParams struct {
 // Post-function effects commit with the status write or not at all, so this
 // carries the same space predicate UpdateTicketWorkflowState does. Without it a
 // transition could be refused the status change and still rewrite the far
-// entity's assignee, due date and labels.
+// entity's assignee and due date. The set_field:tags effect is not a column on
+// this row at all any more — the applier replaces the entity's entity_tags
+// associations inside the same transaction, through the same predicate-scoped
+// statements every tag write uses.
 func (q *Queries) ApplyTicketEffects(ctx context.Context, arg ApplyTicketEffectsParams) error {
 	_, err := q.db.Exec(ctx, applyTicketEffects,
 		arg.SetAssignee,
 		arg.AssigneeID,
 		arg.SetDueAt,
 		arg.DueAt,
-		arg.SetLabels,
-		arg.Labels,
 		arg.ID,
 		arg.SpaceID,
 	)

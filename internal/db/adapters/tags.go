@@ -10,16 +10,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
 
-// TagAdapter implements tags.Repository over the tags and page_tags tables
-// (migration 040).
+// TagAdapter implements tags.Repository over the tags and entity_tags tables
+// (migrations 040, 055).
 //
-// It holds a pool as well as the queries because [TagAdapter.ReplacePageTags]
-// is two statements that have to be one: a delete of what is no longer wanted
-// and an insert of what is new. Between them the page carries neither set, and
-// a failure there would leave a page's tags half-applied with nothing to say so.
+// It holds a pool as well as the queries because
+// [TagAdapter.ReplaceEntityTags] is two statements that have to be one: a
+// delete of what is no longer wanted and an insert of what is new. Between
+// them the entity carries neither set, and a failure there would leave its
+// tags half-applied with nothing to say so.
 type TagAdapter struct {
 	q    *generated.Queries
 	pool *pgxpool.Pool
@@ -60,27 +62,42 @@ func (a *TagAdapter) Upsert(ctx context.Context, orgID uuid.UUID, slug, name str
 	return dbTagToTag(row), nil
 }
 
-// ForPage implements the repository interface.
+// ForEntity implements the repository interface.
 //
-// The space parameter reaches the query rather than being applied here: the
-// association table has no space of its own, so the reconciliation is a join
-// through the page and belongs in SQL, where it cannot be forgotten by a caller.
-func (a *TagAdapter) ForPage(ctx context.Context, pageID, spaceID uuid.UUID) ([]tags.Tag, error) {
-	rows, err := a.q.ListTagsForPage(ctx, generated.ListTagsForPageParams{
-		PageID:  pageID,
-		SpaceID: spaceID,
+// The space reaches the query rather than being applied here: the association
+// table has no space of its own, so the reconciliation is a three-arm EXISTS
+// against the entity's own table and belongs in SQL, where it cannot be
+// forgotten by a caller.
+func (a *TagAdapter) ForEntity(ctx context.Context, ref tags.EntityRef) ([]tags.Tag, error) {
+	rows, err := a.q.ListTagsForEntity(ctx, generated.ListTagsForEntityParams{
+		EntityType: string(ref.Type),
+		EntityID:   ref.ID,
+		SpaceID:    ref.SpaceID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("tag adapter list for page: %w", err)
+		return nil, fmt.Errorf("tag adapter list for entity: %w", err)
 	}
 	return dbTagsToTags(rows), nil
 }
 
-// ReplacePageTags implements the repository interface, in one transaction.
-func (a *TagAdapter) ReplacePageTags(ctx context.Context, pageID uuid.UUID, tagIDs []uuid.UUID) error {
+// EntityInSpace implements the repository interface.
+func (a *TagAdapter) EntityInSpace(ctx context.Context, ref tags.EntityRef) (bool, error) {
+	ok, err := a.q.EntityTagTargetInSpace(ctx, generated.EntityTagTargetInSpaceParams{
+		EntityType: string(ref.Type),
+		EntityID:   ref.ID,
+		SpaceID:    ref.SpaceID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("tag adapter entity in space: %w", err)
+	}
+	return ok, nil
+}
+
+// ReplaceEntityTags implements the repository interface, in one transaction.
+func (a *TagAdapter) ReplaceEntityTags(ctx context.Context, ref tags.EntityRef, tagIDs []uuid.UUID) error {
 	tx, err := a.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("tag adapter replace page tags: begin: %w", err)
+		return fmt.Errorf("tag adapter replace entity tags: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := a.q.WithTx(tx)
@@ -88,76 +105,105 @@ func (a *TagAdapter) ReplacePageTags(ctx context.Context, pageID uuid.UUID, tagI
 	// A nil slice would make `= ANY(NULL)` NULL rather than false, and the
 	// NOT of that is NULL, so the DELETE would match nothing — the empty case
 	// would silently keep every tag. An empty non-nil array is what makes
-	// "clear this page's tags" delete them.
+	// "clear this entity's tags" delete them.
 	keep := tagIDs
 	if keep == nil {
 		keep = []uuid.UUID{}
 	}
-	if err := qtx.DeletePageTagsExcept(ctx, generated.DeletePageTagsExceptParams{
-		PageID:  pageID,
-		KeepIds: keep,
+	if err := qtx.DeleteEntityTagsExcept(ctx, generated.DeleteEntityTagsExceptParams{
+		EntityType: string(ref.Type),
+		EntityID:   ref.ID,
+		SpaceID:    ref.SpaceID,
+		KeepIds:    keep,
 	}); err != nil {
-		return fmt.Errorf("tag adapter replace page tags: delete: %w", err)
+		return fmt.Errorf("tag adapter replace entity tags: delete: %w", err)
 	}
-	if err := addPageTags(ctx, qtx, pageID, tagIDs); err != nil {
+	if err := addEntityTags(ctx, qtx, ref, tagIDs); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("tag adapter replace page tags: commit: %w", err)
+		return fmt.Errorf("tag adapter replace entity tags: commit: %w", err)
 	}
 	return nil
 }
 
-// AddPageTags implements the repository interface.
-func (a *TagAdapter) AddPageTags(ctx context.Context, pageID uuid.UUID, tagIDs []uuid.UUID) error {
-	return addPageTags(ctx, a.q, pageID, tagIDs)
+// AddEntityTags implements the repository interface.
+func (a *TagAdapter) AddEntityTags(ctx context.Context, ref tags.EntityRef, tagIDs []uuid.UUID) error {
+	return addEntityTags(ctx, a.q, ref, tagIDs)
 }
 
-// pageTagWriter is the slice of the generated queries the association writes
+// entityTagWriter is the slice of the generated queries the association writes
 // need, so the same code serves both the pool and a transaction.
-type pageTagWriter interface {
-	AddPageTag(ctx context.Context, arg generated.AddPageTagParams) error
+type entityTagWriter interface {
+	AddEntityTag(ctx context.Context, arg generated.AddEntityTagParams) error
 }
 
-func addPageTags(ctx context.Context, q pageTagWriter, pageID uuid.UUID, tagIDs []uuid.UUID) error {
+func addEntityTags(ctx context.Context, q entityTagWriter, ref tags.EntityRef, tagIDs []uuid.UUID) error {
 	for _, tagID := range tagIDs {
-		if err := q.AddPageTag(ctx, generated.AddPageTagParams{PageID: pageID, TagID: tagID}); err != nil {
-			return fmt.Errorf("tag adapter add page tag: %w", err)
+		if err := q.AddEntityTag(ctx, generated.AddEntityTagParams{
+			EntityType: string(ref.Type),
+			EntityID:   ref.ID,
+			SpaceID:    ref.SpaceID,
+			TagID:      tagID,
+		}); err != nil {
+			return fmt.Errorf("tag adapter add entity tag: %w", err)
 		}
 	}
 	return nil
 }
 
-// PagesWithTag implements the repository interface.
-func (a *TagAdapter) PagesWithTag(ctx context.Context, tagID uuid.UUID, readableSpaceIDs []uuid.UUID) ([]tags.TaggedPage, error) {
-	// Same NULL trap as above, and here it fails the other way: `= ANY(NULL)`
-	// is NULL, so the WHERE never matches and a nil readable set returns
-	// nothing. That is the fail-closed direction, but relying on a NULL
+// EntitiesWithTag implements the repository interface.
+func (a *TagAdapter) EntitiesWithTag(ctx context.Context, tagID uuid.UUID, readableSpaceIDs []uuid.UUID) ([]tags.TaggedEntity, error) {
+	// Same NULL trap as ReplaceEntityTags, and here it fails the other way:
+	// `= ANY(NULL)` is NULL, so the WHERE never matches and a nil readable set
+	// returns nothing. That is the fail-closed direction, but relying on a NULL
 	// comparison for an authorisation filter is not something to leave implicit.
 	readable := readableSpaceIDs
 	if readable == nil {
 		readable = []uuid.UUID{}
 	}
-	rows, err := a.q.ListPagesWithTag(ctx, generated.ListPagesWithTagParams{
+	rows, err := a.q.ListEntitiesWithTag(ctx, generated.ListEntitiesWithTagParams{
 		TagID:            tagID,
 		ReadableSpaceIds: readable,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("tag adapter pages with tag: %w", err)
+		return nil, fmt.Errorf("tag adapter entities with tag: %w", err)
 	}
-	out := make([]tags.TaggedPage, 0, len(rows))
+	out := make([]tags.TaggedEntity, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, tags.TaggedPage{
-			PageID:    row.ID,
-			SpaceID:   row.SpaceID,
-			SpaceName: row.SpaceName,
-			SpaceKey:  row.SpaceKey,
-			Title:     row.Title,
-			Path:      row.Path,
-			UpdatedAt: goTime(row.UpdatedAt),
+		out = append(out, tags.TaggedEntity{
+			EntityType: tags.EntityType(row.EntityType),
+			EntityID:   row.ID,
+			SpaceID:    row.SpaceID,
+			SpaceName:  row.SpaceName,
+			SpaceKey:   row.SpaceKey,
+			Title:      row.Title,
+			Ref:        composeEntityRef(row),
+			UpdatedAt:  goTime(row.UpdatedAt),
 		})
 	}
 	return out, nil
+}
+
+// composeEntityRef turns a browse row's raw ref parts into the kind's one
+// human-readable reference. Each arm is the kind's single existing composition
+// site: tickets.ComposeRef for tickets, the stored item_key for project items
+// (saved_views.sql records why it is selected rather than re-derived), and the
+// materialised path for pages.
+func composeEntityRef(row generated.ListEntitiesWithTagRow) string {
+	switch tags.EntityType(row.EntityType) {
+	case tags.EntityTicket:
+		if row.Number == nil {
+			// Unreachable: the ticket arm always selects its number. An empty
+			// ref beats a panic on a shape this code does not control.
+			return ""
+		}
+		return tickets.ComposeRef(row.SpaceKey, *row.Number)
+	case tags.EntityProjectItem:
+		return row.ItemKey
+	default:
+		return row.Path
+	}
 }
 
 func dbTagToTag(row generated.Tag) tags.Tag {

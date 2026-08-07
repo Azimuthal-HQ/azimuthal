@@ -162,7 +162,7 @@ describe('the same component does render all of it once something is configured'
       { id: 'a1', transition_id: 't1', subject_type: 'user', subject_id: 'u1', subject_name: 'Dana' },
     ];
     postFunctions = [
-      { id: 'p1', transition_id: 't1', kind: 'set_field', position: 0, field_key: 'labels', field_value: 'urgent' },
+      { id: 'p1', transition_id: 't1', kind: 'set_field', position: 0, field_key: 'tags', field_value: 'urgent' },
     ];
   });
 

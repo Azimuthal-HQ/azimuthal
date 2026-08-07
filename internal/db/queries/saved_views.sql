@@ -130,7 +130,6 @@ WHERE id = ANY(@space_ids::uuid[]) AND org_id = @org_id AND deleted_at IS NULL;
 -- syntax is invalid" — so the expanded form is the one that compiles.
 SELECT tk.id, tk.number, tk.title, tk.space_id, tk.status, tk.priority,
        tk.assignee_id, tk.created_at, tk.updated_at, tk.due_at, tk.resolved_at,
-       tk.labels,
        s.key  AS space_key,
        s.name AS space_name,
        au.display_name AS assignee_name,
@@ -225,7 +224,7 @@ LIMIT @row_limit;
 -- is re-derived in the API layer.
 SELECT pi.id, pi.number, pi.title, pi.space_id, pi.status, pi.priority,
        pi.assignee_id, pi.created_at, pi.updated_at, pi.due_at,
-       pi.resolved_at, pi.labels, pi.kind, pi.sprint_id, pi.item_key,
+       pi.resolved_at, pi.kind, pi.sprint_id, pi.item_key,
        s.key  AS space_key,
        s.name AS space_name,
        au.display_name AS assignee_name,

@@ -50,7 +50,7 @@ type projNegFixture struct {
 	ts      *testServer
 	spaceID string
 	// base is the space's project subtree; orgBase the org-scoped families
-	// (labels, item types, custom fields) the same handler serves.
+	// (item types, custom fields) the same handler serves.
 	base    string
 	orgBase string
 
@@ -263,8 +263,6 @@ func TestProjectsNeg_MalformedPathIDsAre400(t *testing.T) {
 		}{
 			{projNegRoute{"relation", http.MethodDelete, f.base + "/relations/" + bad, nil},
 				"invalid relation ID"},
-			{projNegRoute{"label", http.MethodDelete, f.orgBase + "/labels/" + bad, nil},
-				"invalid label ID"},
 			{projNegRoute{"item type patch", http.MethodPatch, f.orgBase + "/item-types/" + bad,
 				map[string]any{"name": "x"}}, "invalid item type ID"},
 			{projNegRoute{"item type delete", http.MethodDelete, f.orgBase + "/item-types/" + bad, nil},
@@ -317,7 +315,6 @@ func TestProjectsNeg_MalformedJSONBodyIs400(t *testing.T) {
 		{"move to backlog", http.MethodPost, f.base + "/backlog/move-to-backlog", nil},
 		{"save board config", http.MethodPut, f.base + "/board/config", nil},
 		{"delete board column", http.MethodDelete, f.base + "/board/config/columns/" + someUUID, nil},
-		{"create label", http.MethodPost, f.orgBase + "/labels", nil},
 		{"create item type", http.MethodPost, f.orgBase + "/item-types", nil},
 		{"update item type", http.MethodPatch, f.orgBase + "/item-types/" + someUUID, nil},
 		{"create custom field", http.MethodPost, f.orgBase + "/custom-fields", nil},
@@ -647,7 +644,7 @@ func TestProjectsNeg_SprintLifecycleConflicts(t *testing.T) {
 
 // TestProjectsNeg_ValidationRefusalsAre400 gathers the request-shape refusals
 // across the handler's four families: relations, the query-parameter reads,
-// labels, and the org-scoped schema surfaces.
+// and the org-scoped schema surfaces.
 //
 // Defect it catches, family by family. A relation whose kind is unrecognised
 // would be stored and then rendered as a link nothing knows how to draw, and a
@@ -677,8 +674,6 @@ func TestProjectsNeg_ValidationRefusalsAre400(t *testing.T) {
 			f.base + "/roadmap?from=last-tuesday&to=2026-01-31", nil}, "invalid 'from' date format"},
 		{projNegRoute{"roadmap with an unparseable to", http.MethodGet,
 			f.base + "/roadmap?from=2026-01-01&to=whenever", nil}, "invalid 'to' date format"},
-		{projNegRoute{"label without a name", http.MethodPost, f.orgBase + "/labels",
-			map[string]any{"color": "#ffffff"}}, "name is required"},
 		{projNegRoute{"item type with a blank name", http.MethodPost, f.orgBase + "/item-types",
 			map[string]any{"name": "   "}}, "name is required"},
 		{projNegRoute{"item type patch with nothing to change", http.MethodPatch,
@@ -693,44 +688,6 @@ func TestProjectsNeg_ValidationRefusalsAre400(t *testing.T) {
 				http.StatusBadRequest, "VALIDATION_ERROR", tc.wantMessage)
 		})
 	}
-}
-
-// TestProjectsNeg_DuplicateLabelNameIs409 walks the arm of handleProjectError
-// that nothing in the tree could reach.
-//
-// projects.LabelRepository's own doc comment says Create "Returns
-// ErrLabelDuplicate if the name exists in the org", and handleProjectError has
-// had a 409 arm for that sentinel since it was written — but LabelAdapter.Create
-// never mapped the unique violation, so the only producer of the sentinel was a
-// test double and a repeated name answered
-// `500 "project operation failed: ... duplicate key value violates unique
-// constraint"` (known-issues #24), leaking the constraint name with it.
-//
-// Both halves of that are closed now: the adapter maps the violation, and the
-// default arm no longer interpolates the error at all — an unmapped 500 here
-// reads `project operation failed` and nothing more, with the cause in the
-// server log under the caller's request id. See TestUnmappedProjectError_* in
-// internal/core/api/projects.
-//
-// This is the end-to-end half of TestLabelAdapter_DuplicateName in
-// internal/db/adapters: that one proves the mapping, this one proves the arm is
-// reachable through the router.
-func TestProjectsNeg_DuplicateLabelNameIs409(t *testing.T) {
-	f := newProjNegFixture(t)
-
-	first := f.as(t, f.ts.Token, http.MethodPost, f.orgBase+"/labels",
-		map[string]any{"name": "escalated", "color": "#ff0000"})
-	require.Equal(t, http.StatusCreated, first.StatusCode, "%s", first.Body)
-
-	projNegRequireError(t, f.as(t, f.ts.Token, http.MethodPost, f.orgBase+"/labels",
-		map[string]any{"name": "escalated", "color": "#00ff00"}),
-		http.StatusConflict, "CONFLICT", "already exists")
-
-	// A different name still succeeds, so the 409 above is the clash and not a
-	// handler that refuses every second label.
-	second := f.as(t, f.ts.Token, http.MethodPost, f.orgBase+"/labels",
-		map[string]any{"name": "deferred", "color": "#00ff00"})
-	require.Equal(t, http.StatusCreated, second.StatusCode, "%s", second.Body)
 }
 
 // --- Board configuration ---

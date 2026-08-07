@@ -212,7 +212,7 @@ export function App() {
           {/* The tag browse (U4). It sits under a space because every Codex
               route does — the space id is the reader's context, not the
               query's scope, which spans every space they can read. See
-              components/codex/tagLinks.ts. */}
+              components/tags/tagLinks.ts. */}
           <Route path="tags/:label" element={<ErrorBoundary><TagPage /></ErrorBoundary>} />
           <Route path="settings" element={<ErrorBoundary><SpaceSettingsPage /></ErrorBoundary>} />
           {/* Unknown sub-routes keep the space chrome and render the branded

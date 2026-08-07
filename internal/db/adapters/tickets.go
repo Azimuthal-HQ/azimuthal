@@ -40,7 +40,6 @@ func (a *TicketAdapter) Create(ctx context.Context, t *tickets.Ticket) error {
 		Priority:    string(t.Priority),
 		ReporterID:  pgUUID(t.ReporterID),
 		AssigneeID:  pgUUID(t.AssigneeID),
-		Labels:      coalesceLabels(t.Labels),
 		DueAt:       pgTimestampPtr(t.DueAt),
 		Rank:        t.Rank,
 		// Written at creation so the ticket starts INSIDE its state machine.
@@ -104,7 +103,6 @@ func (a *TicketAdapter) Update(ctx context.Context, t *tickets.Ticket) error {
 		Status:      string(t.Status),
 		Priority:    string(t.Priority),
 		AssigneeID:  pgUUID(t.AssigneeID),
-		Labels:      coalesceLabels(t.Labels),
 		DueAt:       pgTimestampPtr(t.DueAt),
 		Rank:        t.Rank,
 	})
@@ -223,7 +221,6 @@ func dbTicketToTicket(t generated.Ticket) *tickets.Ticket {
 		ReporterID:  goUUIDPtr(t.ReporterID),
 		RequesterID: goUUIDPtr(t.RequesterID),
 		AssigneeID:  goUUIDPtr(t.AssigneeID),
-		Labels:      t.Labels,
 		DueAt:       goTimePtr(t.DueAt),
 		ResolvedAt:  goTimePtr(t.ResolvedAt),
 		Rank:        t.Rank,
@@ -243,14 +240,6 @@ func dbTicketsToTickets(rows []generated.Ticket) []*tickets.Ticket {
 		result = append(result, dbTicketToTicket(r))
 	}
 	return result
-}
-
-// coalesceLabels ensures nil slices become empty slices for DB compatibility.
-func coalesceLabels(labels []string) []string {
-	if labels == nil {
-		return []string{}
-	}
-	return labels
 }
 
 // UserIsMemberOfSpaceOrg reports whether a user belongs to the organisation

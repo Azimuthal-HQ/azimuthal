@@ -109,7 +109,6 @@ func createTicketForDue(t *testing.T, ts *testServer, due string) (string, strin
 		"title":       "Original Title",
 		"description": "Original description",
 		"priority":    "high",
-		"labels":      []string{"first", "second"},
 	}
 	if due != "" {
 		body["due_at"] = due
@@ -184,7 +183,6 @@ func TestUpdateTicket_DueOnlyPatchLeavesEverythingElse(t *testing.T) {
 	require.Equal(t, "Original Title", got["title"], "an omitted title must be left alone, not blanked")
 	require.Equal(t, "Original description", got["description"], "an omitted description must be left alone")
 	require.Equal(t, "high", got["priority"], "an omitted priority must be left alone")
-	require.Equal(t, []any{"first", "second"}, got["labels"], "omitted labels must be left alone")
 }
 
 // TestUpdateTicket_OmittedDueAtIsNotCleared is the anti-clear regression, and

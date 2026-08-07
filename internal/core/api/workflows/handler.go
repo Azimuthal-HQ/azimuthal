@@ -17,6 +17,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/tiergate"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
@@ -699,7 +700,6 @@ func (h *Handler) ApplyWorkflowTransitionToTicket(w http.ResponseWriter, r *http
 			AssigneeID:  goUUIDPtr(ticket.AssigneeID),
 			DueAt:       goTimePtr(ticket.DueAt),
 			Description: ticket.Description,
-			Labels:      ticket.Labels,
 		})
 	if !ok {
 		return
@@ -783,7 +783,6 @@ func (h *Handler) ApplyWorkflowTransitionToItem(w http.ResponseWriter, r *http.R
 			AssigneeID:  goUUIDPtr(item.AssigneeID),
 			DueAt:       goTimePtr(item.DueAt),
 			Description: item.Description,
-			Labels:      item.Labels,
 		})
 	if !ok {
 		return
@@ -933,6 +932,41 @@ func (h *Handler) targetStateInSpace(
 // These two routes have no frontend caller today, but they are gated for the
 // same reason the /status routes are: an ungated route is a way around a
 // configured guard, and "nothing calls it yet" is not a security boundary.
+// snapshotWithTags fills a guard snapshot's tag slugs from entity_tags,
+// mapping the approval vocabulary's entity kind onto the tag model's.
+func (h *Handler) snapshotWithTags(
+	w http.ResponseWriter, r *http.Request,
+	spaceID uuid.UUID, entityType workflow.ApprovalEntityType, entityID uuid.UUID,
+	snapshot workflow.EntitySnapshot,
+) (workflow.EntitySnapshot, bool) {
+	tagKind := tags.EntityTicket
+	if entityType == workflow.ApprovalEntityItem {
+		tagKind = tags.EntityProjectItem
+	}
+	entityTags, ok := h.entityTagSlugs(w, r, tagKind, entityID, spaceID)
+	if !ok {
+		return snapshot, false
+	}
+	snapshot.Tags = entityTags
+	return snapshot, true
+}
+
+// gateActor resolves the caller's claims and org id for a gate evaluation,
+// answering 401 itself when either is absent.
+func (h *Handler) gateActor(w http.ResponseWriter, r *http.Request) (*auth.Claims, uuid.UUID, bool) {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return nil, uuid.Nil, false
+	}
+	orgID, err := uuid.Parse(claims.OrgID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return nil, uuid.Nil, false
+	}
+	return claims, orgID, true
+}
+
 func (h *Handler) gate(
 	w http.ResponseWriter, r *http.Request,
 	spaceID uuid.UUID, entityType workflow.ApprovalEntityType, entityID uuid.UUID,
@@ -944,14 +978,17 @@ func (h *Handler) gate(
 		return workflow.TransitionDecision{}, false
 	}
 
-	claims := auth.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+	// The snapshot's tag slugs are filled HERE, not by the callers: every
+	// gate evaluation needs them (field_required on 'tags' reads entity_tags,
+	// migration 055), and a caller that forgot would hand the guard an
+	// entity that appears untagged — a silent refusal on every tagged entity.
+	snapshot, ok := h.snapshotWithTags(w, r, spaceID, entityType, entityID, snapshot)
+	if !ok {
 		return workflow.TransitionDecision{}, false
 	}
-	orgID, err := uuid.Parse(claims.OrgID)
-	if err != nil {
-		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+
+	claims, orgID, ok := h.gateActor(w, r)
+	if !ok {
 		return workflow.TransitionDecision{}, false
 	}
 

@@ -118,25 +118,25 @@ func TestPlanPostFunctions_SetField(t *testing.T) {
 		require.Nil(t, *effects[0].SetDueAt)
 	})
 
-	t.Run("labels split on commas, dropping empties", func(t *testing.T) {
+	t.Run("tag labels split on commas, dropping empties", func(t *testing.T) {
 		t.Parallel()
 		v := "needs-review, ,escalated ,"
 		effects, err := PlanPostFunctions([]PostFunction{{
-			ID: uuid.New(), Kind: PostSetField, FieldKey: ptr(PostFieldLabels), FieldValue: &v,
+			ID: uuid.New(), Kind: PostSetField, FieldKey: ptr(PostFieldTags), FieldValue: &v,
 		}})
 		require.NoError(t, err)
-		require.NotNil(t, effects[0].SetLabels)
-		require.Equal(t, []string{"needs-review", "escalated"}, *effects[0].SetLabels)
+		require.NotNil(t, effects[0].SetTags)
+		require.Equal(t, []string{"needs-review", "escalated"}, *effects[0].SetTags)
 	})
 
 	t.Run("no label value is the empty set, not one empty label", func(t *testing.T) {
 		t.Parallel()
 		effects, err := PlanPostFunctions([]PostFunction{{
-			ID: uuid.New(), Kind: PostSetField, FieldKey: ptr(PostFieldLabels),
+			ID: uuid.New(), Kind: PostSetField, FieldKey: ptr(PostFieldTags),
 		}})
 		require.NoError(t, err)
-		require.NotNil(t, effects[0].SetLabels)
-		require.Empty(t, *effects[0].SetLabels)
+		require.NotNil(t, effects[0].SetTags)
+		require.Empty(t, *effects[0].SetTags)
 	})
 }
 
@@ -202,7 +202,7 @@ func TestValidatePostFunction(t *testing.T) {
 	require.NoError(t, ValidatePostFunction(PostFunction{
 		Kind: PostSetField, FieldKey: ptr(PostFieldDueAt), FieldValue: &good,
 	}))
-	require.NoError(t, ValidatePostFunction(PostFunction{Kind: PostSetField, FieldKey: ptr(PostFieldLabels)}))
+	require.NoError(t, ValidatePostFunction(PostFunction{Kind: PostSetField, FieldKey: ptr(PostFieldTags)}))
 }
 
 // Every kind must be both writable and plannable. A kind added to

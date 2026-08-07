@@ -108,12 +108,9 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/notifications/{notificationID}/read": "user-scoped",
 
 	// Org-scoped reads (membership required; 404 for non-members).
-	"GET /api/v1/orgs/{orgID}/":                    "org-member",
-	"PATCH /api/v1/orgs/{orgID}/":                  "org-admin",
-	"GET /api/v1/orgs/{orgID}/config":              "org-member: boot-time deployment flags on an explicit code allowlist, never secrets or connection strings; the orgID authorises the read, it does not scope the values (they are process-wide)",
-	"GET /api/v1/orgs/{orgID}/labels/":             "org-member",
-	"POST /api/v1/orgs/{orgID}/labels/":            "org-member: org-wide metadata, any member (status quo)",
-	"DELETE /api/v1/orgs/{orgID}/labels/{labelID}": "org-member: org-wide metadata, any member (status quo)",
+	"GET /api/v1/orgs/{orgID}/":       "org-member",
+	"PATCH /api/v1/orgs/{orgID}/":     "org-admin",
+	"GET /api/v1/orgs/{orgID}/config": "org-member: boot-time deployment flags on an explicit code allowlist, never secrets or connection strings; the orgID authorises the read, it does not scope the values (they are process-wide)",
 
 	// Teams: members read (the picker groups by team); admin mutates.
 	"GET /api/v1/orgs/{orgID}/teams/":                             "org-member",
@@ -258,20 +255,25 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/publish": "space-write: edit_own/edit_any in-handler",
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/images":  "space-write: edit_own/edit_any in-handler; the entity comes from the URL, never a form field",
 
-	// Revision restore, and page-level tags (this phase, migration 040).
+	// Revision restore, and entity tags (migrations 040, 055).
 	//
 	// Restore is space-write for the plainest reason there is: it republishes
 	// through the same publish path, so it is the same permission as any other
 	// edit, and it inherits the version guard and the lost-content refusal with it.
 	//
-	// Tags divide the way everything else on a page does — reading a page's tags
-	// is reading the page, and setting them is editing it. Note that the org-level
-	// tag routes are a different guard class (org-read) because a tag is org-scoped
-	// and its NAME is not a space's secret; the pages carrying it are filtered
-	// separately against the caller's readable set.
+	// Tags divide the way everything else on an entity does — reading an
+	// entity's tags is reading the entity, and setting them is editing it. The
+	// ticket and item tag routes below carry the same split. Note that the
+	// org-level tag routes are a different guard class (org-read) because a tag
+	// is org-scoped and its NAME is not a space's secret; the entities carrying
+	// it are filtered separately against the caller's readable set.
 	"POST /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/revisions/{version}/restore": "space-write: edit_own/edit_any in-handler; republishes through the ordinary publish path and gets no exemption from its refusals",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/tags":                         "space-read",
 	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/wiki/{pageID}/tags":                         "space-write: edit_own/edit_any in-handler",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/tags":                    "space-read",
+	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/tags":                    "space-write: edit_own/edit_any in-handler",
+	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/tags":               "space-read",
+	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/tags":               "space-write: edit_own/edit_any in-handler",
 
 	// Projects.
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items":         "space-read",
@@ -282,13 +284,13 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/item-types/":                            "org-admin: orgAdminGuard",
 	"PATCH /api/v1/orgs/{orgID}/item-types/{typeID}":                   "org-admin: orgAdminGuard",
 	"DELETE /api/v1/orgs/{orgID}/item-types/{typeID}":                  "org-admin: orgAdminGuard",
-	// Codex tags, org level (migration 040). Read-only: there is no tag
+	// Entity tags, org level (migrations 040, 055). Read-only: there is no tag
 	// administration surface in this phase — tags are created by use, on the
-	// space-scoped page routes where the page's own edit permission applies.
-	// The pages route is cross-space, so it filters against the caller's
-	// resolved readable set in-handler (ADR-0010).
+	// space-scoped entity routes where each entity's own edit permission
+	// applies. The entities route is cross-space, so it filters against the
+	// caller's resolved readable set in-handler (ADR-0010).
 	"GET /api/v1/orgs/{orgID}/tags/":                      "org-read: members read the tag list for the autocomplete; a tag name is not a space's secret",
-	"GET /api/v1/orgs/{orgID}/tags/{slug}/pages":          "org-read: cross-space, filtered to the caller's readable spaces in-handler (ADR-0010)",
+	"GET /api/v1/orgs/{orgID}/tags/{slug}/entities":       "org-read: cross-space, filtered to the caller's readable spaces in-handler (ADR-0010)",
 	"GET /api/v1/orgs/{orgID}/custom-fields/":             "org-read: members read definitions for item forms",
 	"POST /api/v1/orgs/{orgID}/custom-fields/":            "org-admin: orgAdminGuard",
 	"PATCH /api/v1/orgs/{orgID}/custom-fields/{fieldID}":  "org-admin: orgAdminGuard",

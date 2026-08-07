@@ -21,6 +21,9 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../lib/api', () => ({
+  useEntityTags: () => ({ data: [], isLoading: false, error: null }),
+  useOrgTags: () => ({ data: [], isLoading: false, error: null }),
+  useSetEntityTags: () => ({ mutate: () => {}, isPending: false, error: null }),
   useTicket: () => ({ data: state.ticket, isLoading: false, error: null, refetch: vi.fn() }),
   // The status picker reads its options from the server's offering. `undefined`
   // is the still-loading answer, which falls back to the page's own vocabulary

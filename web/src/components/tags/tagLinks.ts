@@ -15,18 +15,19 @@
  * forms work — which also means an old link keeps working if the label a chip
  * was rendered from is not the tag's current display name.
  *
- * ## Why the route is under a space
+ * ## Why the route is under a module and a space
  *
- * A tag is org-scoped and its results span spaces, so a space id in the path
- * describes the reader's context rather than the query's scope. It is there
- * because every Codex route lives under `SpaceLayout`, which is what keeps the
- * page tree and the module nav on screen — landing on a bare org-level route
- * would drop the reader out of the space they were reading and give them
- * nothing to go back to. The results themselves are filtered to every space the
- * reader can see, not to this one.
+ * A tag is org-scoped and its results span spaces and modules, so the module
+ * and space in the path describe the reader's context rather than the query's
+ * scope. They are there because the browse renders inside `SpaceLayout`, which
+ * is what keeps the sidebar and the module nav on screen — landing on a bare
+ * org-level route would drop the reader out of the space they were reading and
+ * give them nothing to go back to. The results themselves are filtered to
+ * every space the reader can see, not to this one, and cover all three entity
+ * kinds whatever module the reader came from.
  */
 
 /** The route a tag chip links to. */
-export function tagBrowsePath(spaceId: string, label: string): string {
-  return `/codex/${spaceId}/tags/${encodeURIComponent(label)}`;
+export function tagBrowsePath(module: string, spaceId: string, label: string): string {
+  return `/${module}/${spaceId}/tags/${encodeURIComponent(label)}`;
 }

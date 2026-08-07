@@ -2,27 +2,36 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CodexTag } from '../../../lib/api';
-import { PageTags } from '../PageTags';
+import type { CodexTag, TagEntityType } from '../../../lib/api';
+import { EntityTags } from '../EntityTags';
 
 /**
- * The page tag surface (U4), in both of its modes.
+ * The entity tag surface (U4, generalized by the entity-tags convergence), in
+ * both of its modes. This is the battery that covered PageTags before the
+ * component went entity-generic; every page assertion still holds, exercised
+ * through entityType="page", and the ticket siblings at the end pin that the
+ * kind changes which hooks are called — never the surface's behaviour.
  *
  * The assertions that matter here are about the SHAPE of what is sent, not
- * about whether anything was sent. `useSetPageTags` is a whole-set replacement:
- * adding a tag means PUTting every tag the page should end up with, and
- * removing one means PUTting the shorter list. A component that sent a delta —
- * `['new']` on an add, `['gone']` on a remove — would look correct in the DOM
- * and would silently strip every other tag off the page on the first edit. So
- * each mutation test asserts the exact array, and would fail on a delta.
+ * about whether anything was sent. `useSetEntityTags` is a whole-set
+ * replacement: adding a tag means PUTting every tag the entity should end up
+ * with, and removing one means PUTting the shorter list. A component that sent
+ * a delta — `['new']` on an add, `['gone']` on a remove — would look correct in
+ * the DOM and would silently strip every other tag off the entity on the first
+ * edit. So each mutation test asserts the exact array, and would fail on a
+ * delta.
  *
- * The last case pins the inline-#tag copy. It is not decoration: the decided
- * semantic is that publishing merges body #tags into this list and that
+ * The last page-mode case pins the inline-#tag copy. It is not decoration: the
+ * decided semantic is that publishing merges body #tags into this list and that
  * removing a body #tag does NOT remove the tag, and a person who is not told
  * that will reasonably assume the opposite.
  */
 
-const { setTagsMock } = vi.hoisted(() => ({ setTagsMock: vi.fn() }));
+const { setTagsMock, entityTagsArgs, setEntityTagsArgs } = vi.hoisted(() => ({
+  setTagsMock: vi.fn(),
+  entityTagsArgs: { calls: [] as unknown[][] },
+  setEntityTagsArgs: { calls: [] as unknown[][] },
+}));
 
 function tag(name: string, slug = name.toLowerCase()): CodexTag {
   return {
@@ -34,7 +43,7 @@ function tag(name: string, slug = name.toLowerCase()): CodexTag {
   };
 }
 
-let pageTags: CodexTag[] = [];
+let entityTags: CodexTag[] = [];
 let orgTags: CodexTag[] = [];
 let setTagsError: unknown = null;
 
@@ -50,30 +59,43 @@ vi.mock('../../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../lib/api')>();
   return {
     ...actual,
-    usePageTags: () => ({ data: pageTags, isLoading: false, error: null }),
+    useEntityTags: (...args: unknown[]) => {
+      entityTagsArgs.calls.push(args);
+      return { data: entityTags, isLoading: false, error: null };
+    },
     useOrgTags: () => ({ data: orgTags, isLoading: false, error: null }),
-    useSetPageTags: () => ({ mutate: setTagsMock, isPending: false, error: setTagsError }),
+    useSetEntityTags: (...args: unknown[]) => {
+      setEntityTagsArgs.calls.push(args);
+      return { mutate: setTagsMock, isPending: false, error: setTagsError };
+    },
   };
 });
 
-function renderTags(editable: boolean) {
+function renderTags(editable: boolean, entityType: TagEntityType = 'page') {
   return render(
     <MemoryRouter>
-      <PageTags spaceId="space-1" pageId="page-1" editable={editable} />
+      <EntityTags
+        entityType={entityType}
+        spaceId="space-1"
+        entityId="entity-1"
+        editable={editable}
+      />
     </MemoryRouter>,
   );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  pageTags = [];
+  entityTags = [];
   orgTags = [];
   setTagsError = null;
+  entityTagsArgs.calls = [];
+  setEntityTagsArgs.calls = [];
 });
 
 describe('reading mode', () => {
   it('renders a chip per tag, each linking to the tag browse', () => {
-    pageTags = [tag('runbook'), tag('On Call', 'on_call')];
+    entityTags = [tag('runbook'), tag('On Call', 'on_call')];
     renderTags(false);
 
     const chips = screen.getAllByTestId('codex-page-tag');
@@ -87,18 +109,18 @@ describe('reading mode', () => {
     expect(chips[1]).toHaveAttribute('data-slug', 'on_call');
   });
 
-  it('renders nothing at all when the page has no tags', () => {
-    pageTags = [];
+  it('renders nothing at all when the entity has no tags', () => {
+    entityTags = [];
     const { container } = renderTags(false);
 
     expect(screen.queryByTestId('codex-page-tags')).not.toBeInTheDocument();
-    // Not merely "no chips": an empty label row on every untagged page is the
-    // thing being prevented, so the component must emit no markup whatsoever.
+    // Not merely "no chips": an empty label row on every untagged entity is
+    // the thing being prevented, so the component must emit no markup at all.
     expect(container).toBeEmptyDOMElement();
   });
 
   it('offers no editing affordances', () => {
-    pageTags = [tag('runbook')];
+    entityTags = [tag('runbook')];
     renderTags(false);
 
     expect(screen.queryByTestId('codex-tag-input')).not.toBeInTheDocument();
@@ -108,7 +130,7 @@ describe('reading mode', () => {
 
 describe('editing mode', () => {
   it('sends the whole new list when a tag is added, not just the new one', () => {
-    pageTags = [tag('runbook'), tag('ops')];
+    entityTags = [tag('runbook'), tag('ops')];
     renderTags(true);
 
     fireEvent.change(screen.getByTestId('codex-tag-input'), { target: { value: 'incident' } });
@@ -118,7 +140,7 @@ describe('editing mode', () => {
   });
 
   it('commits on a comma as well as on Enter', () => {
-    pageTags = [];
+    entityTags = [];
     renderTags(true);
 
     fireEvent.change(screen.getByTestId('codex-tag-input'), { target: { value: 'incident' } });
@@ -128,7 +150,7 @@ describe('editing mode', () => {
   });
 
   it('sends the shorter list when a chip is removed', () => {
-    pageTags = [tag('runbook'), tag('ops'), tag('incident')];
+    entityTags = [tag('runbook'), tag('ops'), tag('incident')];
     renderTags(true);
 
     fireEvent.click(screen.getAllByTestId('codex-tag-remove')[1]);
@@ -137,7 +159,7 @@ describe('editing mode', () => {
   });
 
   it('removes the last chip on Backspace in an empty input', () => {
-    pageTags = [tag('runbook'), tag('ops')];
+    entityTags = [tag('runbook'), tag('ops')];
     renderTags(true);
 
     fireEvent.keyDown(screen.getByTestId('codex-tag-input'), { key: 'Backspace' });
@@ -146,7 +168,7 @@ describe('editing mode', () => {
   });
 
   it('leaves the tags alone when Backspace is pressed with text in the input', () => {
-    pageTags = [tag('runbook')];
+    entityTags = [tag('runbook')];
     renderTags(true);
 
     fireEvent.change(screen.getByTestId('codex-tag-input'), { target: { value: 'op' } });
@@ -157,8 +179,8 @@ describe('editing mode', () => {
     expect(setTagsMock).not.toHaveBeenCalled();
   });
 
-  it('suggests org tags matching what is typed, and excludes ones already on the page', () => {
-    pageTags = [tag('runbook')];
+  it('suggests org tags matching what is typed, and excludes ones already carried', () => {
+    entityTags = [tag('runbook')];
     orgTags = [tag('runbook'), tag('runtime'), tag('ops')];
     renderTags(true);
 
@@ -169,7 +191,7 @@ describe('editing mode', () => {
   });
 
   it('commits a name that matches no existing tag, because typing one is how tags are created', () => {
-    pageTags = [];
+    entityTags = [];
     orgTags = [tag('ops')];
     renderTags(true);
 
@@ -180,8 +202,8 @@ describe('editing mode', () => {
     expect(setTagsMock).toHaveBeenCalledWith(['brand-new']);
   });
 
-  it('does not write when the typed name is already on the page', () => {
-    pageTags = [tag('ops')];
+  it('does not write when the typed name is already carried', () => {
+    entityTags = [tag('ops')];
     renderTags(true);
 
     fireEvent.change(screen.getByTestId('codex-tag-input'), { target: { value: 'OPS' } });
@@ -199,7 +221,7 @@ describe('editing mode', () => {
         request_id: 'req-1',
       },
     });
-    pageTags = [];
+    entityTags = [];
     renderTags(true);
 
     // Not a generic fallback: friendlyErrorMessage passes VALIDATION_ERROR
@@ -211,7 +233,7 @@ describe('editing mode', () => {
   });
 
   it('states that body #tags are merged in on publish and that this list is the authority', () => {
-    pageTags = [];
+    entityTags = [];
     renderTags(true);
 
     const note = screen.getByTestId('codex-page-tags').textContent ?? '';
@@ -220,5 +242,40 @@ describe('editing mode', () => {
     // deleting the #tag from the prose does not remove the tag.
     expect(note).toMatch(/#tag[\s\S]*added to this list when you publish/i);
     expect(note).toMatch(/deleting the #tag from the body will not take the tag off the page/i);
+  });
+});
+
+describe('on a ticket', () => {
+  it('renders chips and edits with the same whole-set semantics, through the ticket hooks', () => {
+    entityTags = [tag('runbook')];
+    renderTags(true, 'ticket');
+
+    // The kind reaches both hooks: it is what selects the API route, and a
+    // component that hardcoded 'page' would write a ticket's tags to a page.
+    expect(entityTagsArgs.calls[0]).toEqual(['ticket', 'space-1', 'entity-1']);
+    expect(setEntityTagsArgs.calls[0]).toEqual(['ticket', 'space-1', 'entity-1']);
+
+    fireEvent.change(screen.getByTestId('codex-tag-input'), { target: { value: 'incident' } });
+    fireEvent.keyDown(screen.getByTestId('codex-tag-input'), { key: 'Enter' });
+    expect(setTagsMock).toHaveBeenCalledWith(['runbook', 'incident']);
+  });
+
+  it('links a reading chip into the beacon module when no module is in the URL', () => {
+    entityTags = [tag('runbook')];
+    renderTags(false, 'ticket');
+
+    expect(screen.getAllByTestId('codex-page-tag')[0]).toHaveAttribute(
+      'href',
+      '/beacon/space-1/tags/runbook',
+    );
+  });
+
+  it('does not show the page-only inline-#tag note', () => {
+    entityTags = [];
+    renderTags(true, 'ticket');
+
+    // Tickets have no document body, so the sentence about publishing #tags
+    // would be a false statement on this surface.
+    expect(screen.getByTestId('codex-page-tags').textContent ?? '').not.toMatch(/publish/i);
   });
 });

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 )
 
 // This file is the single place the workflow post-function vocabulary is
@@ -81,12 +83,18 @@ type PostFieldKey string
 
 // The two writable fields.
 const (
-	PostFieldDueAt  PostFieldKey = "due_at"
-	PostFieldLabels PostFieldKey = "labels"
+	PostFieldDueAt PostFieldKey = "due_at"
+	// PostFieldTags was PostFieldLabels ("labels") until the entity-tags
+	// convergence (migration 055). The wire encoding of its value is
+	// unchanged and stated here so nobody infers it from the parser: a
+	// COMMA-SEPARATED label list ("escalated,urgent"), never a JSON array.
+	// What changed is where it lands — the applier replaces the entity's
+	// entity_tags associations instead of writing a text-array column.
+	PostFieldTags PostFieldKey = "tags"
 )
 
 // allPostFieldKeys is hand-maintained; see allGuardKinds.
-var allPostFieldKeys = []PostFieldKey{PostFieldDueAt, PostFieldLabels}
+var allPostFieldKeys = []PostFieldKey{PostFieldDueAt, PostFieldTags}
 
 // PostFunction is one configured action on one transition.
 type PostFunction struct {
@@ -120,8 +128,12 @@ type Effect struct {
 	// SetDueAt is present when the due date changes; the inner pointer is nil
 	// to clear it.
 	SetDueAt **time.Time
-	// SetLabels is present when the label set is replaced.
-	SetLabels *[]string
+	// SetTags is present when the tag set is replaced. The labels it carries
+	// are resolved to tag rows by the applier, leniently: a stored label that
+	// cannot become a tag is dropped at apply time rather than refusing the
+	// transition, because the value may predate the convergence and a person
+	// mid-transition cannot fix a workflow's configuration.
+	SetTags *[]string
 }
 
 // PlanPostFunctions turns the configured post-functions into the ordered list of
@@ -191,18 +203,19 @@ func planSetField(key PostFieldKey, raw *string) (Effect, error) {
 		p := &t
 		return Effect{SetDueAt: &p}, nil
 
-	case PostFieldLabels:
-		return Effect{SetLabels: ptrTo(parseLabels(raw))}, nil
+	case PostFieldTags:
+		return Effect{SetTags: ptrTo(parseTags(raw))}, nil
 
 	default:
 		return Effect{}, fmt.Errorf("field %q: %w", key, ErrPostFunctionUnknown)
 	}
 }
 
-// parseLabels reads the stored comma-separated label list. Empty entries are
-// dropped and surrounding whitespace is trimmed, so "a, ,b " is {"a","b"} and
-// "" is the empty set rather than a single empty label.
-func parseLabels(raw *string) []string {
+// parseTags reads the stored comma-separated label list — the same wire
+// encoding PostFieldLabels always used. Empty entries are dropped and
+// surrounding whitespace is trimmed, so "a, ,b " is {"a","b"} and "" is the
+// empty set rather than a single empty label.
+func parseTags(raw *string) []string {
 	if raw == nil {
 		return []string{}
 	}
@@ -264,6 +277,18 @@ func validateSetField(p PostFunction) error {
 	// at a moment far from the mistake that caused it.
 	if _, err := planSetField(*p.FieldKey, p.FieldValue); err != nil {
 		return err
+	}
+	// Tag labels are additionally checked as taggable at the API boundary —
+	// and ONLY here. The apply path is deliberately lenient (see Effect.SetTags),
+	// so a label that can never become a tag would otherwise be accepted now
+	// and silently set nothing on every transition later. The person writing
+	// the configuration is the one who can fix it, so they are the one told.
+	if *p.FieldKey == PostFieldTags {
+		for _, label := range parseTags(p.FieldValue) {
+			if tags.Slugify(label) == "" {
+				return fmt.Errorf("label %q cannot become a tag: %w", label, ErrPostFunctionMalformed)
+			}
+		}
 	}
 	return nil
 }

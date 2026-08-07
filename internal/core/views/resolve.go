@@ -99,7 +99,6 @@ type Result struct {
 	// found no user, which the UI shows as the id rather than as nothing.
 	AssigneeID   *uuid.UUID
 	AssigneeName *string
-	Labels       []string
 	Kind         *string
 	SprintID     *uuid.UUID
 	CreatedAt    time.Time

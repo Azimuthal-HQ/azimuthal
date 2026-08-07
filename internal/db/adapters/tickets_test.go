@@ -29,7 +29,6 @@ func TestDbTicketToTicket(t *testing.T) {
 		Priority:    "high",
 		ReporterID:  pgtype.UUID{Bytes: reporterID, Valid: true},
 		AssigneeID:  pgtype.UUID{Bytes: assigneeID, Valid: true},
-		Labels:      []string{"bug", "auth"},
 		DueAt:       pgtype.Timestamptz{Time: due, Valid: true},
 		ResolvedAt:  pgtype.Timestamptz{},
 		Rank:        "0|aaaaaa:",
@@ -65,9 +64,6 @@ func TestDbTicketToTicket(t *testing.T) {
 	}
 	if got.AssigneeID == nil || *got.AssigneeID != assigneeID {
 		t.Errorf("AssigneeID mismatch")
-	}
-	if len(got.Labels) != 2 || got.Labels[0] != "bug" {
-		t.Errorf("Labels mismatch: got %v", got.Labels)
 	}
 	if got.DueAt == nil || !got.DueAt.Equal(due) {
 		t.Errorf("DueAt mismatch")
@@ -149,7 +145,6 @@ func TestTicketCreateParamsValidation(t *testing.T) {
 		Priority:    tickets.PriorityHigh,
 		ReporterID:  &reporter,
 		AssigneeID:  &assignee,
-		Labels:      []string{"bug"},
 		DueAt:       &due,
 		Rank:        "0|aaa:",
 	}
@@ -165,7 +160,6 @@ func TestTicketCreateParamsValidation(t *testing.T) {
 		Priority:    string(tk.Priority),
 		ReporterID:  pgUUID(tk.ReporterID),
 		AssigneeID:  pgUUID(tk.AssigneeID),
-		Labels:      coalesceLabels(tk.Labels),
 		DueAt:       pgTimestampPtr(tk.DueAt),
 		Rank:        tk.Rank,
 	}
@@ -187,9 +181,6 @@ func TestTicketCreateParamsValidation(t *testing.T) {
 	}
 	if !params.AssigneeID.Valid {
 		t.Error("AssigneeID should be valid")
-	}
-	if len(params.Labels) != 1 || params.Labels[0] != "bug" {
-		t.Errorf("Labels mismatch: got %v", params.Labels)
 	}
 	if !params.DueAt.Valid {
 		t.Error("DueAt should be valid")
@@ -217,7 +208,6 @@ func TestTicketCreateParamsNilOptionals(t *testing.T) {
 		Priority:    string(tk.Priority),
 		ReporterID:  pgUUID(tk.ReporterID),
 		AssigneeID:  pgUUID(tk.AssigneeID),
-		Labels:      coalesceLabels(tk.Labels),
 		DueAt:       pgTimestampPtr(tk.DueAt),
 		Rank:        tk.Rank,
 	}
@@ -239,7 +229,6 @@ func TestTicketUpdateParamsValidation(t *testing.T) {
 		Status:      tickets.StatusInProgress,
 		Priority:    tickets.PriorityUrgent,
 		AssigneeID:  &assignee,
-		Labels:      []string{"feature", "urgent"},
 		Rank:        "0|bbb:",
 	}
 
@@ -250,7 +239,6 @@ func TestTicketUpdateParamsValidation(t *testing.T) {
 		Status:      string(tk.Status),
 		Priority:    string(tk.Priority),
 		AssigneeID:  pgUUID(tk.AssigneeID),
-		Labels:      coalesceLabels(tk.Labels),
 		DueAt:       pgTimestampPtr(tk.DueAt),
 		Rank:        tk.Rank,
 	}
@@ -266,9 +254,6 @@ func TestTicketUpdateParamsValidation(t *testing.T) {
 	}
 	if params.Priority != "urgent" {
 		t.Errorf("Priority mismatch: got %v", params.Priority)
-	}
-	if len(params.Labels) != 2 {
-		t.Errorf("Labels mismatch: got %v", params.Labels)
 	}
 }
 

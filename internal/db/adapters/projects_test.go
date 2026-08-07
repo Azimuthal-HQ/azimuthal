@@ -37,7 +37,6 @@ func TestDbProjectItemToItem(t *testing.T) {
 		ReporterID:  reporterID,
 		AssigneeID:  pgtype.UUID{Bytes: assigneeID, Valid: true},
 		SprintID:    pgtype.UUID{Bytes: sprintID, Valid: true},
-		Labels:      []string{"feature", "frontend"},
 		DueAt:       pgtype.Timestamptz{Time: due, Valid: true},
 		ResolvedAt:  pgtype.Timestamptz{Time: resolved, Valid: true},
 		Rank:        "0|bbbbbb:",
@@ -86,9 +85,6 @@ func TestDbProjectItemToItem(t *testing.T) {
 	}
 	if got.SprintID == nil || *got.SprintID != sprintID {
 		t.Errorf("SprintID mismatch")
-	}
-	if len(got.Labels) != 2 {
-		t.Errorf("Labels mismatch: got %v", got.Labels)
 	}
 	if got.DueAt == nil || !got.DueAt.Equal(due) {
 		t.Errorf("DueAt mismatch")
@@ -266,7 +262,6 @@ func TestProjectItemCreateParamsValidation(t *testing.T) {
 		Priority:    "high",
 		ReporterID:  uuid.New(),
 		AssigneeID:  &assigneeID,
-		Labels:      []string{"frontend"},
 		DueAt:       &due,
 		Rank:        "0|ccc:",
 	}
@@ -283,7 +278,6 @@ func TestProjectItemCreateParamsValidation(t *testing.T) {
 		Priority:    item.Priority,
 		ReporterID:  item.ReporterID,
 		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      coalesceLabels(item.Labels),
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
 	}
@@ -330,7 +324,6 @@ func TestProjectItemCreateParamsNilOptionals(t *testing.T) {
 		Priority:    item.Priority,
 		ReporterID:  item.ReporterID,
 		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      coalesceLabels(item.Labels),
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
 	}
@@ -355,7 +348,6 @@ func TestProjectItemUpdateParamsValidation(t *testing.T) {
 		Status:      "in_progress",
 		Priority:    "urgent",
 		AssigneeID:  &assignee,
-		Labels:      []string{"critical"},
 		Rank:        "0|ddd:",
 	}
 
@@ -366,7 +358,6 @@ func TestProjectItemUpdateParamsValidation(t *testing.T) {
 		Status:      item.Status,
 		Priority:    item.Priority,
 		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      coalesceLabels(item.Labels),
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
 	}

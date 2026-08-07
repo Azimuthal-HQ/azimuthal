@@ -19,6 +19,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/tickets"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 	"github.com/Azimuthal-HQ/azimuthal/internal/jobs"
@@ -31,7 +32,12 @@ type NotificationEnqueuer interface {
 
 // Handler holds the dependencies for ticket HTTP handlers.
 type Handler struct {
-	svc      *tickets.TicketService
+	svc *tickets.TicketService
+	// tags is the entity tag model (migration 055): tickets carry the same
+	// org-scoped tags pages do, and the tag routes in Routes() are
+	// unconditional, so the service is a required constructor argument rather
+	// than a With* option — a missing one does not compile.
+	tags     *tags.Service
 	auditLog audit.Logger
 	notifs   NotificationEnqueuer
 	// suggestions backs the org-scoped ticket_ref typeahead. Held separately
@@ -65,8 +71,8 @@ type Handler struct {
 }
 
 // NewHandler creates a ticket Handler.
-func NewHandler(svc *tickets.TicketService) *Handler {
-	return &Handler{svc: svc, auditLog: audit.NewLogger()}
+func NewHandler(svc *tickets.TicketService, tagSvc *tags.Service) *Handler {
+	return &Handler{svc: svc, tags: tagSvc, auditLog: audit.NewLogger()}
 }
 
 // WithWorkflowTiers attaches the ADR-0011 tier gate and the transactional
@@ -136,6 +142,11 @@ func (h *Handler) Routes() chi.Router {
 	// value store, mirroring the item routes in internal/core/api/projects.
 	r.Get("/{ticketID}/fields", h.GetTicketFields)
 	r.Put("/{ticketID}/fields/{slug}", h.SetTicketField)
+
+	// Entity tags (migration 055). Read is the space's, writing is the same
+	// permission as editing the ticket.
+	r.Get("/{ticketID}/tags", h.ListTicketTags)
+	r.Put("/{ticketID}/tags", h.SetTicketTags)
 	return r
 }
 
@@ -144,7 +155,6 @@ type createTicketRequest struct {
 	Description string           `json:"description"`
 	Priority    tickets.Priority `json:"priority"`
 	AssigneeID  *uuid.UUID       `json:"assignee_id,omitempty"`
-	Labels      []string         `json:"labels,omitempty"`
 	// DueAt lets a ticket be born with a due date. CreateTicketParams has
 	// carried the field all along and TicketService.Create writes it to the
 	// model; nothing ever populated it from a request, so it was dead.
@@ -176,7 +186,6 @@ type updateTicketRequest struct {
 	Title       *string                          `json:"title"`
 	Description *string                          `json:"description"`
 	Priority    *tickets.Priority                `json:"priority"`
-	Labels      []string                         `json:"labels,omitempty"`
 	DueAt       respond.OptionalField[time.Time] `json:"due_at"`
 }
 
@@ -196,9 +205,6 @@ func applyTicketPatch(existing *tickets.Ticket, req updateTicketRequest) {
 	}
 	if req.Priority != nil {
 		existing.Priority = *req.Priority
-	}
-	if req.Labels != nil {
-		existing.Labels = req.Labels
 	}
 	// Only when the key was actually present. A nil Value with Set true is an
 	// explicit null and does mean "clear it" — that is how the due-date control
@@ -293,7 +299,6 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Priority:    req.Priority,
 		ReporterID:  claims.UserID,
 		AssigneeID:  req.AssigneeID,
-		Labels:      req.Labels,
 		DueAt:       req.DueAt,
 	}
 	if h.tiers != nil {
@@ -684,7 +689,21 @@ func (h *Handler) gateTicketTransition(
 		return workflow.TransitionDecision{}, false
 	}
 
-	gated, err := h.tiers.Evaluate(r.Context(), TicketGateRequest(orgID, spaceID, actorID, current, target))
+	// The guard snapshot carries the ticket's tag slugs: field_required on
+	// 'tags' reads entity_tags now, not a column on the row it was loaded
+	// with. A read failure refuses the transition — evaluating a tag guard
+	// against an unknowable tag set would be a silent permit or a silent
+	// refusal, and both are wrong.
+	ticketTags, err := h.tags.ForEntity(r.Context(), tags.EntityRef{
+		Type: tags.EntityTicket, ID: current.ID, SpaceID: spaceID,
+	})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"the ticket's tags could not be read")
+		return workflow.TransitionDecision{}, false
+	}
+
+	gated, err := h.tiers.Evaluate(r.Context(), TicketGateRequest(orgID, spaceID, actorID, current, target, tags.SlugsOf(ticketTags)))
 	if err != nil {
 		handleTierError(w, r, err)
 		return workflow.TransitionDecision{}, false
@@ -704,7 +723,7 @@ func (h *Handler) gateTicketTransition(
 // than the mutation it feeds, and the resulting disagreement is invisible: the
 // picker offers a move and the server refuses it, with nothing to point at.
 func TicketGateRequest(
-	orgID, spaceID, actorID uuid.UUID, current *tickets.Ticket, target tickets.Status,
+	orgID, spaceID, actorID uuid.UUID, current *tickets.Ticket, target tickets.Status, tagSlugs []string,
 ) tiergate.Request {
 	return tiergate.Request{
 		OrgID:          orgID,
@@ -719,7 +738,7 @@ func TicketGateRequest(
 			AssigneeID:  current.AssigneeID,
 			DueAt:       current.DueAt,
 			Description: current.Description,
-			Labels:      current.Labels,
+			Tags:        tagSlugs,
 		},
 	}
 }
@@ -976,6 +995,9 @@ func spaceIDFromURL(r *http.Request) (uuid.UUID, error) {
 	return id, nil
 }
 
+// orgIDFromURL reads the org from the path rather than from the JWT. The URL
+// is the scoping convention every space-scoped route follows, and the
+// middleware has already established that the space belongs to it.
 func orgIDFromURL(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "orgID"))
 	if err != nil {

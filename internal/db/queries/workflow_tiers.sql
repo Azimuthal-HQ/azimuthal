@@ -272,11 +272,13 @@ SELECT * FROM workflows WHERE id = $1 AND org_id = $2;
 -- Post-function effects commit with the status write or not at all, so this
 -- carries the same space predicate UpdateTicketWorkflowState does. Without it a
 -- transition could be refused the status change and still rewrite the far
--- entity's assignee, due date and labels.
+-- entity's assignee and due date. The set_field:tags effect is not a column on
+-- this row at all any more — the applier replaces the entity's entity_tags
+-- associations inside the same transaction, through the same predicate-scoped
+-- statements every tag write uses.
 UPDATE tickets SET
     assignee_id = CASE WHEN @set_assignee::boolean THEN sqlc.narg(assignee_id)::uuid ELSE assignee_id END,
     due_at      = CASE WHEN @set_due_at::boolean   THEN sqlc.narg(due_at)::timestamptz ELSE due_at END,
-    labels      = CASE WHEN @set_labels::boolean   THEN @labels::text[] ELSE labels END,
     updated_at  = now()
 WHERE id = @id AND space_id = @space_id AND deleted_at IS NULL;
 
@@ -285,7 +287,6 @@ WHERE id = @id AND space_id = @space_id AND deleted_at IS NULL;
 UPDATE project_items SET
     assignee_id = CASE WHEN @set_assignee::boolean THEN sqlc.narg(assignee_id)::uuid ELSE assignee_id END,
     due_at      = CASE WHEN @set_due_at::boolean   THEN sqlc.narg(due_at)::timestamptz ELSE due_at END,
-    labels      = CASE WHEN @set_labels::boolean   THEN @labels::text[] ELSE labels END,
     updated_at  = now()
 WHERE id = @id AND space_id = @space_id AND deleted_at IS NULL;
 

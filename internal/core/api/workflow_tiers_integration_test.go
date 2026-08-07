@@ -178,6 +178,45 @@ func TestTierAPI_SatisfiedValidatorCommits(t *testing.T) {
 	require.Equal(t, "in_progress", f.statusNow(t))
 }
 
+// The converted guard: field_required on 'tags' — which stored rows spelled
+// 'labels' until migration 055 rewrote them — evaluates against the entity's
+// entity_tags associations, not against a column on the row. Refusal first,
+// then satisfaction by TAGGING the ticket, so a build that quietly evaluated
+// the guard against the dead array (always empty) fails the second half.
+func TestTierAPI_TagsGuardReadsEntityTags(t *testing.T) {
+	f := setupTierAPI(t)
+	ctx := context.Background()
+
+	_, err := f.tier.CreateGuard(ctx, workflow.Guard{
+		TransitionID: f.edge,
+		Class:        workflow.GuardValidatorClass,
+		Kind:         workflow.GuardFieldRequired,
+		FieldKey:     ptrTo(workflow.FieldTags),
+	})
+	require.NoError(t, err)
+
+	code, body := f.transition(t, "in_progress")
+	require.Equal(t, http.StatusUnprocessableEntity, code,
+		"an untagged ticket must be refused by the tags guard")
+	errObj, _ := body["error"].(map[string]any)
+	require.Contains(t, errObj["message"], "tag",
+		"the refusal names the requirement in the reader's vocabulary")
+
+	// Tag the ticket — the entity_tags association is what the guard reads.
+	_, err = f.ts.DB.Pool.Exec(ctx,
+		`WITH t AS (
+		     INSERT INTO tags (org_id, slug, name) VALUES ($1, 'escalated', 'escalated')
+		     RETURNING id
+		 )
+		 INSERT INTO entity_tags (entity_type, entity_id, tag_id)
+		 SELECT 'ticket', $2, id FROM t`, f.ts.OrgID, f.ticketID)
+	require.NoError(t, err)
+
+	code, _ = f.transition(t, "in_progress")
+	require.Equal(t, http.StatusOK, code, "a tagged ticket satisfies the converted guard")
+	require.Equal(t, "in_progress", f.statusNow(t))
+}
+
 // A guard on one edge must not gate a different edge.
 func TestTierAPI_GuardAppliesOnlyToItsOwnEdge(t *testing.T) {
 	f := setupTierAPI(t)
@@ -418,7 +457,7 @@ func TestTierAPI_ItemPostFunctionCommitsWithTheStatus(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tier.CreatePostFunction(ctx, workflow.PostFunction{
 		TransitionID: edge, Kind: workflow.PostSetField,
-		FieldKey: ptrTo(workflow.PostFieldLabels), FieldValue: ptrTo("escalated,urgent"), Position: 1,
+		FieldKey: ptrTo(workflow.PostFieldTags), FieldValue: ptrTo("escalated,urgent"), Position: 1,
 	})
 	require.NoError(t, err)
 
@@ -445,13 +484,31 @@ func TestTierAPI_ItemPostFunctionCommitsWithTheStatus(t *testing.T) {
 
 	var status string
 	var gotAssignee *uuid.UUID
-	var labels []string
 	require.NoError(t, ts.DB.Pool.QueryRow(ctx,
-		`SELECT status, assignee_id, labels FROM project_items WHERE id = $1`, itemID).
-		Scan(&status, &gotAssignee, &labels))
+		`SELECT status, assignee_id FROM project_items WHERE id = $1`, itemID).
+		Scan(&status, &gotAssignee))
 	require.Equal(t, "todo", status)
 	require.NotNil(t, gotAssignee)
 	require.Equal(t, assignee.ID, *gotAssignee)
-	require.Equal(t, []string{"escalated", "urgent"}, labels,
-		"both post-functions committed with the status, in order")
+
+	// The set_field:tags value is the same comma-separated wire encoding
+	// set_field:labels always carried ("escalated,urgent"); what changed is
+	// where it lands — entity_tags associations, in the transition's own
+	// transaction, not a column on the row.
+	rows, err := ts.DB.Pool.Query(ctx,
+		`SELECT t.slug FROM entity_tags et
+		  JOIN tags t ON t.id = et.tag_id
+		 WHERE et.entity_type = 'project_item' AND et.entity_id = $1
+		 ORDER BY t.slug`, itemID)
+	require.NoError(t, err)
+	defer rows.Close()
+	var slugs []string
+	for rows.Next() {
+		var slug string
+		require.NoError(t, rows.Scan(&slug))
+		slugs = append(slugs, slug)
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, []string{"escalated", "urgent"}, slugs,
+		"both post-functions committed with the status, and the tag effect landed as entity tags")
 }

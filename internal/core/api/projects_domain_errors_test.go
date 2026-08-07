@@ -96,8 +96,7 @@ func (f *projDomFixture) createItem(t *testing.T, title string) string {
 
 // projDomItem is the slice of an item's wire form these tests assert on.
 type projDomItem struct {
-	Title  string   `json:"title"`
-	Labels []string `json:"labels"`
+	Title string `json:"title"`
 }
 
 func projDomDecodeItem(t *testing.T, r httpResult) projDomItem {
@@ -198,51 +197,6 @@ func TestProjectsDomain_BoardColumnIdentitySurvivesAResaveWithIDs(t *testing.T) 
 	require.Len(t, afterDelete.Columns, len(kept.Columns)-1)
 	require.ElementsMatch(t, mappedStatuses(kept), mappedStatuses(afterDelete),
 		"the removed column's statuses must have been re-homed, not dropped")
-}
-
-// --- The item PATCH's label tri-state ---
-
-// TestProjectsDomain_ItemLabelsPatchDistinguishesAbsentFromEmpty covers
-// applyItemPatch's `if req.Labels != nil` guard, in both directions.
-//
-// Labels are the third field on the item PATCH whose absence must not be
-// treated as a value — the same shape that already destroyed data twice here
-// (due_at and assignee_id, see updateItemRequest's comment). A []string is nil
-// when the key is absent and non-nil-but-empty when the client sends [], and
-// that difference is the whole guard.
-//
-// Defect it catches: removing the nil check so labels are assigned
-// unconditionally. Every PATCH that never mentions labels — which is every
-// PATCH the product actually sends: a rename, a board drag, an assignee
-// change — would then silently strip the item's labels. Nothing would fail;
-// the response is a 200 and the labels are simply gone. The middle step is the
-// assertion that catches it, and the last step is what stops the fix from
-// going the other way: an explicit [] must still clear them, or the label
-// editor can never remove the last label.
-func TestProjectsDomain_ItemLabelsPatchDistinguishesAbsentFromEmpty(t *testing.T) {
-	f := newProjDomFixture(t, "labels")
-	itemPath := f.base + "/items/" + f.createItem(t, "Labelled Item")
-
-	r := f.ts.patch(t, itemPath, map[string]any{"labels": []string{"alpha", "beta"}}, true)
-	require.Equal(t, http.StatusOK, r.StatusCode, "set labels: %s", r.Body)
-	require.ElementsMatch(t, []string{"alpha", "beta"},
-		projDomDecodeItem(t, f.ts.get(t, itemPath, true)).Labels,
-		"a PATCH carrying labels must store them")
-
-	// A PATCH that never mentions labels must leave them exactly as they were.
-	r = f.ts.patch(t, itemPath, map[string]any{"title": "Renamed, labels untouched"}, true)
-	require.Equal(t, http.StatusOK, r.StatusCode, "rename: %s", r.Body)
-	reread := projDomDecodeItem(t, f.ts.get(t, itemPath, true))
-	require.Equal(t, "Renamed, labels untouched", reread.Title,
-		"the rename must have been applied — otherwise the labels below survived a no-op")
-	require.ElementsMatch(t, []string{"alpha", "beta"}, reread.Labels,
-		"a PATCH that omits labels must not strip them")
-
-	// An explicit empty array is a value, not an absence: it clears.
-	r = f.ts.patch(t, itemPath, map[string]any{"labels": []string{}}, true)
-	require.Equal(t, http.StatusOK, r.StatusCode, "clear labels: %s", r.Body)
-	require.Empty(t, projDomDecodeItem(t, f.ts.get(t, itemPath, true)).Labels,
-		"an explicit [] must clear the labels, or the last one can never be removed")
 }
 
 // --- Sprint update: a service refusal on a well-formed request ---

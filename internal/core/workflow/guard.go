@@ -114,7 +114,12 @@ const (
 	FieldAssigneeID  FieldKey = "assignee_id"
 	FieldDueAt       FieldKey = "due_at"
 	FieldDescription FieldKey = "description"
-	FieldLabels      FieldKey = "labels"
+	// FieldTags was FieldLabels ("labels") until the entity-tags convergence
+	// (migration 055): the labels text array is gone, and the guard now reads
+	// the entity's tag set. Stored guard rows were rewritten by that
+	// migration, not stranded — a stored 'labels' key would otherwise have
+	// evaluated as "field not present" and refused its transition forever.
+	FieldTags FieldKey = "tags"
 )
 
 // allFieldKeys is hand-maintained; see allGuardClasses.
@@ -122,7 +127,7 @@ var allFieldKeys = []FieldKey{
 	FieldAssigneeID,
 	FieldDueAt,
 	FieldDescription,
-	FieldLabels,
+	FieldTags,
 }
 
 // guardCapabilities is the closed subset of the capability model a
@@ -192,7 +197,10 @@ type EntitySnapshot struct {
 	AssigneeID  *uuid.UUID
 	DueAt       *time.Time
 	Description string
-	Labels      []string
+	// Tags is the entity's tag slugs, read from entity_tags by whoever builds
+	// the snapshot. The guard only ever asks whether any exist, but slugs
+	// rather than a count keep the snapshot honest about what it carries.
+	Tags []string
 }
 
 // Refusal explains why a transition was refused.
@@ -320,7 +328,7 @@ func (g Guard) refuse(reason string) *Refusal {
 // fieldPresent reports whether the required field carries a value.
 //
 // "Non-empty" is per-field and deliberate: a description of only whitespace is
-// empty, an empty label array is empty, and a zero timestamp cannot occur
+// empty, an empty tag set is empty, and a zero timestamp cannot occur
 // because the column is nullable rather than defaulted.
 func fieldPresent(f FieldKey, e EntitySnapshot) bool {
 	switch f {
@@ -330,8 +338,8 @@ func fieldPresent(f FieldKey, e EntitySnapshot) bool {
 		return e.DueAt != nil
 	case FieldDescription:
 		return strings.TrimSpace(e.Description) != ""
-	case FieldLabels:
-		return len(e.Labels) > 0
+	case FieldTags:
+		return len(e.Tags) > 0
 	default:
 		// Unknown field key: not present. Same fail-closed direction as an
 		// unknown kind — a field this build cannot read has not been filled in
@@ -350,8 +358,8 @@ func fieldLabel(f FieldKey) string {
 		return "A due date"
 	case FieldDescription:
 		return "A description"
-	case FieldLabels:
-		return "At least one label"
+	case FieldTags:
+		return "At least one tag"
 	default:
 		return "A required field"
 	}

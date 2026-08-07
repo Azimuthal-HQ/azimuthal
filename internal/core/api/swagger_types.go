@@ -180,7 +180,6 @@ type SwaggerCreateTicketRequest struct {
 	Description string     `json:"description" example:"The login button does not work on mobile"`
 	Priority    string     `json:"priority" example:"medium"`
 	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty" example:"bug,frontend"`
 	DueAt       *time.Time `json:"due_at,omitempty"`
 }
 
@@ -188,10 +187,9 @@ type SwaggerCreateTicketRequest struct {
 // The real request type uses pointers to tell "absent" from "empty"; this is
 // the documentation shape, so it keeps plain strings.
 type SwaggerUpdateTicketRequest struct {
-	Title       string   `json:"title" example:"Fix login button (updated)"`
-	Description string   `json:"description" example:"Updated description"`
-	Priority    string   `json:"priority" example:"high"`
-	Labels      []string `json:"labels,omitempty"`
+	Title       string `json:"title" example:"Fix login button (updated)"`
+	Description string `json:"description" example:"Updated description"`
+	Priority    string `json:"priority" example:"high"`
 	// DueAt is RFC3339. Sending null clears the stored due date; omitting the
 	// key leaves it alone.
 	DueAt *time.Time `json:"due_at,omitempty"`
@@ -254,7 +252,6 @@ type SwaggerTicketResponse struct {
 	RequesterID *uuid.UUID                `json:"requester_id"`
 	Requester   *SwaggerRequesterIdentity `json:"requester"`
 	AssigneeID  *uuid.UUID                `json:"assignee_id,omitempty"`
-	Labels      []string                  `json:"labels"`
 	DueAt       *time.Time                `json:"due_at,omitempty"`
 	ResolvedAt  *time.Time                `json:"resolved_at,omitempty"`
 	Rank        string                    `json:"rank" example:"0|aaaaaa:"`
@@ -301,7 +298,6 @@ type SwaggerCreateItemRequest struct {
 	Priority    string     `json:"priority" example:"medium"`
 	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
 	SprintID    *uuid.UUID `json:"sprint_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
 	DueAt       *time.Time `json:"due_at,omitempty"`
 }
 
@@ -316,7 +312,6 @@ type SwaggerUpdateItemRequest struct {
 	Kind       string     `json:"kind" example:"bug"`
 	Priority   string     `json:"priority" example:"high"`
 	AssigneeID *uuid.UUID `json:"assignee_id,omitempty"`
-	Labels     []string   `json:"labels,omitempty"`
 	DueAt      *time.Time `json:"due_at,omitempty"`
 }
 
@@ -358,12 +353,6 @@ type SwaggerCreateRelationRequest struct {
 	ToID   uuid.UUID `json:"to_id"   example:"b2c3d4e5-f6a7-8901-bcde-f12345678901"`
 	ToType string    `json:"to_type" example:"project_item"`
 	Kind   string    `json:"kind"    example:"blocks"`
-}
-
-// SwaggerCreateLabelRequest matches createLabelRequest in projects handler.
-type SwaggerCreateLabelRequest struct {
-	Name  string `json:"name" example:"bug"`
-	Color string `json:"color" example:"#ff0000"`
 }
 
 // SwaggerMoveToSprintRequest matches moveToSprintRequest in projects handler.

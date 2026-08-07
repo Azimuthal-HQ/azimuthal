@@ -45,7 +45,6 @@ type Item struct {
 	ReporterID  uuid.UUID  `json:"reporter_id"`
 	AssigneeID  *uuid.UUID `json:"assignee_id"`
 	SprintID    *uuid.UUID `json:"sprint_id"`
-	Labels      []string   `json:"labels"`
 	DueAt       *time.Time `json:"due_at"`
 	ResolvedAt  *time.Time `json:"resolved_at"`
 	Rank        string     `json:"rank"`

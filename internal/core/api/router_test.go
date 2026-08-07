@@ -761,23 +761,6 @@ func (m *mockRelationRepo) ListForEntity(_ context.Context, _ uuid.UUID, _ strin
 }
 func (m *mockRelationRepo) DeleteInSpace(_ context.Context, _, _ uuid.UUID) error { return nil }
 
-type mockLabelRepo struct{}
-
-type mockMembershipResolver struct{}
-
-func (m *mockMembershipResolver) PrimaryOrgForUser(_ context.Context, _ uuid.UUID) (uuid.UUID, string, string, error) {
-	return uuid.MustParse("00000000-0000-0000-0000-000000000001"), "test-org", "Test Org", nil
-}
-
-func (m *mockLabelRepo) Create(_ context.Context, l *projects.Label) error {
-	l.ID = uuid.New()
-	return nil
-}
-func (m *mockLabelRepo) ListByOrg(_ context.Context, _ uuid.UUID) ([]*projects.Label, error) {
-	return nil, nil
-}
-func (m *mockLabelRepo) DeleteInOrg(_ context.Context, _, _ uuid.UUID) error { return nil }
-
 // mockTagRepo stands in for the tag store in the ROUTING tests, which assert
 // that a path reaches a handler and nothing about what it stores. The real
 // behaviour is covered against a real database in the tags integration tests —
@@ -791,15 +774,26 @@ func (m *mockTagRepo) GetByOrgSlug(_ context.Context, _ uuid.UUID, _ string) (ta
 func (m *mockTagRepo) Upsert(_ context.Context, orgID uuid.UUID, slug, name string) (tags.Tag, error) {
 	return tags.Tag{ID: uuid.New(), OrgID: orgID, Slug: slug, Name: name}, nil
 }
-func (m *mockTagRepo) ForPage(_ context.Context, _, _ uuid.UUID) ([]tags.Tag, error) {
+func (m *mockTagRepo) ForEntity(_ context.Context, _ tags.EntityRef) ([]tags.Tag, error) {
 	return nil, nil
 }
-func (m *mockTagRepo) ReplacePageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error {
+func (m *mockTagRepo) EntityInSpace(_ context.Context, _ tags.EntityRef) (bool, error) {
+	return true, nil
+}
+func (m *mockTagRepo) ReplaceEntityTags(_ context.Context, _ tags.EntityRef, _ []uuid.UUID) error {
 	return nil
 }
-func (m *mockTagRepo) AddPageTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error { return nil }
-func (m *mockTagRepo) PagesWithTag(_ context.Context, _ uuid.UUID, _ []uuid.UUID) ([]tags.TaggedPage, error) {
+func (m *mockTagRepo) AddEntityTags(_ context.Context, _ tags.EntityRef, _ []uuid.UUID) error {
+	return nil
+}
+func (m *mockTagRepo) EntitiesWithTag(_ context.Context, _ uuid.UUID, _ []uuid.UUID) ([]tags.TaggedEntity, error) {
 	return nil, nil
+}
+
+type mockMembershipResolver struct{}
+
+func (m *mockMembershipResolver) PrimaryOrgForUser(_ context.Context, _ uuid.UUID) (uuid.UUID, string, string, error) {
+	return uuid.MustParse("00000000-0000-0000-0000-000000000001"), "test-org", "Test Org", nil
 }
 
 // ---- Test helpers ----
@@ -838,7 +832,6 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	backlogSvc := projects.NewBacklogService(itemRepo, sprintRepo)
 	roadmapSvc := projects.NewRoadmapService(itemRepo, sprintRepo)
 	relationSvc := projects.NewRelationService(&mockRelationRepo{})
-	labelSvc := projects.NewLabelService(&mockLabelRepo{})
 	itemTypeSvc := itemtypes.NewService(&mockItemTypeRepo{})
 	customFieldSvc := customfields.NewService(&mockCustomFieldDefRepo{}, &mockCustomFieldValueRepo{}, &mockCustomFieldScopeRepo{})
 
@@ -850,13 +843,13 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 	// database and therefore no workflow, so WorkflowIDForSpace reports none and
 	// the gate resolves to "nothing applies" — which is exactly what an
 	// unconfigured space must do.
-	ticketHandler := ticketsapi.NewHandler(ticketSvc).
+	tagSvc := tags.NewService(&mockTagRepo{})
+	ticketHandler := ticketsapi.NewHandler(ticketSvc, tagSvc).
 		WithWorkflowTiers(
 			tiergate.New(workflow.NewTierService(&mockTierStore{}, &mockTransitionApplier{}), &mockWorkflowResolver{}, jobs.NoopNotificationEnqueuer{}),
 			&mockTransitionApplier{},
 		).
 		WithCustomFields(customFieldSvc)
-	tagSvc := tags.NewService(&mockTagRepo{})
 	wikiDocs := wiki.NewDocumentService(
 		newMockDocumentStore(mockPages),
 		&mockDocumentTx{},
@@ -866,7 +859,7 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		tagSvc,
 	)
 	wikiHandler := wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc)
-	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, labelSvc).
+	projectHandler := projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, tagSvc).
 		WithItemTypes(itemTypeSvc).
 		WithCustomFields(customFieldSvc).
 		WithWorkflowTiers(
@@ -2605,53 +2598,6 @@ func TestProjectRelationsCRUD(t *testing.T) {
 
 	if rr.Code != http.StatusNoContent {
 		t.Errorf("delete relation status = %d, want %d", rr.Code, http.StatusNoContent)
-	}
-}
-
-func TestProjectLabelsCRUD(t *testing.T) {
-	router, jwtSvc := setupRouter(t)
-	token := authHeader(t, jwtSvc, uuid.New())
-	orgID := uuid.New()
-	baseURL := "/api/v1/orgs/" + orgID.String() + "/labels"
-
-	// Create label
-	createBody := jsonBody(t, map[string]string{
-		"name":  "bug",
-		"color": "#ff0000",
-	})
-	req := httptest.NewRequest(http.MethodPost, baseURL, createBody)
-	req.Header.Set("Authorization", token)
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("create label status = %d, want %d, body: %s", rr.Code, http.StatusCreated, rr.Body.String())
-	}
-
-	var label struct {
-		ID uuid.UUID `json:"ID"`
-	}
-	decodeBody(t, rr.Body, &label)
-
-	// List labels
-	req = httptest.NewRequest(http.MethodGet, baseURL, nil)
-	req.Header.Set("Authorization", token)
-	rr = httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("list labels status = %d, want %d", rr.Code, http.StatusOK)
-	}
-
-	// Delete label
-	req = httptest.NewRequest(http.MethodDelete, baseURL+"/"+label.ID.String(), nil)
-	req.Header.Set("Authorization", token)
-	rr = httptest.NewRecorder()
-	router.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusNoContent {
-		t.Errorf("delete label status = %d, want %d", rr.Code, http.StatusNoContent)
 	}
 }
 

@@ -904,14 +904,14 @@ func TestGate_PlansPostFunctionsForTheCallerToApply(t *testing.T) {
 	target := uuid.New()
 	f.postFns[edge] = []PostFunction{
 		{ID: uuid.New(), Kind: PostAssignTo, AssigneeUserID: &target, Position: 0},
-		{ID: uuid.New(), Kind: PostSetField, FieldKey: ptr(PostFieldLabels), FieldValue: ptr("escalated"), Position: 1},
+		{ID: uuid.New(), Kind: PostSetField, FieldKey: ptr(PostFieldTags), FieldValue: ptr("escalated"), Position: 1},
 	}
 
 	got, err := NewTierService(f, &fakeApplier{store: f}).Gate(context.Background(), gateReq(uuid.New()))
 	require.NoError(t, err)
 	require.Len(t, got.Effects, 2)
 	require.Equal(t, target, **got.Effects[0].SetAssignee)
-	require.Equal(t, []string{"escalated"}, *got.Effects[1].SetLabels)
+	require.Equal(t, []string{"escalated"}, *got.Effects[1].SetTags)
 }
 
 // An action this build cannot perform aborts the whole transition. Committing

@@ -395,7 +395,7 @@ func TestTierAdapter_GuardRoundTrip(t *testing.T) {
 		{Class: workflow.GuardConditionClass, Kind: workflow.GuardActorIsAssignee},
 		{Class: workflow.GuardValidatorClass, Kind: workflow.GuardActorInTeam, TeamID: &f.teamID},
 		{Class: workflow.GuardConditionClass, Kind: workflow.GuardActorHasCapability, Capability: ptr(access.CapManageSpace)},
-		{Class: workflow.GuardValidatorClass, Kind: workflow.GuardFieldRequired, FieldKey: ptr(workflow.FieldLabels)},
+		{Class: workflow.GuardValidatorClass, Kind: workflow.GuardFieldRequired, FieldKey: ptr(workflow.FieldTags)},
 	} {
 		g.TransitionID = f.openToInProgress
 		created, err := f.tier.CreateGuard(ctx, g)
@@ -531,7 +531,7 @@ func TestTierAdapter_WorkflowLevelReadsSpanEveryTransition(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.tier.CreatePostFunction(ctx, workflow.PostFunction{
 		TransitionID: second, Kind: workflow.PostSetField,
-		FieldKey: ptr(workflow.PostFieldLabels), FieldValue: ptr("escalated"),
+		FieldKey: ptr(workflow.PostFieldTags), FieldValue: ptr("escalated"),
 	})
 	require.NoError(t, err)
 

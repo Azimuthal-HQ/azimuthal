@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/wiki"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
@@ -67,11 +68,15 @@ func (a *ContentTxAdapter) PublishPageTx(ctx context.Context, in wiki.PublishPag
 
 	// The inline tags the body carries (migration 040). ADD, never replace: the
 	// page-level tag list is the authority, and a body that no longer mentions
-	// `#foo` is not a request to untag the page.
+	// `#foo` is not a request to untag the page. The space is the page row's
+	// own, just written above in this transaction, so AddEntityTag's
+	// reconciliation predicate is satisfied by construction.
 	for _, tagID := range in.TagIDs {
-		if err := qtx.AddPageTag(ctx, generated.AddPageTagParams{
-			PageID: in.PageID,
-			TagID:  tagID,
+		if err := qtx.AddEntityTag(ctx, generated.AddEntityTagParams{
+			EntityType: string(tags.EntityPage),
+			EntityID:   in.PageID,
+			SpaceID:    page.SpaceID,
+			TagID:      tagID,
 		}); err != nil {
 			return generated.Page{}, fmt.Errorf("publish page: tagging: %w", err)
 		}

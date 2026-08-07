@@ -908,7 +908,6 @@ func seedRoundTripFixtures(ctx context.Context, t *testing.T, q *generated.Queri
 		Status:      "open",
 		Priority:    "medium",
 		ReporterID:  pgtype.UUID{Bytes: user.ID, Valid: true},
-		Labels:      []string{},
 		Rank:        "a0",
 	})
 	require.NoError(t, err)

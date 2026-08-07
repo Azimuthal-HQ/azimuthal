@@ -72,7 +72,7 @@ export type GuardKind = (typeof GUARD_KINDS)[number];
  * post-functions WRITE two. Offering this list in a post-function picker gets a
  * 400 from ValidatePostFunction.
  */
-export const GUARD_FIELD_KEYS = ['assignee_id', 'due_at', 'description', 'labels'] as const;
+export const GUARD_FIELD_KEYS = ['assignee_id', 'due_at', 'description', 'tags'] as const;
 export type GuardFieldKey = (typeof GUARD_FIELD_KEYS)[number];
 
 /**
@@ -115,7 +115,7 @@ export type PostFunctionKind = (typeof POST_FUNCTION_KINDS)[number];
  * overwrote author prose is a different and worse thing than one that sets a
  * date — and `assignee_id` belongs to `assign_to`.
  */
-export const POST_FIELD_KEYS = ['due_at', 'labels'] as const;
+export const POST_FIELD_KEYS = ['due_at', 'tags'] as const;
 export type PostFieldKey = (typeof POST_FIELD_KEYS)[number];
 
 // ─── Approvals (tier 2) ───────────────────────────────────────────────────────
@@ -175,7 +175,7 @@ export const GUARD_FIELD_LABEL: Record<GuardFieldKey, string> = {
   assignee_id: 'Assignee',
   due_at: 'Due date',
   description: 'Description',
-  labels: 'Labels',
+  tags: 'Tags',
 };
 
 export const GUARD_CAPABILITY_LABEL: Record<GuardCapability, string> = {
@@ -192,7 +192,7 @@ export const POST_FUNCTION_KIND_LABEL: Record<PostFunctionKind, string> = {
 
 export const POST_FIELD_LABEL: Record<PostFieldKey, string> = {
   due_at: 'Due date',
-  labels: 'Labels',
+  tags: 'Tags',
 };
 
 /**

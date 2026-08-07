@@ -26,7 +26,7 @@ import { ShareDialog } from '../../components/ShareDialog';
 import { MovePageDialog } from '../../components/MovePageDialog';
 import { CodexDocRenderer } from '../../components/codex/CodexDocRenderer';
 import { PageEditor } from '../../components/codex/PageEditor';
-import { PageTags } from '../../components/codex/PageTags';
+import { EntityTags } from '../../components/tags/EntityTags';
 import { codexMeasureClasses } from '../../components/codex/editorStyles';
 // The revision panel moved out of this file when it stopped being a bare
 // ledger: an author column, a two-version text comparison and restore are
@@ -366,7 +366,7 @@ export function WikiPage() {
                       past the document first. Read-only here — the editing
                       affordances belong to the editor. Renders nothing at all
                       on an untagged page. */}
-                  <PageTags spaceId={spaceId} pageId={activePage.id} editable={false} />
+                  <EntityTags entityType="page" spaceId={spaceId} entityId={activePage.id} editable={false} />
 
                   {/* The dual-format read path (migration 036).
 

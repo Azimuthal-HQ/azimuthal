@@ -41,7 +41,6 @@ func (a *ItemAdapter) Create(ctx context.Context, item *projects.Item) error {
 		ReporterID:  item.ReporterID,
 		AssigneeID:  pgUUID(item.AssigneeID),
 		SprintID:    pgUUID(item.SprintID),
-		Labels:      coalesceLabels(item.Labels),
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
 		// See the ticket twin: written at creation so the item starts inside its
@@ -117,7 +116,6 @@ func (a *ItemAdapter) Update(ctx context.Context, item *projects.Item) error {
 		Status:      item.Status,
 		Priority:    item.Priority,
 		AssigneeID:  pgUUID(item.AssigneeID),
-		Labels:      coalesceLabels(item.Labels),
 		DueAt:       pgTimestampPtr(item.DueAt),
 		Rank:        item.Rank,
 		// Safe for a PATCH that omitted "kind": applyItemPatch leaves the
@@ -265,7 +263,6 @@ func dbProjectItemToItem(i generated.ProjectItem) *projects.Item {
 		ReporterID:  i.ReporterID,
 		AssigneeID:  goUUIDPtr(i.AssigneeID),
 		SprintID:    goUUIDPtr(i.SprintID),
-		Labels:      i.Labels,
 		DueAt:       goTimePtr(i.DueAt),
 		ResolvedAt:  goTimePtr(i.ResolvedAt),
 		Rank:        i.Rank,
@@ -587,73 +584,4 @@ func dbEntityRelationRowsToRelations(rows []generated.ListEntityRelationsForEnti
 		result[i] = rel
 	}
 	return result
-}
-
-// LabelAdapter implements projects.LabelRepository using sqlc-generated queries.
-type LabelAdapter struct {
-	q *generated.Queries
-}
-
-// NewLabelAdapter creates a LabelAdapter backed by the given queries.
-func NewLabelAdapter(q *generated.Queries) *LabelAdapter {
-	return &LabelAdapter{q: q}
-}
-
-// Create persists a new label.
-//
-// A second label with a name the org already uses is ErrLabelDuplicate, which
-// is what projects.LabelRepository's own doc comment has always promised and
-// what handleProjectError has always had a 409 arm for. Without this mapping
-// nothing in the tree could produce that sentinel, so the arm was unreachable
-// and a duplicate name answered 500 (known-issues #24). Matched on the
-// constraint rather than on any 23505, so a future unique index on this table
-// cannot be silently reported as a name clash — labels_org_id_name_key is the
-// name PostgreSQL generated for migration 004's inline UNIQUE (org_id, name),
-// verified against the database rather than read off the migration.
-func (a *LabelAdapter) Create(ctx context.Context, label *projects.Label) error {
-	_, err := a.q.CreateLabel(ctx, generated.CreateLabelParams{
-		ID:    label.ID,
-		OrgID: label.OrgID,
-		Name:  label.Name,
-		Color: label.Color,
-	})
-	if err != nil {
-		if name, ok := uniqueViolation(err); ok && name == "labels_org_id_name_key" {
-			return projects.ErrLabelDuplicate
-		}
-		return fmt.Errorf("label adapter create: %w", err)
-	}
-	return nil
-}
-
-// ListByOrg returns all labels for an organization, ordered by name.
-func (a *LabelAdapter) ListByOrg(ctx context.Context, orgID uuid.UUID) ([]*projects.Label, error) {
-	rows, err := a.q.ListLabelsByOrg(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("label adapter list by org: %w", err)
-	}
-	result := make([]*projects.Label, len(rows))
-	for i, row := range rows {
-		result[i] = &projects.Label{
-			ID:    row.ID,
-			OrgID: row.OrgID,
-			Name:  row.Name,
-			Color: row.Color,
-		}
-	}
-	return result, nil
-}
-
-// DeleteInOrg removes a label belonging to orgID.
-//
-// A label in another organisation is left alone and reported as success, which
-// is the same answer an id that never existed gets.
-func (a *LabelAdapter) DeleteInOrg(ctx context.Context, id, orgID uuid.UUID) error {
-	if err := a.q.DeleteLabelInOrg(ctx, generated.DeleteLabelInOrgParams{
-		LabelID: id,
-		OrgID:   orgID,
-	}); err != nil {
-		return fmt.Errorf("label adapter delete: %w", err)
-	}
-	return nil
 }

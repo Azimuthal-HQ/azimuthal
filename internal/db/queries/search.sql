@@ -79,11 +79,12 @@
 -- cascade roots included, is in SharedEntities.direct, and the patterns from
 -- CascadeSubtreeArrays are strict-descendant.
 --
--- `tag:` narrows to tagged pages by joining page_tags — never by adding a term
--- to the tsquery. A tag's slug does not survive tokenization as one lexeme
--- (`#design_docs` becomes 'design' and 'doc'), page-level tags set through the
--- tags endpoint never touch the pages row at all, and a generated column cannot
--- reference another table. So the tag model is reachable only as a join.
+-- `tag:` narrows to tagged pages by joining entity_tags — never by adding a
+-- term to the tsquery. A tag's slug does not survive tokenization as one lexeme
+-- (`#design_docs` becomes 'design' and 'doc'), tags set through the tags
+-- endpoints never touch the pages row at all, and a generated column cannot
+-- reference another table. So the tag model is reachable only as a join. The
+-- ticket and item queries below carry the same arm over their own entity_type.
 SELECT p.id, p.space_id, p.parent_id, p.title, p.path, p.version, p.author_id,
        p.created_at, p.updated_at,
        s.key  AS space_key,
@@ -117,8 +118,9 @@ WHERE p.deleted_at IS NULL
              AND p.path LIKE root.pattern
        ))
   AND (NOT sqlc.arg(filter_tag)::boolean
-       OR EXISTS (SELECT 1 FROM page_tags pt
-                  WHERE pt.page_id = p.id AND pt.tag_id = sqlc.arg(tag_id)::uuid))
+       OR EXISTS (SELECT 1 FROM entity_tags et
+                  WHERE et.entity_type = 'page' AND et.entity_id = p.id
+                    AND et.tag_id = sqlc.arg(tag_id)::uuid))
   AND (sqlc.arg(cursor_key)::text = ''
        OR k.sort_key < sqlc.arg(cursor_key)::text
        OR (k.sort_key = sqlc.arg(cursor_key)::text AND p.id < sqlc.arg(cursor_id)::uuid))
@@ -152,6 +154,10 @@ WHERE t.deleted_at IS NULL
   AND t.search_vector @@ websearch_to_tsquery('english', sqlc.arg(query)::text)
   AND (t.space_id = ANY(sqlc.arg(readable_space_ids)::uuid[])
        OR t.id = ANY(sqlc.arg(shared_ticket_ids)::uuid[]))
+  AND (NOT sqlc.arg(filter_tag)::boolean
+       OR EXISTS (SELECT 1 FROM entity_tags et
+                  WHERE et.entity_type = 'ticket' AND et.entity_id = t.id
+                    AND et.tag_id = sqlc.arg(tag_id)::uuid))
   AND (sqlc.arg(cursor_key)::text = ''
        OR k.sort_key < sqlc.arg(cursor_key)::text
        OR (k.sort_key = sqlc.arg(cursor_key)::text AND t.id < sqlc.arg(cursor_id)::uuid))
@@ -182,6 +188,10 @@ WHERE i.deleted_at IS NULL
   AND i.search_vector @@ websearch_to_tsquery('english', sqlc.arg(query)::text)
   AND (i.space_id = ANY(sqlc.arg(readable_space_ids)::uuid[])
        OR i.id = ANY(sqlc.arg(shared_item_ids)::uuid[]))
+  AND (NOT sqlc.arg(filter_tag)::boolean
+       OR EXISTS (SELECT 1 FROM entity_tags et
+                  WHERE et.entity_type = 'project_item' AND et.entity_id = i.id
+                    AND et.tag_id = sqlc.arg(tag_id)::uuid))
   AND (sqlc.arg(cursor_key)::text = ''
        OR k.sort_key < sqlc.arg(cursor_key)::text
        OR (k.sort_key = sqlc.arg(cursor_key)::text AND i.id < sqlc.arg(cursor_id)::uuid))

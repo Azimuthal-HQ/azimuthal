@@ -13,6 +13,7 @@ import {
 import { EntityShareControl } from '../../components/EntityShareControl';
 import { CustomFieldsSection } from '../../components/CustomFieldsSection';
 import { RelationsSection } from '../../components/RelationsSection';
+import { EntityTags } from '../../components/tags/EntityTags';
 import { ModuleChip } from '../../shell/ModuleChip';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { Input } from '../../components/ui/input';
@@ -374,6 +375,11 @@ export function TicketDetailPage() {
           >
             {ticket.description ?? ''}
           </Markdown>
+
+          {/* Entity tags (migration 055): the same org vocabulary pages carry,
+              editable in place like the rest of the detail surface. The server
+              enforces the edit permission; a refused write surfaces its words. */}
+          <EntityTags entityType="ticket" spaceId={spaceId} entityId={ticket.id} editable />
 
           {/* Approvals (ADR-0011 tier 2). Above the Activity block and outside
               it: the comment area and its visibility toggle belong to the

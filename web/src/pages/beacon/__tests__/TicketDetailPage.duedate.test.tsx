@@ -25,6 +25,9 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../lib/api', () => ({
+  useEntityTags: () => ({ data: [], isLoading: false, error: null }),
+  useOrgTags: () => ({ data: [], isLoading: false, error: null }),
+  useSetEntityTags: () => ({ mutate: () => {}, isPending: false, error: null }),
   useTicket: () => ({
     data: state.ticket,
     isLoading: false,

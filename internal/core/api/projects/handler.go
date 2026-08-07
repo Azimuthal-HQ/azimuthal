@@ -22,6 +22,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/itemtypes"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/projects"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/tags"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/workflow"
 )
 
@@ -32,11 +33,15 @@ import (
 // router.go the way comments are. The item relation URLs did not move — only
 // their registration did.
 type Handler struct {
-	items        *projects.ItemService
-	sprints      *projects.SprintService
-	backlog      *projects.BacklogService
-	roadmap      *projects.RoadmapService
-	labels       *projects.LabelService
+	items   *projects.ItemService
+	sprints *projects.SprintService
+	backlog *projects.BacklogService
+	roadmap *projects.RoadmapService
+	// tags is the entity tag model (migration 055): project items carry the
+	// same org-scoped tags pages do, and the tag routes in Routes() are
+	// unconditional, so the service is a required constructor argument rather
+	// than a With* option — a missing one does not compile.
+	tags         *tags.Service
 	itemTypes    *itemtypes.Service
 	customFields *customfields.Service
 	boardConfig  *projects.BoardConfigService
@@ -63,14 +68,14 @@ func NewHandler(
 	sprints *projects.SprintService,
 	backlog *projects.BacklogService,
 	roadmap *projects.RoadmapService,
-	labels *projects.LabelService,
+	tagSvc *tags.Service,
 ) *Handler {
 	return &Handler{
 		items:    items,
 		sprints:  sprints,
 		backlog:  backlog,
 		roadmap:  roadmap,
-		labels:   labels,
+		tags:     tagSvc,
 		auditLog: audit.NewLogger(),
 	}
 }
@@ -122,6 +127,11 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/items/{itemID}/fields", h.GetItemFields)
 	r.Put("/items/{itemID}/fields/{slug}", h.SetItemField)
 
+	// Entity tags (migration 055). Read is the space's, writing is the same
+	// permission as editing the item.
+	r.Get("/items/{itemID}/tags", h.ListItemTags)
+	r.Put("/items/{itemID}/tags", h.SetItemTags)
+
 	// Relations are mounted in router.go beside this subtree's comment routes,
 	// not here: the satellite is entity-generic and every entity subtree
 	// carries the same wrappers over one core (see api/relations).
@@ -165,7 +175,6 @@ type createItemRequest struct {
 	Priority    string     `json:"priority"`
 	AssigneeID  *uuid.UUID `json:"assignee_id,omitempty"`
 	SprintID    *uuid.UUID `json:"sprint_id,omitempty"`
-	Labels      []string   `json:"labels,omitempty"`
 	DueAt       *time.Time `json:"due_at,omitempty"`
 }
 
@@ -200,7 +209,6 @@ type updateItemRequest struct {
 	Kind        *string                          `json:"kind"`
 	Priority    *string                          `json:"priority"`
 	AssigneeID  respond.OptionalField[uuid.UUID] `json:"assignee_id"`
-	Labels      []string                         `json:"labels,omitempty"`
 	DueAt       respond.OptionalField[time.Time] `json:"due_at"`
 }
 
@@ -375,7 +383,6 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 		ReporterID:  claims.UserID,
 		AssigneeID:  req.AssigneeID,
 		SprintID:    req.SprintID,
-		Labels:      req.Labels,
 		DueAt:       req.DueAt,
 	}
 	// Born INSIDE the space's state machine, both position columns written
@@ -461,9 +468,6 @@ func applyItemPatch(existing *projects.Item, req updateItemRequest) {
 	}
 	if req.Priority != nil {
 		existing.Priority = *req.Priority
-	}
-	if req.Labels != nil {
-		existing.Labels = req.Labels
 	}
 	// Only when the key was actually present. A nil Value with Set true is an
 	// explicit null and does mean "clear it" — that is how item detail
@@ -699,7 +703,19 @@ func (h *Handler) gateItemTransition(
 		return workflow.TransitionDecision{}, false
 	}
 
-	gated, err := h.tiers.Evaluate(r.Context(), ItemGateRequest(orgID, spaceID, claims.UserID, current, target))
+	// See the ticket twin: the guard snapshot's tag slugs come from
+	// entity_tags, and an unreadable tag set refuses the transition rather
+	// than evaluating a tag guard against nothing.
+	itemTags, err := h.tags.ForEntity(r.Context(), tags.EntityRef{
+		Type: tags.EntityProjectItem, ID: current.ID, SpaceID: spaceID,
+	})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"the item's tags could not be read")
+		return workflow.TransitionDecision{}, false
+	}
+
+	gated, err := h.tiers.Evaluate(r.Context(), ItemGateRequest(orgID, spaceID, claims.UserID, current, target, tags.SlugsOf(itemTags)))
 	if err != nil {
 		handleTierError(w, r, err)
 		return workflow.TransitionDecision{}, false
@@ -717,7 +733,7 @@ func (h *Handler) gateItemTransition(
 // entity snapshot the mutation is checked against, or the picker and the server
 // disagree about the same item.
 func ItemGateRequest(
-	orgID, spaceID, actorID uuid.UUID, current *projects.Item, target string,
+	orgID, spaceID, actorID uuid.UUID, current *projects.Item, target string, tagSlugs []string,
 ) tiergate.Request {
 	return tiergate.Request{
 		OrgID:          orgID,
@@ -732,7 +748,7 @@ func ItemGateRequest(
 			AssigneeID:  current.AssigneeID,
 			DueAt:       current.DueAt,
 			Description: current.Description,
-			Labels:      current.Labels,
+			Tags:        tagSlugs,
 		},
 	}
 }
@@ -1579,115 +1595,6 @@ func (h *Handler) GetSprintRoadmap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond.JSON(w, http.StatusOK, roadmap)
-}
-
-// --- Label handlers ---
-
-// ListLabels returns all labels for an organization.
-//
-// @Summary      List labels
-// @Description  Returns all labels for an organization
-// @Tags         labels
-// @Produce      json
-// @Security     BearerAuth
-// @Param        orgID  path      string  true  "Organization ID (UUID)"
-// @Success      200    {array}   map[string]interface{}
-// @Failure      400    {object}  api.SwaggerErrorResponse
-// @Failure      401    {object}  api.SwaggerErrorResponse
-// @Failure      500    {object}  api.SwaggerErrorResponse
-// @Router       /orgs/{orgID}/labels [get]
-func (h *Handler) ListLabels(w http.ResponseWriter, r *http.Request) {
-	orgID, err := orgIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
-		return
-	}
-
-	labels, err := h.labels.ListLabels(r.Context(), orgID)
-	if err != nil {
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to list labels")
-		return
-	}
-	respond.JSON(w, http.StatusOK, labels)
-}
-
-// CreateLabel creates a new label.
-//
-// @Summary      Create a label
-// @Description  Creates a new label for an organization
-// @Tags         labels
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        orgID  path      string                         true  "Organization ID (UUID)"
-// @Param        body   body      api.SwaggerCreateLabelRequest   true  "Label details"
-// @Success      201    {object}  map[string]interface{}
-// @Failure      400    {object}  api.SwaggerErrorResponse
-// @Failure      401    {object}  api.SwaggerErrorResponse
-// @Failure      409    {object}  api.SwaggerErrorResponse
-// @Failure      500    {object}  api.SwaggerErrorResponse
-// @Router       /orgs/{orgID}/labels [post]
-func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
-	orgID, err := orgIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
-		return
-	}
-
-	var req createLabelRequest
-	if err := respond.DecodeJSON(r, &req); err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
-		return
-	}
-
-	label := &projects.Label{
-		OrgID: orgID,
-		Name:  req.Name,
-		Color: req.Color,
-	}
-
-	created, err := h.labels.CreateLabel(r.Context(), label)
-	if err != nil {
-		handleProjectError(w, r, err)
-		return
-	}
-	respond.JSON(w, http.StatusCreated, created)
-}
-
-// DeleteLabel removes a label.
-//
-// @Summary      Delete a label
-// @Description  Removes a label from an organization
-// @Tags         labels
-// @Produce      json
-// @Security     BearerAuth
-// @Param        orgID    path      string  true  "Organization ID (UUID)"
-// @Param        labelID  path      string  true  "Label ID (UUID)"
-// @Success      204      "No Content"
-// @Failure      400      {object}  api.SwaggerErrorResponse
-// @Failure      401      {object}  api.SwaggerErrorResponse
-// @Failure      500      {object}  api.SwaggerErrorResponse
-// @Router       /orgs/{orgID}/labels/{labelID} [delete]
-func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "labelID"))
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid label ID")
-		return
-	}
-	// The route is open to any org member by design — labels are shared
-	// metadata, not an administered resource — so {orgID} is the only boundary
-	// this delete has, and the label id alone did not carry it.
-	orgID, err := orgIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
-		return
-	}
-
-	if err := h.labels.DeleteLabel(r.Context(), id, orgID); err != nil {
-		handleProjectError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Item type handlers ---

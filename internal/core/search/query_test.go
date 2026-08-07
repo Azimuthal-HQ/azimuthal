@@ -58,23 +58,30 @@ func TestParse_ClosedVocabulary(t *testing.T) {
 			name:        "tag: slugifies through the one slug helper",
 			raw:         `tag:"Design Docs" latency`,
 			wantText:    "latency",
-			wantModules: []Module{ModuleCodex},
+			wantModules: AllModules(),
 			wantTag:     "design_docs",
 		},
 		{
 			name:        "tag: hyphens and underscores are the same tag",
 			raw:         "tag:design-docs",
 			wantText:    "",
-			wantModules: []Module{ModuleCodex},
+			wantModules: AllModules(),
 			wantTag:     "design_docs",
 		},
 		{
-			name: "a tag filter narrows to Codex even against an explicit type:",
-			// Tags exist only on pages, so type:ticket + tag: can only ever
-			// return nothing. Codex alone is the useful answer.
+			name: "a tag filter does not narrow the fan-out, and an explicit type: stands",
+			// The inverse of the pre-v0.4.2 pin that read "a tag filter
+			// narrows to Codex even against an explicit type:". Tags were
+			// page-only then, so type:ticket + tag: could only ever return
+			// nothing and Codex alone was the useful answer. Tags are
+			// entity-generic now (migration 055) — tickets carry them and the
+			// Beacon search arm filters on them — so type:ticket tag:runbooks
+			// must fan out to Beacon and return tickets. The case is inverted
+			// rather than deleted so the record of the deliberate behaviour
+			// change lives where the old pin lived.
 			raw:         "type:ticket tag:runbooks disk",
 			wantText:    "disk",
-			wantModules: []Module{ModuleCodex},
+			wantModules: []Module{ModuleBeacon},
 			wantTag:     "runbooks",
 		},
 		{

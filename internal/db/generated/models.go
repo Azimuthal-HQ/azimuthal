@@ -168,6 +168,14 @@ type EntityShare struct {
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type EntityTag struct {
+	PageID     pgtype.UUID        `json:"page_id"`
+	TagID      uuid.UUID          `json:"tag_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	EntityType string             `json:"entity_type"`
+	EntityID   uuid.UUID          `json:"entity_id"`
+}
+
 type Invite struct {
 	ID             uuid.UUID          `json:"id"`
 	OrgID          uuid.UUID          `json:"org_id"`
@@ -215,14 +223,6 @@ type ItemsArchive struct {
 	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 	SearchVector interface{}        `json:"search_vector"`
 	Number       *int32             `json:"number"`
-}
-
-type Label struct {
-	ID        uuid.UUID          `json:"id"`
-	OrgID     uuid.UUID          `json:"org_id"`
-	Name      string             `json:"name"`
-	Color     string             `json:"color"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Membership struct {
@@ -297,12 +297,6 @@ type PageRevision struct {
 	Doc       json.RawMessage    `json:"doc"`
 }
 
-type PageTag struct {
-	PageID    uuid.UUID          `json:"page_id"`
-	TagID     uuid.UUID          `json:"tag_id"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-}
-
 type ProjectItem struct {
 	ID              uuid.UUID          `json:"id"`
 	SpaceID         uuid.UUID          `json:"space_id"`
@@ -316,7 +310,6 @@ type ProjectItem struct {
 	ReporterID      uuid.UUID          `json:"reporter_id"`
 	AssigneeID      pgtype.UUID        `json:"assignee_id"`
 	SprintID        pgtype.UUID        `json:"sprint_id"`
-	Labels          []string           `json:"labels"`
 	DueAt           pgtype.Timestamptz `json:"due_at"`
 	ResolvedAt      pgtype.Timestamptz `json:"resolved_at"`
 	Rank            string             `json:"rank"`
@@ -490,7 +483,6 @@ type Ticket struct {
 	Priority        string             `json:"priority"`
 	ReporterID      pgtype.UUID        `json:"reporter_id"`
 	AssigneeID      pgtype.UUID        `json:"assignee_id"`
-	Labels          []string           `json:"labels"`
 	DueAt           pgtype.Timestamptz `json:"due_at"`
 	ResolvedAt      pgtype.Timestamptz `json:"resolved_at"`
 	Rank            string             `json:"rank"`
