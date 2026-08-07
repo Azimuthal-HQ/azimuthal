@@ -222,5 +222,12 @@ WHERE sc.field_id = ord.field_id
   );
 
 -- name: DeleteCustomFieldScope :execrows
+-- No org predicate, deliberately unlike the attach and reorder statements
+-- above: every caller reaches this through (*Service).RemoveScope, which
+-- resolves the field via getOwned and refuses a cross-org field before any
+-- SQL runs — and a cross-org row cannot exist to be deleted anyway, because
+-- UpsertCustomFieldScope's own org predicate refuses to create one. The
+-- asymmetry is safe because deletion is bounded by what the attach could
+-- write; it is the attach that must carry the fence.
 DELETE FROM custom_field_scopes
 WHERE field_id = $1 AND space_id = $2 AND entity_type = $3;

@@ -123,6 +123,13 @@ type DeleteCustomFieldScopeParams struct {
 	EntityType string    `json:"entity_type"`
 }
 
+// No org predicate, deliberately unlike the attach and reorder statements
+// above: every caller reaches this through (*Service).RemoveScope, which
+// resolves the field via getOwned and refuses a cross-org field before any
+// SQL runs — and a cross-org row cannot exist to be deleted anyway, because
+// UpsertCustomFieldScope's own org predicate refuses to create one. The
+// asymmetry is safe because deletion is bounded by what the attach could
+// write; it is the attach that must carry the fence.
 func (q *Queries) DeleteCustomFieldScope(ctx context.Context, arg DeleteCustomFieldScopeParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteCustomFieldScope, arg.FieldID, arg.SpaceID, arg.EntityType)
 	if err != nil {

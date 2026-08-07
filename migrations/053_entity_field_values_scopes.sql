@@ -115,9 +115,15 @@ JOIN spaces s ON s.org_id = d.org_id AND s.type = 'vector';
 -- +goose StatementBegin
 DROP TABLE IF EXISTS custom_field_scopes;
 
--- Values written for tickets and pages after the Up have no item_id to return
--- to; the pre-polymorphic schema cannot represent them, so the Down removes
--- them — the same lossy shape as 015's Down dropping entity_type/entity_id.
+-- EVERY value written after the Up has no item_id to return to — project
+-- item values as much as ticket and page values, because the polymorphic
+-- write path (UpsertEntityFieldValue) writes entity_type/entity_id only and
+-- never populates the legacy item_id column. So this removes all
+-- post-migration writes; only rows the Up backfilled from the old table
+-- survive. The pre-polymorphic schema cannot represent the rest — the same
+-- lossy shape as 015's Down dropping entity_type/entity_id. (This comment
+-- said "values written for tickets and pages"; the behaviour was always
+-- broader, and is unchanged.)
 DELETE FROM entity_field_values WHERE item_id IS NULL;
 
 ALTER TABLE entity_field_values DROP CONSTRAINT IF EXISTS entity_field_values_entity_slug_key;
