@@ -110,12 +110,19 @@ func newScopeFixture(t *testing.T) *scopeFixture {
 	f.mkFieldValue(t, "project_item", f.itemB, secretField)
 	f.mkFieldValue(t, "ticket", f.ticketB, secretTicketField)
 	f.mkTag(t, f.pageB, secretTag)
+	// Relations touching every space-B entity type, so the relations rows'
+	// crossed direction has rows to withhold: an unreconciled list leaks the
+	// rows' existence (count, kinds, directions) even with far sides redacted.
+	f.mkRelation(t, f.itemB, "project_item", f.ticketB, "ticket")
+	f.mkRelation(t, f.pageB, "page", f.itemB, "project_item")
 	// And the matching dependents in A, so the positive direction has something
 	// to find.
 	f.mkComment(t, "project_item", f.itemA, "Ordinary comment in A")
 	f.mkFieldValue(t, "project_item", f.itemA, "ordinary-value")
 	f.mkFieldValue(t, "ticket", f.ticketA, "ordinary-ticket-value")
 	f.mkTag(t, f.pageA, "ordinary_tag")
+	f.mkRelation(t, f.itemA, "project_item", f.pageA, "page")
+	f.mkRelation(t, f.ticketA, "ticket", f.itemA, "project_item")
 
 	return f
 }
@@ -185,6 +192,15 @@ func (f *scopeFixture) mkFieldValue(t *testing.T, entityType string, entityID uu
 	require.NoError(t, err)
 }
 
+func (f *scopeFixture) mkRelation(t *testing.T, fromID uuid.UUID, fromType string, toID uuid.UUID, toType string) {
+	t.Helper()
+	_, err := f.ts.DB.Pool.Exec(context.Background(),
+		`INSERT INTO entity_relations (id, from_id, from_type, to_id, to_type, kind, created_by)
+		 VALUES ($1,$2,$3,$4,$5,'relates_to',$6)`,
+		uuid.New(), fromID, fromType, toID, toType, f.ts.UserID)
+	require.NoError(t, err)
+}
+
 func (f *scopeFixture) mkTag(t *testing.T, pageID uuid.UUID, slug string) {
 	t.Helper()
 	var tagID uuid.UUID
@@ -251,6 +267,21 @@ var scopeCases = []scopeCase{
 		listRoute: true,
 	},
 	{
+		// A4: the relations list reconciles its near entity against the URL's
+		// space the way comments always did. An item in another space answers
+		// the same empty list an absent item does — the rows' very existence
+		// (count, kinds) is what an unreconciled list would leak, far-side
+		// redaction notwithstanding.
+		name: "ItemRelations",
+		path: func(f *scopeFixture, s, e uuid.UUID) string {
+			return f.base(s) + "/projects/items/" + e.String() + "/relations"
+		},
+		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.itemA },
+		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.itemB },
+		secret:    secretTicket,
+		listRoute: true,
+	},
+	{
 		name:    "GetSprint",
 		path:    func(f *scopeFixture, s, e uuid.UUID) string { return f.base(s) + "/projects/sprints/" + e.String() },
 		legit:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.sprintA },
@@ -288,6 +319,18 @@ var scopeCases = []scopeCase{
 		listRoute: true,
 	},
 	{
+		// A4: the ticket-mounted relations list, same reconciliation as
+		// ItemRelations above.
+		name: "TicketRelations",
+		path: func(f *scopeFixture, s, e uuid.UUID) string {
+			return f.base(s) + "/tickets/" + e.String() + "/relations"
+		},
+		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketA },
+		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketB },
+		secret:    secretItem,
+		listRoute: true,
+	},
+	{
 		name:    "GetPage",
 		path:    func(f *scopeFixture, s, e uuid.UUID) string { return f.base(s) + "/wiki/" + e.String() },
 		legit:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.pageA },
@@ -315,6 +358,18 @@ var scopeCases = []scopeCase{
 		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.pageA },
 		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.pageB },
 		secret:    secretTag,
+		listRoute: true,
+	},
+	{
+		// A4: the page-mounted relations list, same reconciliation as
+		// ItemRelations above.
+		name: "PageRelations",
+		path: func(f *scopeFixture, s, e uuid.UUID) string {
+			return f.base(s) + "/wiki/" + e.String() + "/relations"
+		},
+		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.pageA },
+		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.pageB },
+		secret:    secretItem,
 		listRoute: true,
 	},
 }

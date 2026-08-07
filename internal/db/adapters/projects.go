@@ -579,6 +579,10 @@ func dbEntityRelationRowsToRelations(rows []generated.ListEntityRelationsForEnti
 			rel.FarType = row.FarType
 			rel.FarTitle = row.FarTitle
 			rel.FarStatus = row.FarStatus
+			if row.FarSpaceID.Valid {
+				farSpaceID := uuid.UUID(row.FarSpaceID.Bytes)
+				rel.FarSpaceID = &farSpaceID
+			}
 		}
 		result[i] = rel
 	}

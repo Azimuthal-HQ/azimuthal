@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Clock, AlertCircle, Trash2, Link2 } from 'lucide-react';
+import { ArrowLeft, Clock, AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -12,6 +12,7 @@ import {
   DetailDivider,
 } from '../../components/layout/DetailLayout';
 import { EntityShareControl } from '../../components/EntityShareControl';
+import { RelationsSection } from '../../components/RelationsSection';
 import { ModuleChip } from '../../shell/ModuleChip';
 import { ItemKeyChip, itemKeyLabel } from '../../components/ItemKeyChip';
 import { CustomFieldsSection } from '../../components/CustomFieldsSection';
@@ -34,10 +35,6 @@ import {
   useComments,
   useCreateComment,
   useMe,
-  useRelations,
-  useCreateRelation,
-  useDeleteRelation,
-  useItemSearch,
   useSpace,
   useItemTypes,
   useSprints,
@@ -132,31 +129,6 @@ export function ItemDetailPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
-
-  // Relations state
-  const { data: relations = [] } = useRelations(spaceId, itemId);
-  const createRelationMutation = useCreateRelation(spaceId, itemId);
-  const deleteRelationMutation = useDeleteRelation(spaceId, itemId);
-  const [relKind, setRelKind] = useState('relates_to');
-  const [relSearch, setRelSearch] = useState('');
-  const [relSearchDebounced, setRelSearchDebounced] = useState('');
-  const { data: searchResults = [] } = useItemSearch(spaceId, relSearchDebounced);
-
-  // The debounce timer hangs off the function object itself. Typed here rather
-  // than cast to `any` so the property has a name and a type; the runtime is
-  // unchanged.
-  type DebouncedRelSearch = typeof handleRelSearchChange & {
-    _t?: ReturnType<typeof setTimeout>;
-  };
-
-  function handleRelSearchChange(v: string) {
-    setRelSearch(v);
-    clearTimeout((handleRelSearchChange as DebouncedRelSearch)._t);
-    (handleRelSearchChange as DebouncedRelSearch)._t = setTimeout(
-      () => setRelSearchDebounced(v),
-      300,
-    );
-  }
 
   const backlogPath = `/vector/${spaceId}/backlog`;
 
@@ -379,87 +351,13 @@ export function ItemDetailPage() {
             />
           </div>
 
-          {/* Relations section */}
-          <div className="mt-6 border-t border-[var(--color-border)] pt-5">
-            <h3 className="mb-3 flex items-center gap-2 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
-              <Link2 className="h-4 w-4" />Relations
-            </h3>
-            {relations.length > 0 && (
-              <div className="mb-4 space-y-1.5">
-                {relations.map(rel => (
-                  <div key={rel.id} className="flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[var(--text-sm)]">
-                    <span className="shrink-0 rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[var(--text-xs)] capitalize text-[var(--color-text-muted)]">
-                      {rel.direction === 'incoming' ? '← ' : ''}{rel.kind.replace(/_/g, ' ')}
-                    </span>
-                    {/*
-                      A relation whose far side sits in a space this viewer
-                      cannot read arrives with every far field null. Showing the
-                      row is deliberate — an item needs to know it is blocked —
-                      but the placeholder must stay free of anything that
-                      identifies the far entity, so there is no title, no key
-                      and no link to follow.
-                    */}
-                    {rel.far_readable ? (
-                      <>
-                        <span className="flex-1 truncate text-[var(--color-text)]">{rel.far_title}</span>
-                        <span className="shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)]">{rel.far_status}</span>
-                      </>
-                    ) : (
-                      <span className="flex-1 truncate italic text-[var(--color-text-muted)]">
-                        Restricted item
-                      </span>
-                    )}
-                    <button
-                      onClick={() => deleteRelationMutation.mutate(rel.id)}
-                      className="ml-1 rounded p-0.5 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-danger)]"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <select
-                value={relKind}
-                onChange={e => setRelKind(e.target.value)}
-                className={cn(
-                  'rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-input)] px-2 py-1.5 text-[var(--text-sm)] text-[var(--color-text)]',
-                  'focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]',
-                )}
-              >
-                {['relates_to', 'blocks', 'is_blocked_by', 'duplicates'].map(k => (
-                  <option key={k} value={k}>{k.replace(/_/g, ' ')}</option>
-                ))}
-              </select>
-              <div className="relative flex-1">
-                <Input
-                  placeholder="Search items…"
-                  value={relSearch}
-                  onChange={e => handleRelSearchChange(e.target.value)}
-                />
-                {searchResults.length > 0 && relSearch && (
-                  <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)]">
-                    {searchResults.filter(r => r.id !== itemId).slice(0, 8).map(r => (
-                      <button
-                        key={r.id}
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[var(--text-sm)] text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]"
-                        onClick={async () => {
-                          await createRelationMutation.mutateAsync({ to_id: r.id, kind: relKind });
-                          setRelSearch('');
-                          setRelSearchDebounced('');
-                        }}
-                      >
-                        <span className="truncate">{r.title}</span>
-                        <span className="ml-auto shrink-0 text-[var(--text-xs)] text-[var(--color-text-muted)]">{r.status}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          {/* Relations (A4): the shared entity-generic surface. */}
+          <RelationsSection
+            orgId={orgId}
+            spaceId={spaceId}
+            entityType="project_item"
+            entityId={itemId}
+          />
 
           {/* Comments section */}
           <div className="mt-6 border-t border-[var(--color-border)] pt-5">

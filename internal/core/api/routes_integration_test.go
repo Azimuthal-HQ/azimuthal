@@ -29,6 +29,7 @@ import (
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	relationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/relations"
 	searchapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/search"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -297,8 +298,8 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			WithWorkflowTiers(tierGate, transitionTx).
 			WithRequesterLookup(portalAdapter).
 			WithCustomFields(customFieldSvc),
-		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
-		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, relationSvc, labelSvc).
+		WikiHandler: wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter).WithPageSuggestions(wiki.NewPageSuggestionService(queries)),
+		ProjectHandler: projectsapi.NewHandler(itemSvc, sprintSvc, backlogSvc, roadmapSvc, labelSvc).
 			WithAuditLogger(auditLog).
 			WithWorkflowTiers(tierGate, transitionTx).
 			WithItemTypes(itemtypes.NewService(adapters.NewItemTypeAdapter(queries))).
@@ -307,6 +308,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 				adapters.NewBoardConfigAdapter(pool),
 				adapters.NewWorkflowStatusAdapter(pool),
 			)),
+		RelationHandler:     relationsapi.NewHandler(relationSvc),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(adapters.NewSpaceCreateAdapter(db.Pool)).WithAuditLogger(auditLog),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
 		NotificationHandler: notificationsapi.NewHandler(queries, accessResolver),

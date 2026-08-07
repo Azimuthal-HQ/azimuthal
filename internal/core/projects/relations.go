@@ -35,10 +35,11 @@ const (
 	DirectionIncoming = "incoming"
 )
 
-// ValidEntityTypes are the entity kinds a relation may point at. It mirrors
-// the entity_relations to_type/from_type CHECK constraint from migration 015 —
-// a value outside this set reaches the database only to be rejected by the
-// constraint, which surfaces to the caller as a 500 rather than a 400.
+// ValidEntityTypes are the entity kinds a relation may point at — and, since
+// the entity-generic routes, originate from. It mirrors the entity_relations
+// to_type/from_type CHECK constraint from migration 015 — a value outside this
+// set reaches the database only to be rejected by the constraint, which
+// surfaces to the caller as a 500 rather than a 400.
 var ValidEntityTypes = map[string]bool{
 	EntityTypeTicket:      true,
 	EntityTypeProjectItem: true,
@@ -79,7 +80,15 @@ type Relation struct {
 	FarID       *uuid.UUID `json:"far_id"`
 	FarType     *string    `json:"far_type"`
 	FarTitle    *string    `json:"far_title"`
-	FarStatus   *string    `json:"far_status"`
+	// FarStatus is nil for an unreadable far side like every other far field —
+	// and ALSO for a readable page, which has no status to report. A client
+	// must key on FarReadable, never on a non-nil status.
+	FarStatus *string `json:"far_status"`
+	// FarSpaceID is what makes a resolved far side navigable: relations link
+	// across spaces by design, so the near entity's space cannot be used to
+	// build the far entity's URL. Populated only when FarReadable — it names a
+	// space already in the viewer's own readable set, never a new fact.
+	FarSpaceID *uuid.UUID `json:"far_space_id"`
 }
 
 // NewRelation is a request to create a link. It is a separate type from
@@ -200,10 +209,31 @@ func (s *RelationService) CreateRelation(
 	}, nil
 }
 
-// ListRelations returns every relation touching the entity — both the ones it
-// declares and the ones declared about it — with far sides resolved only where
-// the caller may read them.
-func (s *RelationService) ListRelations(ctx context.Context, entityID uuid.UUID, entityType string, readableSpaceIDs []uuid.UUID) ([]*Relation, error) {
+// ListRelationsInSpace returns every relation touching the entity — both the
+// ones it declares and the ones declared about it, far sides resolved only
+// where the caller may read them — after reconciling the entity itself against
+// the space the route named.
+//
+// The reconciliation is the same TargetIsReadable the write path runs on its
+// near side, against the URL's space alone, for the same reason: the route
+// proved the caller may read {spaceID} and proved nothing at all about
+// {entityID}, so without it an entity anywhere in the installation answered
+// through whichever space the caller could name. This replaced an unreconciled
+// ListRelations rather than joining it, so no ungated variant survives to be
+// called by mistake — the same reshaping the repository interface had.
+//
+// A miss is an empty list, not an error: a collection hanging off an entity
+// outside this space answers exactly as one hanging off an entity that never
+// existed, which is the no-oracle shape the scoping battery pins for every
+// list route in the family.
+func (s *RelationService) ListRelationsInSpace(ctx context.Context, entityID uuid.UUID, entityType string, spaceID uuid.UUID, readableSpaceIDs []uuid.UUID) ([]*Relation, error) {
+	near, err := s.repo.TargetIsReadable(ctx, entityID, entityType, []uuid.UUID{spaceID})
+	if err != nil {
+		return nil, fmt.Errorf("listing relations: %w", err)
+	}
+	if !near {
+		return []*Relation{}, nil
+	}
 	rels, err := s.repo.ListForEntity(ctx, entityID, entityType, readableSpaceIDs)
 	if err != nil {
 		return nil, fmt.Errorf("listing relations: %w", err)
@@ -274,14 +304,28 @@ func filterByDirectedKind(rels []*Relation, outgoingKind, incomingKind string) [
 }
 
 // validateNewRelation checks that a relation request has valid fields.
+//
+// FromType gets the same enumeration and the same sentinel as ToType. For as
+// long as the only mount hardcoded EntityTypeProjectItem the check could not
+// fire, which made it look unnecessary — but "the handler constrains it" is a
+// property of one call site, not of this function, and the entity-generic
+// routes are exactly the change that stops it being true. An unvalidated
+// FromType reaches the CHECK constraint and comes back as an unmapped 500.
 func validateNewRelation(rel *NewRelation) error {
 	if !ValidRelationKinds[rel.Kind] {
 		return ErrInvalidRelationKind
 	}
+	if !ValidEntityTypes[rel.FromType] {
+		return ErrInvalidEntityType
+	}
 	if !ValidEntityTypes[rel.ToType] {
 		return ErrInvalidEntityType
 	}
-	if rel.FromID == rel.ToID {
+	// A self-relation is the same (type, id) PAIR on both ends, not the same
+	// id. Ids are unique only within an entity type's own table, so a ticket
+	// and a page sharing a UUID are two different entities — comparing ids
+	// alone would refuse that pair while asserting something it never checked.
+	if rel.FromID == rel.ToID && rel.FromType == rel.ToType {
 		return ErrSelfRelation
 	}
 	return nil

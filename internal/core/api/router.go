@@ -17,6 +17,7 @@ import (
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	relationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/relations"
 	searchapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/search"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -31,13 +32,20 @@ import (
 
 // RouterConfig holds all the dependencies needed to build the API router.
 type RouterConfig struct {
-	Authenticator       *auth.Authenticator
-	AuthHandler         *authapi.Handler
-	TicketHandler       *ticketsapi.Handler
-	WikiHandler         *wikiapi.Handler
-	ProjectHandler      *projectsapi.Handler
-	SpaceHandler        *spacesapi.Handler
-	CommentHandler      *commentsapi.Handler
+	Authenticator  *auth.Authenticator
+	AuthHandler    *authapi.Handler
+	TicketHandler  *ticketsapi.Handler
+	WikiHandler    *wikiapi.Handler
+	ProjectHandler *projectsapi.Handler
+	SpaceHandler   *spacesapi.Handler
+	CommentHandler *commentsapi.Handler
+	// RelationHandler serves the entity-generic relation satellite: one core,
+	// mounted per entity subtree (projects items, tickets, wiki pages) the way
+	// comments are — the from side of a relation comes from which route was
+	// hit. nil leaves every relation route unmounted, including the item ones
+	// that used to live inside ProjectHandler.Routes(); the harness wires it,
+	// and TestHarness_NoDarkDependencies fails on a nil.
+	RelationHandler     *relationsapi.Handler
 	NotificationHandler *notificationsapi.Handler
 	WorkflowHandler     *workflowsapi.Handler
 	TeamHandler         *teamsapi.Handler
@@ -287,6 +295,14 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			// caller's own resolved readable set, so this reveals nothing an
 			// ordinary ticket list would not.
 			r.Get("/tickets/suggest", cfg.TicketHandler.SuggestRefs)
+
+			// Page typeahead (A4), beside the ticket one and org-scoped for
+			// the same reason: a relation target may be a page anywhere in
+			// the organisation, not one in whichever space the operator is
+			// looking at. The handler cuts results to the caller's own
+			// resolved readable set, so this reveals nothing a page list
+			// would not.
+			r.Get("/pages/suggest", cfg.WikiHandler.SuggestPages)
 
 			// Labels (org-scoped metadata; any member).
 			r.Route("/labels", func(r chi.Router) {
@@ -633,6 +649,8 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/{ticketID}/comments", cfg.CommentHandler.ListTicketComments)
 			r.Post("/{ticketID}/comments", cfg.CommentHandler.CreateTicketComment)
 		}
+		mountRelationRoutes(r, cfg.RelationHandler, "/{ticketID}",
+			(*relationsapi.Handler).ListTicketRelations, (*relationsapi.Handler).CreateTicketRelation, false)
 	})
 
 	// Wiki pages
@@ -645,6 +663,8 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/{pageID}/comments", cfg.CommentHandler.ListPageComments)
 			r.Post("/{pageID}/comments", cfg.CommentHandler.CreatePageComment)
 		}
+		mountRelationRoutes(r, cfg.RelationHandler, "/{pageID}",
+			(*relationsapi.Handler).ListPageRelations, (*relationsapi.Handler).CreatePageRelation, false)
 	})
 
 	// Projects
@@ -660,6 +680,11 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/items/{itemID}/comments", cfg.CommentHandler.ListItemComments)
 			r.Post("/items/{itemID}/comments", cfg.CommentHandler.CreateItemComment)
 		}
+		// The item URLs predate the entity-generic mount and did not move;
+		// only their registration did, out of ProjectHandler.Routes() and
+		// into the same per-subtree convention comments use.
+		mountRelationRoutes(r, cfg.RelationHandler, "/items/{itemID}",
+			(*relationsapi.Handler).ListItemRelations, (*relationsapi.Handler).CreateItemRelation, true)
 	})
 
 	// Space workflow (read-only routes plus the transition POST above).
@@ -682,5 +707,31 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Use(writeFloor)
 			r.Mount("/", cfg.AttachmentHandler.SpaceRoutes())
 		})
+	}
+}
+
+// mountRelationRoutes registers one entity subtree's relation routes (A4):
+// the satellite is ONE handler mounted per subtree, so each call fixes only
+// the id pattern and the two wrappers. Method expressions rather than bound
+// values, because h may legitimately be nil — a nil handler leaves the
+// subtree's relation routes unmounted, exactly like a nil CommentHandler one
+// block up, and the harness's dark-dependency walk is what keeps that state
+// out of the test server. withDelete adds the single relation-addressed
+// DELETE, which the projects subtree carries for URL continuity; a relation
+// is addressed by its own id, so one delete serves all three mounts.
+func mountRelationRoutes(
+	r chi.Router,
+	h *relationsapi.Handler,
+	idPattern string,
+	list, create func(*relationsapi.Handler, http.ResponseWriter, *http.Request),
+	withDelete bool,
+) {
+	if h == nil {
+		return
+	}
+	r.Get(idPattern+"/relations", func(w http.ResponseWriter, req *http.Request) { list(h, w, req) })
+	r.Post(idPattern+"/relations", func(w http.ResponseWriter, req *http.Request) { create(h, w, req) })
+	if withDelete {
+		r.Delete("/relations/{relationID}", h.DeleteRelation)
 	}
 }

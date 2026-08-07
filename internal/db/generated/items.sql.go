@@ -275,11 +275,12 @@ type EntityRelationTargetIsReadableParams struct {
 // choice for space-scoped routes ("404, never 403: unreadable spaces do not
 // exist as far as the caller can tell"); this is that rule, one level down.
 //
-// All three entity types the to_type CHECK constraint permits are covered.
-// Pages have no reader in ListEntityRelationsForEntity and never had one, so a
-// page target still renders as unresolvable — but refusing the WRITE outright
-// would narrow behaviour the schema allows, and this is a security fix, not a
-// feature removal.
+// All three entity types the to_type CHECK constraint permits are covered, and
+// since the pages arm landed in ListEntityRelationsForEntity's readable_target,
+// all three RENDER as well: this query and that one agree, arm for arm, on what
+// a relation may point at. Keep them agreeing — an arm added here without its
+// reader over there reopens the gap where a relation could be created and then
+// never displayed.
 func (q *Queries) EntityRelationTargetIsReadable(ctx context.Context, arg EntityRelationTargetIsReadableParams) (bool, error) {
 	row := q.db.QueryRow(ctx, entityRelationTargetIsReadable, arg.TargetID, arg.TargetType, arg.ReadableSpaceIds)
 	var readable bool
@@ -390,17 +391,29 @@ WITH rel AS (
       AND NOT (er.from_id = $1 AND er.from_type = $2::text)
 ),
 readable_target AS (
-    SELECT t.id, t.title, t.status, 'ticket'::text AS entity_type
+    SELECT t.id, t.title, t.status, t.space_id, 'ticket'::text AS entity_type
     FROM tickets t
     WHERE t.deleted_at IS NULL
       AND t.space_id = ANY($3::uuid[])
 
     UNION ALL
 
-    SELECT pi.id, pi.title, pi.status, 'project_item'::text
+    SELECT pi.id, pi.title, pi.status, pi.space_id, 'project_item'::text
     FROM project_items pi
     WHERE pi.deleted_at IS NULL
       AND pi.space_id = ANY($3::uuid[])
+
+    UNION ALL
+
+    -- Pages are the third to_type the schema has always permitted, and the arm
+    -- the read path lacked: a relation to a page could be created and then only
+    -- ever rendered as unresolvable. The status column is an explicit NULL, not
+    -- an oversight — a page is content, not work; it has no status column and
+    -- no workflow, so there is nothing truthful this column could carry.
+    SELECT pg.id, pg.title, NULL::text AS status, pg.space_id, 'page'::text
+    FROM pages pg
+    WHERE pg.deleted_at IS NULL
+      AND pg.space_id = ANY($3::uuid[])
 )
 SELECT rel.id,
        rel.kind,
@@ -409,6 +422,7 @@ SELECT rel.id,
        tgt.id          AS far_id,
        tgt.title       AS far_title,
        tgt.status      AS far_status,
+       tgt.space_id    AS far_space_id,
        tgt.entity_type AS far_type
 FROM rel
 LEFT JOIN readable_target tgt
@@ -431,6 +445,7 @@ type ListEntityRelationsForEntityRow struct {
 	FarID      pgtype.UUID        `json:"far_id"`
 	FarTitle   *string            `json:"far_title"`
 	FarStatus  *string            `json:"far_status"`
+	FarSpaceID pgtype.UUID        `json:"far_space_id"`
 	FarType    *string            `json:"far_type"`
 }
 
@@ -460,6 +475,13 @@ type ListEntityRelationsForEntityRow struct {
 // the response carry no existence oracle (D82: no container identity). far_type
 // comes from the same joined row, so an unreadable relation does not even
 // disclose what KIND of thing it points at.
+//
+// far_space_id comes from the same joined row too, and exists so a resolved far
+// side is NAVIGABLE: linking across spaces is the feature, and a client cannot
+// build the far entity's URL from the near entity's space. It rides inside the
+// same LEFT JOIN as the title, so an unreadable far side discloses no space —
+// and a readable one discloses only a space already in the caller's own
+// readable set.
 //
 // entity_relations.created_by is deliberately absent from the projection. No
 // caller rendered it, and on an incoming relation from a space the viewer
@@ -495,6 +517,7 @@ func (q *Queries) ListEntityRelationsForEntity(ctx context.Context, arg ListEnti
 			&i.FarID,
 			&i.FarTitle,
 			&i.FarStatus,
+			&i.FarSpaceID,
 			&i.FarType,
 		); err != nil {
 			return nil, err

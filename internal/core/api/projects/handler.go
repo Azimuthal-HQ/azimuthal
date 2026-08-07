@@ -26,12 +26,16 @@ import (
 )
 
 // Handler holds the dependencies for project HTTP handlers.
+//
+// Relations are deliberately absent: they became an entity-generic satellite
+// served by internal/core/api/relations, mounted per entity subtree in
+// router.go the way comments are. The item relation URLs did not move — only
+// their registration did.
 type Handler struct {
 	items        *projects.ItemService
 	sprints      *projects.SprintService
 	backlog      *projects.BacklogService
 	roadmap      *projects.RoadmapService
-	relations    *projects.RelationService
 	labels       *projects.LabelService
 	itemTypes    *itemtypes.Service
 	customFields *customfields.Service
@@ -59,17 +63,15 @@ func NewHandler(
 	sprints *projects.SprintService,
 	backlog *projects.BacklogService,
 	roadmap *projects.RoadmapService,
-	relations *projects.RelationService,
 	labels *projects.LabelService,
 ) *Handler {
 	return &Handler{
-		items:     items,
-		sprints:   sprints,
-		backlog:   backlog,
-		roadmap:   roadmap,
-		relations: relations,
-		labels:    labels,
-		auditLog:  audit.NewLogger(),
+		items:    items,
+		sprints:  sprints,
+		backlog:  backlog,
+		roadmap:  roadmap,
+		labels:   labels,
+		auditLog: audit.NewLogger(),
 	}
 }
 
@@ -120,10 +122,9 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/items/{itemID}/fields", h.GetItemFields)
 	r.Put("/items/{itemID}/fields/{slug}", h.SetItemField)
 
-	// Relations
-	r.Get("/items/{itemID}/relations", h.ListRelations)
-	r.Post("/items/{itemID}/relations", h.CreateRelation)
-	r.Delete("/relations/{relationID}", h.DeleteRelation)
+	// Relations are mounted in router.go beside this subtree's comment routes,
+	// not here: the satellite is entity-generic and every entity subtree
+	// carries the same wrappers over one core (see api/relations).
 
 	// Sprints
 	r.Get("/sprints", h.ListSprints)
@@ -244,12 +245,6 @@ type completeSprintRequest struct {
 type rankItemRequest struct {
 	BeforeID *uuid.UUID `json:"before_id"`
 	AfterID  *uuid.UUID `json:"after_id"`
-}
-
-type createRelationRequest struct {
-	ToID   uuid.UUID `json:"to_id"`
-	ToType string    `json:"to_type"`
-	Kind   string    `json:"kind"`
 }
 
 type createLabelRequest struct {
@@ -1030,148 +1025,6 @@ func (h *Handler) ResolveItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusOK, item)
-}
-
-// --- Relation handlers ---
-
-// ListRelations returns all relations for an item.
-//
-// @Summary      List item relations
-// @Description  Returns all relations for a project item
-// @Tags         projects
-// @Produce      json
-// @Security     BearerAuth
-// @Param        orgID    path      string  true  "Organization ID (UUID)"
-// @Param        spaceID  path      string  true  "Space ID (UUID)"
-// @Param        itemID   path      string  true  "Item ID (UUID)"
-// @Success      200      {array}   map[string]interface{}
-// @Failure      400      {object}  api.SwaggerErrorResponse
-// @Failure      401      {object}  api.SwaggerErrorResponse
-// @Failure      500      {object}  api.SwaggerErrorResponse
-// @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/relations [get]
-func (h *Handler) ListRelations(w http.ResponseWriter, r *http.Request) {
-	id, err := itemIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
-		return
-	}
-
-	readable, ok := readableSpaceIDs(w, r)
-	if !ok {
-		return
-	}
-
-	rels, err := h.relations.ListRelations(r.Context(), id, projects.EntityTypeProjectItem, readable)
-	if err != nil {
-		handleProjectError(w, r, err)
-		return
-	}
-	respond.JSON(w, http.StatusOK, rels)
-}
-
-// CreateRelation creates a new relation from an item.
-//
-// @Summary      Create item relation
-// @Description  Creates a new relation from a project item to another item
-// @Tags         projects
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        orgID    path      string  true  "Organization ID (UUID)"
-// @Param        spaceID  path      string                           true  "Space ID (UUID)"
-// @Param        itemID   path      string                           true  "Item ID (UUID)"
-// @Param        body     body      api.SwaggerCreateRelationRequest  true  "Relation details"
-// @Success      201      {object}  map[string]interface{}
-// @Failure      400      {object}  api.SwaggerErrorResponse
-// @Failure      401      {object}  api.SwaggerErrorResponse
-// @Failure      500      {object}  api.SwaggerErrorResponse
-// @Router       /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/relations [post]
-func (h *Handler) CreateRelation(w http.ResponseWriter, r *http.Request) {
-	fromID, err := itemIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid item ID")
-		return
-	}
-
-	claims := auth.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
-		return
-	}
-
-	var req createRelationRequest
-	if err := respond.DecodeJSON(r, &req); err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
-		return
-	}
-
-	readable, ok := readableSpaceIDs(w, r)
-	if !ok {
-		return
-	}
-
-	toType := req.ToType
-	if toType == "" {
-		toType = projects.EntityTypeProjectItem
-	}
-	rel := &projects.NewRelation{
-		FromID:    fromID,
-		FromType:  projects.EntityTypeProjectItem,
-		ToID:      req.ToID,
-		ToType:    toType,
-		Kind:      req.Kind,
-		CreatedBy: claims.UserID,
-	}
-
-	spaceID, err := spaceIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
-		return
-	}
-
-	created, err := h.relations.CreateRelation(r.Context(), rel, spaceID, readable)
-	if err != nil {
-		handleProjectError(w, r, err)
-		return
-	}
-	respond.JSON(w, http.StatusCreated, created)
-}
-
-// DeleteRelation removes a relation.
-//
-// @Summary      Delete a relation
-// @Description  Removes a relation between project items
-// @Tags         projects
-// @Produce      json
-// @Security     BearerAuth
-// @Param        orgID    path      string  true  "Organization ID (UUID)"
-// @Param        spaceID     path      string  true  "Space ID (UUID)"
-// @Param        relationID  path      string  true  "Relation ID (UUID)"
-// @Success      204         "No Content"
-// @Failure      400         {object}  api.SwaggerErrorResponse
-// @Failure      401         {object}  api.SwaggerErrorResponse
-// @Failure      500         {object}  api.SwaggerErrorResponse
-// @Router       /orgs/{orgID}/spaces/{spaceID}/projects/relations/{relationID} [delete]
-func (h *Handler) DeleteRelation(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "relationID"))
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid relation ID")
-		return
-	}
-	// The route proved {spaceID} readable and {relationID} nothing at all, and
-	// this is the only place the two are reconciled: a relation carries no
-	// space of its own, and neither of its endpoints carries a foreign key.
-	spaceID, err := spaceIDFromURL(r)
-	if err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
-		return
-	}
-
-	if err := h.relations.DeleteRelation(r.Context(), id, spaceID); err != nil {
-		handleProjectError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Sprint handlers ---

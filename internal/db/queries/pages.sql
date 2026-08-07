@@ -173,3 +173,35 @@ ORDER BY r.version DESC;
 
 -- The page-lock queries were removed in S2 along with the page_locks table
 -- (migration 037). The lock was advisory only — no write path consulted it.
+
+-- name: SuggestPages :many
+-- Backs the page-picker typeahead (A4). The readable_space_ids filter IS the
+-- access control, exactly as it is for SuggestTicketRefs: the resolver fills
+-- the set with every live space for an org admin and with exactly the granted
+-- set for everyone else, so one ANY() serves both personas and no page outside
+-- the caller's read access can appear. The caller never runs this with an
+-- empty set — the service short-circuits first.
+--
+-- Matching is ILIKE on the title, deliberately not the search_vector GIN
+-- index, for the same reason the ticket suggest is: a typeahead needs
+-- substring behaviour on partial words, and tsvector matching gives neither
+-- prefix nor infix.
+--
+-- The LIMIT lives here, not in the caller: a typeahead must not be usable as
+-- a bulk export of every page title the caller can read.
+SELECT p.id, p.title, p.space_id,
+       s.key  AS space_key,
+       s.name AS space_name
+FROM pages p
+JOIN spaces s ON s.id = p.space_id AND s.deleted_at IS NULL
+WHERE p.deleted_at IS NULL
+  AND p.space_id = ANY(sqlc.arg(readable_space_ids)::uuid[])
+  -- The caller's text is a literal substring, not a pattern. It is already a
+  -- bound parameter, so this is not an injection guard — it stops a bare `%`
+  -- or `_` in a legitimate query from acting as a wildcard and quietly
+  -- widening the match. Backslash is PostgreSQL's default LIKE escape, so the
+  -- escape character itself is doubled first.
+  AND (sqlc.arg(query)::text = ''
+       OR p.title ILIKE '%' || replace(replace(replace(sqlc.arg(query)::text, '\', '\\'), '%', '\%'), '_', '\_') || '%')
+ORDER BY p.updated_at DESC
+LIMIT 20;

@@ -164,7 +164,6 @@ func schemaHandlerWithScopes(types *mockTypeRepo, defs *mockFieldDefRepo, scopes
 		projects.NewSprintService(sr),
 		projects.NewBacklogService(ir, sr),
 		projects.NewRoadmapService(ir, sr),
-		projects.NewRelationService(&mockRelationRepo{}),
 		projects.NewLabelService(&mockLabelRepo{}),
 	)
 	return h.
@@ -482,7 +481,6 @@ func TestCustomFieldHandlers_NilServiceAnswers404(t *testing.T) {
 		projects.NewSprintService(sr),
 		projects.NewBacklogService(ir, sr),
 		projects.NewRoadmapService(ir, sr),
-		projects.NewRelationService(&mockRelationRepo{}),
 		projects.NewLabelService(&mockLabelRepo{}),
 	) // deliberately no WithCustomFields
 	org := uuid.New().String()

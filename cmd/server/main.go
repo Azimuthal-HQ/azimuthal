@@ -74,6 +74,7 @@ import (
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
 	projectsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/projects"
+	relationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/relations"
 	searchapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/search"
 	sharesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/shares"
 	spacesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/spaces"
@@ -441,8 +442,9 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
 		TicketHandler:       ticketsapi.NewHandler(ticketSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc).WithWorkflowTiers(tierGate, transitionTx).WithRequesterLookup(portalAdapter).WithCustomFields(customFieldSvc),
-		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter),
-		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewRelationService(adapters.NewRelationAdapter(queries)), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
+		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter).WithPageSuggestions(wiki.NewPageSuggestionService(queries)),
+		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), projects.NewLabelService(adapters.NewLabelAdapter(queries))).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
+		RelationHandler:     relationsapi.NewHandler(projects.NewRelationService(adapters.NewRelationAdapter(queries))),
 		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		NotificationHandler: notificationsapi.NewHandler(queries, accessResolver),

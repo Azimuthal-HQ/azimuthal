@@ -55,6 +55,12 @@ vi.mock('../../../lib/api', () => ({
   // silence).
   useEntityFields: () => ({ data: [], isLoading: false, isError: false, error: null }),
   useSetEntityField: () => ({ mutate: vi.fn(), isPending: false }),
+  useRelations: () => ({ data: [], refetch: vi.fn() }),
+  useCreateRelation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useDeleteRelation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  useItemSearch: () => ({ data: [], isLoading: false }),
+  usePageSuggestions: () => ({ data: [], isLoading: false }),
+  RELATION_KINDS: [{ value: 'relates_to', label: 'relates to' }],
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 

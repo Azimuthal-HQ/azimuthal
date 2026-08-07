@@ -791,8 +791,34 @@ export interface Relation {
   far_id: string | null;
   far_type: string | null;
   far_title: string | null;
+  /** null for an unreadable far side — and ALSO for a readable page, which
+   *  has no status. Key on far_readable, never on a non-null status. */
   far_status: string | null;
+  /** The far entity's own space, for building its URL — relations link across
+   *  spaces, so the near entity's space is not a substitute. null exactly when
+   *  the far side is unreadable. */
+  far_space_id: string | null;
 }
+
+/** The entity kinds a relation endpoint may name — the server's
+ *  ValidEntityTypes, verbatim. */
+export type RelationEntityType = 'project_item' | 'ticket' | 'page';
+
+/**
+ * The relation-kind vocabulary, with the labels the kind select renders.
+ *
+ * This mirrors the server's ValidRelationKinds exactly — the exhaustiveness
+ * test in RelationsSection.test.tsx fails in both directions if the two drift
+ * — and it is the ONE place the vocabulary lives client-side: the select maps
+ * over this list rather than carrying its own.
+ */
+export const RELATION_KINDS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'relates_to', label: 'relates to' },
+  { value: 'blocks', label: 'blocks' },
+  { value: 'is_blocked_by', label: 'is blocked by' },
+  { value: 'duplicates', label: 'duplicates' },
+  { value: 'wiki_link', label: 'wiki link' },
+];
 
 export interface RoadmapItem {
   item: ProjectItem;
@@ -1279,6 +1305,24 @@ async function searchOrgMembers(orgId: string, q: string): Promise<PersonRef[]> 
 async function suggestTicketRefs(orgId: string, q: string): Promise<TicketRefSuggestion[]> {
   const data = await apiFetch<TicketRefSuggestion[] | null>(
     `/orgs/${orgId}/tickets/suggest?q=${encodeURIComponent(q)}`,
+  );
+  return data ?? [];
+}
+
+/** One row of the page-picker typeahead (A4). page_id is what the picker
+ *  submits; the space key and name are how a human tells apart two pages
+ *  with the same title in different spaces. */
+export interface PageSuggestion {
+  page_id: string;
+  title: string;
+  space_id: string;
+  space_key: string;
+  space_name: string;
+}
+
+async function suggestPages(orgId: string, q: string): Promise<PageSuggestion[]> {
+  const data = await apiFetch<PageSuggestion[] | null>(
+    `/orgs/${orgId}/pages/suggest?q=${encodeURIComponent(q)}`,
   );
   return data ?? [];
 }
@@ -2464,18 +2508,43 @@ async function moveWikiPage(spaceId: string, pageId: string, req: MoveWikiPageRe
 // Relations API functions
 // ---------------------------------------------------------------------------
 
-async function fetchRelations(spaceId: string, itemId: string): Promise<Relation[]> {
-  const data = await apiFetch<Relation[] | null>(`${spaceBase(spaceId)}/projects/items/${itemId}/relations`);
+/** The subtree each entity type's relation routes hang off (A4): one
+ *  entity-generic satellite, mounted per subtree the way comments are. */
+function relationsBase(spaceId: string, entityType: RelationEntityType, entityId: string): string {
+  switch (entityType) {
+    case 'ticket':
+      return `${spaceBase(spaceId)}/tickets/${entityId}/relations`;
+    case 'page':
+      return `${spaceBase(spaceId)}/wiki/${entityId}/relations`;
+    case 'project_item':
+      return `${spaceBase(spaceId)}/projects/items/${entityId}/relations`;
+  }
+}
+
+async function fetchRelations(
+  spaceId: string,
+  entityType: RelationEntityType,
+  entityId: string,
+): Promise<Relation[]> {
+  const data = await apiFetch<Relation[] | null>(relationsBase(spaceId, entityType, entityId));
   return data ?? [];
 }
 
 interface CreateRelationRequest {
   to_id: string;
+  /** Target entity type. Omitted means project_item — the wire's pre-A4
+   *  default, kept so old clients mean what they always meant. */
+  to_type?: RelationEntityType;
   kind: string;
 }
 
-async function createRelation(spaceId: string, itemId: string, req: CreateRelationRequest): Promise<Relation> {
-  return apiFetch<Relation>(`${spaceBase(spaceId)}/projects/items/${itemId}/relations`, {
+async function createRelation(
+  spaceId: string,
+  entityType: RelationEntityType,
+  entityId: string,
+  req: CreateRelationRequest,
+): Promise<Relation> {
+  return apiFetch<Relation>(relationsBase(spaceId, entityType, entityId), {
     method: 'POST',
     body: JSON.stringify(req),
   });
@@ -2592,7 +2661,9 @@ export const queryKeys = {
   /** The Codex document surface (issue #15). */
   pageDocument: (spaceId: string, pageId: string) => ['pageDocument', spaceId, pageId] as const,
   spaceDrafts: (spaceId: string) => ['spaceDrafts', spaceId] as const,
-  relations: (spaceId: string, itemId: string) => ['relations', spaceId, itemId] as const,
+  relations: (spaceId: string, entityType: string, entityId: string) =>
+    ['relations', spaceId, entityType, entityId] as const,
+  pageSuggestions: (orgId: string, q: string) => ['pageSuggestions', orgId, q] as const,
   roadmap: (spaceId: string, from: string, to: string) => ['roadmap', spaceId, from, to] as const,
   roadmapOverdue: (spaceId: string) => ['roadmapOverdue', spaceId] as const,
   roadmapSprints: (spaceId: string) => ['roadmapSprints', spaceId] as const,
@@ -3478,11 +3549,16 @@ export function useSetPageTags(spaceId: string, pageId: string) {
   });
 }
 
-export function useRelations(spaceId: string, itemId: string, opts?: QueryOpts<Relation[]>) {
+export function useRelations(
+  spaceId: string,
+  entityType: RelationEntityType,
+  entityId: string,
+  opts?: QueryOpts<Relation[]>,
+) {
   return useQuery<Relation[], APIError>({
-    queryKey: queryKeys.relations(spaceId, itemId),
-    queryFn: () => fetchRelations(spaceId, itemId),
-    enabled: !!spaceId && !!itemId,
+    queryKey: queryKeys.relations(spaceId, entityType, entityId),
+    queryFn: () => fetchRelations(spaceId, entityType, entityId),
+    enabled: !!spaceId && !!entityId,
     ...opts,
   });
 }
@@ -3556,22 +3632,22 @@ export function useMoveWikiPage(spaceId: string, pageId: string) {
   });
 }
 
-export function useCreateRelation(spaceId: string, itemId: string) {
+export function useCreateRelation(spaceId: string, entityType: RelationEntityType, entityId: string) {
   const queryClient = useQueryClient();
   return useMutation<Relation, APIError, CreateRelationRequest>({
-    mutationFn: (req) => createRelation(spaceId, itemId, req),
+    mutationFn: (req) => createRelation(spaceId, entityType, entityId, req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.relations(spaceId, itemId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.relations(spaceId, entityType, entityId) });
     },
   });
 }
 
-export function useDeleteRelation(spaceId: string, itemId: string) {
+export function useDeleteRelation(spaceId: string, entityType: RelationEntityType, entityId: string) {
   const queryClient = useQueryClient();
   return useMutation<void, APIError, string>({
     mutationFn: (relationId) => deleteRelation(spaceId, relationId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.relations(spaceId, itemId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.relations(spaceId, entityType, entityId) });
     },
   });
 }
@@ -4560,6 +4636,19 @@ export function useTicketRefSuggestions(
   return useQuery<TicketRefSuggestion[], APIError>({
     queryKey: queryKeys.ticketRefSuggestions(orgId, q),
     queryFn: () => suggestTicketRefs(orgId, q),
+    enabled: !!orgId && q.trim().length > 0,
+    ...opts,
+  });
+}
+
+export function usePageSuggestions(
+  orgId: string,
+  q: string,
+  opts?: QueryOpts<PageSuggestion[]>,
+) {
+  return useQuery<PageSuggestion[], APIError>({
+    queryKey: queryKeys.pageSuggestions(orgId, q),
+    queryFn: () => suggestPages(orgId, q),
     enabled: !!orgId && q.trim().length > 0,
     ...opts,
   });
