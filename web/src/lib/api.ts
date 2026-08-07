@@ -2214,6 +2214,30 @@ async function deleteFieldScope(
   });
 }
 
+async function fetchFormFieldScopes(
+  orgId: string,
+  spaceId: string,
+  entityType: 'project_item' | 'ticket',
+): Promise<CustomFieldScope[]> {
+  const data = await apiFetch<CustomFieldScope[] | null>(
+    `/orgs/${orgId}/custom-fields/forms/${spaceId}/${entityType}`,
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+async function putFormFieldOrder(
+  orgId: string,
+  spaceId: string,
+  entityType: 'project_item' | 'ticket',
+  fieldIds: string[],
+): Promise<CustomFieldScope[]> {
+  const data = await apiFetch<CustomFieldScope[] | null>(
+    `/orgs/${orgId}/custom-fields/forms/${spaceId}/${entityType}/order`,
+    { method: 'PUT', body: JSON.stringify({ field_ids: fieldIds }) },
+  );
+  return Array.isArray(data) ? data : [];
+}
+
 function entityFieldsBase(spaceId: string, kind: FieldEntityKind, entityId: string): string {
   return kind === 'ticket'
     ? `${spaceBase(spaceId)}/tickets/${entityId}/fields`
@@ -2635,6 +2659,11 @@ export const queryKeys = {
   itemTypes: (orgId: string) => ['itemTypes', orgId] as const,
   customFields: (orgId: string) => ['customFields', orgId] as const,
   fieldScopes: (orgId: string, fieldId: string) => ['fieldScopes', orgId, fieldId] as const,
+  // One form's scope rows across fields — the same data fieldScopes holds per
+  // field, pivoted per (space, entity type). Its own root: nesting it under
+  // fieldScopes would need a fieldId it does not have.
+  formFieldScopes: (orgId: string, spaceId: string, entityType: string) =>
+    ['formFieldScopes', orgId, spaceId, entityType] as const,
   entityFields: (spaceId: string, kind: FieldEntityKind, entityId: string) =>
     ['entityFields', spaceId, kind, entityId] as const,
   members: (orgId: string, spaceId: string) => ['members', orgId, spaceId] as const,
@@ -3024,6 +3053,35 @@ export function useRemoveFieldScope(orgId: string, fieldId: string) {
   return useMutation<void, APIError, { spaceId: string; entityType: 'project_item' | 'ticket' }>({
     mutationFn: ({ spaceId, entityType }) => deleteFieldScope(orgId, fieldId, spaceId, entityType),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.fieldScopes(orgId, fieldId) }),
+  });
+}
+
+export function useFormFieldScopes(
+  orgId: string,
+  spaceId: string,
+  entityType: 'project_item' | 'ticket',
+  opts?: QueryOpts<CustomFieldScope[]>,
+) {
+  return useQuery<CustomFieldScope[], APIError>({
+    queryKey: queryKeys.formFieldScopes(orgId, spaceId, entityType),
+    queryFn: () => fetchFormFieldScopes(orgId, spaceId, entityType),
+    enabled: !!orgId && !!spaceId,
+    ...opts,
+  });
+}
+
+export function useReorderFormFields(
+  orgId: string,
+  spaceId: string,
+  entityType: 'project_item' | 'ticket',
+) {
+  const queryClient = useQueryClient();
+  return useMutation<CustomFieldScope[], APIError, string[]>({
+    mutationFn: (fieldIds) => putFormFieldOrder(orgId, spaceId, entityType, fieldIds),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.formFieldScopes(orgId, spaceId, entityType),
+      }),
   });
 }
 

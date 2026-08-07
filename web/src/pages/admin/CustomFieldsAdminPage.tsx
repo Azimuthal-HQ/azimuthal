@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertCircle, Plus, Archive, ArchiveRestore, Trash2, ChevronRight } from 'lucide-react';
+import { AlertCircle, Plus, Archive, ArchiveRestore, Trash2, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import {
   useCustomFields,
@@ -10,6 +10,8 @@ import {
   useFieldScopes,
   useSetFieldScope,
   useRemoveFieldScope,
+  useFormFieldScopes,
+  useReorderFormFields,
   friendlyErrorMessage,
   type CustomFieldDef,
   type CustomFieldType,
@@ -126,6 +128,8 @@ export function CustomFieldsAdminPage() {
           </CardContent>
         </Card>
       )}
+
+      <FormOrderPanel orgId={orgId} defs={fields ?? []} />
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
@@ -337,6 +341,140 @@ function FieldScopesPanel({ orgId, fieldId }: { orgId: string; fieldId: string }
         <p data-testid="field-scopes-action-error" className="text-[var(--text-xs)] text-[var(--color-danger)]">
           {error}
         </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * FormOrderPanel edits one FORM's field order. The rows above are
+ * field-centric — one field expanded into its spaces — but an order is a
+ * property of one form: one (space, entity type), across fields. So this
+ * panel pivots the other way: pick a form, see its attached fields in the
+ * order entities render them, move them.
+ *
+ * A space names its form outright — Vector spaces host item forms, Beacon
+ * spaces ticket forms — so the picker is a space picker and the entity type
+ * follows from the module. Each move submits the WHOLE order (the route
+ * takes a permutation of the form, refused if stale), and the required flag
+ * is untouched by construction: reordering writes position only, the exact
+ * converse of the required toggle keeping position.
+ */
+function FormOrderPanel({ orgId, defs }: { orgId: string; defs: CustomFieldDef[] }) {
+  const spacesQuery = useSpaces(orgId);
+  const [spaceId, setSpaceId] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const spaces = (spacesQuery.data ?? []).filter((s) => s.type === 'vector' || s.type === 'beacon');
+  const selected = spaces.find((s) => s.id === spaceId);
+  const entityType: 'project_item' | 'ticket' = selected?.type === 'beacon' ? 'ticket' : 'project_item';
+
+  const scopesQuery = useFormFieldScopes(orgId, spaceId, entityType, { enabled: !!spaceId });
+  const reorderMut = useReorderFormFields(orgId, spaceId, entityType);
+
+  const nameOf = (fieldId: string) => defs.find((d) => d.id === fieldId)?.name ?? fieldId;
+  const scopes = scopesQuery.data ?? [];
+
+  function move(index: number, delta: -1 | 1) {
+    setError(null);
+    const ids = scopes.map((sc) => sc.field_id);
+    const target = index + delta;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    reorderMut.mutate(ids, {
+      onError: (e) => setError(friendlyErrorMessage(e, 'The order could not be saved.')),
+    });
+  }
+
+  return (
+    <div data-testid="form-order-panel" className="mt-[var(--space-6)]">
+      <h3 className="text-[var(--text-md)] font-semibold text-[var(--color-text)]">Form order</h3>
+      <p className="mb-[var(--space-3)] text-[var(--text-sm)] text-[var(--color-text-muted)]">
+        The order fields appear in on one form. Pick a space; moving a field saves immediately and
+        never changes whether it is required there.
+      </p>
+      <div className="max-w-md">
+        <select
+          aria-label="Form"
+          data-testid="form-order-space"
+          value={spaceId}
+          onChange={(e) => {
+            setError(null);
+            setSpaceId(e.target.value);
+          }}
+          className={selectClass}
+        >
+          <option value="">Choose a form…</option>
+          {spaces.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} — {s.type === 'beacon' ? 'ticket form' : 'item form'}
+            </option>
+          ))}
+        </select>
+      </div>
+      {spaceId && (
+        <div className="mt-[var(--space-3)] max-w-md">
+          {scopesQuery.isLoading ? (
+            <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">Loading…</p>
+          ) : scopesQuery.isError ? (
+            <p data-testid="form-order-error" className="text-[var(--text-sm)] text-[var(--color-danger)]">
+              {friendlyErrorMessage(scopesQuery.error, 'The form could not be loaded.')}
+            </p>
+          ) : scopes.length === 0 ? (
+            <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+              No fields are attached to this form yet — attach some above first.
+            </p>
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                <ul>
+                  {scopes.map((sc, i) => (
+                    <li
+                      key={sc.field_id}
+                      data-testid="form-order-row"
+                      className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-4 py-2 last:border-b-0"
+                    >
+                      <span className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-text)]">
+                        {nameOf(sc.field_id)}
+                        {sc.required && (
+                          <Badge variant="secondary" data-testid="form-order-required">
+                            Required
+                          </Badge>
+                        )}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Move ${nameOf(sc.field_id)} up`}
+                          data-testid={`form-order-up-${sc.field_id}`}
+                          disabled={i === 0 || reorderMut.isPending}
+                          onClick={() => move(i, -1)}
+                        >
+                          <ChevronUp className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Move ${nameOf(sc.field_id)} down`}
+                          data-testid={`form-order-down-${sc.field_id}`}
+                          disabled={i === scopes.length - 1 || reorderMut.isPending}
+                          onClick={() => move(i, 1)}
+                        >
+                          <ChevronDown className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+          {error && (
+            <p data-testid="form-order-action-error" className="mt-2 text-[var(--text-xs)] text-[var(--color-danger)]">
+              {error}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

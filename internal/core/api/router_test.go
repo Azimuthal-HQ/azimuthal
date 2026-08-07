@@ -607,6 +607,9 @@ func (m *mockCustomFieldScopeRepo) Upsert(_ context.Context, _ uuid.UUID, s *cus
 func (m *mockCustomFieldScopeRepo) Delete(_ context.Context, _, _ uuid.UUID, _ string) (bool, error) {
 	return false, nil
 }
+func (m *mockCustomFieldScopeRepo) Reorder(_ context.Context, _, _ uuid.UUID, _ string, _ []uuid.UUID) (int64, error) {
+	return 0, nil
+}
 func (m *mockCustomFieldScopeRepo) SpaceOrgType(_ context.Context, _ uuid.UUID) (uuid.UUID, string, error) {
 	return uuid.Nil, "", customfields.ErrSpaceNotFound
 }

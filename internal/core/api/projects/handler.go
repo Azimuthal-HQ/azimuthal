@@ -2043,6 +2043,92 @@ func (h *Handler) RemoveFieldScope(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListFormFieldScopes returns one form's attachments — this space, this
+// entity type — in form order: which fields the form carries, their required
+// flags, and their positions. The read the ordering surface edits against.
+//
+// @Summary      List a form's attached custom fields in order
+// @Tags         projects
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID       path      string  true  "Organization ID (UUID)"
+// @Param        spaceID     path      string  true  "Space ID (UUID)"
+// @Param        entityType  path      string  true  "Entity type (ticket or project_item)"
+// @Success      200         {array}   map[string]interface{}
+// @Router       /orgs/{orgID}/custom-fields/forms/{spaceID}/{entityType} [get]
+func (h *Handler) ListFormFieldScopes(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
+	orgID, spaceID, entityType, ok := formParamsFromURL(w, r)
+	if !ok {
+		return
+	}
+	scopes, err := h.customFields.ListFormScopes(r.Context(), orgID, spaceID, entityType)
+	if err != nil {
+		handleCustomFieldError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, scopes)
+}
+
+type reorderFormFieldsRequest struct {
+	FieldIDs []uuid.UUID `json:"field_ids"`
+}
+
+// ReorderFormFields rewrites one form's field order to the request's
+// field_ids, first to last. The list must name every field attached to the
+// form exactly once — a partial or stale order is refused whole rather than
+// half-applied. Its own route and its own statement, deliberately not a
+// widening of the scope upsert: the upsert's contract is that toggling
+// required never touches position, and this route's is the converse.
+//
+// @Summary      Reorder a form's custom fields
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        orgID       path      string  true  "Organization ID (UUID)"
+// @Param        spaceID     path      string  true  "Space ID (UUID)"
+// @Param        entityType  path      string  true  "Entity type (ticket or project_item)"
+// @Success      200         {array}   map[string]interface{}
+// @Router       /orgs/{orgID}/custom-fields/forms/{spaceID}/{entityType}/order [put]
+func (h *Handler) ReorderFormFields(w http.ResponseWriter, r *http.Request) {
+	if !h.customFieldsEnabled(w, r) {
+		return
+	}
+	orgID, spaceID, entityType, ok := formParamsFromURL(w, r)
+	if !ok {
+		return
+	}
+	var req reorderFormFieldsRequest
+	if err := respond.DecodeJSON(r, &req); err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid request body")
+		return
+	}
+	scopes, err := h.customFields.ReorderForm(r.Context(), orgID, spaceID, entityType, req.FieldIDs)
+	if err != nil {
+		handleCustomFieldError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, scopes)
+}
+
+func formParamsFromURL(w http.ResponseWriter, r *http.Request) (orgID, spaceID uuid.UUID, entityType string, ok bool) {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org_id")
+		return
+	}
+	spaceID, err = uuid.Parse(chi.URLParam(r, "spaceID"))
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return
+	}
+	entityType = chi.URLParam(r, "entityType")
+	return orgID, spaceID, entityType, true
+}
+
 func scopeParamsFromURL(w http.ResponseWriter, r *http.Request) (orgID, fieldID, spaceID uuid.UUID, entityType string, ok bool) {
 	orgID, err := orgIDFromURL(r)
 	if err != nil {
@@ -2210,6 +2296,7 @@ func handleCustomFieldError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, customfields.ErrInvalidEntityType),
 		errors.Is(err, customfields.ErrUnscopableEntityType),
 		errors.Is(err, customfields.ErrScopeSpaceMismatch),
+		errors.Is(err, customfields.ErrOrderMismatch),
 		errors.Is(err, customfields.ErrValueRequired):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
 	case errors.Is(err, customfields.ErrDuplicate),

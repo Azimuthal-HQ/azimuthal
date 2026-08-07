@@ -2770,6 +2770,83 @@ paths:
       summary: Attach a custom field to a space form
       tags:
       - projects
+  /orgs/{orgID}/custom-fields/forms/{spaceID}/{entityType}:
+    get:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Entity type (ticket or project_item)
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: List a form's attached custom fields in order
+      tags:
+      - projects
+  /orgs/{orgID}/custom-fields/forms/{spaceID}/{entityType}/order:
+    put:
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Entity type (ticket or project_item)
+        in: path
+        name: entityType
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  additionalProperties: {}
+                  type: object
+                type: array
+          description: OK
+      security:
+      - BearerAuth: []
+      summary: Reorder a form's custom fields
+      tags:
+      - projects
   /orgs/{orgID}/dashboards:
     get:
       description: Returns the caller's own dashboards plus those shared with them

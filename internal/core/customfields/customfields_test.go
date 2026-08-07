@@ -3,6 +3,7 @@ package customfields
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
@@ -177,6 +178,10 @@ func (r *stubScopeRepo) ListForSpaceEntity(_ context.Context, spaceID uuid.UUID,
 			out = append(out, *s)
 		}
 	}
+	// Models the statement's ORDER BY position, created_at — the map has no
+	// created_at, so the tiebreak is unmodelled; tests that read order back
+	// use distinct positions.
+	sort.Slice(out, func(i, j int) bool { return out[i].Position < out[j].Position })
 	return out, nil
 }
 func (r *stubScopeRepo) Get(_ context.Context, fieldID, spaceID uuid.UUID, entityType string) (*FieldScope, error) {
@@ -208,6 +213,20 @@ func (r *stubScopeRepo) Delete(_ context.Context, fieldID, spaceID uuid.UUID, en
 	}
 	delete(r.scopes, k)
 	return true, nil
+}
+func (r *stubScopeRepo) Reorder(_ context.Context, orgID, spaceID uuid.UUID, entityType string, fieldIDs []uuid.UUID) (int64, error) {
+	sp, ok := r.spaces[spaceID]
+	if !ok || sp.org != orgID {
+		return 0, nil // org predicate in the statement: zero rows, no error
+	}
+	var n int64
+	for i, id := range fieldIDs {
+		if s, ok := r.scopes[skey(id, spaceID, entityType)]; ok {
+			s.Position = i + 1 // 1-based, matching WITH ORDINALITY
+			n++
+		}
+	}
+	return n, nil
 }
 func (r *stubScopeRepo) SpaceOrgType(_ context.Context, spaceID uuid.UUID) (uuid.UUID, string, error) {
 	sp, ok := r.spaces[spaceID]
@@ -635,6 +654,119 @@ func TestSetScope_Validation(t *testing.T) {
 	}
 	if err := f.svc.RemoveScope(ctx, f.org, d.ID, beacon, EntityTypeTicket); err != nil {
 		t.Errorf("RemoveScope: %v", err)
+	}
+}
+
+// TestReorderForm covers the form-order surface at the service layer: the
+// round-trip, the permutation rule, and the preservation pair — a reorder
+// never touches required, and a required toggle never touches position.
+func TestReorderForm(t *testing.T) {
+	f := newFixture()
+	ctx := context.Background()
+
+	a, _ := f.svc.CreateDef(ctx, f.org, "Alpha", TypeText, nil)
+	b, _ := f.svc.CreateDef(ctx, f.org, "Beta", TypeText, nil)
+	c, _ := f.svc.CreateDef(ctx, f.org, "Gamma", TypeText, nil)
+	f.attach(t, a, false)
+	f.attach(t, b, true) // required, to prove the reorder leaves it alone
+	f.attach(t, c, false)
+
+	order := func(scopes []FieldScope) []uuid.UUID {
+		out := make([]uuid.UUID, len(scopes))
+		for i, sc := range scopes {
+			out[i] = sc.FieldID
+		}
+		return out
+	}
+	wantOrder := func(t *testing.T, got []FieldScope, want ...uuid.UUID) {
+		t.Helper()
+		ids := order(got)
+		if len(ids) != len(want) {
+			t.Fatalf("expected %d scopes, got %d", len(want), len(ids))
+		}
+		for i := range want {
+			if ids[i] != want[i] {
+				t.Fatalf("order mismatch at %d: got %v want %v", i, ids, want)
+			}
+		}
+	}
+
+	// Definitions attach at their definition positions, so the form starts
+	// in creation order.
+	initial, err := f.svc.ListFormScopes(ctx, f.org, f.space, EntityTypeProjectItem)
+	if err != nil {
+		t.Fatalf("ListFormScopes: %v", err)
+	}
+	wantOrder(t, initial, a.ID, b.ID, c.ID)
+
+	// Round-trip: the new order comes back from the write and from a re-list.
+	got, err := f.svc.ReorderForm(ctx, f.org, f.space, EntityTypeProjectItem, []uuid.UUID{c.ID, a.ID, b.ID})
+	if err != nil {
+		t.Fatalf("ReorderForm: %v", err)
+	}
+	wantOrder(t, got, c.ID, a.ID, b.ID)
+	relisted, err := f.svc.ListFormScopes(ctx, f.org, f.space, EntityTypeProjectItem)
+	if err != nil {
+		t.Fatalf("ListFormScopes after reorder: %v", err)
+	}
+	wantOrder(t, relisted, c.ID, a.ID, b.ID)
+
+	// The reorder did not touch required: b keeps its flag, a and c stay off.
+	for _, sc := range relisted {
+		if want := sc.FieldID == b.ID; sc.Required != want {
+			t.Errorf("reorder must not change required: field %s got %v want %v", sc.FieldID, sc.Required, want)
+		}
+	}
+
+	// The converse pin: toggling required keeps the REORDERED position, and
+	// the form does not reshuffle.
+	sc, err := f.svc.SetScope(ctx, f.org, a.ID, f.space, EntityTypeProjectItem, true)
+	if err != nil {
+		t.Fatalf("SetScope required toggle: %v", err)
+	}
+	if sc.Position != 2 {
+		t.Errorf("required toggle must keep the reordered position, got %d want 2", sc.Position)
+	}
+	after, _ := f.svc.ListFormScopes(ctx, f.org, f.space, EntityTypeProjectItem)
+	wantOrder(t, after, c.ID, a.ID, b.ID)
+
+	// The permutation rule: subset, superset, duplicate, and a swapped-in
+	// foreign id are each refused whole.
+	for name, ids := range map[string][]uuid.UUID{
+		"subset":     {c.ID, a.ID},
+		"superset":   {c.ID, a.ID, b.ID, uuid.New()},
+		"duplicate":  {c.ID, c.ID, b.ID},
+		"foreign id": {c.ID, a.ID, uuid.New()},
+	} {
+		if _, err := f.svc.ReorderForm(ctx, f.org, f.space, EntityTypeProjectItem, ids); !errors.Is(err, ErrOrderMismatch) {
+			t.Errorf("%s must be refused as ErrOrderMismatch, got %v", name, err)
+		}
+	}
+	// ...and a refused reorder wrote nothing.
+	unchanged, _ := f.svc.ListFormScopes(ctx, f.org, f.space, EntityTypeProjectItem)
+	wantOrder(t, unchanged, c.ID, a.ID, b.ID)
+
+	// The form-space validation is the attach's, shared: foreign space
+	// answers not-found, a module mismatch is refused, and both new methods
+	// go through it.
+	foreign := uuid.New()
+	f.scopes.addSpace(foreign, uuid.New(), "vector")
+	if _, err := f.svc.ReorderForm(ctx, f.org, foreign, EntityTypeProjectItem, nil); !errors.Is(err, ErrSpaceNotFound) {
+		t.Errorf("foreign space must answer not-found, got %v", err)
+	}
+	if _, err := f.svc.ListFormScopes(ctx, f.org, foreign, EntityTypeProjectItem); !errors.Is(err, ErrSpaceNotFound) {
+		t.Errorf("foreign space list must answer not-found, got %v", err)
+	}
+	beacon := uuid.New()
+	f.scopes.addSpace(beacon, f.org, "beacon")
+	if _, err := f.svc.ReorderForm(ctx, f.org, beacon, EntityTypeProjectItem, nil); !errors.Is(err, ErrScopeSpaceMismatch) {
+		t.Errorf("module mismatch must be refused, got %v", err)
+	}
+	if _, err := f.svc.ReorderForm(ctx, f.org, f.space, EntityTypePage, nil); !errors.Is(err, ErrUnscopableEntityType) {
+		t.Errorf("page form must be refused, got %v", err)
+	}
+	if _, err := f.svc.ReorderForm(ctx, f.org, f.space, "epic", nil); !errors.Is(err, ErrInvalidEntityType) {
+		t.Errorf("unknown entity type must be refused, got %v", err)
 	}
 }
 

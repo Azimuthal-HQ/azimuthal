@@ -167,6 +167,7 @@ describe('portal query keys separate requesters, not just portals', () => {
       queryKeys.homeDashboard(portalKey),
       queryKeys.search(portalKey, alice, 0, '', false),
       queryKeys.portalAdmin(portalKey, portalKey),
+      queryKeys.formFieldScopes(portalKey, portalKey, 'ticket'),
     ].map(key);
 
     for (const mine of [
@@ -249,6 +250,7 @@ describe('the agent-side portal config family is isolated from the customer fami
       key(queryKeys.queues(org, space)),
       key(queryKeys.boardConfig(space)),
       key(queryKeys.space(space)),
+      key(queryKeys.formFieldScopes(org, space, 'ticket')),
     ]) {
       expect(sibling).not.toBe(admin);
     }

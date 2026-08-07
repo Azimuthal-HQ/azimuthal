@@ -340,6 +340,10 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			// member would disclose which private spaces a field is attached
 			// to. Forms never read raw scopes; they read the composed
 			// per-entity render, which carries no space beyond the URL's own.
+			//
+			// The /forms/* pair is the same data pivoted the other way — one
+			// form's rows across fields, rather than one field's rows across
+			// spaces — so the same both-directions org-admin rule applies.
 			r.Route("/custom-fields", func(r chi.Router) {
 				r.Get("/", cfg.ProjectHandler.ListCustomFields)
 				r.With(orgAdminGuard(cfg)).Post("/", cfg.ProjectHandler.CreateCustomField)
@@ -348,6 +352,8 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 				r.With(orgAdminGuard(cfg)).Get("/{fieldID}/scopes", cfg.ProjectHandler.ListFieldScopes)
 				r.With(orgAdminGuard(cfg)).Put("/{fieldID}/scopes/{spaceID}/{entityType}", cfg.ProjectHandler.SetFieldScope)
 				r.With(orgAdminGuard(cfg)).Delete("/{fieldID}/scopes/{spaceID}/{entityType}", cfg.ProjectHandler.RemoveFieldScope)
+				r.With(orgAdminGuard(cfg)).Get("/forms/{spaceID}/{entityType}", cfg.ProjectHandler.ListFormFieldScopes)
+				r.With(orgAdminGuard(cfg)).Put("/forms/{spaceID}/{entityType}/order", cfg.ProjectHandler.ReorderFormFields)
 			})
 
 			// Workflows (org-scoped: members read, org admins mutate).

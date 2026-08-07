@@ -302,6 +302,10 @@ var routeAccounting = map[string]string{
 	"GET /api/v1/orgs/{orgID}/custom-fields/{fieldID}/scopes":                           "org-admin: orgAdminGuard",
 	"PUT /api/v1/orgs/{orgID}/custom-fields/{fieldID}/scopes/{spaceID}/{entityType}":    "org-admin: orgAdminGuard",
 	"DELETE /api/v1/orgs/{orgID}/custom-fields/{fieldID}/scopes/{spaceID}/{entityType}": "org-admin: orgAdminGuard",
+	// The form-order pair is scope data pivoted per form, so the same
+	// both-directions rule covers it: the rows carry space ids either way.
+	"GET /api/v1/orgs/{orgID}/custom-fields/forms/{spaceID}/{entityType}":               "org-admin: orgAdminGuard",
+	"PUT /api/v1/orgs/{orgID}/custom-fields/forms/{spaceID}/{entityType}/order":         "org-admin: orgAdminGuard",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields":          "space-read",
 	"PUT /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/fields/{slug}":   "space-write: edit_own/edit_any in-handler",
 	"GET /api/v1/orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}":                 "space-read",

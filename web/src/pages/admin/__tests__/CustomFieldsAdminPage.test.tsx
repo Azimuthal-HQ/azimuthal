@@ -8,6 +8,7 @@ const updateMutate = vi.fn();
 const deleteMutate = vi.fn();
 const setScopeMutate = vi.fn();
 const removeScopeMutate = vi.fn();
+const reorderMutate = vi.fn();
 
 const useCustomFieldsMock = vi.fn(() => ({
   data: [
@@ -37,6 +38,18 @@ const useFieldScopesMock = vi.fn(() => ({
   error: null,
 }));
 
+// One form's rows for the ordering panel: the vector space's item form
+// carries both fields, f1 first and required.
+const useFormFieldScopesMock = vi.fn(() => ({
+  data: [
+    { field_id: 'f1', space_id: 's-vec', entity_type: 'project_item', required: true, position: 1 },
+    { field_id: 'f2', space_id: 's-vec', entity_type: 'project_item', required: false, position: 2 },
+  ],
+  isLoading: false,
+  isError: false,
+  error: null,
+}));
+
 vi.mock('../../../lib/auth', () => ({ useAuth: () => ({ user: { orgId: 'o1' } }) }));
 
 vi.mock('../../../lib/api', () => ({
@@ -48,6 +61,8 @@ vi.mock('../../../lib/api', () => ({
   useFieldScopes: () => useFieldScopesMock(),
   useSetFieldScope: () => ({ mutate: setScopeMutate, isPending: false }),
   useRemoveFieldScope: () => ({ mutate: removeScopeMutate, isPending: false }),
+  useFormFieldScopes: () => useFormFieldScopesMock(),
+  useReorderFormFields: () => ({ mutate: reorderMutate, isPending: false }),
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
@@ -56,6 +71,7 @@ afterEach(() => {
   deleteMutate.mockReset();
   setScopeMutate.mockReset();
   removeScopeMutate.mockReset();
+  reorderMutate.mockReset();
 });
 
 function renderPage() {
@@ -126,5 +142,48 @@ describe('CustomFieldsAdminPage', () => {
     fireEvent.click(screen.getByTestId('scope-attach-s-vec-project_item'));
     expect(removeScopeMutate).toHaveBeenCalledTimes(1);
     expect(removeScopeMutate.mock.calls[0][0]).toEqual({ spaceId: 's-vec', entityType: 'project_item' });
+  });
+});
+
+describe('FormOrderPanel', () => {
+  it('shows a form picker and no rows until a form is chosen', () => {
+    renderPage();
+    expect(screen.getByTestId('form-order-panel')).toBeInTheDocument();
+    expect(screen.queryAllByTestId('form-order-row')).toHaveLength(0);
+  });
+
+  it('renders the chosen form in scope order with names and required flags', () => {
+    renderPage();
+    fireEvent.change(screen.getByTestId('form-order-space'), { target: { value: 's-vec' } });
+
+    const rows = screen.getAllByTestId('form-order-row');
+    expect(rows).toHaveLength(2);
+    // Names resolved from the definitions list, in the order the form
+    // reports, with the required badge on the row that carries the flag.
+    expect(rows[0]).toHaveTextContent('Points');
+    expect(rows[0]).toHaveTextContent('Required');
+    expect(rows[1]).toHaveTextContent('Tier');
+    expect(rows[1]).not.toHaveTextContent('Required');
+  });
+
+  it('submits the whole permutation on a move, not a delta', () => {
+    renderPage();
+    fireEvent.change(screen.getByTestId('form-order-space'), { target: { value: 's-vec' } });
+
+    fireEvent.click(screen.getByTestId('form-order-down-f1'));
+    expect(reorderMutate).toHaveBeenCalledTimes(1);
+    // The route takes a permutation of the form; the panel must send every
+    // field, in the new order.
+    expect(reorderMutate.mock.calls[0][0]).toEqual(['f2', 'f1']);
+  });
+
+  it('pins the ends: first row cannot move up, last cannot move down', () => {
+    renderPage();
+    fireEvent.change(screen.getByTestId('form-order-space'), { target: { value: 's-vec' } });
+
+    expect(screen.getByTestId('form-order-up-f1')).toBeDisabled();
+    expect(screen.getByTestId('form-order-down-f2')).toBeDisabled();
+    fireEvent.click(screen.getByTestId('form-order-up-f1'));
+    expect(reorderMutate).not.toHaveBeenCalled();
   });
 });

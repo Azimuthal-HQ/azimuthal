@@ -482,6 +482,52 @@ func (q *Queries) MaxCustomFieldDefPosition(ctx context.Context, orgID uuid.UUID
 	return max_position, err
 }
 
+const reorderCustomFieldScopes = `-- name: ReorderCustomFieldScopes :execrows
+UPDATE custom_field_scopes sc
+SET position = ord.pos::int, updated_at = now()
+FROM unnest($4::uuid[]) WITH ORDINALITY AS ord(field_id, pos)
+WHERE sc.field_id = ord.field_id
+  AND sc.space_id = $1
+  AND sc.entity_type = $2::text
+  AND EXISTS (
+    SELECT 1 FROM spaces s
+     WHERE s.id = $1 AND s.org_id = $3 AND s.deleted_at IS NULL
+  )
+`
+
+type ReorderCustomFieldScopesParams struct {
+	SpaceID    uuid.UUID   `json:"space_id"`
+	EntityType string      `json:"entity_type"`
+	OrgID      uuid.UUID   `json:"org_id"`
+	FieldIds   []uuid.UUID `json:"field_ids"`
+}
+
+// Form-centric position rewrite: one statement assigns each listed field its
+// 1-based position on one (space, entity type) form, in the order the caller
+// listed them. The org predicate is in the statement for the same reason the
+// attach carries one: @space_id is caller-supplied, and without the EXISTS an
+// org admin could rewrite another organisation's form order. A space outside
+// the org — or soft-deleted — matches zero rows and the caller answers the
+// same 404 an unknown space gets.
+//
+// position is the ONLY scope attribute this statement touches. It is
+// deliberately a separate statement from UpsertCustomFieldScope, whose
+// DO UPDATE deliberately never touches position: one statement per property,
+// so toggling required cannot reshuffle the form and reordering the form
+// cannot flip a required flag.
+func (q *Queries) ReorderCustomFieldScopes(ctx context.Context, arg ReorderCustomFieldScopesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reorderCustomFieldScopes,
+		arg.SpaceID,
+		arg.EntityType,
+		arg.OrgID,
+		arg.FieldIds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setCustomFieldDefArchived = `-- name: SetCustomFieldDefArchived :one
 UPDATE custom_field_defs SET archived_at = $2, updated_at = now()
 WHERE id = $1
