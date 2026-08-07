@@ -263,6 +263,8 @@ function FieldScopesPanel({ orgId, fieldId }: { orgId: string; fieldId: string }
   const setScope = useSetFieldScope(orgId, fieldId);
   const removeScope = useRemoveFieldScope(orgId, fieldId);
   const [error, setError] = useState<string | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkFailure, setBulkFailure] = useState<string | null>(null);
 
   if (spacesQuery.isLoading || scopesQuery.isLoading) {
     return <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">Loading attachments…</p>;
@@ -285,13 +287,77 @@ function FieldScopesPanel({ orgId, fieldId }: { orgId: string; fieldId: string }
     scopes.find((sc) => sc.space_id === spaceId && sc.entity_type === entityType);
   const onError = (e: unknown) => setError(friendlyErrorMessage(e, 'The attachment could not be saved.'));
 
+  /**
+   * Bulk attach/detach: a loop over the existing per-scope routes, targeting
+   * only the spaces whose state has to change. That targeting is what makes
+   * the buttons safe and convergent, not an optimisation:
+   *
+   * - Attach-all skips spaces already attached. Re-PUTting one would reset
+   *   its required flag to false (the PUT body carries required), so the
+   *   skip is what keeps a re-run from clobbering flags an admin has set.
+   * - Detach-all skips spaces with no attachment. DELETE on an absent scope
+   *   answers 404, so the skip is what lets a re-run after partial failure
+   *   converge instead of reporting the already-done spaces as new failures.
+   *
+   * Partial failure is never silent: the message names each space that
+   * failed, and re-running retries exactly those, because by then they are
+   * the only ones still in the wrong state.
+   */
+  async function bulk(g: { label: string; entityType: 'project_item' | 'ticket'; spaces: Space[] }, direction: 'attach' | 'detach') {
+    setError(null);
+    setBulkFailure(null);
+    setBulkPending(true);
+    const targets = g.spaces.filter((s) =>
+      direction === 'attach' ? !scopeFor(s.id, g.entityType) : !!scopeFor(s.id, g.entityType),
+    );
+    const results = await Promise.allSettled(
+      targets.map((s) =>
+        direction === 'attach'
+          ? setScope.mutateAsync({ spaceId: s.id, entityType: g.entityType, required: false })
+          : removeScope.mutateAsync({ spaceId: s.id, entityType: g.entityType }),
+      ),
+    );
+    setBulkPending(false);
+    const failed = targets.filter((_, i) => results[i].status === 'rejected').map((s) => s.name);
+    if (failed.length > 0) {
+      setBulkFailure(
+        `Could not ${direction} ${failed.length} of ${targets.length} space${targets.length === 1 ? '' : 's'}: ` +
+          `${failed.join(', ')}. Running it again retries only what is still ${direction === 'attach' ? 'missing' : 'attached'}.`,
+      );
+    }
+  }
+
   return (
     <div data-testid="field-scopes-panel" className="space-y-3">
       {groups.map((g) => (
         <div key={g.entityType}>
-          <p className="mb-1 text-[var(--text-xs)] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-            {g.label}
-          </p>
+          <div className="mb-1 flex items-center gap-3">
+            <p className="text-[var(--text-xs)] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+              {g.label}
+            </p>
+            {g.spaces.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  data-testid={`bulk-attach-${g.entityType}`}
+                  disabled={bulkPending}
+                  onClick={() => void bulk(g, 'attach')}
+                  className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline disabled:opacity-50"
+                >
+                  Attach all
+                </button>
+                <button
+                  type="button"
+                  data-testid={`bulk-detach-${g.entityType}`}
+                  disabled={bulkPending}
+                  onClick={() => void bulk(g, 'detach')}
+                  className="text-[var(--text-xs)] text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:underline disabled:opacity-50"
+                >
+                  Detach all
+                </button>
+              </>
+            )}
+          </div>
           {g.spaces.length === 0 ? (
             <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">No spaces of this kind yet.</p>
           ) : (
@@ -337,6 +403,11 @@ function FieldScopesPanel({ orgId, fieldId }: { orgId: string; fieldId: string }
           )}
         </div>
       ))}
+      {bulkFailure && (
+        <p data-testid="bulk-scope-failure" className="text-[var(--text-xs)] text-[var(--color-danger)]">
+          {bulkFailure}
+        </p>
+      )}
       {error && (
         <p data-testid="field-scopes-action-error" className="text-[var(--text-xs)] text-[var(--color-danger)]">
           {error}
