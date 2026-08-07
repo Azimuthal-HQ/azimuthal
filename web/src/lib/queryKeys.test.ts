@@ -141,41 +141,37 @@ describe('portal query keys separate requesters, not just portals', () => {
     );
   });
 
-  it('collides with no existing family', () => {
-    // Every other factory in the object, evaluated with the portal key in each
-    // string position it accepts. A new family that reuses the 'portal' root
-    // would show up here rather than as a blank page in production.
-    const existing = [
-      queryKeys.me(),
-      queryKeys.organization(portalKey),
-      queryKeys.space(portalKey),
-      queryKeys.spaces(portalKey),
-      queryKeys.tickets(portalKey),
-      queryKeys.ticket(portalKey, ref),
-      queryKeys.wikiPages(portalKey),
-      queryKeys.projectItems(portalKey),
-      queryKeys.sprints(portalKey),
-      queryKeys.members(portalKey, portalKey),
-      queryKeys.comments(portalKey, 'ticket', ref),
-      queryKeys.notifications(),
-      queryKeys.teams(portalKey),
-      queryKeys.views(portalKey),
-      queryKeys.view(portalKey, ref),
-      queryKeys.queues(portalKey, portalKey),
-      queryKeys.dashboards(portalKey, 'home'),
-      queryKeys.dashboard(portalKey, ref),
-      queryKeys.homeDashboard(portalKey),
-      queryKeys.search(portalKey, alice, 0, '', false),
-      queryKeys.portalAdmin(portalKey, portalKey),
-    ].map(key);
-
-    for (const mine of [
+  it('collides with no existing family, and nothing else claims the portal root', () => {
+    // Every other factory in the object — GENERATED from the object, never
+    // maintained by hand. The hand-kept enumeration this replaces said
+    // "every other factory" while most of them were missing from it (A2's
+    // entityFields and fieldScopes were merely the two that exposed the
+    // drift); a claimed sweep that silently covers a subset is the same
+    // defect as the route-accounting table drifting from the router, and
+    // gets the same fix: derive the list from the source of truth so it
+    // fails when reality moves. Each factory is evaluated with the portal
+    // key in every argument position it accepts — the pathological inputs —
+    // and must both miss the four portal-family keys and stay off the
+    // portal root that sign-out invalidates by prefix.
+    const portalFamilies = new Set(['portal', 'portalDescribe', 'portalRequests', 'portalRequest']);
+    const mine = [
       key(queryKeys.portal(portalKey)),
       key(queryKeys.portalDescribe(portalKey)),
       key(queryKeys.portalRequests(portalKey, alice)),
       key(queryKeys.portalRequest(portalKey, alice, ref)),
-    ]) {
-      expect(existing).not.toContain(mine);
+    ];
+    const root = queryKeys.portal(portalKey);
+
+    const others = Object.entries(queryKeys).filter(([name]) => !portalFamilies.has(name));
+    expect(others.length).toBeGreaterThan(0);
+
+    for (const [name, factory] of others) {
+      const fn = factory as unknown as (...args: unknown[]) => readonly unknown[];
+      const k = fn(...Array.from({ length: fn.length }, () => portalKey));
+      expect(mine, `queryKeys.${name} collides with a portal family`).not.toContain(key(k));
+      expect(k.slice(0, root.length), `queryKeys.${name} nests under the portal root`).not.toEqual([
+        ...root,
+      ]);
     }
   });
 
@@ -249,6 +245,10 @@ describe('the agent-side portal config family is isolated from the customer fami
       key(queryKeys.queues(org, space)),
       key(queryKeys.boardConfig(space)),
       key(queryKeys.space(space)),
+      // The A2/A3 field-admin families sit on the same admin surfaces and
+      // take the same (org, x) argument shapes.
+      key(queryKeys.fieldScopes(org, space)),
+      key(queryKeys.formFieldScopes(org, space, 'ticket')),
     ]) {
       expect(sibling).not.toBe(admin);
     }

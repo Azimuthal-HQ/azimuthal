@@ -99,6 +99,13 @@ var (
 	// ErrScopeNotFound is a missing attachment row.
 	ErrScopeNotFound = errors.New("this custom field is not attached to this space")
 
+	// ErrOrderMismatch refuses a form reorder that is not a permutation of the
+	// form: every attached field named exactly once, nothing else. Partial
+	// orders are refused rather than merged because the caller is always
+	// looking at the whole form — a request that disagrees with it is stale or
+	// wrong, and half-applying it would leave an order nobody asked for.
+	ErrOrderMismatch = errors.New("the new order must name every field attached to this form, each exactly once")
+
 	// ErrFieldNotInScope refuses a value write for a field that is defined in
 	// the org but not attached to this (space, entity type) form. Unscoped
 	// fields are read-only here, exactly like legacy fields: their stored
@@ -232,6 +239,12 @@ type ScopeRepository interface {
 	Upsert(ctx context.Context, orgID uuid.UUID, scope *FieldScope) (*FieldScope, error)
 	// Delete detaches a field; found=false reports there was no row.
 	Delete(ctx context.Context, fieldID, spaceID uuid.UUID, entityType string) (found bool, err error)
+	// Reorder assigns each listed field its 1-based position on one
+	// (space, entity type) form, in list order, in a single statement. The
+	// org predicate is in the statement, exactly as Upsert's is; a space
+	// outside orgID matches zero rows and nothing is written. It touches
+	// position only — never required.
+	Reorder(ctx context.Context, orgID, spaceID uuid.UUID, entityType string, fieldIDs []uuid.UUID) (int64, error)
 	// SpaceOrgType resolves a live space's org and type, or ErrSpaceNotFound.
 	// It backs the attach-time validation that a scope's entity type has
 	// forms in the named space at all.
@@ -388,6 +401,35 @@ func (s *Service) ListScopes(ctx context.Context, orgID, fieldID uuid.UUID) ([]F
 	return out, nil
 }
 
+// resolveFormSpace validates that (spaceID, entityType) names a form this org
+// can have: the entity type is attachable at all, the space is the org's own,
+// and the space's module hosts this entity type's forms. Shared by SetScope
+// and the form-order surface, so the two cannot drift on what "a form" means.
+func (s *Service) resolveFormSpace(ctx context.Context, orgID, spaceID uuid.UUID, entityType string) error {
+	hostType, ok := scopeHostSpaceType[entityType]
+	if !ok {
+		if ValidEntityTypes[entityType] {
+			return ErrUnscopableEntityType
+		}
+		return ErrInvalidEntityType
+	}
+	spaceOrg, spaceType, err := s.scopes.SpaceOrgType(ctx, spaceID)
+	if err != nil {
+		return fmt.Errorf("resolving scope space: %w", err)
+	}
+	// Another org's space answers exactly as a nonexistent one — the org
+	// check happens before the type check so a mismatch message cannot become
+	// a probe for what kind of space a foreign id is.
+	if spaceOrg != orgID {
+		return fmt.Errorf("resolving scope space: %w", ErrSpaceNotFound)
+	}
+	if spaceType != hostType {
+		return fmt.Errorf("%w: %s forms live in %s spaces and this space is %s",
+			ErrScopeSpaceMismatch, entityType, hostType, spaceType)
+	}
+	return nil
+}
+
 // SetScope attaches a field to a (space, entity type) form, or updates the
 // attachment's required flag. Position is taken from the definition on first
 // attach — the same rule migration 053's backfill applied — and kept on
@@ -397,26 +439,8 @@ func (s *Service) SetScope(ctx context.Context, orgID, fieldID, spaceID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	hostType, ok := scopeHostSpaceType[entityType]
-	if !ok {
-		if ValidEntityTypes[entityType] {
-			return nil, ErrUnscopableEntityType
-		}
-		return nil, ErrInvalidEntityType
-	}
-	spaceOrg, spaceType, err := s.scopes.SpaceOrgType(ctx, spaceID)
-	if err != nil {
-		return nil, fmt.Errorf("resolving scope space: %w", err)
-	}
-	// Another org's space answers exactly as a nonexistent one — the org
-	// check happens before the type check so a mismatch message cannot become
-	// a probe for what kind of space a foreign id is.
-	if spaceOrg != orgID {
-		return nil, fmt.Errorf("resolving scope space: %w", ErrSpaceNotFound)
-	}
-	if spaceType != hostType {
-		return nil, fmt.Errorf("%w: %s forms live in %s spaces and this space is %s",
-			ErrScopeSpaceMismatch, entityType, hostType, spaceType)
+	if err := s.resolveFormSpace(ctx, orgID, spaceID, entityType); err != nil {
+		return nil, err
 	}
 
 	scope := &FieldScope{
@@ -431,6 +455,67 @@ func (s *Service) SetScope(ctx context.Context, orgID, fieldID, spaceID uuid.UUI
 		return nil, fmt.Errorf("saving custom field scope: %w", err)
 	}
 	return saved, nil
+}
+
+// ListFormScopes returns the scope rows governing one form — this space, this
+// entity type — in form order. It is the read the admin ordering surface edits
+// against; entity pages keep consuming the composed RenderForEntity, which
+// carries no space ids beyond the URL's own.
+func (s *Service) ListFormScopes(ctx context.Context, orgID, spaceID uuid.UUID, entityType string) ([]FieldScope, error) {
+	if err := s.resolveFormSpace(ctx, orgID, spaceID, entityType); err != nil {
+		return nil, err
+	}
+	out, err := s.scopes.ListForSpaceEntity(ctx, spaceID, entityType)
+	if err != nil {
+		return nil, fmt.Errorf("listing form scopes: %w", err)
+	}
+	return out, nil
+}
+
+// ReorderForm rewrites one form's field order to exactly fieldIDs, first to
+// last. The request must be a permutation of the form — every attached field
+// named exactly once — or it is refused whole (ErrOrderMismatch): the caller
+// is always looking at the entire form, so a request that disagrees with it
+// is stale, and half-applying it would leave an order nobody asked for.
+//
+// Ordering is the one scope property this writes. The required flag is
+// untouched by construction — the statement never mentions it — which is the
+// converse of the upsert's pin that toggling required keeps position.
+func (s *Service) ReorderForm(ctx context.Context, orgID, spaceID uuid.UUID, entityType string, fieldIDs []uuid.UUID) ([]FieldScope, error) {
+	if err := s.resolveFormSpace(ctx, orgID, spaceID, entityType); err != nil {
+		return nil, err
+	}
+	current, err := s.scopes.ListForSpaceEntity(ctx, spaceID, entityType)
+	if err != nil {
+		return nil, fmt.Errorf("listing form scopes: %w", err)
+	}
+	if len(fieldIDs) != len(current) {
+		return nil, ErrOrderMismatch
+	}
+	attached := make(map[uuid.UUID]bool, len(current))
+	for _, sc := range current {
+		attached[sc.FieldID] = true
+	}
+	for _, id := range fieldIDs {
+		// !attached covers both an id never on this form and a duplicate (the
+		// first occurrence consumes the entry) — with the length check above,
+		// either means the request is not a permutation of the form.
+		if !attached[id] {
+			return nil, ErrOrderMismatch
+		}
+		delete(attached, id)
+	}
+
+	if _, err := s.scopes.Reorder(ctx, orgID, spaceID, entityType, fieldIDs); err != nil {
+		return nil, fmt.Errorf("reordering form scopes: %w", err)
+	}
+	// Re-list rather than fabricate: the response is what the statement left
+	// behind, including any row a concurrent detach removed mid-flight.
+	out, err := s.scopes.ListForSpaceEntity(ctx, spaceID, entityType)
+	if err != nil {
+		return nil, fmt.Errorf("listing form scopes: %w", err)
+	}
+	return out, nil
 }
 
 // RemoveScope detaches a field from a (space, entity type) form. Values

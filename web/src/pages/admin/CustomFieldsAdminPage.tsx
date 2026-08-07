@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertCircle, Plus, Archive, ArchiveRestore, Trash2, ChevronRight } from 'lucide-react';
+import { AlertCircle, Plus, Archive, ArchiveRestore, Trash2, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import {
   useCustomFields,
@@ -10,6 +10,8 @@ import {
   useFieldScopes,
   useSetFieldScope,
   useRemoveFieldScope,
+  useFormFieldScopes,
+  useReorderFormFields,
   friendlyErrorMessage,
   type CustomFieldDef,
   type CustomFieldType,
@@ -126,6 +128,8 @@ export function CustomFieldsAdminPage() {
           </CardContent>
         </Card>
       )}
+
+      <FormOrderPanel orgId={orgId} defs={fields ?? []} />
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
@@ -259,6 +263,8 @@ function FieldScopesPanel({ orgId, fieldId }: { orgId: string; fieldId: string }
   const setScope = useSetFieldScope(orgId, fieldId);
   const removeScope = useRemoveFieldScope(orgId, fieldId);
   const [error, setError] = useState<string | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkFailure, setBulkFailure] = useState<string | null>(null);
 
   if (spacesQuery.isLoading || scopesQuery.isLoading) {
     return <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">Loading attachments…</p>;
@@ -281,13 +287,77 @@ function FieldScopesPanel({ orgId, fieldId }: { orgId: string; fieldId: string }
     scopes.find((sc) => sc.space_id === spaceId && sc.entity_type === entityType);
   const onError = (e: unknown) => setError(friendlyErrorMessage(e, 'The attachment could not be saved.'));
 
+  /**
+   * Bulk attach/detach: a loop over the existing per-scope routes, targeting
+   * only the spaces whose state has to change. That targeting is what makes
+   * the buttons safe and convergent, not an optimisation:
+   *
+   * - Attach-all skips spaces already attached. Re-PUTting one would reset
+   *   its required flag to false (the PUT body carries required), so the
+   *   skip is what keeps a re-run from clobbering flags an admin has set.
+   * - Detach-all skips spaces with no attachment. DELETE on an absent scope
+   *   answers 404, so the skip is what lets a re-run after partial failure
+   *   converge instead of reporting the already-done spaces as new failures.
+   *
+   * Partial failure is never silent: the message names each space that
+   * failed, and re-running retries exactly those, because by then they are
+   * the only ones still in the wrong state.
+   */
+  async function bulk(g: { label: string; entityType: 'project_item' | 'ticket'; spaces: Space[] }, direction: 'attach' | 'detach') {
+    setError(null);
+    setBulkFailure(null);
+    setBulkPending(true);
+    const targets = g.spaces.filter((s) =>
+      direction === 'attach' ? !scopeFor(s.id, g.entityType) : !!scopeFor(s.id, g.entityType),
+    );
+    const results = await Promise.allSettled(
+      targets.map((s) =>
+        direction === 'attach'
+          ? setScope.mutateAsync({ spaceId: s.id, entityType: g.entityType, required: false })
+          : removeScope.mutateAsync({ spaceId: s.id, entityType: g.entityType }),
+      ),
+    );
+    setBulkPending(false);
+    const failed = targets.filter((_, i) => results[i].status === 'rejected').map((s) => s.name);
+    if (failed.length > 0) {
+      setBulkFailure(
+        `Could not ${direction} ${failed.length} of ${targets.length} space${targets.length === 1 ? '' : 's'}: ` +
+          `${failed.join(', ')}. Running it again retries only what is still ${direction === 'attach' ? 'missing' : 'attached'}.`,
+      );
+    }
+  }
+
   return (
     <div data-testid="field-scopes-panel" className="space-y-3">
       {groups.map((g) => (
         <div key={g.entityType}>
-          <p className="mb-1 text-[var(--text-xs)] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-            {g.label}
-          </p>
+          <div className="mb-1 flex items-center gap-3">
+            <p className="text-[var(--text-xs)] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+              {g.label}
+            </p>
+            {g.spaces.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  data-testid={`bulk-attach-${g.entityType}`}
+                  disabled={bulkPending}
+                  onClick={() => void bulk(g, 'attach')}
+                  className="text-[var(--text-xs)] text-[var(--color-primary)] hover:underline disabled:opacity-50"
+                >
+                  Attach all
+                </button>
+                <button
+                  type="button"
+                  data-testid={`bulk-detach-${g.entityType}`}
+                  disabled={bulkPending}
+                  onClick={() => void bulk(g, 'detach')}
+                  className="text-[var(--text-xs)] text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:underline disabled:opacity-50"
+                >
+                  Detach all
+                </button>
+              </>
+            )}
+          </div>
           {g.spaces.length === 0 ? (
             <p className="text-[var(--text-xs)] text-[var(--color-text-muted)]">No spaces of this kind yet.</p>
           ) : (
@@ -333,10 +403,149 @@ function FieldScopesPanel({ orgId, fieldId }: { orgId: string; fieldId: string }
           )}
         </div>
       ))}
+      {bulkFailure && (
+        <p data-testid="bulk-scope-failure" className="text-[var(--text-xs)] text-[var(--color-danger)]">
+          {bulkFailure}
+        </p>
+      )}
       {error && (
         <p data-testid="field-scopes-action-error" className="text-[var(--text-xs)] text-[var(--color-danger)]">
           {error}
         </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * FormOrderPanel edits one FORM's field order. The rows above are
+ * field-centric — one field expanded into its spaces — but an order is a
+ * property of one form: one (space, entity type), across fields. So this
+ * panel pivots the other way: pick a form, see its attached fields in the
+ * order entities render them, move them.
+ *
+ * A space names its form outright — Vector spaces host item forms, Beacon
+ * spaces ticket forms — so the picker is a space picker and the entity type
+ * follows from the module. Each move submits the WHOLE order (the route
+ * takes a permutation of the form, refused if stale), and the required flag
+ * is untouched by construction: reordering writes position only, the exact
+ * converse of the required toggle keeping position.
+ */
+function FormOrderPanel({ orgId, defs }: { orgId: string; defs: CustomFieldDef[] }) {
+  const spacesQuery = useSpaces(orgId);
+  const [spaceId, setSpaceId] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const spaces = (spacesQuery.data ?? []).filter((s) => s.type === 'vector' || s.type === 'beacon');
+  const selected = spaces.find((s) => s.id === spaceId);
+  const entityType: 'project_item' | 'ticket' = selected?.type === 'beacon' ? 'ticket' : 'project_item';
+
+  const scopesQuery = useFormFieldScopes(orgId, spaceId, entityType, { enabled: !!spaceId });
+  const reorderMut = useReorderFormFields(orgId, spaceId, entityType);
+
+  const nameOf = (fieldId: string) => defs.find((d) => d.id === fieldId)?.name ?? fieldId;
+  const scopes = scopesQuery.data ?? [];
+
+  function move(index: number, delta: -1 | 1) {
+    setError(null);
+    const ids = scopes.map((sc) => sc.field_id);
+    const target = index + delta;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    reorderMut.mutate(ids, {
+      onError: (e) => setError(friendlyErrorMessage(e, 'The order could not be saved.')),
+    });
+  }
+
+  return (
+    <div data-testid="form-order-panel" className="mt-[var(--space-6)]">
+      <h3 className="text-[var(--text-md)] font-semibold text-[var(--color-text)]">Form order</h3>
+      <p className="mb-[var(--space-3)] text-[var(--text-sm)] text-[var(--color-text-muted)]">
+        The order fields appear in on one form. Pick a space; moving a field saves immediately and
+        never changes whether it is required there.
+      </p>
+      <div className="max-w-md">
+        <select
+          aria-label="Form"
+          data-testid="form-order-space"
+          value={spaceId}
+          onChange={(e) => {
+            setError(null);
+            setSpaceId(e.target.value);
+          }}
+          className={selectClass}
+        >
+          <option value="">Choose a form…</option>
+          {spaces.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} — {s.type === 'beacon' ? 'ticket form' : 'item form'}
+            </option>
+          ))}
+        </select>
+      </div>
+      {spaceId && (
+        <div className="mt-[var(--space-3)] max-w-md">
+          {scopesQuery.isLoading ? (
+            <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">Loading…</p>
+          ) : scopesQuery.isError ? (
+            <p data-testid="form-order-error" className="text-[var(--text-sm)] text-[var(--color-danger)]">
+              {friendlyErrorMessage(scopesQuery.error, 'The form could not be loaded.')}
+            </p>
+          ) : scopes.length === 0 ? (
+            <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+              No fields are attached to this form yet — attach some above first.
+            </p>
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                <ul>
+                  {scopes.map((sc, i) => (
+                    <li
+                      key={sc.field_id}
+                      data-testid="form-order-row"
+                      className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-4 py-2 last:border-b-0"
+                    >
+                      <span className="flex items-center gap-2 text-[var(--text-sm)] text-[var(--color-text)]">
+                        {nameOf(sc.field_id)}
+                        {sc.required && (
+                          <Badge variant="secondary" data-testid="form-order-required">
+                            Required
+                          </Badge>
+                        )}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Move ${nameOf(sc.field_id)} up`}
+                          data-testid={`form-order-up-${sc.field_id}`}
+                          disabled={i === 0 || reorderMut.isPending}
+                          onClick={() => move(i, -1)}
+                        >
+                          <ChevronUp className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Move ${nameOf(sc.field_id)} down`}
+                          data-testid={`form-order-down-${sc.field_id}`}
+                          disabled={i === scopes.length - 1 || reorderMut.isPending}
+                          onClick={() => move(i, 1)}
+                        >
+                          <ChevronDown className="h-4 w-4" />
+                        </Button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+          {error && (
+            <p data-testid="form-order-action-error" className="mt-2 text-[var(--text-xs)] text-[var(--color-danger)]">
+              {error}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

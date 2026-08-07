@@ -7,6 +7,7 @@ import {
   type FieldEntityKind,
 } from '../lib/api';
 import { Input } from './ui/input';
+import { DetailDivider } from './layout/DetailLayout';
 import { cn } from '../lib/utils';
 
 /**
@@ -17,6 +18,12 @@ import { cn } from '../lib/utils';
  * marked on the label; legacy fields — values whose definition was archived,
  * removed, or detached from this form — are shown read-only so no data is
  * silently dropped.
+ *
+ * The section sits mid-rail, above the Created/Updated footer, and OWNS ITS
+ * TRAILING DIVIDER: only the section knows whether it rendered anything, so a
+ * divider managed by the page would either double up or dangle whenever the
+ * form has no fields. With the divider in here, an empty section leaves the
+ * rail exactly as it was before custom fields existed.
  */
 export function CustomFieldsSection({
   spaceId,
@@ -42,6 +49,7 @@ export function CustomFieldsSection({
         <p data-testid="custom-fields-error" className="text-[var(--text-xs)] text-[var(--color-danger)]">
           {friendlyErrorMessage(error, 'Custom fields could not be loaded.')}
         </p>
+        <DetailDivider />
       </div>
     );
   }
@@ -57,6 +65,7 @@ export function CustomFieldsSection({
           <CustomFieldRow key={f.slug} field={f} spaceId={spaceId} entityKind={entityKind} entityId={entityId} />
         ))}
       </div>
+      <DetailDivider />
     </div>
   );
 }

@@ -54,6 +54,7 @@ export function PortalSection({ orgId, spaceId }: { orgId: string; spaceId: stri
   const [draftIntro, setDraftIntro] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const forbidden = configQuery.error?.status === 403;
   const noPortal = configQuery.error?.status === 404;
@@ -102,10 +103,24 @@ export function PortalSection({ orgId, spaceId }: { orgId: string; spaceId: stri
     }
   }
 
-  function handleCopy() {
-    void navigator.clipboard?.writeText(portalUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+  // "Copied" only when the write actually happened. navigator.clipboard is
+  // undefined on non-secure contexts — and plain-http self-hosting is exactly
+  // this project's audience — so the old optional chain no-oped and the
+  // button lied. The write can also reject (permissions policy). Either way
+  // the honest fallback is legible: the URL sits selectable beside the
+  // button, and the failure line says to use it.
+  async function handleCopy() {
+    setCopyFailed(false);
+    try {
+      if (!navigator.clipboard) {
+        throw new Error('clipboard unavailable');
+      }
+      await navigator.clipboard.writeText(portalUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopyFailed(true);
+    }
   }
 
   return (
@@ -207,11 +222,21 @@ export function PortalSection({ orgId, spaceId }: { orgId: string; spaceId: stri
                 >
                   {portalUrl}
                 </code>
-                <Button variant="outline" size="sm" data-testid="portal-config-copy" onClick={handleCopy}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="portal-config-copy"
+                  onClick={() => void handleCopy()}
+                >
                   <Copy className="mr-1 h-3.5 w-3.5" />
                   {copied ? 'Copied' : 'Copy link'}
                 </Button>
               </div>
+              {copyFailed && (
+                <p data-testid="portal-copy-failed" className="mt-1 text-[var(--text-xs)] text-[var(--color-danger)]">
+                  Copying is not available here — select the URL above and copy it yourself.
+                </p>
+              )}
               <p className="mt-1 text-[var(--text-xs)] text-[var(--color-text-muted)]">
                 The key <code data-testid="portal-config-key">{cfg.portal_key}</code> is permanent —
                 renaming or disabling the portal never changes it.

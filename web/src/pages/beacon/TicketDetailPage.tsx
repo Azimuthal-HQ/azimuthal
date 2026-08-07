@@ -651,6 +651,12 @@ export function TicketDetailPage() {
             )}
           </DetailField>
 
+          {/* Live, editable, sometimes required data — above the Created/
+              Updated metadata footer, not below it. The section renders its
+              own trailing divider only when it has content, so an empty form
+              leaves this rail exactly as it was before custom fields. */}
+          <CustomFieldsSection spaceId={spaceId} entityKind="ticket" entityId={ticket.id} />
+
           <DetailField label="Created">
             <div className="flex items-center gap-2 text-[var(--text-xs)] text-[var(--color-text-muted)]">
               <Clock className="h-3 w-3" />
@@ -663,8 +669,6 @@ export function TicketDetailPage() {
               {ticket.updated_at.slice(0, 10)}
             </div>
           </DetailField>
-          <DetailDivider />
-          <CustomFieldsSection spaceId={spaceId} entityKind="ticket" entityId={ticket.id} />
         </DetailSide>
       </DetailLayout>
     </div>

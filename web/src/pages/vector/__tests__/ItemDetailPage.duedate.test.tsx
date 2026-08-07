@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   item: null as Record<string, unknown> | null,
   updateItem: vi.fn(),
   refetchItem: vi.fn(),
+  entityFields: [] as Record<string, unknown>[],
 }));
 
 vi.mock('../../../lib/api', () => ({
@@ -56,10 +57,11 @@ vi.mock('../../../lib/api', () => ({
   useEffectiveAccess: () => ({ data: undefined }),
   useEntityShares: () => ({ data: undefined }),
   useEntityApprovals: () => ({ data: [], isLoading: false, error: null }),
-  // Reached through CustomFieldsSection, which the rail renders below the
+  // Reached through CustomFieldsSection, which the rail renders above the
   // timestamps — not imported by the page itself. The wholesale mock does not
-  // care where in the tree the call comes from.
-  useEntityFields: () => ({ data: [], isLoading: false, isError: false, error: null }),
+  // care where in the tree the call comes from. Steerable so the placement
+  // test below can give the section something to render.
+  useEntityFields: () => ({ data: state.entityFields, isLoading: false, isError: false, error: null }),
   useSetEntityField: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
@@ -103,6 +105,7 @@ beforeEach(() => {
   state.item = { ...baseItem };
   state.updateItem = vi.fn().mockResolvedValue({});
   state.refetchItem = vi.fn();
+  state.entityFields = [];
 });
 
 afterEach(() => {
@@ -178,5 +181,23 @@ describe('item due-date control', () => {
 
     expect(await screen.findByText('The due date could not be changed.')).toBeInTheDocument();
     expect(state.refetchItem).not.toHaveBeenCalled();
+  });
+});
+
+describe('detail rail placement', () => {
+  // Custom fields are live, editable, sometimes required data; Created/Updated
+  // are a metadata footer. The section must render ABOVE the timestamps —
+  // this fails against the pre-A3 rail, which mounted it at the very bottom.
+  it('renders the custom fields section above the Created timestamp', () => {
+    state.entityFields = [
+      { slug: 'severity', name: 'Severity', field_type: 'text', options: [], value: 'high', required: false, legacy: false },
+    ];
+    renderDetail();
+
+    const section = screen.getByTestId('custom-fields-section');
+    const created = screen.getByText('Created');
+    expect(
+      section.compareDocumentPosition(created) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

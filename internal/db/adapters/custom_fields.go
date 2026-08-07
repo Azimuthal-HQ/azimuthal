@@ -292,6 +292,22 @@ func (a *CustomFieldScopeAdapter) Upsert(ctx context.Context, orgID uuid.UUID, s
 	return &s, nil
 }
 
+// Reorder implements the repository interface: one statement, org-predicated
+// like the upsert, assigning list order as 1-based position. The count is
+// rows repositioned — zero when the space is not the org's to reorder.
+func (a *CustomFieldScopeAdapter) Reorder(ctx context.Context, orgID, spaceID uuid.UUID, entityType string, fieldIDs []uuid.UUID) (int64, error) {
+	n, err := a.q.ReorderCustomFieldScopes(ctx, generated.ReorderCustomFieldScopesParams{
+		SpaceID:    spaceID,
+		EntityType: entityType,
+		OrgID:      orgID,
+		FieldIds:   fieldIDs,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("custom field scope adapter reorder: %w", err)
+	}
+	return n, nil
+}
+
 // Delete implements the repository interface.
 func (a *CustomFieldScopeAdapter) Delete(ctx context.Context, fieldID, spaceID uuid.UUID, entityType string) (bool, error) {
 	n, err := a.q.DeleteCustomFieldScope(ctx, generated.DeleteCustomFieldScopeParams{

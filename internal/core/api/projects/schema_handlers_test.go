@@ -125,13 +125,14 @@ type mockFieldScopeRepo struct {
 	deleted   bool
 	spaceOrg  uuid.UUID
 	spaceType string
+	form      []customfields.FieldScope // one form's rows, for the order surface
 }
 
 func (m *mockFieldScopeRepo) ListByField(context.Context, uuid.UUID) ([]customfields.FieldScope, error) {
 	return nil, nil
 }
 func (m *mockFieldScopeRepo) ListForSpaceEntity(context.Context, uuid.UUID, string) ([]customfields.FieldScope, error) {
-	return nil, nil
+	return m.form, nil
 }
 func (m *mockFieldScopeRepo) Get(context.Context, uuid.UUID, uuid.UUID, string) (*customfields.FieldScope, error) {
 	if m.get != nil {
@@ -144,6 +145,9 @@ func (m *mockFieldScopeRepo) Upsert(_ context.Context, _ uuid.UUID, s *customfie
 }
 func (m *mockFieldScopeRepo) Delete(context.Context, uuid.UUID, uuid.UUID, string) (bool, error) {
 	return m.deleted, nil
+}
+func (m *mockFieldScopeRepo) Reorder(context.Context, uuid.UUID, uuid.UUID, string, []uuid.UUID) (int64, error) {
+	return int64(len(m.form)), nil
 }
 func (m *mockFieldScopeRepo) SpaceOrgType(context.Context, uuid.UUID) (uuid.UUID, string, error) {
 	if m.spaceType == "" {
@@ -469,6 +473,81 @@ func TestCustomFieldScopeHandlers_Branches(t *testing.T) {
 	})
 }
 
+// The form-order surface's input-validation and error-mapping branches —
+// the same coverage discipline as the scope handlers above, one route over.
+func TestFormOrderHandlers_Branches(t *testing.T) {
+	org, sid, fid := uuid.New(), uuid.New(), uuid.New()
+	formParams := func(entityType string) map[string]string {
+		return map[string]string{"orgID": org.String(), "spaceID": sid.String(), "entityType": entityType}
+	}
+	oneRowForm := func(spaceType string) *mockFieldScopeRepo {
+		return &mockFieldScopeRepo{
+			spaceOrg: org, spaceType: spaceType,
+			form: []customfields.FieldScope{{FieldID: fid, SpaceID: sid, EntityType: "project_item", Position: 1}},
+		}
+	}
+
+	t.Run("list form invalid space id -> 400", func(t *testing.T) {
+		h := schemaHandler(&mockTypeRepo{}, &mockFieldDefRepo{})
+		if code := run(t, h, h.ListFormFieldScopes, req(t, http.MethodGet, "", map[string]string{"orgID": org.String(), "spaceID": "bad", "entityType": "project_item"})); code != http.StatusBadRequest {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("list form ok", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{}, oneRowForm("vector"))
+		if code := run(t, h, h.ListFormFieldScopes, req(t, http.MethodGet, "", formParams("project_item"))); code != http.StatusOK {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("list form on another org's space -> 404, not 400", func(t *testing.T) {
+		// Same non-disclosure ordering as the attach: the org check answers
+		// before the module check can describe a foreign space.
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{},
+			&mockFieldScopeRepo{spaceOrg: uuid.New(), spaceType: "beacon"})
+		if code := run(t, h, h.ListFormFieldScopes, req(t, http.MethodGet, "", formParams("ticket"))); code != http.StatusNotFound {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("reorder ok -> 200", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{}, oneRowForm("vector"))
+		if code := run(t, h, h.ReorderFormFields, req(t, http.MethodPut, `{"field_ids":["`+fid.String()+`"]}`, formParams("project_item"))); code != http.StatusOK {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("reorder bad body -> 400", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{}, oneRowForm("vector"))
+		if code := run(t, h, h.ReorderFormFields, req(t, http.MethodPut, `{bad`, formParams("project_item"))); code != http.StatusBadRequest {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("reorder not a permutation -> 400", func(t *testing.T) {
+		// The form has one field; the request names a different one.
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{}, oneRowForm("vector"))
+		if code := run(t, h, h.ReorderFormFields, req(t, http.MethodPut, `{"field_ids":["`+uuid.NewString()+`"]}`, formParams("project_item"))); code != http.StatusBadRequest {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("reorder module mismatch -> 400", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{}, oneRowForm("vector"))
+		if code := run(t, h, h.ReorderFormFields, req(t, http.MethodPut, `{"field_ids":[]}`, formParams("ticket"))); code != http.StatusBadRequest {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("reorder page form -> 400", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{}, oneRowForm("codex"))
+		if code := run(t, h, h.ReorderFormFields, req(t, http.MethodPut, `{"field_ids":[]}`, formParams("page"))); code != http.StatusBadRequest {
+			t.Errorf("got %d", code)
+		}
+	})
+	t.Run("reorder on another org's space -> 404, not 400", func(t *testing.T) {
+		h := schemaHandlerWithScopes(&mockTypeRepo{}, &mockFieldDefRepo{},
+			&mockFieldScopeRepo{spaceOrg: uuid.New(), spaceType: "beacon"})
+		if code := run(t, h, h.ReorderFormFields, req(t, http.MethodPut, `{"field_ids":[]}`, formParams("ticket"))); code != http.StatusNotFound {
+			t.Errorf("got %d", code)
+		}
+	})
+}
+
 // A handler built without WithCustomFields answers the conventional
 // feature-disabled 404 on every custom-field route. Before the guard existed
 // this was a nil-pointer dereference: the sibling itemTypes collaborator was
@@ -496,6 +575,12 @@ func TestCustomFieldHandlers_NilServiceAnswers404(t *testing.T) {
 	}
 	if code := run(t, h, h.ListFieldScopes, req(t, http.MethodGet, "", map[string]string{"orgID": org, "fieldID": uuid.New().String()})); code != http.StatusNotFound {
 		t.Errorf("ListFieldScopes: got %d, want 404", code)
+	}
+	if code := run(t, h, h.ListFormFieldScopes, req(t, http.MethodGet, "", map[string]string{"orgID": org, "spaceID": uuid.New().String(), "entityType": "project_item"})); code != http.StatusNotFound {
+		t.Errorf("ListFormFieldScopes: got %d, want 404", code)
+	}
+	if code := run(t, h, h.ReorderFormFields, req(t, http.MethodPut, `{"field_ids":[]}`, map[string]string{"orgID": org, "spaceID": uuid.New().String(), "entityType": "project_item"})); code != http.StatusNotFound {
+		t.Errorf("ReorderFormFields: got %d, want 404", code)
 	}
 }
 

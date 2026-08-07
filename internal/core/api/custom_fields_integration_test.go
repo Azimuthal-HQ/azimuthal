@@ -178,6 +178,14 @@ func TestCustomFields_MemberPermissions(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, r.StatusCode, "member attach scope must 403: %d %s", r.StatusCode, r.Body)
 	r = ts.deleteAs(t, memTok, fmt.Sprintf("%s/%s/scopes/%s/project_item", defsBase, d.ID, spaceID))
 	require.Equal(t, http.StatusForbidden, r.StatusCode, "member detach scope must 403: %d %s", r.StatusCode, r.Body)
+
+	// The form-order pair is the same scope data pivoted per form, so the same
+	// both-directions refusal applies to it.
+	r = ts.getAs(t, memTok, fmt.Sprintf("%s/forms/%s/project_item", defsBase, spaceID))
+	require.Equal(t, http.StatusForbidden, r.StatusCode, "member read form order must 403: %d %s", r.StatusCode, r.Body)
+	r = ts.putAs(t, memTok, fmt.Sprintf("%s/forms/%s/project_item/order", defsBase, spaceID),
+		map[string]any{"field_ids": []string{}})
+	require.Equal(t, http.StatusForbidden, r.StatusCode, "member reorder form must 403: %d %s", r.StatusCode, r.Body)
 }
 
 // S12 — a new definition may not reuse a slug that still holds legacy values.

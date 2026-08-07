@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PortalSection } from '../PortalSection';
 import type { AdminPortalConfig, APIError } from '../../../lib/api';
@@ -117,10 +117,28 @@ describe('PortalSection states', () => {
     expect(screen.queryByTestId('portal-configured')).not.toBeInTheDocument();
     expect(screen.queryByTestId('portal-config-url')).not.toBeInTheDocument();
   });
+
+  it('renders a 500 as an error, never as the offer to create a portal', () => {
+    // The UI half of the GetConfig error split: 404 alone means "no portal
+    // yet". A store failure must read as a failure — offering the create
+    // form over a space with a live portal is the defect the split closes.
+    queryState = {
+      data: undefined,
+      isLoading: false,
+      error: { status: 500, code: 'INTERNAL_ERROR', message: 'could not load the portal configuration' },
+    };
+    renderSection();
+
+    expect(screen.queryByTestId('portal-create')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('portal-configured')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('The portal configuration could not be loaded.'),
+    ).toBeInTheDocument();
+  });
 });
 
 describe('PortalSection copy control', () => {
-  it('copies the full customer URL, not the bare key', () => {
+  it('copies the full customer URL, not the bare key', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText },
@@ -136,7 +154,48 @@ describe('PortalSection copy control', () => {
     // The bare key would paste into an email as a meaningless string — the
     // assertion that it is a URL is the point of the control.
     expect(copiedValue).not.toBe(configured.portal_key);
-    expect(screen.getByTestId('portal-config-copy')).toHaveTextContent('Copied');
+    // "Copied" appears once the write RESOLVES — the confirmation now
+    // follows the fact rather than the click.
+    await waitFor(() =>
+      expect(screen.getByTestId('portal-config-copy')).toHaveTextContent('Copied'),
+    );
+    expect(screen.queryByTestId('portal-copy-failed')).not.toBeInTheDocument();
+  });
+
+  it('never says Copied when the clipboard API is unavailable', async () => {
+    // navigator.clipboard is undefined on non-secure contexts, and
+    // plain-http self-hosting is exactly this project's audience. The old
+    // optional chain no-oped and the button lied.
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
+    });
+
+    renderSection();
+    fireEvent.click(screen.getByTestId('portal-config-copy'));
+
+    expect(await screen.findByTestId('portal-copy-failed')).toHaveTextContent(
+      'select the URL above',
+    );
+    expect(screen.getByTestId('portal-config-copy')).not.toHaveTextContent('Copied');
+    // The fallback stays legible: the URL is still on screen to select.
+    expect(screen.getByTestId('portal-config-url')).toHaveTextContent(
+      `${window.location.origin}/portal/${configured.portal_key}`,
+    );
+  });
+
+  it('reports a rejected clipboard write instead of claiming success', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied by permissions policy'));
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    renderSection();
+    fireEvent.click(screen.getByTestId('portal-config-copy'));
+
+    expect(await screen.findByTestId('portal-copy-failed')).toBeInTheDocument();
+    expect(screen.getByTestId('portal-config-copy')).not.toHaveTextContent('Copied');
   });
 });
 

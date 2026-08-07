@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
 // The A2 (v0.4.2) surface: polymorphic field values over tickets and items,
@@ -291,6 +293,136 @@ func TestCustomFields_ValuesSurviveTheirDefinitionOnBothEntityTypes(t *testing.T
 	require.Equal(t, http.StatusNoContent, r.StatusCode, "%s", r.Body)
 	assertLegacy(itemFields, "Falcon")
 	assertLegacy(ticketFields, "Hawk")
+}
+
+// formScopeDTO is the wire shape of one form's scope row, shared by the
+// form-order tests below.
+type formScopeDTO struct {
+	FieldID    string `json:"field_id"`
+	SpaceID    string `json:"space_id"`
+	EntityType string `json:"entity_type"`
+	Required   bool   `json:"required"`
+	Position   int    `json:"position"`
+}
+
+// The form-order surface end to end: the GET reads one form in order, the PUT
+// rewrites the order, and — the part that makes ordering real — the entity
+// render follows it, because ListCustomFieldScopesForSpaceEntity orders by
+// position and RenderForEntity composes in that order.
+func TestCustomFields_FormOrderRoundTrip(t *testing.T) {
+	ts := newTestServer(t)
+	defsBase := fmt.Sprintf("/api/v1/orgs/%s/custom-fields", ts.OrgID)
+	spaceID := createScopedSpace(t, ts, "Order Proj", "order-proj", "vector")
+	itemsBase := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s/projects/items", ts.OrgID, spaceID)
+	itemID := createItem(t, ts, itemsBase)
+	formBase := fmt.Sprintf("%s/forms/%s/project_item", defsBase, spaceID)
+
+	mk := func(name string) fieldDefDTO {
+		r := ts.post(t, defsBase, map[string]any{"name": name, "field_type": "text"}, true)
+		require.Equal(t, http.StatusCreated, r.StatusCode, "create %s: %s", name, r.Body)
+		var d fieldDefDTO
+		require.NoError(t, json.Unmarshal(r.Body, &d))
+		attachField(t, ts, d.ID, spaceID, "project_item", false)
+		return d
+	}
+	alpha, beta, gamma := mk("Alpha"), mk("Beta"), mk("Gamma")
+
+	fieldOrder := func(scopes []formScopeDTO) []string {
+		out := make([]string, len(scopes))
+		for i, sc := range scopes {
+			out[i] = sc.FieldID
+		}
+		return out
+	}
+	getForm := func() []formScopeDTO {
+		t.Helper()
+		var scopes []formScopeDTO
+		r := ts.get(t, formBase, true)
+		require.Equal(t, http.StatusOK, r.StatusCode, "get form: %s", r.Body)
+		require.NoError(t, json.Unmarshal(r.Body, &scopes))
+		return scopes
+	}
+
+	// The form starts in definition order — first attach takes the
+	// definition's position.
+	require.Equal(t, []string{alpha.ID, beta.ID, gamma.ID}, fieldOrder(getForm()))
+
+	// PUT a new order; the response is the re-listed form, and a fresh GET
+	// agrees with it.
+	r := ts.put(t, formBase+"/order",
+		map[string]any{"field_ids": []string{gamma.ID, alpha.ID, beta.ID}}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "reorder: %s", r.Body)
+	var reordered []formScopeDTO
+	require.NoError(t, json.Unmarshal(r.Body, &reordered))
+	require.Equal(t, []string{gamma.ID, alpha.ID, beta.ID}, fieldOrder(reordered))
+	require.Equal(t, []string{gamma.ID, alpha.ID, beta.ID}, fieldOrder(getForm()))
+
+	// The ordering consumer: the item's rendered fields follow the new order.
+	var rendered []renderedFieldDTO
+	r = ts.get(t, fmt.Sprintf("%s/%s/fields", itemsBase, itemID), true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
+	require.NoError(t, json.Unmarshal(r.Body, &rendered))
+	require.Len(t, rendered, 3)
+	require.Equal(t, []string{"gamma", "alpha", "beta"},
+		[]string{rendered[0].Slug, rendered[1].Slug, rendered[2].Slug},
+		"the entity render must follow the form order")
+
+	// A partial order is refused whole — nothing about the form moved.
+	r = ts.put(t, formBase+"/order", map[string]any{"field_ids": []string{alpha.ID, beta.ID}}, true)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "partial order must 400: %s", r.Body)
+	require.Equal(t, []string{gamma.ID, alpha.ID, beta.ID}, fieldOrder(getForm()))
+
+	// The preservation pair, over the wire. Toggling required keeps the
+	// reordered position (the upsert's pinned no-reshuffle property)...
+	attachField(t, ts, alpha.ID, spaceID, "project_item", true)
+	afterFlag := getForm()
+	require.Equal(t, []string{gamma.ID, alpha.ID, beta.ID}, fieldOrder(afterFlag),
+		"toggling required must not reshuffle the form")
+	require.True(t, afterFlag[1].Required, "the flag itself must have landed")
+
+	// ...and its converse: a reorder changes position and does not change
+	// required.
+	r = ts.put(t, formBase+"/order",
+		map[string]any{"field_ids": []string{beta.ID, gamma.ID, alpha.ID}}, true)
+	require.Equal(t, http.StatusOK, r.StatusCode, "%s", r.Body)
+	afterReorder := getForm()
+	require.Equal(t, []string{beta.ID, gamma.ID, alpha.ID}, fieldOrder(afterReorder))
+	for _, sc := range afterReorder {
+		require.Equal(t, sc.FieldID == alpha.ID, sc.Required,
+			"a reorder must not change any required flag")
+	}
+}
+
+// The form-order routes hold the scope family's cross-org discipline: another
+// org's space answers 404 with the envelope of a space that does not exist,
+// in both directions, and nothing is written.
+func TestCustomFields_FormOrderRefusesCrossOrg(t *testing.T) {
+	ts := newTestServer(t)
+	defsBase := fmt.Sprintf("/api/v1/orgs/%s/custom-fields", ts.OrgID)
+
+	otherOrg := testutil.CreateTestOrg(t, ts.DB.Pool)
+	otherUser := testutil.CreateTestUser(t, ts.DB.Pool, otherOrg.ID)
+	otherSpace := testutil.CreateTestSpace(t, ts.DB.Pool, otherOrg.ID, otherUser.ID, "vector")
+
+	formPath := func(space string) string {
+		return fmt.Sprintf("%s/forms/%s/project_item", defsBase, space)
+	}
+
+	// GET direction: foreign and nonexistent spaces are indistinguishable.
+	foreign := ts.get(t, formPath(otherSpace.ID.String()), true)
+	require.Equal(t, http.StatusNotFound, foreign.StatusCode, "%s", foreign.Body)
+	absent := ts.get(t, formPath(uuid.NewString()), true)
+	require.Equal(t, absent.StatusCode, foreign.StatusCode)
+	require.Equal(t, withoutRequestID(t, absent.Body), withoutRequestID(t, foreign.Body),
+		"a foreign space must not be distinguishable from a nonexistent one")
+
+	// PUT direction, same parity — and the foreign form's rows are untouched.
+	fBody := map[string]any{"field_ids": []string{}}
+	foreignPut := ts.put(t, formPath(otherSpace.ID.String())+"/order", fBody, true)
+	require.Equal(t, http.StatusNotFound, foreignPut.StatusCode, "%s", foreignPut.Body)
+	absentPut := ts.put(t, formPath(uuid.NewString())+"/order", fBody, true)
+	require.Equal(t, absentPut.StatusCode, foreignPut.StatusCode)
+	require.Equal(t, withoutRequestID(t, absentPut.Body), withoutRequestID(t, foreignPut.Body))
 }
 
 // The scopes admin surface round-trip: attach with required, list, re-flag,

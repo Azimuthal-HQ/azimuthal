@@ -196,6 +196,38 @@ ON CONFLICT (field_id, space_id, entity_type)
 DO UPDATE SET required = EXCLUDED.required, updated_at = now()
 RETURNING *;
 
+-- name: ReorderCustomFieldScopes :execrows
+-- Form-centric position rewrite: one statement assigns each listed field its
+-- 1-based position on one (space, entity type) form, in the order the caller
+-- listed them. The org predicate is in the statement for the same reason the
+-- attach carries one: @space_id is caller-supplied, and without the EXISTS an
+-- org admin could rewrite another organisation's form order. A space outside
+-- the org — or soft-deleted — matches zero rows and the caller answers the
+-- same 404 an unknown space gets.
+--
+-- position is the ONLY scope attribute this statement touches. It is
+-- deliberately a separate statement from UpsertCustomFieldScope, whose
+-- DO UPDATE deliberately never touches position: one statement per property,
+-- so toggling required cannot reshuffle the form and reordering the form
+-- cannot flip a required flag.
+UPDATE custom_field_scopes sc
+SET position = ord.pos::int, updated_at = now()
+FROM unnest(@field_ids::uuid[]) WITH ORDINALITY AS ord(field_id, pos)
+WHERE sc.field_id = ord.field_id
+  AND sc.space_id = @space_id
+  AND sc.entity_type = @entity_type::text
+  AND EXISTS (
+    SELECT 1 FROM spaces s
+     WHERE s.id = @space_id AND s.org_id = @org_id AND s.deleted_at IS NULL
+  );
+
 -- name: DeleteCustomFieldScope :execrows
+-- No org predicate, deliberately unlike the attach and reorder statements
+-- above: every caller reaches this through (*Service).RemoveScope, which
+-- resolves the field via getOwned and refuses a cross-org field before any
+-- SQL runs — and a cross-org row cannot exist to be deleted anyway, because
+-- UpsertCustomFieldScope's own org predicate refuses to create one. The
+-- asymmetry is safe because deletion is bounded by what the attach could
+-- write; it is the attach that must carry the fence.
 DELETE FROM custom_field_scopes
 WHERE field_id = $1 AND space_id = $2 AND entity_type = $3;
