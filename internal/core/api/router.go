@@ -162,6 +162,10 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 		r.Group(func(r chi.Router) {
 			r.Use(cfg.Authenticator.RequireAuth)
 			r.Post("/logout", cfg.AuthHandler.Logout)
+			// Logout-all is the org-wide sign-out plain logout used to be
+			// before B1: same RequireAuth as logout, bumps the generation and
+			// revokes every session row rather than just this device's.
+			r.Post("/logout-all", cfg.AuthHandler.LogoutAll)
 			r.Get("/me", cfg.AuthHandler.Me)
 			r.Patch("/me", cfg.AuthHandler.UpdateMe)
 			if cfg.AvatarHandler != nil {

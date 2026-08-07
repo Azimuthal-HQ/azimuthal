@@ -640,7 +640,7 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 			audit.NewReader(adapters.NewAuditReaderAdapter(queries))).
 			WithAuditLogger(auditLog).
 			WithTicketRefPolicy(required),
-		InviteHandler: invitesapi.NewHandler(inviteSvc, jwtSvc).
+		InviteHandler: invitesapi.NewHandler(inviteSvc, jwtSvc, sessionSvc).
 			WithAuditLogger(auditLog).
 			WithTicketRefPolicy(required),
 		GrantHandler: grantsapi.NewHandler(grantSvc, explainer).
@@ -673,12 +673,14 @@ func newTicketRefRequiredServer(t *testing.T) *testServer {
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
-	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, org.ID.String(), "member", 0)
+	primarySession, err := sessionSvc.CreateSession(context.Background(), user.ID, "test-agent", "127.0.0.1")
+	require.NoError(t, err)
+	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, org.ID.String(), "member", 0, primarySession.ID)
 	require.NoError(t, err)
 
 	return &testServer{
 		Server: srv, Handler: router, DB: db, OrgID: org.ID, UserID: user.ID,
-		Token: pair.AccessToken, JWT: jwtSvc, TeamService: teamSvc,
+		Token: pair.AccessToken, JWT: jwtSvc, Sessions: sessionSvc, TeamService: teamSvc,
 		GrantService: grantSvc, RouterCfg: cfg, AuditLog: auditLog,
 	}
 }

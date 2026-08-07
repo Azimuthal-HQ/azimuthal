@@ -119,10 +119,16 @@ func (a *UserAdapter) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// AuthState implements auth.StateStore: the single primary-key read the
-// auth middleware performs on every request (token_generation + is_active).
-func (a *UserAdapter) AuthState(ctx context.Context, id uuid.UUID) (auth.State, error) {
-	row, err := a.q.GetUserAuthState(ctx, id)
+// AuthState implements auth.StateStore: the single indexed read the auth
+// middleware performs on every request (token_generation + is_active for the
+// user, joined with the liveness of the token's session). sessionID may be
+// uuid.Nil for the cookie path, which carries no session claim; the join
+// then matches nothing and SessionValid is false, which that path ignores.
+func (a *UserAdapter) AuthState(ctx context.Context, id, sessionID uuid.UUID) (auth.State, error) {
+	row, err := a.q.GetUserAuthStateWithSession(ctx, generated.GetUserAuthStateWithSessionParams{
+		SessionID: sessionID,
+		UserID:    id,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return auth.State{}, auth.ErrNotFound
 	}
@@ -132,6 +138,7 @@ func (a *UserAdapter) AuthState(ctx context.Context, id uuid.UUID) (auth.State, 
 	return auth.State{
 		TokenGeneration: int(row.TokenGeneration),
 		IsActive:        row.IsActive,
+		SessionValid:    row.SessionValid,
 	}, nil
 }
 

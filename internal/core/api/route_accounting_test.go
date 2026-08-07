@@ -99,7 +99,8 @@ var routeAccounting = map[string]string{
 	// wired router, and the sweep below now checks this row against the real
 	// middleware chain — it did not when the defect shipped, which is why the
 	// row could say `public` about an authenticated route with every gate green.
-	"POST /api/v1/auth/logout":                         "user-scoped: revokes the caller's own token generation and sessions",
+	"POST /api/v1/auth/logout":                         "user-scoped: revokes the caller's current session only (this device), by the token's sid",
+	"POST /api/v1/auth/logout-all":                     "user-scoped: revokes every session and bumps the caller's token generation (all devices)",
 	"GET /api/v1/auth/me":                              "user-scoped",
 	"PATCH /api/v1/auth/me":                            "user-scoped",
 	"PUT /api/v1/auth/me/avatar":                       "user-scoped: self avatar upload",

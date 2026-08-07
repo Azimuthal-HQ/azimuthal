@@ -224,7 +224,13 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 
 	userAdapter := adapters.NewUserAdapter(pool, uuid.Nil)
 	userSvc := auth.NewUserService(userAdapter)
-	sessionSvc := auth.NewSessionService(adapters.NewSessionAdapter(queries), auth.SessionConfig{TTL: cfg.JWTExpiry})
+	// A login's session must outlive its short access token and cover the
+	// whole refresh window, or a legitimately refreshed pair (same sid) would
+	// be refused the moment the session expired. It is bounded to the refresh
+	// TTL, which is the longest-lived credential the session backs — so the
+	// session is also the hard cap on how long a login can be kept alive by
+	// refreshing (B1).
+	sessionSvc := auth.NewSessionService(adapters.NewSessionAdapter(queries), auth.SessionConfig{TTL: cfg.JWTExpiry * 7})
 	// The user adapter doubles as the per-request auth-state store: the
 	// token_generation + is_active check that makes deactivation and force
 	// logout effective on the very next request (P2.5 session control).
@@ -452,7 +458,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		ShareHandler:        shareHandler,
 		AttachmentHandler:   attachmentHandler,
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
-		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
+		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc, sessionSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		AvatarHandler:       avatarHandler,
 		ViewHandler:         viewHandler,
 		PortalHandler:       portalHandler,

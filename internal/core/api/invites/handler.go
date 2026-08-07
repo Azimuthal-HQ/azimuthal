@@ -22,14 +22,17 @@ import (
 type Handler struct {
 	invites   *invites.Service
 	jwt       *auth.JWTService
+	sessions  *auth.SessionService
 	auditLog  audit.Logger
 	ticketRef ticketref.Policy
 }
 
 // NewHandler creates an invite Handler. jwt mints the post-acceptance token
-// pair for freshly created accounts.
-func NewHandler(invitesSvc *invites.Service, jwt *auth.JWTService) *Handler {
-	return &Handler{invites: invitesSvc, jwt: jwt, auditLog: audit.NewLogger()}
+// pair for freshly created accounts, and sessions opens the row it is bound
+// to — a post-acceptance auto-login is a login, so it needs a session like
+// any other (B1: a token minted without one is refused on its first use).
+func NewHandler(invitesSvc *invites.Service, jwt *auth.JWTService, sessions *auth.SessionService) *Handler {
+	return &Handler{invites: invitesSvc, jwt: jwt, sessions: sessions, auditLog: audit.NewLogger()}
 }
 
 // WithAuditLogger attaches an audit logger.
@@ -472,8 +475,14 @@ func (h *Handler) Accept(w http.ResponseWriter, r *http.Request) {
 		resp.UserID = &id
 		if !outcome.ExistingAccount {
 			// Auto-login for the account created moments ago; an existing
-			// account proves its password at the login form instead.
-			pair, err := h.jwt.IssueTokenPair(outcome.User.ID, outcome.User.Email, outcome.OrgID.String(), outcome.User.Role, outcome.User.TokenGeneration)
+			// account proves its password at the login form instead. A session
+			// is opened and the pair bound to it, exactly as login does.
+			sess, err := h.sessions.CreateSession(r.Context(), outcome.User.ID, r.UserAgent(), "")
+			if err != nil {
+				respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "joined, but failed to start a session — sign in normally")
+				return
+			}
+			pair, err := h.jwt.IssueTokenPair(outcome.User.ID, outcome.User.Email, outcome.OrgID.String(), outcome.User.Role, outcome.User.TokenGeneration, sess.ID)
 			if err != nil {
 				respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "joined, but failed to issue tokens — sign in normally")
 				return

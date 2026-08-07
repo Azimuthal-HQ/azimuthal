@@ -5,38 +5,27 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/testutil"
 )
 
-// The v0.4.1 trust patch, link 3: logout revokes.
+// B1 per-session revocation: logout revokes THIS session, and only this one.
 //
-// WHAT WAS BROKEN, IN TWO LAYERS.
-//
-// The routing layer: POST /api/v1/auth/logout was mounted by
-// authapi.Handler.Routes(), which NewRouter mounts outside its RequireAuth
-// group, and OptionalAuth is mounted nowhere in this router. Nothing therefore
-// put claims on the request context at that path, `auth.ClaimsFromContext`
-// returned nil for every caller, and Handler.Logout's first branch answered
-// 401 — to a valid bearer token exactly as to an anonymous request. The
-// endpoint could not be used.
-//
-// The revocation layer, underneath it: Handler.Logout deleted database session
-// rows and nothing else. That would have revoked nothing even had the route
-// been reachable. The SPA authenticates with a stateless RS256 bearer JWT
-// which the auth middleware validates from its signature plus a single
-// token_generation read — the sessions table is not consulted, and in fact
-// production never writes a row to it. A token copied out of localStorage by
-// script therefore outlived every sign-out, until its own expiry.
+// WHAT CHANGED FROM THE v0.4.1 TRUST PATCH. That patch made logout revoke by
+// bumping token_generation — the only lever available before this track, and a
+// sledgehammer: it signed the user out on every device at once. B1 gives login
+// a real sessions row and stamps its id into the token (`sid`); the middleware
+// now refuses a token whose session is gone. Logout revokes the caller's OWN
+// session row and stops bumping the generation, so a sign-out on one device
+// leaves the others signed in. The org-wide behaviour moved to /auth/logout-all
+// (TestAuthLogoutAll_* below).
 //
 // WHY THIS TEST IS SHAPED THIS WAY. The token is minted BEFORE the logout, via
 // the real login endpoint, and the assertion is on the very NEXT request made
-// with that same token. A test that logged out and then tried to log in again,
-// or that minted a fresh token afterwards, would pass against a server that
-// still honoured every token it had ever issued — which is precisely the state
-// being fixed. loginAs is used rather than ts.tokenFor for the same reason:
-// tokenFor mints at generation 0, so it would not notice a bump.
+// with that same token. loginAs is used rather than ts.tokenFor because it goes
+// through the production path that opens the session the logout then revokes.
 func TestAuthLogout_RevokesTheToken(t *testing.T) {
 	ts := newTestServer(t)
 	person := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
@@ -54,17 +43,18 @@ func TestAuthLogout_RevokesTheToken(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, meWith(t, ts, access),
 		"a token minted before logout must be refused on the next request")
 
-	// And the mechanism, asserted directly, so a future change that keeps the
-	// 401 by some other means (an expiry, a session lookup) does not read as
-	// this behaviour still being present.
-	require.Equal(t, generationBefore+1, tokenGeneration(t, ts, person.ID),
-		"logout must move token_generation past what the issued token claims")
+	// And the MECHANISM, asserted directly so a future change cannot keep the
+	// 401 by the wrong means: the generation is UNTOUCHED (single-device logout
+	// is not the org-wide hammer), and the session row is revoked instead.
+	require.Equal(t, generationBefore, tokenGeneration(t, ts, person.ID),
+		"single-device logout must NOT move token_generation — that is logout-all's job")
+	require.Equal(t, 1, revokedSessionCount(t, ts, person.ID),
+		"logout must revoke exactly the caller's own session row")
 
-	// The refresh token dies with it. It is not a database row — it is a
-	// stateless JWT carrying the same generation claim — and Handler.Refresh
-	// re-reads the live state, so the bump reaches it without any extra work.
-	// Asserted rather than assumed: a refresh path that still minted a new
-	// access token would hand the whole session straight back.
+	// The refresh token dies with it: it carries the same sid, and Handler.Refresh
+	// re-reads the live session, so the revocation reaches it without extra work.
+	// Asserted rather than assumed: a refresh path that ignored the session would
+	// hand the whole session straight back.
 	rr := ts.post(t, "/api/v1/auth/refresh", map[string]string{"refresh_token": refresh}, false)
 	require.Equal(t, http.StatusUnauthorized, rr.StatusCode,
 		"the refresh token issued with it must not survive logout: %s", rr.Body)
@@ -80,10 +70,10 @@ func TestAuthLogout_RevokesTheToken(t *testing.T) {
 		"signing in again after logout works")
 }
 
-// TestAuthLogout_RevokesOnlyTheCaller: the bump is scoped to the caller's own
-// id, taken from their verified claims. A logout that revoked more broadly —
-// or that read a user id from anywhere the caller controls — would be a way to
-// sign other people out.
+// TestAuthLogout_RevokesOnlyTheCaller: the revocation is scoped to the caller's
+// own session, taken from their verified claims. A logout that revoked more
+// broadly — or that read a session id from anywhere the caller controls — would
+// be a way to sign other people out.
 func TestAuthLogout_RevokesOnlyTheCaller(t *testing.T) {
 	ts := newTestServer(t)
 	caller := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
@@ -98,6 +88,16 @@ func TestAuthLogout_RevokesOnlyTheCaller(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, meWith(t, ts, callerTok))
 	require.Equal(t, http.StatusOK, meWith(t, ts, bystanderTok),
 		"one person's logout must not revoke another's session")
+}
+
+// revokedSessionCount returns how many of a user's session rows carry a
+// revoked_at, so a test can assert the exact scope of a logout.
+func revokedSessionCount(t *testing.T, ts *testServer, userID uuid.UUID) int {
+	t.Helper()
+	var n int
+	require.NoError(t, ts.DB.Pool.QueryRow(t.Context(),
+		`SELECT count(*) FROM sessions WHERE user_id = $1 AND revoked_at IS NOT NULL`, userID).Scan(&n))
+	return n
 }
 
 // TestAuthLogout_RefusesAnAlreadyRevokedToken pins the live-state check on this

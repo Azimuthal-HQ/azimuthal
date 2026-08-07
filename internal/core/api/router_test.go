@@ -904,7 +904,7 @@ var spacePathPattern = regexp.MustCompile(`/spaces/([0-9a-fA-F-]{36})`)
 
 func authHeader(t *testing.T, jwtSvc *auth.JWTService, userID uuid.UUID) string {
 	t.Helper()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member", 0)
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatalf("issuing token pair: %v", err)
 	}
@@ -1082,7 +1082,7 @@ func TestAuthRefresh(t *testing.T) {
 	router, jwtSvc := setupRouter(t)
 
 	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member", 0)
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatalf("issuing tokens: %v", err)
 	}
@@ -1399,7 +1399,7 @@ func TestAuthLogoutIsAuthenticated(t *testing.T) {
 	})
 
 	t.Run("a bearer token is let through", func(t *testing.T) {
-		pair, err := jwtSvc.IssueTokenPair(uuid.New(), "logout@example.com", uuid.New().String(), "member", 0)
+		pair, err := jwtSvc.IssueTokenPair(uuid.New(), "logout@example.com", uuid.New().String(), "member", 0, uuid.New())
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -170,10 +171,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	h.finishLogin(w, r, user)
 }
 
-// finishLogin resolves the primary org, mints the token pair with the
-// user's CURRENT generation (a login after a force logout or password
-// change must yield tokens that survive the check), stamps last sign-in,
-// and writes the response.
+// finishLogin resolves the primary org, opens a session, mints the token
+// pair bound to it with the user's CURRENT generation (a login after a force
+// logout or password change must yield tokens that survive the check),
+// stamps last sign-in, and writes the response.
 func (h *Handler) finishLogin(w http.ResponseWriter, r *http.Request, user *auth.User) {
 	// Falls back to the user's org_id if no memberships exist (e.g.
 	// registered via the API but not yet added to an org).
@@ -184,7 +185,18 @@ func (h *Handler) finishLogin(w http.ResponseWriter, r *http.Request, user *auth
 		orgName = ""
 	}
 
-	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, orgID.String(), user.Role, user.TokenGeneration)
+	// One sessions row per sign-in. Its id is stamped into the pair as `sid`,
+	// and the middleware refuses a token whose row is gone — so a single-device
+	// logout revokes THIS row and leaves other devices signed in. A session
+	// that could not be opened is a failed login: minting a sessionless pair
+	// would hand back tokens the very next request refuses.
+	sess, err := h.sessions.CreateSession(r.Context(), user.ID, r.UserAgent(), clientIP(r))
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to start session")
+		return
+	}
+
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, orgID.String(), user.Role, user.TokenGeneration, sess.ID)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
@@ -280,7 +292,16 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role, user.TokenGeneration)
+	// Registration logs the new user straight in, so it opens a session and
+	// binds the pair to it, exactly as login does — a token minted here with
+	// no session would be refused on its first use.
+	sess, err := h.sessions.CreateSession(r.Context(), user.ID, r.UserAgent(), clientIP(r))
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to start session")
+		return
+	}
+
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role, user.TokenGeneration, sess.ID)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to issue tokens")
 		return
@@ -371,20 +392,13 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A refresh token survives neither deactivation nor a generation bump:
-	// the same live-state check the auth middleware applies to access tokens
-	// runs here, so "deactivate" and "force logout" also revoke refresh.
-	generation := claims.TokenGeneration
-	if h.states != nil {
-		state, err := h.states.AuthState(r.Context(), claims.UserID)
-		if err != nil || !state.IsActive || state.TokenGeneration != claims.TokenGeneration {
-			respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "invalid or expired refresh token")
-			return
-		}
-		generation = state.TokenGeneration
+	generation, ok := h.liveRefreshGeneration(r.Context(), claims)
+	if !ok {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "invalid or expired refresh token")
+		return
 	}
 
-	pair, err := h.jwt.IssueTokenPair(claims.UserID, claims.Email, claims.OrgID, claims.Role, generation)
+	pair, err := h.jwt.IssueTokenPair(claims.UserID, claims.Email, claims.OrgID, claims.Role, generation, claims.SessionID)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to refresh tokens")
 		return
@@ -396,24 +410,39 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Logout revokes every token and session the current user holds.
+// liveRefreshGeneration re-checks a refresh token's claims against live account
+// state and returns the generation to mint the new pair with. A refresh token
+// survives neither deactivation nor a generation bump nor the revocation of its
+// own session: the same live-state check the auth middleware applies to access
+// tokens runs here, so "deactivate", "force logout" and a single-device
+// "logout" all revoke refresh too. ok is false when the token must be refused;
+// a nil states store (DB-less unit tests) trusts the claim's generation.
+func (h *Handler) liveRefreshGeneration(ctx context.Context, claims *auth.Claims) (generation int, ok bool) {
+	if h.states == nil {
+		return claims.TokenGeneration, true
+	}
+	state, err := h.states.AuthState(ctx, claims.UserID, claims.SessionID)
+	if err != nil || !state.IsActive || state.TokenGeneration != claims.TokenGeneration || !state.SessionValid {
+		return 0, false
+	}
+	return state.TokenGeneration, true
+}
+
+// Logout revokes the CURRENT session only — the one device.
 //
-// TWO STEPS, AND THE SECOND IS THE ONE THAT MATTERS. DeleteAllSessions clears
-// the database session rows; on its own that revoked nothing an attacker could
-// use, because the SPA authenticates with a bearer JWT and the middleware
-// validates that signature-plus-generation without consulting the session
-// table at all. A token copied out of localStorage therefore survived logout
-// until it expired. Bumping token_generation is what actually ends it: the
-// middleware reads the live column on every request (GetUserAuthState), so the
-// stolen copy is refused on the very next call.
+// This is the whole point of B1. It revokes the sessions row named by the
+// token's sid claim (the revoked_at update) and does NOT bump
+// token_generation, so a sign-out on a phone leaves the same user's desktop
+// signed in. The middleware refuses the revoked session on its very next
+// request; the other sessions carry different sids and are untouched.
 //
-// Both are attempted even if the first fails, and the response reports failure
-// if either did. Answering "logged out" after a failed revocation would tell
-// somebody who is signing out because they think they have been compromised
-// exactly the opposite of the truth.
+// A failed revocation still answers 500, for the same reason it always has:
+// telling somebody who is signing out because they think they are compromised
+// that they are "logged out" when nothing was revoked is the opposite of the
+// truth. The org-wide hammer — every device at once — is /auth/logout-all.
 //
-// @Summary      Logout user
-// @Description  Revokes every token and deletes every session for the current user.
+// @Summary      Logout current session
+// @Description  Revokes the current session (this device) only. Other sessions the user holds stay signed in.
 // @Tags         auth
 // @Produce      json
 // @Security     BearerAuth
@@ -428,10 +457,57 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.sessions.DeleteSession(r.Context(), claims.SessionID); err != nil {
+		slog.Error("logout failed",
+			"session_error", err,
+			"request_id", respond.RequestIDFromContext(r.Context()),
+		)
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to logout")
+		return
+	}
+
+	_ = h.auditLog.Log(r.Context(), audit.Event{
+		Type: audit.EventTypeUserLogout, ActorID: claims.UserID.String(),
+		OrgID: claims.OrgID, ResourceType: "user", ResourceID: claims.UserID.String(),
+	})
+
+	respond.JSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+}
+
+// LogoutAll revokes every token and session the current user holds — the
+// org-wide hammer that plain logout used to be before B1 split them.
+//
+// TWO STEPS, AND THE SECOND IS THE ONE THAT MATTERS. DeleteAllSessions clears
+// every database session row; on its own that revokes nothing an attacker
+// holds, because a bearer JWT is validated by signature-plus-generation and,
+// for the session arm, by a sid the attacker's stolen copy still carries. What
+// ends every outstanding token at once is bumping token_generation: the
+// middleware reads the live column on every request, so every copy — on every
+// device, whatever its sid — is refused on its very next call.
+//
+// Both are attempted even if the first fails, and the response reports failure
+// if either did, for the same reason Logout does.
+//
+// @Summary      Logout everywhere
+// @Description  Revokes every token and every session for the current user, across all devices.
+// @Tags         auth
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  api.SwaggerLogoutResponse  "Logged out everywhere"
+// @Failure      401  {object}  api.SwaggerErrorResponse   "Not authenticated"
+// @Failure      500  {object}  api.SwaggerErrorResponse   "Internal error"
+// @Router       /auth/logout-all [post]
+func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return
+	}
+
 	sessionErr := h.sessions.DeleteAllSessions(r.Context(), claims.UserID)
 	revokeErr := h.users.RevokeTokens(r.Context(), claims.UserID)
 	if sessionErr != nil || revokeErr != nil {
-		slog.Error("logout failed",
+		slog.Error("logout-all failed",
 			"session_error", sessionErr,
 			"revoke_error", revokeErr,
 			"request_id", respond.RequestIDFromContext(r.Context()),
@@ -446,6 +522,19 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	})
 
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+}
+
+// clientIP is a best-effort extraction of the caller's address for the
+// session's audit columns (ip_address is INET and nullable, so an
+// unparseable or proxied value simply stores NULL). It strips the port that
+// r.RemoteAddr always carries; anything fancier (X-Forwarded-For trust) is a
+// deployment concern this does not pretend to solve.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // Me returns the current authenticated user's profile.

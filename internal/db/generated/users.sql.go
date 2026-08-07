@@ -274,24 +274,43 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash string) (
 	return i, err
 }
 
-const getUserAuthState = `-- name: GetUserAuthState :one
-SELECT token_generation, is_active FROM users WHERE id = $1 AND deleted_at IS NULL
+const getUserAuthStateWithSession = `-- name: GetUserAuthStateWithSession :one
+SELECT u.token_generation, u.is_active,
+       (s.id IS NOT NULL)::boolean AS session_valid
+FROM users u
+LEFT JOIN sessions s
+  ON s.id = $1
+ AND s.user_id = u.id
+ AND s.revoked_at IS NULL
+ AND s.expires_at > now()
+WHERE u.id = $2 AND u.deleted_at IS NULL
 `
 
-type GetUserAuthStateRow struct {
-	TokenGeneration int32 `json:"token_generation"`
-	IsActive        bool  `json:"is_active"`
+type GetUserAuthStateWithSessionParams struct {
+	SessionID uuid.UUID `json:"session_id"`
+	UserID    uuid.UUID `json:"user_id"`
 }
 
-// The per-request auth check (P2.5 session control): one primary-key read
-// comparing the JWT's token_generation claim against the live column and
-// rejecting deactivated accounts. Constant cost — TestMatrixAPI23 asserts
-// this statement runs exactly once per authenticated request, so it cannot
-// be silently optimised away.
-func (q *Queries) GetUserAuthState(ctx context.Context, id uuid.UUID) (GetUserAuthStateRow, error) {
-	row := q.db.QueryRow(ctx, getUserAuthState, id)
-	var i GetUserAuthStateRow
-	err := row.Scan(&i.TokenGeneration, &i.IsActive)
+type GetUserAuthStateWithSessionRow struct {
+	TokenGeneration int32 `json:"token_generation"`
+	IsActive        bool  `json:"is_active"`
+	SessionValid    bool  `json:"session_valid"`
+}
+
+// The per-request auth check (P2.5 session control + B1 per-session
+// revocation): ONE indexed read that returns the live token_generation and
+// is_active for the user, and whether the session named by the JWT's sid
+// claim is still live — present, unrevoked, unexpired. The LEFT JOIN keeps it
+// a single round trip and a single row: session_valid is false whenever the
+// session is gone for any reason, including a sessionless token whose sid is
+// the zero UUID (no such row exists, so nothing matches). Constant cost —
+// TestMatrixAPI23 asserts this statement runs exactly once per authenticated
+// request, so it cannot be silently split or dropped. The name keeps the
+// GetUserAuthState prefix the case-23 query tracer keys on.
+func (q *Queries) GetUserAuthStateWithSession(ctx context.Context, arg GetUserAuthStateWithSessionParams) (GetUserAuthStateWithSessionRow, error) {
+	row := q.db.QueryRow(ctx, getUserAuthStateWithSession, arg.SessionID, arg.UserID)
+	var i GetUserAuthStateWithSessionRow
+	err := row.Scan(&i.TokenGeneration, &i.IsActive, &i.SessionValid)
 	return i, err
 }
 
