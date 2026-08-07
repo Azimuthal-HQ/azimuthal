@@ -355,12 +355,6 @@ type SwaggerCreateRelationRequest struct {
 	Kind   string    `json:"kind"    example:"blocks"`
 }
 
-// SwaggerCreateLabelRequest matches createLabelRequest in projects handler.
-type SwaggerCreateLabelRequest struct {
-	Name  string `json:"name" example:"bug"`
-	Color string `json:"color" example:"#ff0000"`
-}
-
 // SwaggerMoveToSprintRequest matches moveToSprintRequest in projects handler.
 type SwaggerMoveToSprintRequest struct {
 	ItemID   uuid.UUID `json:"item_id" example:"a1b2c3d4-e5f6-7890-abcd-ef1234567890"`
