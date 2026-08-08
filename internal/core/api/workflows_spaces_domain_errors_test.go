@@ -488,6 +488,75 @@ func TestWfSpaceDomain_TransitionCreate_ForeignStateIsIndistinguishableFromAbsen
 	require.Equal(t, 1, wfsdListLen(t, ts, minePath))
 }
 
+// TestWfSpaceDomain_TransitionDelete_WrongWorkflowIsIndistinguishableFromAbsent
+// is the delete-side twin of the create oracle above, and pins the predicate-in-
+// query conversion.
+//
+// DeleteTransition used to load the row (GetWorkflowTransition) and compare its
+// WorkflowID before deleting. The belonging-check now lives in the DELETE's
+// WHERE clause, so a transition of another workflow and one that exists nowhere
+// both match zero rows and both answer the same 404. This test fails in three
+// ways if that parity breaks:
+//
+//  1. A wrong-workflow delete that answered anything but 404 — or that actually
+//     removed the edge — would fail the status/list assertions.
+//  2. A refusal whose envelope differs between the wrong-workflow and absent
+//     cases would fail the oracle assertion, which is an existence probe: the
+//     status or body telling a caller whether an id names a real transition
+//     somewhere they cannot see.
+//  3. The legitimate same-workflow delete is run last and must still return 204,
+//     so the predicate cannot be satisfied by refusing everything.
+func TestWfSpaceDomain_TransitionDelete_WrongWorkflowIsIndistinguishableFromAbsent(t *testing.T) {
+	ts := newTestServer(t)
+
+	// The caller's own workflow with a real edge, and a second workflow they
+	// equally own. Same org and admin, so a 403 would fail these 404 assertions —
+	// the test cannot pass for the wrong reason.
+	mine := wfsdCreateWorkflow(t, ts, "Mine", "tickets")
+	from := wfsdCreateState(t, ts, mine, "open", "todo", 0, true)
+	to := wfsdCreateState(t, ts, mine, "done", "done", 1, false)
+	other := wfsdCreateWorkflow(t, ts, "Other", "tickets")
+
+	minePath := wfsdWorkflowBase(ts) + "/" + mine + "/transitions"
+	otherPath := wfsdWorkflowBase(ts) + "/" + other + "/transitions"
+
+	created := ts.post(t, minePath, map[string]any{
+		"name": "Finish", "from_state_id": from, "to_state_id": to,
+	}, true)
+	require.Equal(t, http.StatusCreated, created.StatusCode, "seed transition: %s", created.Body)
+	transitionID := decodeJSONMap(t, created.Body)["id"].(string)
+
+	// Delete a real transition through the WRONG workflow's URL: it belongs to
+	// `mine`, not `other`, so the scoped DELETE matches no rows.
+	wrongWorkflowResp := ts.delete(t, otherPath+"/"+transitionID, true)
+	wsnegRequireError(t, wrongWorkflowResp, http.StatusNotFound, "NOT_FOUND", "transition not found")
+
+	// The same delete with an id that names nothing anywhere.
+	absentResp := ts.delete(t, minePath+"/"+uuid.New().String(), true)
+	wsnegRequireError(t, absentResp, http.StatusNotFound, "NOT_FOUND", "transition not found")
+
+	// The oracle: not merely "both 404" — everything a caller can read must
+	// match, or the difference is itself the signal. request_id is the one field
+	// that legitimately differs per request, so it is blanked and the rest
+	// required equal — which fails if any OTHER field starts to diverge.
+	require.Equal(t, absentResp.StatusCode, wrongWorkflowResp.StatusCode,
+		"a transition in another workflow and one that does not exist must answer alike")
+	require.Equal(t,
+		wfsdErrorEnvelopeWithoutRequestID(t, absentResp.Body),
+		wfsdErrorEnvelopeWithoutRequestID(t, wrongWorkflowResp.Body),
+		"the two refusals differ, so the route reports whether the id names a real transition")
+
+	// The wrong-workflow attempt must not have deleted the edge from `mine`.
+	require.Equal(t, 1, wfsdListLen(t, ts, minePath),
+		"a delete through another workflow's URL must not remove the edge")
+
+	// The predicate refuses foreign/absent ids, not every delete: the legitimate
+	// same-workflow delete still succeeds.
+	ok := ts.delete(t, minePath+"/"+transitionID, true)
+	require.Equal(t, http.StatusNoContent, ok.StatusCode, "the legitimate delete: %s", ok.Body)
+	require.Equal(t, 0, wfsdListLen(t, ts, minePath))
+}
+
 // ─── Workflows: the transition endpoints' initial-state fallback ──────────────
 
 // TestWfSpaceDomain_TicketTransition_WorkflowWithNoInitialStateIsRefused drives

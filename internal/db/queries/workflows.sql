@@ -97,8 +97,23 @@ SELECT * FROM workflow_transitions WHERE workflow_id = $1;
 -- name: ListAvailableTransitions :many
 SELECT * FROM workflow_transitions WHERE workflow_id = $1 AND from_state_id = $2;
 
--- name: DeleteWorkflowTransition :exec
-DELETE FROM workflow_transitions WHERE id = $1;
+-- name: DeleteWorkflowTransition :execrows
+-- Delete an edge, scoped to its workflow so the belonging-check is the query's,
+-- not a handler load-then-compare.
+--
+-- id alone would delete any workflow's transition; the handler used to guard
+-- that by loading the row (GetWorkflowTransition) and comparing WorkflowID before
+-- deleting. That is the load-then-compare shape CreateWorkflowTransition above
+-- moved into the statement, and this closes the same class the same way: the
+-- predicate lives in the DELETE, so there is no window between check and write,
+-- and the refusal is one answer for two questions — a wrong-workflow id and a
+-- nonexistent id both match zero rows, so the route cannot report which. The
+-- belonging column is on this row itself, so a plain compound predicate says it;
+-- Create needs WHERE EXISTS only because its check is against another table.
+-- :execrows lets the handler turn "no rows affected" into its single 404.
+DELETE FROM workflow_transitions
+WHERE id = @id::uuid
+  AND workflow_id = @workflow_id::uuid;
 
 -- name: AssignWorkflowToSpace :exec
 UPDATE spaces SET workflow_id = $1 WHERE id = $2;

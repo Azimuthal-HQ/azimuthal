@@ -23,6 +23,16 @@ var ErrNoWorkflow = errors.New("no workflow assigned")
 // existence oracle over every workflow state in the installation.
 var ErrStateNotInWorkflow = errors.New("state not found")
 
+// ErrTransitionNotInWorkflow is returned when a delete names a transition that
+// is not an edge of the workflow in the URL.
+//
+// Like ErrStateNotInWorkflow, it does not distinguish a transition that belongs
+// to another workflow from one that exists nowhere: the workflow-scoped DELETE
+// matches no rows in either case, so the two are one answer. A caller that maps
+// this to anything other than a plain not-found turns the route into an existence
+// oracle over every workflow transition in the installation.
+var ErrTransitionNotInWorkflow = errors.New("transition not found")
+
 // ─── Tier errors (ADR-0011) ───────────────────────────────────────────────────
 
 // ErrPostFunctionUnknown is returned when a stored post-function names an
