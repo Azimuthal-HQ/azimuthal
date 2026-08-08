@@ -212,6 +212,25 @@ The backup archive contains:
 Copy the archive off the host. A backup that only exists inside the container is lost with the
 container.
 
+> **The backup archive is a credential — store and move it like one.** The database dump inside it
+> includes the `auth_signing_keys` table, which holds the RS256 private key this deployment signs
+> every session token with (the key lives in the database by design — see
+> [ADR-0004](adr/0004-signing-keys-in-database.md)). Anyone who holds a backup can mint valid tokens
+> for **every** user, so this is a full authentication compromise, not merely a data disclosure.
+> Encrypt the archive at rest, and keep it out of shared drives, ticket attachments, and
+> unencrypted buckets. The `backup` command creates the file owner-only (`0600`) on the host that
+> takes it — that protects it there, not wherever you copy it next.
+>
+> **If an archive leaks, be clear about what you can and cannot do today.** There is no key-rotation
+> command, and `auth_signing_keys` is a singleton that cannot hold a second key without a schema
+> change, so an in-place rotation with a grace window does not exist yet (ADR-0004 records this;
+> tracked as D100). Signing every user out — the `token_generation` bump behind logout — does **not**
+> help here: it never touches the signing key, so a holder of the leaked key can still forge tokens
+> for anyone. The only way to retire a leaked signing key is to replace it — bring up a deployment
+> whose key store is empty so a fresh key is generated, or import a known-good PEM via
+> `JWT_PRIVATE_KEY_PATH` (consulted only when the store is empty), then migrate your data onto it.
+> That invalidates every outstanding token at once; there is no softer path today.
+
 ### Restoring from Backup
 
 ```bash
