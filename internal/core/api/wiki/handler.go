@@ -935,35 +935,6 @@ func handleWikiError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, wiki.ErrPageMoveCycle):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
 	default:
-		respondUnmapped(w, r, err)
+		respond.Unmapped(w, r, "wiki", "", err)
 	}
-}
-
-// respondUnmapped answers an error none of the arms above could classify.
-//
-// The error text does not reach the wire. Every arm above passes err.Error()
-// having first established which sentinel it holds, and those strings are ours.
-// The default arm has established nothing: what arrives here is whatever the
-// layer below produced, and a Postgres error names the constraint it violated,
-// the table and the SQLSTATE.
-//
-// This is the last member of the family known-issues #23 describes — H5 closed
-// the three project surfaces, the write-authorisation pass closed tickets (#23b)
-// and notifications (#28), and that entry records this file as "the last of the
-// family". The shape follows respondUnmapped in
-// internal/core/api/tickets/handler.go rather than inventing a second idiom for
-// the same guarantee; see the longer note on the projects one.
-//
-// The client gets a fixed message and the request id it already had —
-// respond.Error puts it in the body and the RequestID middleware in the
-// X-Request-ID header — while the full error goes to the server log under that
-// same id. The detail moves rather than being discarded, which is what makes
-// this a redaction and not a loss.
-func respondUnmapped(w http.ResponseWriter, r *http.Request, err error) {
-	slog.Error("unmapped handler error",
-		"surface", "wiki",
-		"error", err,
-		"request_id", respond.RequestIDFromContext(r.Context()),
-	)
-	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "wiki operation failed")
 }

@@ -3,6 +3,8 @@ package respond_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -84,6 +86,99 @@ func TestErrorWithRequestID(t *testing.T) {
 	if !strings.HasPrefix(body.Error.RequestID, "req_") {
 		t.Errorf("request_id = %q, expected prefix 'req_'", body.Error.RequestID)
 	}
+}
+
+// TestUnmapped pins the consolidated helper that four handler packages
+// (plus the relations default arm) now share.
+//
+// The load-bearing properties: the underlying error is redacted from the wire
+// but recorded in the log; the wire message is the fixed "<surface> operation
+// failed"; op is logged only when supplied — a caller that passes "" logs no
+// empty op attribute, which is what lets the three packages that never had an op
+// keep their exact log shape.
+func TestUnmapped(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const leak = "azimuthal_respond_unmapped_leak_marker"
+	sentinel := errors.New(`duplicate key value violates unique constraint "` + leak + `" (SQLSTATE 23505)`)
+
+	t.Run("wire carries a fixed message and never the error detail", func(t *testing.T) {
+		logBuf.Reset()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rr := httptest.NewRecorder()
+
+		respond.Unmapped(rr, req, "ticket", "", sentinel)
+
+		if rr.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500", rr.Code)
+		}
+		var body struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+			t.Fatalf("decoding: %v", err)
+		}
+		if body.Error.Code != "INTERNAL_ERROR" {
+			t.Errorf("code = %q, want INTERNAL_ERROR", body.Error.Code)
+		}
+		if body.Error.Message != "ticket operation failed" {
+			t.Errorf("message = %q, want %q", body.Error.Message, "ticket operation failed")
+		}
+		if strings.Contains(body.Error.Message, leak) {
+			t.Errorf("the underlying error leaked to the wire: %q", body.Error.Message)
+		}
+		if !strings.Contains(logBuf.String(), leak) {
+			t.Errorf("the underlying error must reach the server log; got %q", logBuf.String())
+		}
+		if !strings.Contains(logBuf.String(), "unmapped handler error") {
+			t.Errorf("log must carry the shared message; got %q", logBuf.String())
+		}
+		if !strings.Contains(logBuf.String(), `"surface":"ticket"`) {
+			t.Errorf("log must carry the surface; got %q", logBuf.String())
+		}
+	})
+
+	t.Run("op is logged, and the wire noun is the surface not the op", func(t *testing.T) {
+		logBuf.Reset()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rr := httptest.NewRecorder()
+
+		respond.Unmapped(rr, req, "notification", "listing notifications", sentinel)
+
+		if got := logBuf.String(); !strings.Contains(got, `"op":"listing notifications"`) {
+			t.Errorf("op must be logged when supplied; got %q", got)
+		}
+		var body struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+			t.Fatalf("decoding: %v", err)
+		}
+		if body.Error.Message != "notification operation failed" {
+			t.Errorf("message = %q, want %q — the wire uses the surface, not the log-only op",
+				body.Error.Message, "notification operation failed")
+		}
+	})
+
+	t.Run("op attribute is omitted when empty", func(t *testing.T) {
+		logBuf.Reset()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rr := httptest.NewRecorder()
+
+		respond.Unmapped(rr, req, "wiki", "", sentinel)
+
+		if got := logBuf.String(); strings.Contains(got, `"op":`) {
+			t.Errorf("op must be omitted when empty, not logged as an empty attribute; got %q", got)
+		}
+	})
 }
 
 func TestDecodeJSON(t *testing.T) {
