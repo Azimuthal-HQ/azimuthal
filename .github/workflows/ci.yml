@@ -1077,6 +1077,16 @@ jobs:
       APP_PORT: "8082"
       BASE_URL: http://localhost:8082
       AZIMUTHAL_BINARY: /tmp/azimuthal-test
+      # Whole-suite budget. web/playwright.config.ts defaults globalTimeout to
+      # PW_GLOBAL_TIMEOUT (300000 = 5 min), and the 176-test suite now runs right
+      # at that edge on this runner — a run that lands at ~5.0m aborts mid-suite
+      # with "Timed out waiting 300s for the test suite", tests cut off rather
+      # than failed (0 failures, N did not run). That is the exact failure mode
+      # CLAUDE.md §3 documents; the remedy it prescribes is to raise this knob,
+      # and the config's own comment sanctions it ("raising a budget is not
+      # weakening a test"). The per-test budget (PW_TEST_TIMEOUT, 30s) is
+      # unchanged, so a genuinely hung test still fails fast.
+      PW_GLOBAL_TIMEOUT: "1200000"
 
     steps:
       - uses: actions/checkout@v4
