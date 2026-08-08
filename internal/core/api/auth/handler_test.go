@@ -400,6 +400,50 @@ func (failingSessionRepo) DeleteAllForUser(context.Context, uuid.UUID) error {
 }
 func (failingSessionRepo) DeleteExpired(context.Context) error { return nil }
 
+// failingCreateSessionRepo fails only Create — used to prove a login that
+// cannot open a session refuses rather than handing back a sessionless pair
+// the very next request would 401.
+type failingCreateSessionRepo struct{ mockSessionRepo }
+
+func (failingCreateSessionRepo) Create(context.Context, *auth.Session) error {
+	return fmt.Errorf("the database said no")
+}
+
+// TestLoginSessionCreationFailureReturns500 pins the fail-closed direction of
+// the login-opens-a-session change: if the session cannot be opened, login
+// must NOT mint tokens. Deleting the error guard in finishLogin would dereference
+// the nil session CreateSession returned — so the login path could not silently
+// hand back a sessionless pair with this in place.
+func TestLoginSessionCreationFailureReturns500(t *testing.T) {
+	pk := testSigningKey()
+	jwtSvc := auth.NewJWTService(auth.TokenConfig{
+		PrivateKey: pk, PublicKey: &pk.PublicKey,
+		AccessTTL: time.Hour, RefreshTTL: 24 * time.Hour, Issuer: "test",
+	})
+	// Seed a user with a real password hash so Authenticate succeeds and the
+	// flow reaches the session open.
+	hash, err := auth.HashPassword("correct-horse-battery")
+	require.NoError(t, err)
+	userRepo := newMockUserRepo()
+	uid := uuid.New()
+	userRepo.users[uid] = &auth.User{
+		ID: uid, Email: "sess-fail@test.com", PasswordHash: hash,
+		Role: "member", IsActive: true, OrgID: uuid.New(),
+	}
+	userSvc := auth.NewUserService(userRepo)
+	sessionSvc := auth.NewSessionService(&failingCreateSessionRepo{}, auth.SessionConfig{TTL: time.Hour})
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil)
+
+	body := bytes.NewBufferString(`{"email":"sess-fail@test.com","password":"correct-horse-battery"}`)
+	req := httptest.NewRequest(http.MethodPost, "/login", body)
+	rr := httptest.NewRecorder()
+	h.Login(rr, req)
+
+	require.Equal(t, http.StatusInternalServerError, rr.Code, "body: %s", rr.Body.String())
+	require.NotContains(t, rr.Body.String(), "access_token",
+		"a login that could not open a session must not hand back tokens")
+}
+
 func TestLoginEmptyFields(t *testing.T) {
 	h, _ := setupHandler(t)
 	body := bytes.NewBufferString(`{"email":"","password":""}`)
