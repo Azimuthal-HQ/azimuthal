@@ -63,7 +63,7 @@ func TestWarnIfDisclosureFlagIgnored_EmittedOnEveryIgnoredCombination(t *testing
 		},
 		{
 			name:   "a typo for production is off the safelist",
-			appEnv: "produciton",
+			appEnv: "prodduction",
 			why:    "an unrecognised name discloses nothing, so the flag is ignored and must be reported",
 		},
 	} {

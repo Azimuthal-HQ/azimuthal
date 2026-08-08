@@ -168,7 +168,7 @@ does. Both are detailed below.
   (v0.4.1 shipped this as a literal `APP_ENV != production` comparison, which fails open: an
   `APP_ENV=staging` host with the flag set *would* disclose and got no warning, because `staging`
   is not `production`. v0.4.2 replaced the comparison with the safelist above, so `staging`, an
-  unknown name, or a typo like `produciton` now discloses nothing and *does* emit the warning.)
+  unknown name, or a typo like `prodduction` now discloses nothing and *does* emit the warning.)
 
 - **Signing out revokes tokens on every device**, not just the one signing out. Logout now deletes
   every session row for the user and bumps their token generation, which invalidates outstanding

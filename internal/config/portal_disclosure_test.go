@@ -125,10 +125,10 @@ func TestPortalLinkDisclosureAllowed_TruthTable(t *testing.T) {
 		{name: "an unrecognised environment still refuses without the flag", appEnv: "staging", want: false},
 		{
 			name:   "a typo for production does not fail open",
-			appEnv: "produciton",
+			appEnv: "prodduction",
 			flag:   "true",
 			want:   false,
-			why: "the blocklist's worst case: 'produciton' is not the literal string " +
+			why: "the blocklist's worst case: 'prodduction' is not the literal string " +
 				"'production', so `!IsProduction()` let it through and it disclosed. A " +
 				"safelist refuses every name it does not recognise, typos included.",
 		},
@@ -258,7 +258,7 @@ func TestPortalDisclosureFlagIgnored_TruthTable(t *testing.T) {
 		},
 		{
 			name:   "flag set on a typo for production is ignored",
-			appEnv: "produciton",
+			appEnv: "prodduction",
 			flag:   "true",
 			want:   true,
 			why:    "an unrecognised name is off the safelist, so the flag is ignored and the operator is told",
@@ -310,7 +310,7 @@ func TestPortalDisclosureFlagIgnored_TruthTable(t *testing.T) {
 // warning that stops covering an ignored case, or one that starts firing on a
 // case that works — and this fails.
 func TestPortalDisclosureFlagIgnored_IsExactlyWhatTheRuleDiscards(t *testing.T) {
-	for _, appEnv := range []string{"production", "development", "test", "staging", "produciton", ""} {
+	for _, appEnv := range []string{"production", "development", "test", "staging", "prodduction", ""} {
 		for _, flag := range []string{"true", "false"} {
 			t.Run(appEnv+"/"+flag, func(t *testing.T) {
 				cfg := discloseCase{appEnv: appEnv, flag: flag}.load(t)

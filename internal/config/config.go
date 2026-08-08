@@ -398,7 +398,7 @@ func (c *Config) IsProduction() bool {
 //     bring, and production is not on the safelist, so disclosure is refused
 //     anyway. This conjunct used to be `!IsProduction()`, a blocklist that
 //     failed OPEN: everything that was not the literal string "production"
-//     passed, so APP_ENV=staging disclosed and so did a typo like "produciton".
+//     passed, so APP_ENV=staging disclosed and so did a typo like "prodduction".
 //     Disclosure is an authentication bypass, so the environment test now fails
 //     CLOSED — see appEnvPermitsPortalDisclosure for the safelisted set.
 //
@@ -429,7 +429,7 @@ func (c *Config) PortalLinkDisclosureAllowed() bool {
 // It is a SAFELIST, not a blocklist, and that distinction is the whole point.
 // The rule this replaced was `!IsProduction()`: everything that was not the
 // literal string "production" passed, so APP_ENV=staging disclosed and so did a
-// typo like "produciton" — a blocklist that fails OPEN on every value its author
+// typo like "prodduction" — a blocklist that fails OPEN on every value its author
 // did not anticipate, which for an authentication bypass is the wrong way to
 // fail. The safelist fails CLOSED: disclosure is permitted only for the
 // explicitly-development environment names this repository actually uses —
