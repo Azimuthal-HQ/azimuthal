@@ -243,10 +243,23 @@ func (a *WorkflowAdapter) CreateTransition(ctx context.Context, t *workflow.Tran
 	return nil
 }
 
-// DeleteTransition removes a transition.
-func (a *WorkflowAdapter) DeleteTransition(ctx context.Context, id uuid.UUID) error {
-	if err := a.q.DeleteWorkflowTransition(ctx, id); err != nil {
+// DeleteTransition removes a transition, scoped to its workflow.
+//
+// The workflow_id predicate lives in the DELETE (see DeleteWorkflowTransition in
+// internal/db/queries/workflows.sql), so a transition of another workflow — or
+// none at all — matches no rows. Zero rows affected is the predicate refusing the
+// delete, not a failure, so it maps to ErrTransitionNotInWorkflow rather than an
+// error, mirroring how CreateTransition treats pgx.ErrNoRows above.
+func (a *WorkflowAdapter) DeleteTransition(ctx context.Context, workflowID, id uuid.UUID) error {
+	rows, err := a.q.DeleteWorkflowTransition(ctx, generated.DeleteWorkflowTransitionParams{
+		ID:         id,
+		WorkflowID: workflowID,
+	})
+	if err != nil {
 		return fmt.Errorf("workflow adapter delete transition: %w", err)
+	}
+	if rows == 0 {
+		return workflow.ErrTransitionNotInWorkflow
 	}
 	return nil
 }

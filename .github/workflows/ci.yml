@@ -1077,6 +1077,16 @@ jobs:
       APP_PORT: "8082"
       BASE_URL: http://localhost:8082
       AZIMUTHAL_BINARY: /tmp/azimuthal-test
+      # Whole-suite budget. web/playwright.config.ts defaults globalTimeout to
+      # PW_GLOBAL_TIMEOUT (300000 = 5 min), and the 176-test suite now runs right
+      # at that edge on this runner — a run that lands at ~5.0m aborts mid-suite
+      # with "Timed out waiting 300s for the test suite", tests cut off rather
+      # than failed (0 failures, N did not run). That is the exact failure mode
+      # CLAUDE.md §3 documents; the remedy it prescribes is to raise this knob,
+      # and the config's own comment sanctions it ("raising a budget is not
+      # weakening a test"). The per-test budget (PW_TEST_TIMEOUT, 30s) is
+      # unchanged, so a genuinely hung test still fails fast.
+      PW_GLOBAL_TIMEOUT: "1200000"
 
     steps:
       - uses: actions/checkout@v4
@@ -1631,6 +1641,133 @@ jobs:
 
 
   # ─────────────────────────────────────────────────────────────
+  # REGRESSION SUITE (L2 gate)
+  # ─────────────────────────────────────────────────────────────
+  #
+  # `make regression-test` — in practice scripts/regression-test.sh — is the L2
+  # API regression gate, and until now NO workflow invoked it: the same
+  # gate-that-never-runs class T5 closed for the release pipeline. This job closes
+  # the MEASUREMENT gap only.
+  #
+  # Per the 2026-08-05 ruling, the local-Windows gap stays open and ledgered, and
+  # wiring the suite onto a Linux runner does not close it and must not be read as
+  # closing it: scripts/regression-test.sh builds to a bare /tmp path with no .exe
+  # and no Windows branch, and the Makefile's regression-test recipe (chmod, a
+  # POSIX command-substitution for ENV_TEST_VARS) does not run under cmd.exe.
+  #
+  # Modelled on the `test` job's manual-service shape (postgres + minio started via
+  # docker rather than a services: block). It runs the script directly, not
+  # `make regression-test`, because that target provisions its OWN docker-compose
+  # stack (build/docker-compose.test.yml) and would double-provision the services
+  # this job already starts. The script defaults its DATABASE_URL / storage /
+  # APP_ENV / REGRESSION_PORT (8083) to exactly these values, so no overrides are
+  # needed; the server it boots creates the storage bucket itself (EnsureBucket).
+  regression:
+    name: Regression Suite
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable
+      STORAGE_ENDPOINT: http://localhost:9001
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: minioadmin
+      STORAGE_BUCKET: azimuthal-test
+      APP_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
+          restore-keys: gomod-${{ runner.os }}-${{ env.GO_VERSION }}-
+
+      # The script's `go build ./cmd/server` embeds web/dist via go:embed, so the
+      # directory must exist. A stub is enough — the regression suite exercises the
+      # API, not the SPA.
+      - name: Create stub frontend dist (for go:embed)
+        run: mkdir -p web/dist && echo '<!DOCTYPE html><html><body>stub</body></html>' > web/dist/index.html
+
+      - name: Wait for Docker daemon
+        run: |
+          if docker info >/dev/null 2>&1; then
+            echo "Docker daemon already up — no settle needed."
+            exit 0
+          fi
+          echo "Docker daemon not ready — waiting..."
+          for i in $(seq 1 90); do
+            docker info >/dev/null 2>&1 && echo "Docker daemon ready after $((i*2))s" && break
+            sleep 2
+          done
+          docker info
+          echo "Daemon needed waiting — sleeping 30s for bridge networking to settle..."
+          sleep 30
+
+      - name: Pull container images (with retry)
+        run: |
+          for img in postgres:16-alpine quay.io/minio/minio:latest; do
+            echo "=== Pulling $img ==="
+            for attempt in $(seq 1 10); do
+              docker pull "$img" && echo "✅ Pulled $img" && break
+              echo "Pull attempt $attempt/10 failed, retrying in 30s..."
+              sleep 30
+              [ "$attempt" = "10" ] && echo "❌ Failed to pull $img after 10 attempts" && exit 1
+            done
+          done
+
+      - name: Start postgres
+        run: |
+          docker run -d --name postgres \
+            -p 5433:5432 \
+            -e POSTGRES_USER=azimuthal_test \
+            -e POSTGRES_PASSWORD=testpassword \
+            -e POSTGRES_DB=azimuthal_test \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec postgres pg_isready -U azimuthal_test 2>/dev/null && \
+              echo "postgres ready after $((i*2))s" && break
+            sleep 2
+          done
+          for retry in $(seq 1 5); do
+            docker exec postgres pg_isready -U azimuthal_test && break
+            [ "$retry" = "5" ] && echo "❌ postgres never became ready" && exit 1
+            sleep 2
+          done
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9001:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            quay.io/minio/minio:latest server /data
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:9001/minio/health/live 2>/dev/null && \
+              echo "MinIO ready after $((i*2))s" && break
+            sleep 2
+          done
+          curl -sf http://localhost:9001/minio/health/live || \
+            (echo "❌ MinIO never became ready" && exit 1)
+
+      # The script does not migrate — it boots a server that expects a migrated
+      # schema at DATABASE_URL, the same reason the `test` job runs this step.
+      - name: Run migrations
+        run: go run ./cmd/migrate
+
+      - name: Run API regression suite
+        run: ./scripts/regression-test.sh
+
+
+  # ─────────────────────────────────────────────────────────────
   # FINAL GATE
   # ─────────────────────────────────────────────────────────────
   all-checks:
@@ -1638,7 +1775,7 @@ jobs:
     # `changes` is listed so a failed path-detection job fails this gate —
     # otherwise a broken detection job would skip every gate and still merge.
     # Skipped results (docs-only PRs) are not failures and pass this gate.
-    needs: [changes, build, test, lint, frontend, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e]
+    needs: [changes, build, test, lint, frontend, sast, vuln-scan, secret-scan, container-scan, e2e, docs-check, docker-e2e, regression]
     runs-on: ubuntu-latest
     if: always()
     steps:

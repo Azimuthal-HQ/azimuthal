@@ -187,6 +187,37 @@ func TestRun_RestrictedCommentsAreUnmappable(t *testing.T) {
 	require.Contains(t, reason, "no visibility column")
 }
 
+// TestRun_ConfluenceLabelsMapCleanlyOntoTags pins the post-055 verdict for
+// Confluence labels.
+//
+// Before migration 055 dropped project_items.labels and renamed the page-only
+// page_tags table into the entity-generic entity_tags, a page label had nowhere
+// to land and this class was VerdictUnmappable. A page is now a first-class tag
+// entity (entity_type 'page'), so the honest verdict is clean. This is a
+// hand-written pin rather than the golden file precisely so a regression back to
+// "unmappable" fails by name instead of being waved through by `-update`.
+func TestRun_ConfluenceLabelsMapCleanlyOntoTags(t *testing.T) {
+	t.Parallel()
+
+	res := runFixtures(t)
+	cl := findClass(t, res, "Confluence labels")
+
+	require.Positive(t, cl.Observed, "the fixture carries at least one Labelling object")
+	require.Equal(t, cl.Observed, cl.CountBy(VerdictClean),
+		"every observed label maps cleanly onto entity_tags post-055")
+	require.Zero(t, cl.CountBy(VerdictUnmappable),
+		"labels are no longer unmappable — migration 055 gave pages first-class tags")
+
+	var reason string
+	for _, f := range cl.Findings {
+		if f.Verdict == VerdictClean {
+			reason = f.Reason
+		}
+	}
+	require.Contains(t, reason, "entity_tags",
+		"the reason must name the table that now carries page labels")
+}
+
 // TestRun_ConfluenceMacrosSplitAcrossBuckets — the Confluence half's centre of
 // gravity, and the place ADR-0012's carrier does its work.
 func TestRun_ConfluenceMacrosSplitAcrossBuckets(t *testing.T) {

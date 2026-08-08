@@ -79,6 +79,38 @@ func Error(w http.ResponseWriter, r *http.Request, status int, code ErrorCode, m
 	}
 }
 
+// Unmapped answers an internal error that a handler's error-classification
+// switch could not map to a specific status, without putting the error on the
+// wire.
+//
+// The default arm of such a switch has established nothing about the error: what
+// arrives is whatever the layer below produced, and a Postgres error names the
+// constraint it violated, the table and the SQLSTATE. Interpolating that into
+// the client's message is how a schema object's name reaches a caller
+// (known-issues #23/#24). So the client gets a fixed "<surface> operation
+// failed" plus the request id it already had, while the full error goes to the
+// server log under that same id — the detail moves rather than being discarded.
+//
+// This is the one shared implementation of a shape that had drifted into four
+// private copies (projects, wiki, notifications, tickets), which is exactly how
+// the disclosure it fixes grows back. surface names the failing area and forms
+// both the log attribute and the wire noun; op is an optional finer detail —
+// which call failed — recorded in the log only, and omitted when empty so a
+// caller with nothing to add logs no empty attribute.
+//
+// No G706 (log injection) concern here: the message is a compile-time literal
+// and surface/op/error/request_id are structured slog attributes, not a format
+// string.
+func Unmapped(w http.ResponseWriter, r *http.Request, surface, op string, err error) {
+	attrs := []any{"surface", surface}
+	if op != "" {
+		attrs = append(attrs, "op", op)
+	}
+	attrs = append(attrs, "error", err, "request_id", RequestIDFromContext(r.Context()))
+	slog.Error("unmapped handler error", attrs...)
+	Error(w, r, http.StatusInternalServerError, CodeInternal, surface+" operation failed")
+}
+
 // JSON encodes v as JSON to w with the given status code.
 func JSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

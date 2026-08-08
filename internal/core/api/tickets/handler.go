@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -1163,7 +1162,7 @@ func handleTicketFieldError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, customfields.ErrValueRequired):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
 	default:
-		respondUnmapped(w, r, err)
+		respond.Unmapped(w, r, "ticket", "", err)
 	}
 }
 
@@ -1196,34 +1195,8 @@ func handleTicketError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, tickets.ErrAlreadyAssigned):
 		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, err.Error())
 	default:
-		respondUnmapped(w, r, err)
+		respond.Unmapped(w, r, "ticket", "", err)
 	}
-}
-
-// respondUnmapped answers an error none of the arms above could classify.
-//
-// The error text does not reach the wire. Every arm above passes err.Error()
-// having first established which sentinel it holds, and those strings are ours.
-// The default arm has established nothing: what arrives here is whatever the
-// layer below produced, and a Postgres error names the constraint it violated,
-// the table and the SQLSTATE. known-issues #23 was filed against exactly that —
-// a well-formed uuid naming no user reached the UPDATE, violated
-// tickets_assignee_id_fkey, and the driver's sentence was handed to the caller.
-//
-// This is the change the hygiene pass (H5) made to the three project surfaces
-// and explicitly left undone here; see respondUnmapped in
-// internal/core/api/projects/handler.go for the longer note. The client gets a
-// fixed message and the request id it already had — respond.Error puts it in the
-// body and the RequestID middleware in the X-Request-ID header — while the full
-// error goes to the server log under that same id. The detail moves rather than
-// being discarded.
-func respondUnmapped(w http.ResponseWriter, r *http.Request, err error) {
-	slog.Error("unmapped handler error",
-		"surface", "ticket",
-		"error", err,
-		"request_id", respond.RequestIDFromContext(r.Context()),
-	)
-	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "ticket operation failed")
 }
 
 // queueAssignmentNotifier implements tickets.AssignmentNotifier via the job queue.

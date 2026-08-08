@@ -219,6 +219,13 @@ E2E result reasoning about a "clean database" that was nothing of the kind. `mak
 does the same thing in one step when the stack is already running. If you want the data kept, do
 not run `down`.
 
+**Reset the volume between full E2E runs, not just restart it.** That hazard has a sharp E2E edge:
+a test database still carrying a previous run's rows fails count-exact assertions in suites that
+have nothing to do with what seeded them — an "expected 3, got 7" in an unrelated spec, nowhere
+near the change under test, is the signature. `make test-db-reset` (the `down -v` + `up` in one
+step) before a full `make e2e-test` is the fix; a bare restart is not, because the volume survives
+it, and a suite that reads a stale count passes or fails for the wrong reason either way.
+
 One consequence worth knowing: on a genuinely fresh volume, postgres initialises before it accepts
 TCP connections, and `pg_isready` over the container's unix socket reports "accepting connections"
 during that window. `test-db-up` probes with `-h localhost` to force TCP for exactly that reason.
@@ -249,6 +256,14 @@ Two consequences worth knowing rather than rediscovering:
 for postgres on `:5433` and MinIO on `:9001`), an `npm ci && npm run build` of the frontend, a
 built server binary, and Playwright's browsers already installed. **Verify all of that before
 starting a phase that has to run E2E** — discovering it at the gate is how a phase loses an evening.
+
+**The suite no longer fits the default `PW_GLOBAL_TIMEOUT` on a slow box.** `npx playwright test
+--list` reports 176 tests across 30 spec files today, and `web/playwright.config.ts` caps the whole
+run at `PW_GLOBAL_TIMEOUT` (default `300000` — five minutes). On a sandboxed container or a small
+box the run can exceed that and abort mid-suite, which reads as a hang rather than the budget it is.
+Raise it via the env knob — `PW_GLOBAL_TIMEOUT=1200000 make e2e-test` — which the config's own
+comment sanctions ("raising a budget is not weakening a test"). The per-test budget is a separate
+knob, `PW_TEST_TIMEOUT` (default `30000`); reaching for it does not fix a whole-suite overrun.
 
 The port is env-gated. `web/playwright.config.ts` reads **`E2E_PORT`** (default `8082`) in four
 places — `use.baseURL`, the `webServer` `/health` readiness probe, the spawned server's

@@ -278,7 +278,7 @@ func TestDeletingATransition_RemovesItsGuards(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, adapters.NewWorkflowAdapter(f.q).DeleteTransition(ctx, f.openToInProgress))
+	require.NoError(t, adapters.NewWorkflowAdapter(f.q).DeleteTransition(ctx, f.workflowID, f.openToInProgress))
 
 	guards, err := f.tier.GuardsForTransition(ctx, f.openToInProgress)
 	require.NoError(t, err)
@@ -377,7 +377,7 @@ func TestDeletingATransition_KeepsItsApprovalRecord(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), n, "the count that lets an administrator be warned before deleting the edge")
 
-	require.NoError(t, adapters.NewWorkflowAdapter(f.q).DeleteTransition(ctx, f.openToInProgress))
+	require.NoError(t, adapters.NewWorkflowAdapter(f.q).DeleteTransition(ctx, f.workflowID, f.openToInProgress))
 
 	got, err := f.tier.GetApprovalInSpace(ctx, f.spaceID, created.ID)
 	require.NoError(t, err, "the approval record must outlive the edge it referenced")

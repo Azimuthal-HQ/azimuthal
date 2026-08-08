@@ -2,7 +2,6 @@
 package notifications
 
 import (
-	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -80,13 +79,13 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) { //nolint:cyclop
 		Offset: offset,
 	})
 	if err != nil {
-		respondUnmapped(w, r, "listing notifications", err)
+		respond.Unmapped(w, r, "notification", "listing notifications", err)
 		return
 	}
 
 	unread, err := h.queries.CountUnreadNotifications(r.Context(), claims.UserID)
 	if err != nil {
-		respondUnmapped(w, r, "counting unread", err)
+		respond.Unmapped(w, r, "notification", "counting unread", err)
 		return
 	}
 
@@ -133,7 +132,7 @@ func (h *Handler) MarkRead(w http.ResponseWriter, r *http.Request) {
 		ID:     id,
 		UserID: claims.UserID,
 	}); err != nil {
-		respondUnmapped(w, r, "marking notification read", err)
+		respond.Unmapped(w, r, "notification", "marking notification read", err)
 		return
 	}
 
@@ -158,7 +157,7 @@ func (h *Handler) ReadAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.queries.MarkAllNotificationsRead(r.Context(), claims.UserID); err != nil {
-		respondUnmapped(w, r, "marking all notifications read", err)
+		respond.Unmapped(w, r, "notification", "marking all notifications read", err)
 		return
 	}
 
@@ -270,26 +269,4 @@ func toResponse(n generated.Notification, visible visibleSpaces) notificationRes
 		r.EntitySpaceID = &sid
 	}
 	return r
-}
-
-// respondUnmapped answers an internal failure without putting the error on the
-// wire.
-//
-// All four notification 500s interpolated the underlying error into the
-// client's message (known-issues #28), which is the same shape the hygiene pass
-// closed on the project surfaces and this branch closed on tickets. A Postgres
-// error names the table and the constraint it violated; none of that is the
-// caller's business, and on this surface it would be handed to every
-// authenticated user rather than only to one holding a capability.
-//
-// op names which call failed, for the log only. The client gets a fixed
-// sentence and the request id it already had.
-func respondUnmapped(w http.ResponseWriter, r *http.Request, op string, err error) {
-	slog.Error("unmapped handler error",
-		"surface", "notifications",
-		"op", op,
-		"error", err,
-		"request_id", respond.RequestIDFromContext(r.Context()),
-	)
-	respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "notification operation failed")
 }

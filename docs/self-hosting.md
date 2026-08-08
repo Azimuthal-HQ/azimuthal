@@ -147,7 +147,7 @@ All of these are forwarded by `build/docker-compose.yml` — set any of them in 
 | `AZIMUTHAL_ALLOWED_ORIGINS` | (empty) | Comma-separated CORS allow-list. Empty means no CORS headers are emitted and the browser enforces same-origin, which is correct for this deployment — the frontend is served by the same binary on the same origin. Set it only if you serve the frontend from somewhere else. |
 | `AZIMUTHAL_QUEUE_ENABLED` | `true` | Runs the background job queue in-process. |
 | `AZIMUTHAL_PORTAL_LINK_DELIVERY` | `link` | How a customer-portal sign-in link reaches a requester. Set this to `email` for any instance with the portal exposed to real customers, and set `SMTP_HOST` and `SMTP_FROM` with it — `email` without a relay is refused at startup. `link` means the operator is responsible for getting the URL to the requester, and on this deployment there is no way to do that, so the practical effect of leaving it at `link` in production is that portal sign-in links go nowhere. An unrecognised value is refused at startup. **This setting no longer decides disclosure** — see the row below. |
-| `AZIMUTHAL_PORTAL_DISCLOSE_LINK` | `false` | Return the portal sign-in URL in the body of the unauthenticated request-link response. Inert on this deployment for two independent reasons: `build/docker-compose.yml` sets `APP_ENV: production`, and disclosure requires this flag **and** a non-`production` environment. Setting it here is harmless and does nothing; the server logs a startup warning naming both variables rather than failing, so a working configuration is never locked out over a combination that is already safe. Leave it off in any case: `POST /portal/{key}/auth/request-link` is unauthenticated by design and accepts any address, so a disclosed URL signs the caller in as anyone they can name. |
+| `AZIMUTHAL_PORTAL_DISCLOSE_LINK` | `false` | Return the portal sign-in URL in the body of the unauthenticated request-link response. Inert on this deployment for two independent reasons: `build/docker-compose.yml` sets `APP_ENV: production`, and disclosure requires this flag **and** a development `APP_ENV` — a **safelist** of `development` and `test` only, so `production`, `staging`, or any unrecognised name refuses it. Setting it here is harmless and does nothing; the server logs a startup warning naming both variables rather than failing, so a working configuration is never locked out over a combination that is already safe. Leave it off in any case: `POST /portal/{key}/auth/request-link` is unauthenticated by design and accepts any address, so a disclosed URL signs the caller in as anyone they can name. |
 | `AZIMUTHAL_PORTAL_LINK_TTL` | `1h` | How long a portal sign-in link stays redeemable. Must be positive. |
 | `AZIMUTHAL_PORTAL_SESSION_TTL` | `72h` | Lifetime of the session a redeemed portal link produces. Must be positive. |
 | `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. Required when `AZIMUTHAL_INVITE_DELIVERY=email`. |
@@ -211,6 +211,25 @@ The backup archive contains:
 
 Copy the archive off the host. A backup that only exists inside the container is lost with the
 container.
+
+> **The backup archive is a credential — store and move it like one.** The database dump inside it
+> includes the `auth_signing_keys` table, which holds the RS256 private key this deployment signs
+> every session token with (the key lives in the database by design — see
+> [ADR-0004](adr/0004-signing-keys-in-database.md)). Anyone who holds a backup can mint valid tokens
+> for **every** user, so this is a full authentication compromise, not merely a data disclosure.
+> Encrypt the archive at rest, and keep it out of shared drives, ticket attachments, and
+> unencrypted buckets. The `backup` command creates the file owner-only (`0600`) on the host that
+> takes it — that protects it there, not wherever you copy it next.
+>
+> **If an archive leaks, be clear about what you can and cannot do today.** There is no key-rotation
+> command, and `auth_signing_keys` is a singleton that cannot hold a second key without a schema
+> change, so an in-place rotation with a grace window does not exist yet (ADR-0004 records this;
+> tracked as D100). Signing every user out — the `token_generation` bump behind logout — does **not**
+> help here: it never touches the signing key, so a holder of the leaked key can still forge tokens
+> for anyone. The only way to retire a leaked signing key is to replace it — bring up a deployment
+> whose key store is empty so a fresh key is generated, or import a known-good PEM via
+> `JWT_PRIVATE_KEY_PATH` (consulted only when the store is empty), then migrate your data onto it.
+> That invalidates every outstanding token at once; there is no softer path today.
 
 ### Restoring from Backup
 

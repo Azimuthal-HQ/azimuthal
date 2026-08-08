@@ -8,10 +8,10 @@ This is a read-only assessment. Nothing was written, and no database was contact
 
 | Outcome | Entities | Share |
 |---|---:|---:|
-| Maps cleanly | 35 | 44.9% |
+| Maps cleanly | 36 | 46.2% |
 | Maps with approximation | 22 | 28.2% |
 | Preserved as unknown | 2 | 2.6% |
-| Unmappable (lost) | 19 | 24.4% |
+| Unmappable (lost) | 18 | 23.1% |
 | **Total** | **78** | **100.0%** |
 
 Every entity counted appears in exactly one row above; the arithmetic is checked, not asserted.
@@ -191,7 +191,7 @@ Every entity counted appears in exactly one row above; the arithmetic is checked
 
 1 entity.
 
-- **1 unmappable** — pages carry no labels; project_items.labels exists but pages have no equivalent column, so page labels have nowhere to go
+- **1 maps cleanly** — page labels map onto entity_tags, which migration 055 made entity-generic from the page-only page_tags table; a page is a first-class entity there, so labels have an exact home
 
 ### Confluence macros → Codex nodes
 

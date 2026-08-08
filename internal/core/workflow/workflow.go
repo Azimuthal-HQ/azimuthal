@@ -77,8 +77,11 @@ type Repository interface {
 	ListAvailableTransitions(ctx context.Context, workflowID uuid.UUID, currentStateID uuid.UUID) ([]*Transition, error)
 	// CreateTransition persists a new transition.
 	CreateTransition(ctx context.Context, t *Transition) error
-	// DeleteTransition removes a transition.
-	DeleteTransition(ctx context.Context, id uuid.UUID) error
+	// DeleteTransition removes a transition, scoped to its workflow. It returns
+	// ErrTransitionNotInWorkflow when no edge with that id belongs to workflowID
+	// — the belonging-check is the DELETE's predicate, not a caller load-and-
+	// compare, so a wrong-workflow id and a nonexistent id are one answer.
+	DeleteTransition(ctx context.Context, workflowID, id uuid.UUID) error
 
 	// SeedDefaultWorkflows creates the two default workflows for a new org.
 	SeedDefaultWorkflows(ctx context.Context, orgID uuid.UUID) error

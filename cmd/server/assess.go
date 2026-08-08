@@ -86,13 +86,29 @@ func runAssess(cmd *cobra.Command, _ []string) error {
 	return res.WriteMarkdown(out) //nolint:wrapcheck // the report writer already wraps
 }
 
+// assessReportMode is the permission the --output report file is created with.
+//
+// Owner-only (0600), the same mode and for the same reason as the backup archive
+// (backupArchiveMode in backup.go): an assessment report carries derived
+// Jira/Confluence data — space and item keys, export file paths, and the
+// verbatim JQL of saved filters — that should be readable only by the operator
+// who ran the command, not by anyone else on the host. This was os.Create, which
+// is 0666-before-umask (0644, i.e. world-readable, under the default 022), and
+// the old "#nosec ... as in backup/restore" note no longer matched once T3 moved
+// backup to os.OpenFile with an explicit mode. This mirrors what backup does
+// now, not the os.Create it used to.
+const assessReportMode os.FileMode = 0o600
+
 // assessWriter resolves --output, defaulting to the command's own stdout so the
 // report is capturable in a test.
 func assessWriter(cmd *cobra.Command) (out interface{ Write([]byte) (int, error) }, closeOut func(), err error) {
 	if assessOutput == "" {
 		return cmd.OutOrStdout(), func() {}, nil
 	}
-	f, err := os.Create(assessOutput) // #nosec G304 -- user-provided CLI flag, as in backup/restore
+	// G304 (path from a variable) is genuine and legitimately suppressed:
+	// assessOutput is the --output CLI flag, operator-supplied at their own
+	// shell, not attacker-influenced.
+	f, err := os.OpenFile(assessOutput, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, assessReportMode) // #nosec G304 -- user-provided CLI flag
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating the report file: %w", err)
 	}

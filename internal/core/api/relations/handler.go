@@ -14,7 +14,6 @@ package relations
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -314,12 +313,7 @@ func handleRelationError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, projects.ErrSelfRelation):
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
 	default:
-		slog.Error("unmapped handler error",
-			"surface", "relation",
-			"error", err,
-			"request_id", respond.RequestIDFromContext(r.Context()),
-		)
-		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "relation operation failed")
+		respond.Unmapped(w, r, "relation", "", err)
 	}
 }
 

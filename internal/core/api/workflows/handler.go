@@ -540,12 +540,16 @@ func (h *Handler) DeleteTransition(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid transition ID")
 		return
 	}
-	transition, err := h.q.GetWorkflowTransition(r.Context(), id)
-	if err != nil || transition.WorkflowID != workflowID {
-		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "transition not found")
-		return
-	}
-	if err := h.repo.DeleteTransition(r.Context(), id); err != nil {
+	// The belonging-check is the query's, not a load-then-compare here: the
+	// scoped DELETE matches no rows for a transition of another workflow or one
+	// that does not exist, and the adapter reports both as
+	// ErrTransitionNotInWorkflow — one 404 for the two, so the route is no
+	// existence oracle over other workflows' transitions.
+	if err := h.repo.DeleteTransition(r.Context(), workflowID, id); err != nil {
+		if errors.Is(err, workflow.ErrTransitionNotInWorkflow) {
+			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "transition not found")
+			return
+		}
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to delete transition")
 		return
 	}
