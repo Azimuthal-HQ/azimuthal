@@ -74,7 +74,7 @@ var jiraCustomFieldMap = map[string]struct {
 	"radiobuttons":         {"single_select", VerdictClean, "radio buttons are a single choice and map onto single_select"},
 	"multiselect":          {"text", VerdictApproximated, "there is no multi-value type; the selected values collapse into one text value and stop being options"},
 	"multicheckboxes":      {"text", VerdictApproximated, "there is no multi-value type; the checked values collapse into one text value"},
-	"labels":               {"text", VerdictApproximated, "labels collapse into one text value; project_items.labels exists but is not reachable through a custom field"},
+	"labels":               {"text", VerdictApproximated, "labels collapse into one text value; entity tags exist (entity_tags) but are not reachable through a custom field, so a labels custom field has no tag-shaped home"},
 	"userpicker":           {"text", VerdictApproximated, "there is no user-reference field type; the value is kept as text and stops resolving to a person"},
 	"multiuserpicker":      {"text", VerdictApproximated, "there is no user-reference field type; the values are kept as one text value"},
 	"grouppicker":          {"text", VerdictApproximated, "there is no group-reference field type; the value is kept as text"},

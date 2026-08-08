@@ -1,14 +1,14 @@
 {
   "headline": {
     "total": 78,
-    "clean": 35,
+    "clean": 36,
     "approximated": 22,
     "preserved": 2,
-    "unmappable": 19,
-    "clean_pct": 44.87179487179487,
+    "unmappable": 18,
+    "clean_pct": 46.15384615384615,
     "approximated_pct": 28.205128205128204,
     "preserved_pct": 2.5641025641025643,
-    "lost_pct": 24.358974358974358
+    "lost_pct": 23.076923076923077
   },
   "sources": [
     {
@@ -406,9 +406,9 @@
         "observed": 1,
         "findings": [
           {
-            "verdict": "unmappable",
+            "verdict": "clean",
             "count": 1,
-            "reason": "pages carry no labels; project_items.labels exists but pages have no equivalent column, so page labels have nowhere to go"
+            "reason": "page labels map onto entity_tags, which migration 055 made entity-generic from the page-only page_tags table; a page is a first-class entity there, so labels have an exact home"
           }
         ]
       },

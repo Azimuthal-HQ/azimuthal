@@ -166,8 +166,8 @@ func (c *confluenceCollector) foldPages(l *Ledger) {
 
 	labels := l.Class("Confluence labels")
 	labels.Observed = c.labels
-	labels.Add(VerdictUnmappable, c.labels,
-		"pages carry no labels; project_items.labels exists but pages have no equivalent column, so page labels have nowhere to go")
+	labels.Add(VerdictClean, c.labels,
+		"page labels map onto entity_tags, which migration 055 made entity-generic from the page-only page_tags table; a page is a first-class entity there, so labels have an exact home")
 }
 
 // foldMacros is the Confluence half's centre of gravity: what a page body is
