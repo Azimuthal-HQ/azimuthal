@@ -58,13 +58,26 @@ UPDATE users SET last_login_at = now() WHERE id = $1;
 -- name: SoftDeleteUser :exec
 UPDATE users SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL;
 
--- name: GetUserAuthState :one
--- The per-request auth check (P2.5 session control): one primary-key read
--- comparing the JWT's token_generation claim against the live column and
--- rejecting deactivated accounts. Constant cost — TestMatrixAPI23 asserts
--- this statement runs exactly once per authenticated request, so it cannot
--- be silently optimised away.
-SELECT token_generation, is_active FROM users WHERE id = $1 AND deleted_at IS NULL;
+-- name: GetUserAuthStateWithSession :one
+-- The per-request auth check (P2.5 session control + B1 per-session
+-- revocation): ONE indexed read that returns the live token_generation and
+-- is_active for the user, and whether the session named by the JWT's sid
+-- claim is still live — present, unrevoked, unexpired. The LEFT JOIN keeps it
+-- a single round trip and a single row: session_valid is false whenever the
+-- session is gone for any reason, including a sessionless token whose sid is
+-- the zero UUID (no such row exists, so nothing matches). Constant cost —
+-- TestMatrixAPI23 asserts this statement runs exactly once per authenticated
+-- request, so it cannot be silently split or dropped. The name keeps the
+-- GetUserAuthState prefix the case-23 query tracer keys on.
+SELECT u.token_generation, u.is_active,
+       (s.id IS NOT NULL)::boolean AS session_valid
+FROM users u
+LEFT JOIN sessions s
+  ON s.id = sqlc.arg(session_id)
+ AND s.user_id = u.id
+ AND s.revoked_at IS NULL
+ AND s.expires_at > now()
+WHERE u.id = sqlc.arg(user_id) AND u.deleted_at IS NULL;
 
 -- name: BumpTokenGeneration :execrows
 -- Force logout: instantly invalidates every token the user holds. The user

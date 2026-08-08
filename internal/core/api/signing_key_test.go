@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,7 +57,9 @@ func TestHarness_ServersShareOneSigningKey(t *testing.T) {
 	a := newTestServer(t)
 	b := newTestServer(t)
 
-	pair, err := a.JWT.IssueTokenPair(a.UserID, "shared-key@azimuthal.dev", a.OrgID.String(), "member", 0)
+	// This asserts only that b accepts a's signature — the token never reaches
+	// the middleware, so any sid serves; no session row is needed.
+	pair, err := a.JWT.IssueTokenPair(a.UserID, "shared-key@azimuthal.dev", a.OrgID.String(), "member", 0, uuid.New())
 	require.NoError(t, err)
 
 	claims, err := b.JWT.ValidateAccessToken(pair.AccessToken)

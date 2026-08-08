@@ -81,8 +81,12 @@ type testServer struct {
 	Token           string
 	WorkflowAdapter *adapters.WorkflowAdapter
 	JWT             *auth.JWTService
-	TeamService     *coreteams.Service
-	GrantService    *access.GrantService
+	// Sessions opens the session rows tokens are bound to. Since B1 a bearer
+	// user token with no live session is refused, so tokenFor (and the primary
+	// Token) mint a session first, exactly as login does.
+	Sessions     *auth.SessionService
+	TeamService  *coreteams.Service
+	GrantService *access.GrantService
 	// RouterCfg is the exact config this server was built from, kept so
 	// TestHarness_NoDarkDependencies can walk it and fail on any handler
 	// dependency the harness forgot to wire.
@@ -103,12 +107,26 @@ type testServer struct {
 }
 
 // tokenFor issues an access token for an arbitrary user of the org —
-// multi-user permission tests mint one per persona.
+// multi-user permission tests mint one per persona. It opens a session row
+// first and binds the token to it, the way login does: since B1 a sessionless
+// user token is refused by the middleware, so a token minted without one would
+// 401 on its first use.
 func (ts *testServer) tokenFor(t *testing.T, userID uuid.UUID, email string) string {
 	t.Helper()
-	pair, err := ts.JWT.IssueTokenPair(userID, email, ts.OrgID.String(), "member", 0)
+	sid := ts.mintSession(t, userID)
+	pair, err := ts.JWT.IssueTokenPair(userID, email, ts.OrgID.String(), "member", 0, sid)
 	require.NoError(t, err)
 	return pair.AccessToken
+}
+
+// mintSession opens a session row for userID and returns its id, so a test
+// can bind a token to it the way login does. The user must already exist (the
+// sessions.user_id foreign key), which every persona helper satisfies.
+func (ts *testServer) mintSession(t *testing.T, userID uuid.UUID) uuid.UUID {
+	t.Helper()
+	sess, err := ts.Sessions.CreateSession(context.Background(), userID, "test-agent", "127.0.0.1")
+	require.NoError(t, err)
+	return sess.ID
 }
 
 // newTestServer creates a full API server backed by a real database.
@@ -317,7 +335,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		ShareHandler:        shareHandler,
 		AttachmentHandler:   attachmentHandler,
 		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
-		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc).WithAuditLogger(auditLog),
+		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc, sessionSvc).WithAuditLogger(auditLog),
 		AvatarHandler:       avatarHandler,
 		// Saved views (P4). One adapter satisfies three seams — the view rows,
 		// the two cross-space result fan-outs, and the P5 grouped fan-outs.
@@ -351,13 +369,15 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
-	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, org.ID.String(), "member", 0)
+	primarySession, err := sessionSvc.CreateSession(context.Background(), user.ID, "test-agent", "127.0.0.1")
+	require.NoError(t, err)
+	pair, err := jwtSvc.IssueTokenPair(user.ID, user.Email, org.ID.String(), "member", 0, primarySession.ID)
 	require.NoError(t, err)
 
 	return &testServer{
 		Server: srv, Handler: router, DB: db, OrgID: org.ID, UserID: user.ID,
 		Token: pair.AccessToken, WorkflowAdapter: workflowAdapter,
-		JWT: jwtSvc, TeamService: teamSvc, GrantService: grantSvc,
+		JWT: jwtSvc, Sessions: sessionSvc, TeamService: teamSvc, GrantService: grantSvc,
 		RouterCfg: cfg, AuditLog: auditLog, AvatarBlobs: avatarBlobs,
 		PortalNotifications: portalNotifs,
 	}

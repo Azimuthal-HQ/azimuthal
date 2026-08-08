@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
@@ -41,9 +42,10 @@ var testSigningKey = sync.OnceValue(func() *rsa.PrivateKey {
 type mockUserRepo struct {
 	users map[uuid.UUID]*auth.User
 	// revoked records every RevokeTokens call, in order. A fake that swallowed
-	// the call and returned nil would let TestLogoutRevokesTokens pass with the
-	// revocation deleted from the handler — which is the one thing that test
-	// exists to prove.
+	// the call and returned nil would let TestLogoutAllBumpsGenerationAndClearsSessions
+	// pass with the revocation deleted from the handler — which is one of the
+	// things that test exists to prove — and let TestLogoutRevokesCurrentSessionOnly
+	// stop noticing a stray generation bump.
 	revoked []uuid.UUID
 }
 
@@ -168,13 +170,15 @@ func (m *failingMembershipResolver) PrimaryOrgForUser(_ context.Context, _ uuid.
 
 func setupHandler(t *testing.T) (*authapi.Handler, *auth.JWTService) {
 	t.Helper()
-	h, jwtSvc, _ := setupHandlerWithRepo(t)
+	h, jwtSvc, _, _ := setupHandlerWithRepo(t)
 	return h, jwtSvc
 }
 
-// setupHandlerWithRepo is setupHandler plus the user repository the handler was
-// built on, for the tests that must assert what the handler wrote to it.
-func setupHandlerWithRepo(t *testing.T) (*authapi.Handler, *auth.JWTService, *mockUserRepo) {
+// setupHandlerWithRepo is setupHandler plus the user and session repositories
+// the handler was built on, for the tests that must assert what the handler
+// wrote to them — a single-session logout revokes a session row, and
+// logout-all revokes tokens, so both need to be observable.
+func setupHandlerWithRepo(t *testing.T) (*authapi.Handler, *auth.JWTService, *mockUserRepo, *mockSessionRepo) {
 	t.Helper()
 	pk := testSigningKey()
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
@@ -186,9 +190,10 @@ func setupHandlerWithRepo(t *testing.T) (*authapi.Handler, *auth.JWTService, *mo
 	})
 	repo := newMockUserRepo()
 	userSvc := auth.NewUserService(repo)
-	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
+	sessRepo := newMockSessionRepo()
+	sessionSvc := auth.NewSessionService(sessRepo, auth.SessionConfig{TTL: 24 * time.Hour})
 	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil).WithRegistrationPolicy(true)
-	return h, jwtSvc, repo
+	return h, jwtSvc, repo, sessRepo
 }
 
 func TestLoginNilBody(t *testing.T) {
@@ -224,15 +229,30 @@ func TestRefreshNilBody(t *testing.T) {
 	}
 }
 
-func TestLogoutWithClaims(t *testing.T) {
-	h, jwtSvc, repo := setupHandlerWithRepo(t)
+// TestLogoutRevokesCurrentSessionOnly is the B1 behaviour: a single-device
+// logout revokes the session row named by the token's sid, and does NOT bump
+// the generation — so other sessions the same user holds are untouched.
+func TestLogoutRevokesCurrentSessionOnly(t *testing.T) {
+	h, jwtSvc, userRepo, sessRepo := setupHandlerWithRepo(t)
 	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0)
+
+	// Two live sessions for the one user. Logout should take out only the
+	// one the presented token names.
+	thisSession := uuid.New()
+	otherSession := uuid.New()
+	for _, id := range []uuid.UUID{thisSession, otherSession} {
+		require.NoError(t, sessRepo.Create(context.Background(), &auth.Session{
+			ID: id, UserID: userID, ExpiresAt: time.Now().Add(time.Hour),
+		}))
+	}
+
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0, thisSession)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Create a chi router to properly wire RequireAuth
+	// Nil states, so the middleware admits the token and puts its claims (sid
+	// included) on the context; the handler is what does the revocation.
 	authenticator := auth.NewAuthenticator(jwtSvc, auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: time.Hour}), nil)
 	r := chi.NewRouter()
 	r.Use(authenticator.RequireAuth)
@@ -242,40 +262,34 @@ func TestLogoutWithClaims(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusOK, rr.Body.String())
-	}
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
-	// The status alone proved nothing until the v0.4.1 trust patch: clearing
-	// database session rows revoked nothing an attacker holds, because the SPA
-	// authenticates with a bearer JWT the middleware validates without reading
-	// the session table. What ends the stolen token is the generation bump, so
-	// that is what this asserts.
-	//
-	// This is a mock repository, so it can only witness the CALL. That the call
-	// actually revokes a live token is asserted against real PostgreSQL through
-	// the wired router by TestAuthLogout_RevokesTheToken in internal/core/api.
-	if len(repo.revoked) != 1 || repo.revoked[0] != userID {
-		t.Errorf("RevokeTokens calls = %v, want exactly [%s]", repo.revoked, userID)
-	}
+	// The presented session is gone; the other one survives.
+	_, thisStillThere := sessRepo.sessions[thisSession]
+	require.False(t, thisStillThere, "logout must revoke the session named by the token")
+	_, otherStillThere := sessRepo.sessions[otherSession]
+	require.True(t, otherStillThere, "logout must NOT touch the user's other sessions")
+
+	// And it did NOT bump the generation — that is logout-all's job, and doing
+	// it here would sign every device out, which is the behaviour B1 removes.
+	require.Empty(t, userRepo.revoked, "single-device logout must not bump token_generation")
 }
 
 // TestLogoutReportsRevocationFailure pins the direction that is easy to get
-// wrong: a logout whose revocation failed must NOT answer 200. Somebody
-// signing out because they believe they are compromised would be told the
-// opposite of the truth.
+// wrong: a logout whose session revocation failed must NOT answer 200.
+// Somebody signing out because they believe they are compromised would be told
+// the opposite of the truth.
 func TestLogoutReportsRevocationFailure(t *testing.T) {
 	pk := testSigningKey()
 	jwtSvc := auth.NewJWTService(auth.TokenConfig{
 		PrivateKey: pk, PublicKey: &pk.PublicKey,
 		AccessTTL: time.Hour, RefreshTTL: 24 * time.Hour, Issuer: "test",
 	})
-	userSvc := auth.NewUserService(&failingRevokeUserRepo{mockUserRepo: newMockUserRepo()})
-	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
+	userSvc := auth.NewUserService(newMockUserRepo())
+	sessionSvc := auth.NewSessionService(&failingSessionRepo{}, auth.SessionConfig{TTL: 24 * time.Hour})
 	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil)
 
-	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "test@test.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,6 +308,73 @@ func TestLogoutReportsRevocationFailure(t *testing.T) {
 	}
 }
 
+// TestLogoutAllBumpsGenerationAndClearsSessions is the org-wide hammer plain
+// logout used to be: it revokes every session row AND bumps the generation, so
+// every device the user holds dies on its next request.
+func TestLogoutAllBumpsGenerationAndClearsSessions(t *testing.T) {
+	h, jwtSvc, userRepo, sessRepo := setupHandlerWithRepo(t)
+	userID := uuid.New()
+
+	sidA, sidB := uuid.New(), uuid.New()
+	for _, id := range []uuid.UUID{sidA, sidB} {
+		require.NoError(t, sessRepo.Create(context.Background(), &auth.Session{
+			ID: id, UserID: userID, ExpiresAt: time.Now().Add(time.Hour),
+		}))
+	}
+
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0, sidA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authenticator := auth.NewAuthenticator(jwtSvc, auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: time.Hour}), nil)
+	r := chi.NewRouter()
+	r.Use(authenticator.RequireAuth)
+	r.Post("/logout-all", h.LogoutAll)
+
+	req := httptest.NewRequest(http.MethodPost, "/logout-all", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	// Every session gone, and the generation bumped exactly once for this user.
+	require.Empty(t, sessRepo.sessions, "logout-all must revoke every session row")
+	require.Equal(t, []uuid.UUID{userID}, userRepo.revoked,
+		"logout-all must bump the caller's token_generation exactly once")
+}
+
+// TestLogoutAllReportsRevocationFailure: logout-all whose generation bump
+// failed must NOT answer 200, for the same reason plain logout must not.
+func TestLogoutAllReportsRevocationFailure(t *testing.T) {
+	pk := testSigningKey()
+	jwtSvc := auth.NewJWTService(auth.TokenConfig{
+		PrivateKey: pk, PublicKey: &pk.PublicKey,
+		AccessTTL: time.Hour, RefreshTTL: 24 * time.Hour, Issuer: "test",
+	})
+	userSvc := auth.NewUserService(&failingRevokeUserRepo{mockUserRepo: newMockUserRepo()})
+	sessionSvc := auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: 24 * time.Hour})
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil)
+
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "test@test.com", uuid.New().String(), "member", 0, uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authenticator := auth.NewAuthenticator(jwtSvc, auth.NewSessionService(newMockSessionRepo(), auth.SessionConfig{TTL: time.Hour}), nil)
+	r := chi.NewRouter()
+	r.Use(authenticator.RequireAuth)
+	r.Post("/logout-all", h.LogoutAll)
+
+	req := httptest.NewRequest(http.MethodPost, "/logout-all", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d, body: %s", rr.Code, http.StatusInternalServerError, rr.Body.String())
+	}
+}
+
 // failingRevokeUserRepo succeeds at everything except revocation.
 type failingRevokeUserRepo struct {
 	*mockUserRepo
@@ -301,6 +382,66 @@ type failingRevokeUserRepo struct {
 
 func (r *failingRevokeUserRepo) RevokeTokens(_ context.Context, _ uuid.UUID) error {
 	return fmt.Errorf("the database said no")
+}
+
+// failingSessionRepo fails every session operation — used to prove logout
+// reports a failed session revocation rather than swallowing it.
+type failingSessionRepo struct{}
+
+func (failingSessionRepo) Create(context.Context, *auth.Session) error { return nil }
+func (failingSessionRepo) GetByToken(context.Context, string) (*auth.Session, error) {
+	return nil, auth.ErrNotFound
+}
+func (failingSessionRepo) Delete(context.Context, uuid.UUID) error {
+	return fmt.Errorf("the database said no")
+}
+func (failingSessionRepo) DeleteAllForUser(context.Context, uuid.UUID) error {
+	return fmt.Errorf("the database said no")
+}
+func (failingSessionRepo) DeleteExpired(context.Context) error { return nil }
+
+// failingCreateSessionRepo fails only Create — used to prove a login that
+// cannot open a session refuses rather than handing back a sessionless pair
+// the very next request would 401.
+type failingCreateSessionRepo struct{ mockSessionRepo }
+
+func (failingCreateSessionRepo) Create(context.Context, *auth.Session) error {
+	return fmt.Errorf("the database said no")
+}
+
+// TestLoginSessionCreationFailureReturns500 pins the fail-closed direction of
+// the login-opens-a-session change: if the session cannot be opened, login
+// must NOT mint tokens. Deleting the error guard in finishLogin would dereference
+// the nil session CreateSession returned — so the login path could not silently
+// hand back a sessionless pair with this in place.
+func TestLoginSessionCreationFailureReturns500(t *testing.T) {
+	pk := testSigningKey()
+	jwtSvc := auth.NewJWTService(auth.TokenConfig{
+		PrivateKey: pk, PublicKey: &pk.PublicKey,
+		AccessTTL: time.Hour, RefreshTTL: 24 * time.Hour, Issuer: "test",
+	})
+	// Seed a user with a real password hash so Authenticate succeeds and the
+	// flow reaches the session open.
+	hash, err := auth.HashPassword("correct-horse-battery")
+	require.NoError(t, err)
+	userRepo := newMockUserRepo()
+	uid := uuid.New()
+	userRepo.users[uid] = &auth.User{
+		ID: uid, Email: "sess-fail@test.com", PasswordHash: hash,
+		Role: "member", IsActive: true, OrgID: uuid.New(),
+	}
+	userSvc := auth.NewUserService(userRepo)
+	sessionSvc := auth.NewSessionService(&failingCreateSessionRepo{}, auth.SessionConfig{TTL: time.Hour})
+	h := authapi.NewHandler(userSvc, jwtSvc, sessionSvc, &mockMembershipResolver{}, nil, nil)
+
+	body := bytes.NewBufferString(`{"email":"sess-fail@test.com","password":"correct-horse-battery"}`)
+	req := httptest.NewRequest(http.MethodPost, "/login", body)
+	rr := httptest.NewRecorder()
+	h.Login(rr, req)
+
+	require.Equal(t, http.StatusInternalServerError, rr.Code, "body: %s", rr.Body.String())
+	require.NotContains(t, rr.Body.String(), "access_token",
+		"a login that could not open a session must not hand back tokens")
 }
 
 func TestLoginEmptyFields(t *testing.T) {
@@ -504,7 +645,7 @@ func TestMeWithAuth(t *testing.T) {
 	actualID, _ := uuid.Parse(userMap["id"].(string))
 
 	// Issue a token with the actual user ID
-	pair, err := jwtSvc.IssueTokenPair(actualID, "me@test.com", orgID.String(), "member", 0)
+	pair, err := jwtSvc.IssueTokenPair(actualID, "me@test.com", orgID.String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,7 +670,7 @@ func TestMeWithAuth(t *testing.T) {
 func TestRefreshWithValidToken(t *testing.T) {
 	h, jwtSvc := setupHandler(t)
 	userID := uuid.New()
-	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0)
+	pair, err := jwtSvc.IssueTokenPair(userID, "test@test.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}

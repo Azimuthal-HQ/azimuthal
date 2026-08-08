@@ -21,10 +21,17 @@ const (
 )
 
 // State is the per-request account check: the live token_generation
-// column and active flag, read in a single primary-key query.
+// column, the active flag, and whether the token's session is still live —
+// all read in a single indexed query (users PK + a session PK join).
 type State struct {
 	TokenGeneration int
 	IsActive        bool
+	// SessionValid reports whether the sessions row named by the token's sid
+	// claim is present, unrevoked, and unexpired. False for a revoked or
+	// expired session, and false for a token that names no session at all
+	// (the zero-UUID sid). The middleware only consults it for bearer user
+	// tokens; the cookie path carries no sid.
+	SessionValid bool
 }
 
 // StateStore loads a user's live auth state. Implemented by
@@ -32,9 +39,12 @@ type State struct {
 // constant-cost indexed lookup because it runs on every authenticated
 // request (TestMatrixAPI23 counts it).
 type StateStore interface {
-	// State returns the user's current auth state. Returns ErrNotFound
-	// for unknown or soft-deleted users.
-	AuthState(ctx context.Context, userID uuid.UUID) (State, error)
+	// AuthState returns the user's current auth state, joined with the named
+	// session's liveness. Returns ErrNotFound for unknown or soft-deleted
+	// users. sessionID may be uuid.Nil (the cookie path, which carries no
+	// session claim); SessionValid is then simply false and the caller
+	// ignores it.
+	AuthState(ctx context.Context, userID, sessionID uuid.UUID) (State, error)
 }
 
 // Authenticator provides HTTP middleware for the chi router.
@@ -146,13 +156,32 @@ func (a *Authenticator) extractClaims(r *http.Request) (*Claims, error) {
 	return claims, nil
 }
 
-// checkAuthState rejects credentials whose account is deactivated or whose
-// token_generation claim is stale. One primary-key read per request —
-// constant cost, asserted by TestMatrixAPI23 so it cannot be silently
-// optimised away later.
+// checkAuthState rejects credentials whose account is deactivated, whose
+// token_generation claim is stale, or whose session has been revoked. One
+// indexed read per request — the users PK plus a sessions PK join, constant
+// cost, asserted by TestMatrixAPI23 so it cannot be silently split or dropped
+// later.
 //
-// DB sessions (the cookie path) are revocable server-side and carry no
-// generation claim, so they are checked for active status only.
+// The store read fails closed: any error refuses the request, matching the
+// posture the generation check has always had.
+//
+// Two credential kinds, checked differently:
+//
+//   - The COOKIE path (TokenType "session") is a server-side DB session the
+//     caller reached via GetSession, which already validated revocation and
+//     expiry. It carries no generation and no sid claim, so it is checked for
+//     active status only — SessionValid is meaningless for it.
+//
+//   - A BEARER USER TOKEN (any other TokenType — "access" in practice) must
+//     clear BOTH the generation check and a live session. The generation gate
+//     is the org-wide hammer (deactivation, force logout, logout-all,
+//     password change); the session gate is per-device (single-device
+//     logout). A token that names no session — the zero-UUID sid, which is
+//     every legacy token and any token minted without a session row — has
+//     SessionValid false and is refused. That refusal is the point of the
+//     whole track: there is deliberately no "sessionless tokens still work"
+//     branch, because it would be a revocation bypass, and no user predates
+//     the sid claim so there is nothing to keep working.
 func (a *Authenticator) checkAuthState(ctx context.Context, claims *Claims) error {
 	if a.states == nil {
 		// Routing-only unit tests without a database. Every real
@@ -160,14 +189,20 @@ func (a *Authenticator) checkAuthState(ctx context.Context, claims *Claims) erro
 		// TestMatrixAPI23 run against the wired path.
 		return nil
 	}
-	state, err := a.states.AuthState(ctx, claims.UserID)
+	state, err := a.states.AuthState(ctx, claims.UserID, claims.SessionID)
 	if err != nil {
 		return ErrInvalidToken
 	}
 	if !state.IsActive {
 		return ErrInvalidToken
 	}
-	if claims.TokenType != "session" && claims.TokenGeneration != state.TokenGeneration {
+	if claims.TokenType == "session" {
+		return nil
+	}
+	if claims.TokenGeneration != state.TokenGeneration {
+		return ErrInvalidToken
+	}
+	if !state.SessionValid {
 		return ErrInvalidToken
 	}
 	return nil

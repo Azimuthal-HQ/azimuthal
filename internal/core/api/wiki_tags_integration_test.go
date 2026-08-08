@@ -604,7 +604,8 @@ func TestWikiTags_TagsAreOrgScoped(t *testing.T) {
 		`INSERT INTO tags (org_id, slug, name) VALUES ($1, 'theirs', 'Theirs')`, otherOrg.ID)
 	require.NoError(t, err)
 
-	pair, err := f.ts.JWT.IssueTokenPair(otherUser.ID, otherUser.Email, otherOrg.ID.String(), "member", 0)
+	otherSession := f.ts.mintSession(t, otherUser.ID)
+	pair, err := f.ts.JWT.IssueTokenPair(otherUser.ID, otherUser.Email, otherOrg.ID.String(), "member", 0, otherSession)
 	require.NoError(t, err)
 
 	r := f.ts.getAs(t, pair.AccessToken, fmt.Sprintf("/api/v1/orgs/%s/tags", otherOrg.ID))

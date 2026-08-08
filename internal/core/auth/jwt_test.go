@@ -67,8 +67,9 @@ func TestJWTService_IssueAndValidate(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
 	userID := uuid.New()
 	email := "jwt@example.com"
+	sessionID := uuid.New()
 
-	pair, err := svc.IssueTokenPair(userID, email, uuid.New().String(), "member", 3)
+	pair, err := svc.IssueTokenPair(userID, email, uuid.New().String(), "member", 3, sessionID)
 	if err != nil {
 		t.Fatalf("issuing token pair: %v", err)
 	}
@@ -89,11 +90,17 @@ func TestJWTService_IssueAndValidate(t *testing.T) {
 	if claims.TokenGeneration != 3 {
 		t.Errorf("expected token generation 3 in claims, got %d", claims.TokenGeneration)
 	}
+	// The sid claim must round-trip like tgen does — it is what the auth
+	// middleware joins the session on, so a token that dropped it would be
+	// refused as sessionless (B1).
+	if claims.SessionID != sessionID {
+		t.Errorf("expected session id %s in claims, got %s", sessionID, claims.SessionID)
+	}
 }
 
 func TestJWTService_RefreshToken_NotAccepted_AsAccess(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
-	pair, err := svc.IssueTokenPair(uuid.New(), "a@b.com", uuid.New().String(), "member", 0)
+	pair, err := svc.IssueTokenPair(uuid.New(), "a@b.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +112,7 @@ func TestJWTService_RefreshToken_NotAccepted_AsAccess(t *testing.T) {
 
 func TestJWTService_AccessToken_NotAccepted_AsRefresh(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
-	pair, err := svc.IssueTokenPair(uuid.New(), "a@b.com", uuid.New().String(), "member", 0)
+	pair, err := svc.IssueTokenPair(uuid.New(), "a@b.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +125,8 @@ func TestJWTService_AccessToken_NotAccepted_AsRefresh(t *testing.T) {
 func TestJWTService_ValidateRefresh_ReturnsClaimsForReissue(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
 	userID := uuid.New()
-	pair, err := svc.IssueTokenPair(userID, "refresh@example.com", uuid.New().String(), "member", 2)
+	sessionID := uuid.New()
+	pair, err := svc.IssueTokenPair(userID, "refresh@example.com", uuid.New().String(), "member", 2, sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,8 +145,14 @@ func TestJWTService_ValidateRefresh_ReturnsClaimsForReissue(t *testing.T) {
 	if claims.TokenGeneration != 2 {
 		t.Errorf("expected generation 2 in refresh claims, got %d", claims.TokenGeneration)
 	}
+	if claims.SessionID != sessionID {
+		t.Errorf("expected session id %s in refresh claims, got %s", sessionID, claims.SessionID)
+	}
 
-	newPair, err := svc.IssueTokenPair(claims.UserID, claims.Email, claims.OrgID, claims.Role, claims.TokenGeneration)
+	// The reissue carries the SAME sid forward — a rotated pair must stay
+	// inside the session it was issued under, or refresh would escape a
+	// single-device logout (B1).
+	newPair, err := svc.IssueTokenPair(claims.UserID, claims.Email, claims.OrgID, claims.Role, claims.TokenGeneration, claims.SessionID)
 	if err != nil {
 		t.Fatalf("reissuing pair: %v", err)
 	}
@@ -151,6 +165,9 @@ func TestJWTService_ValidateRefresh_ReturnsClaimsForReissue(t *testing.T) {
 	}
 	if reclaims.UserID != userID {
 		t.Errorf("expected userID %s after refresh, got %s", userID, reclaims.UserID)
+	}
+	if reclaims.SessionID != sessionID {
+		t.Errorf("expected session id %s preserved across refresh, got %s", sessionID, reclaims.SessionID)
 	}
 }
 
@@ -192,6 +209,12 @@ func TestJWTService_LegacyTokenWithoutGenerationClaim_DecodesAsZero(t *testing.T
 	if claims.TokenGeneration != 0 {
 		t.Errorf("legacy token must decode as generation 0, got %d", claims.TokenGeneration)
 	}
+	// It also carries no sid, so it decodes to the zero UUID — which the auth
+	// middleware treats as "no live session" and refuses. That is the intended
+	// fate of a sessionless token (B1), asserted here so the decode is pinned.
+	if claims.SessionID != uuid.Nil {
+		t.Errorf("legacy token must decode with a zero session id, got %s", claims.SessionID)
+	}
 }
 
 func TestJWTService_ExpiredToken(t *testing.T) {
@@ -199,7 +222,7 @@ func TestJWTService_ExpiredToken(t *testing.T) {
 	cfg.AccessTTL = -time.Second // expired immediately
 	svc := NewJWTService(cfg)
 
-	pair, err := svc.IssueTokenPair(uuid.New(), "exp@example.com", uuid.New().String(), "member", 0)
+	pair, err := svc.IssueTokenPair(uuid.New(), "exp@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +233,7 @@ func TestJWTService_ExpiredToken(t *testing.T) {
 
 func TestJWTService_TamperedToken(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
-	pair, err := svc.IssueTokenPair(uuid.New(), "tamper@example.com", uuid.New().String(), "member", 0)
+	pair, err := svc.IssueTokenPair(uuid.New(), "tamper@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +248,7 @@ func TestJWTService_OrgIDInClaims(t *testing.T) {
 	userID := uuid.New()
 	orgID := uuid.New().String()
 
-	pair, err := svc.IssueTokenPair(userID, "org@example.com", orgID, "owner", 0)
+	pair, err := svc.IssueTokenPair(userID, "org@example.com", orgID, "owner", 0, uuid.New())
 	if err != nil {
 		t.Fatalf("issuing token pair: %v", err)
 	}
@@ -246,7 +269,7 @@ func TestJWTService_RefreshClaimsPreserveOrgID(t *testing.T) {
 	svc := NewJWTService(testTokenConfig(t))
 	orgID := uuid.New().String()
 
-	pair, err := svc.IssueTokenPair(uuid.New(), "refresh-org@example.com", orgID, "admin", 0)
+	pair, err := svc.IssueTokenPair(uuid.New(), "refresh-org@example.com", orgID, "admin", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +293,7 @@ func TestJWTService_WrongKey(t *testing.T) {
 	svc1 := NewJWTService(tokenConfigFor(freshTestKey(t)))
 	svc2 := NewJWTService(tokenConfigFor(freshTestKey(t))) // different key pair
 
-	pair, err := svc1.IssueTokenPair(uuid.New(), "key@example.com", uuid.New().String(), "member", 0)
+	pair, err := svc1.IssueTokenPair(uuid.New(), "key@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}

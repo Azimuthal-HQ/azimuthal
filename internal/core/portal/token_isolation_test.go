@@ -162,15 +162,15 @@ func TestPortalToken_IsRefusedByRequireAuth(t *testing.T) {
 
 type permissiveStates struct{}
 
-func (permissiveStates) AuthState(context.Context, uuid.UUID) (auth.State, error) {
-	return auth.State{IsActive: true, TokenGeneration: 0}, nil
+func (permissiveStates) AuthState(context.Context, uuid.UUID, uuid.UUID) (auth.State, error) {
+	return auth.State{IsActive: true, TokenGeneration: 0, SessionValid: true}, nil
 }
 
 // ── Direction 2: an internal credential must never authenticate a requester ──
 
 func TestInternalAccessToken_IsRefusedByPortalValidation(t *testing.T) {
 	key := testKey(t)
-	pair, err := internalService(key).IssueTokenPair(uuid.New(), "agent@example.com", uuid.New().String(), "member", 0)
+	pair, err := internalService(key).IssueTokenPair(uuid.New(), "agent@example.com", uuid.New().String(), "member", 0, uuid.New())
 	require.NoError(t, err)
 
 	_, err = portalService(key).ValidateSession(pair.AccessToken)
@@ -272,7 +272,7 @@ func TestLegacyInternalToken_WithNoAudience_StillValidates(t *testing.T) {
 // exactly the failure mode this guards against.
 func TestInternalTokensCarryTheAudience(t *testing.T) {
 	key := testKey(t)
-	pair, err := internalService(key).IssueTokenPair(uuid.New(), "a@example.com", uuid.New().String(), "member", 0)
+	pair, err := internalService(key).IssueTokenPair(uuid.New(), "a@example.com", uuid.New().String(), "member", 0, uuid.New())
 	require.NoError(t, err)
 
 	claims, err := internalService(key).ValidateAccessToken(pair.AccessToken)

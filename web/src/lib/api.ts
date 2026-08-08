@@ -143,6 +143,15 @@ interface FetchOptions {
   credential?: Credential;
   /** Required when `credential` is `'portal'` — sessions are per portal. */
   portalKey?: string;
+  /**
+   * Opt this request out of the internal-401 clear-and-redirect. Only the
+   * deliberate sign-out call sets it: `logout()` owns the token clear in its
+   * own `finally` block (mutation-tested in auth.logout.test.ts), and a 401
+   * from /auth/logout means the session is already gone — there is nothing to
+   * recover, so apiFetch must not reach in, clear the tokens out from under
+   * that ordering, and hard-navigate. Every other internal 401 still recovers.
+   */
+  skipAuthRedirect?: boolean;
 }
 
 async function apiFetch<T>(
@@ -176,33 +185,34 @@ async function apiFetch<T>(
   });
 
   if (!response.ok) {
-    // On 401, only redirect to login for auth-critical endpoints.
-    // Non-critical 401s (e.g. permission denied on a resource) should
-    // throw an error without logging the user out.
-    if (response.status === 401) {
-      const url = response.url || '';
-      // Only the INTERNAL credential owns the internal session, so only it may
-      // clear it. A requester whose portal session expired must never be sent
-      // to /login: that is the internal product leaking into a surface whose
-      // whole purpose is that an external customer learns nothing about it.
-      //
-      // Note this check keys on substrings of the response URL. No portal path
-      // contains '/auth/login', '/auth/me' or '/auth/refresh' today
-      // ('/portal/auth/redeem' is not 'refresh', and a portalKey is
-      // [a-z0-9]{16,32} so it cannot introduce a segment) — but that is one
-      // rename away from breaking, which is why the credential gate is here
-      // and not left implicit. Pinned by api.portal-credential.test.ts.
-      const isCriticalAuthEndpoint = credential === 'internal' && (
-        url.includes('/auth/login') ||
-        url.includes('/auth/me') ||
-        url.includes('/auth/refresh'));
-      if (isCriticalAuthEndpoint) {
-        removeToken();
-        removeRefreshToken();
-        const currentPath = window.location.pathname;
-        if (currentPath !== '/login') {
-          window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
-        }
+    // A 401 on the INTERNAL credential means the middleware refused the
+    // credential itself — an expired token, a stale generation, or (since B1)
+    // a session another device revoked. Clear the stored tokens and send the
+    // user to /login.
+    //
+    // The credential is the whole gate, and deliberately so: a requester whose
+    // PORTAL session expired must never be sent to /login — that is the
+    // internal product leaking into a surface whose entire purpose is that an
+    // external customer learns nothing about it. So 'portal' and 'none' 401s
+    // fall straight through to the thrown error below. Pinned by
+    // api.portal-credential.test.ts.
+    //
+    // The scope BROADENED in B1. It used to fire only on three auth URLs
+    // (/auth/login, /auth/me, /auth/refresh), which left the case the T1 review
+    // named unhandled: when another device revokes this session — a
+    // logout-all, or this device signed out from elsewhere — the 401 lands on
+    // whatever ordinary data endpoint the app called next, none of those three,
+    // so nothing cleared the dead token or redirected, and the app sat wedged.
+    // Every internal 401 is the middleware refusing the credential (code
+    // UNAUTHORIZED); this API has no resource-level 401 (permission denials are
+    // 403/404), so clearing on any of them is correct and is exactly what
+    // recovers the revoked-elsewhere device.
+    if (response.status === 401 && credential === 'internal' && !fetchOpts.skipAuthRedirect) {
+      removeToken();
+      removeRefreshToken();
+      const currentPath = window.location.pathname;
+      if (currentPath !== '/login') {
+        window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
       }
     }
 
@@ -885,22 +895,27 @@ export async function refreshAccessToken(): Promise<RefreshResponse> {
 }
 
 /**
- * revokeSession is the server half of signing out: it bumps the caller's
- * token_generation, which is what actually ends the session.
+ * revokeSession is the server half of signing out THIS device: since B1 it
+ * revokes the current session row (the one the token's sid names), which is
+ * what actually ends this session — while other devices the same user is
+ * signed in on stay signed in. (The org-wide sign-out is /auth/logout-all.)
  *
  * Clearing localStorage is not a sign-out. The tokens are stateless RS256
  * JWTs; a copy taken out of the browser — by a script on a wiki page, by
- * anything with access to the profile directory — keeps working until it
- * expires, no matter what the tab forgets. Until the v0.4.1 trust patch the
- * frontend never called this route at all, and the route itself always
- * answered 401 because it was mounted outside the server's RequireAuth group.
+ * anything with access to the profile directory — keeps working until its
+ * session is revoked or it expires, no matter what the tab forgets. Until the
+ * v0.4.1 trust patch the frontend never called this route at all.
  *
  * `logout()` in `./auth` is what calls this. Do not call it directly and leave
  * the local clear to a caller: the two belong together, which is why they are
- * one function there.
+ * one function there. It passes skipAuthRedirect because `logout()` owns the
+ * clear in its finally — a 401 here means the session is already gone, so
+ * apiFetch must not clear and hard-redirect out from under that ordering.
  */
 export async function revokeSession(): Promise<void> {
-  await apiFetch<{ message: string }>('/auth/logout', { method: 'POST' });
+  await apiFetch<{ message: string }>('/auth/logout', { method: 'POST' }, undefined, {
+    skipAuthRedirect: true,
+  });
 }
 
 // ---------------------------------------------------------------------------

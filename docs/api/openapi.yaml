@@ -1863,7 +1863,8 @@ paths:
       - auth
   /auth/logout:
     post:
-      description: Revokes every token and deletes every session for the current user.
+      description: Revokes the current session (this device) only. Other sessions
+        the user holds stay signed in.
       responses:
         "200":
           content:
@@ -1885,7 +1886,35 @@ paths:
           description: Internal error
       security:
       - BearerAuth: []
-      summary: Logout user
+      summary: Logout current session
+      tags:
+      - auth
+  /auth/logout-all:
+    post:
+      description: Revokes every token and every session for the current user, across
+        all devices.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerLogoutResponse'
+          description: Logged out everywhere
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not authenticated
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal error
+      security:
+      - BearerAuth: []
+      summary: Logout everywhere
       tags:
       - auth
   /auth/me:

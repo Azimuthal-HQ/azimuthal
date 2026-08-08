@@ -260,12 +260,14 @@ func TestAuthTeamTicketDomain_LoginRefusesAWrongPassword(t *testing.T) {
 	require.Equal(t, badBody.Error.Message, unknownBody.Error.Message,
 		"wrong password and unknown account must be indistinguishable")
 
-	// A refused login leaves no credential behind: the successful sign-in
-	// above is the only session on the account.
+	// A refused login leaves no credential behind: since B1 a SUCCESSFUL login
+	// opens exactly one DB session row (the sid the token is bound to), and the
+	// two refused attempts above — wrong password, unknown account — open none.
+	// So the one successful sign-in is the only session on the account.
 	var sessions int
 	require.NoError(t, ts.DB.Pool.QueryRow(context.Background(),
 		`SELECT count(*) FROM sessions WHERE user_id = $1`, user.ID).Scan(&sessions))
-	require.Zero(t, sessions, "the JWT login path issues no DB session, refused or not")
+	require.Equal(t, 1, sessions, "a successful login opens one session; a refused login opens none")
 
 	// A deactivated account is refused with the same body — the third arm of
 	// the same check, and it must not become distinguishable either.

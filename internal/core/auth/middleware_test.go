@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,10 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// errStoreDown stands in for any auth-state store failure — the middleware
+// must fail closed on it.
+var errStoreDown = errors.New("auth-state store unavailable")
 
 // testAuthenticator creates an Authenticator wired with in-memory stubs and
 // no auth-state store (the nil routing-only-test convention: the
@@ -22,29 +27,34 @@ func testAuthenticator(t *testing.T) (*Authenticator, *JWTService, *SessionServi
 	return auth, jwtSvc, sessSvc
 }
 
-// stubStateStore serves a fixed State for every user id.
+// stubStateStore serves a fixed State for every user id, and records the
+// session id it was last asked about so a test can prove the middleware
+// forwards the token's sid claim rather than a zero value.
 type stubStateStore struct {
-	state State
-	err   error
+	state       State
+	err         error
+	lastSession uuid.UUID
 }
 
-func (s *stubStateStore) AuthState(context.Context, uuid.UUID) (State, error) {
+func (s *stubStateStore) AuthState(_ context.Context, _ uuid.UUID, sessionID uuid.UUID) (State, error) {
+	s.lastSession = sessionID
 	return s.state, s.err
 }
 
 // stubStateAuthenticator wires an Authenticator over a fixed auth state.
-func stubStateAuthenticator(t *testing.T, state State, err error) (*Authenticator, *JWTService) {
+func stubStateAuthenticator(t *testing.T, state State, err error) (*Authenticator, *JWTService, *stubStateStore) {
 	t.Helper()
 	jwtSvc := NewJWTService(testTokenConfig(t))
 	sessSvc := NewSessionService(newStubSessionRepo(), SessionConfig{TTL: time.Hour})
-	return NewAuthenticator(jwtSvc, sessSvc, &stubStateStore{state: state, err: err}), jwtSvc
+	store := &stubStateStore{state: state, err: err}
+	return NewAuthenticator(jwtSvc, sessSvc, store), jwtSvc, store
 }
 
 func TestRequireAuth_StaleGenerationRejected(t *testing.T) {
 	// The live column moved past the claim (force logout / deactivation /
 	// password change) — the very next request must fail.
-	a, jwtSvc := stubStateAuthenticator(t, State{TokenGeneration: 1, IsActive: true}, nil)
-	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "stale@example.com", uuid.New().String(), "member", 0)
+	a, jwtSvc, _ := stubStateAuthenticator(t, State{TokenGeneration: 1, IsActive: true, SessionValid: true}, nil)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "stale@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,8 +72,9 @@ func TestRequireAuth_StaleGenerationRejected(t *testing.T) {
 }
 
 func TestRequireAuth_MatchingGenerationAccepted(t *testing.T) {
-	a, jwtSvc := stubStateAuthenticator(t, State{TokenGeneration: 4, IsActive: true}, nil)
-	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "gen@example.com", uuid.New().String(), "member", 4)
+	sid := uuid.New()
+	a, jwtSvc, store := stubStateAuthenticator(t, State{TokenGeneration: 4, IsActive: true, SessionValid: true}, nil)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "gen@example.com", uuid.New().String(), "member", 4, sid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,13 +86,89 @@ func TestRequireAuth_MatchingGenerationAccepted(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("matching generation: expected 200, got %d", rr.Code)
 	}
+	// The middleware must have looked the session up by the token's own sid,
+	// not a zero value — a store that was always asked about uuid.Nil would
+	// refuse every real token once the session join is live.
+	if store.lastSession != sid {
+		t.Errorf("expected the session lookup to use sid %s, got %s", sid, store.lastSession)
+	}
+}
+
+// TestRequireAuth_RevokedSessionRejected isolates the session arm: the
+// account is active AND the generation matches, but the session the token
+// names is gone (revoked, expired, or absent), so the request is refused. A
+// "viewer is refused upstream" shape would not test this — the generation and
+// active checks both pass here, and only the session check can fail.
+func TestRequireAuth_RevokedSessionRejected(t *testing.T) {
+	a, jwtSvc, _ := stubStateAuthenticator(t, State{TokenGeneration: 0, IsActive: true, SessionValid: false}, nil)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "revoked@example.com", uuid.New().String(), "member", 0, uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &okHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	a.RequireAuth(inner).ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("revoked session: expected 401, got %d", rr.Code)
+	}
+	if inner.called {
+		t.Error("inner handler must not run for a revoked-session token")
+	}
+}
+
+// TestRequireAuth_SessionlessTokenRejected: a bearer access token carrying no
+// sid (the zero UUID) is refused, because the session join finds nothing.
+// There is no "sessionless still works" branch — that would be the revocation
+// bypass B1 closes.
+func TestRequireAuth_SessionlessTokenRejected(t *testing.T) {
+	a, jwtSvc, store := stubStateAuthenticator(t, State{TokenGeneration: 0, IsActive: true, SessionValid: false}, nil)
+	// uuid.Nil sid — exactly what a legacy token or a mis-minted one carries.
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "sessionless@example.com", uuid.New().String(), "member", 0, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &okHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	a.RequireAuth(inner).ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("sessionless token: expected 401, got %d", rr.Code)
+	}
+	if store.lastSession != uuid.Nil {
+		t.Errorf("expected the sessionless token to be looked up under uuid.Nil, got %s", store.lastSession)
+	}
+}
+
+// TestRequireAuth_StoreErrorFailsClosed: a store error during the per-request
+// check refuses the request rather than admitting it — the same fail-closed
+// posture the generation check has always had.
+func TestRequireAuth_StoreErrorFailsClosed(t *testing.T) {
+	a, jwtSvc, _ := stubStateAuthenticator(t, State{TokenGeneration: 0, IsActive: true, SessionValid: true}, errStoreDown)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "storedown@example.com", uuid.New().String(), "member", 0, uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &okHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	rr := httptest.NewRecorder()
+	a.RequireAuth(inner).ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("store error: expected 401, got %d", rr.Code)
+	}
+	if inner.called {
+		t.Error("inner handler must not run when the auth-state store errors")
+	}
 }
 
 func TestRequireAuth_InactiveAccountRejected(t *testing.T) {
 	// Deactivated account, token minted before deactivation with a
 	// generation that would otherwise match: is_active alone must reject.
-	a, jwtSvc := stubStateAuthenticator(t, State{TokenGeneration: 0, IsActive: false}, nil)
-	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "inactive@example.com", uuid.New().String(), "member", 0)
+	a, jwtSvc, _ := stubStateAuthenticator(t, State{TokenGeneration: 0, IsActive: false}, nil)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "inactive@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +183,8 @@ func TestRequireAuth_InactiveAccountRejected(t *testing.T) {
 }
 
 func TestRequireAuth_UnknownUserRejected(t *testing.T) {
-	a, jwtSvc := stubStateAuthenticator(t, State{}, ErrNotFound)
-	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "ghost@example.com", uuid.New().String(), "member", 0)
+	a, jwtSvc, _ := stubStateAuthenticator(t, State{}, ErrNotFound)
+	pair, err := jwtSvc.IssueTokenPair(uuid.New(), "ghost@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +210,7 @@ func TestRequireAuth_BearerToken_Valid(t *testing.T) {
 	a, jwtSvc, _ := testAuthenticator(t)
 	userID := uuid.New()
 
-	pair, err := jwtSvc.IssueTokenPair(userID, "user@example.com", uuid.New().String(), "member", 0)
+	pair, err := jwtSvc.IssueTokenPair(userID, "user@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +304,7 @@ func TestOptionalAuth_WithToken(t *testing.T) {
 	a, jwtSvc, _ := testAuthenticator(t)
 	userID := uuid.New()
 
-	pair, err := jwtSvc.IssueTokenPair(userID, "opt@example.com", uuid.New().String(), "member", 0)
+	pair, err := jwtSvc.IssueTokenPair(userID, "opt@example.com", uuid.New().String(), "member", 0, uuid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
