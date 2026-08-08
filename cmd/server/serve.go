@@ -48,12 +48,15 @@ func newLogger(w io.Writer) (*slog.Logger, *slog.LevelVar) {
 // warnIfDisclosureFlagIgnored tells an operator that a setting they went out of
 // their way to turn on is doing nothing.
 //
-// AZIMUTHAL_PORTAL_DISCLOSE_LINK=true on a production server is safe — the
-// portal never discloses there, by config.Config.PortalLinkDisclosureAllowed —
-// but it was also SILENT, and silence is the failure this closes. An operator
-// who set the flag, restarted, and saw a clean startup would reasonably conclude
-// it was in force. internal/config states the principle at parseLogLevel: a
-// value the server ignores is worse than one it rejects.
+// AZIMUTHAL_PORTAL_DISCLOSE_LINK=true outside a development environment is safe —
+// the portal discloses only on the APP_ENV safelist, by
+// config.Config.PortalLinkDisclosureAllowed — but it was also SILENT, and
+// silence is the failure this closes. An operator who set the flag, restarted,
+// and saw a clean startup would reasonably conclude it was in force. That is
+// most likely on a staging host, whose name is neither "production" nor a
+// development environment: under the blocklist this replaced, staging disclosed
+// with no warning at all. internal/config states the principle at parseLogLevel:
+// a value the server ignores is worse than one it rejects.
 //
 // A warning rather than a boot refusal, by ruling: refusing would turn an
 // already-safe misconfiguration into an outage, which is a bad trade to ship
@@ -61,13 +64,16 @@ func newLogger(w io.Writer) (*slog.Logger, *slog.LevelVar) {
 //
 // It takes the logger rather than reaching for the package default so that the
 // emission can be tested without a server or a global — the same reason
-// newLogger is its own function.
+// newLogger is its own function. The message names the actual APP_ENV so the
+// staging operator sees their own value, not a production-only sentence that
+// would read as "not about me".
 func warnIfDisclosureFlagIgnored(logger *slog.Logger, cfg *config.Config) {
 	if !cfg.PortalDisclosureFlagIgnored() {
 		return
 	}
-	logger.Warn("AZIMUTHAL_PORTAL_DISCLOSE_LINK=true has no effect when APP_ENV=production; " +
-		"the portal sign-in URL is never disclosed on a production server")
+	logger.Warn(fmt.Sprintf("AZIMUTHAL_PORTAL_DISCLOSE_LINK=true has no effect when APP_ENV=%q; "+
+		"the portal sign-in URL is disclosed only in a development environment "+
+		"(APP_ENV=development or test) and is never disclosed otherwise", cfg.AppEnv))
 }
 
 // runServe loads config, connects to the DB, runs migrations, and starts the

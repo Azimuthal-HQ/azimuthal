@@ -54,10 +54,13 @@ func (c discloseCase) load(t *testing.T) *config.Config {
 // combination of settings discloses in production, and no combination discloses
 // outside production without the flag.
 //
-// It fails in both directions by construction. Delete `!c.IsProduction()` from
-// PortalLinkDisclosureAllowed and the three production rows with the flag on
-// fail; delete `c.PortalDiscloseLink &&` and every flag-off row fails. Neither
-// half is decoration.
+// It fails in both directions by construction. Delete
+// `c.appEnvPermitsPortalDisclosure()` from PortalLinkDisclosureAllowed and the
+// production, staging and typo rows with the flag on fail; delete
+// `c.PortalDiscloseLink &&` and every flag-off row fails. Neither half is
+// decoration. And widening the safelist back to a `!IsProduction()` blocklist —
+// the exact regression this item closes — flips the staging and typo rows, which
+// is why they carry want:false with the flag on.
 func TestPortalLinkDisclosureAllowed_TruthTable(t *testing.T) {
 	cases := []discloseCase{
 		{
@@ -109,15 +112,26 @@ func TestPortalLinkDisclosureAllowed_TruthTable(t *testing.T) {
 		},
 		{name: "test without the flag", appEnv: "test", want: false},
 		{
-			name:   "an unrecognised environment is not production",
+			name:   "an unrecognised environment is not on the safelist",
 			appEnv: "staging",
 			flag:   "true",
-			want:   true,
-			why: "IsProduction() is an equality test, so 'staging' is non-production " +
-				"and the flag governs. Stated rather than left to be discovered: an " +
-				"operator on a staging name gets exactly what they asked for.",
+			want:   false,
+			why: "THE FIX THIS ITEM EXISTS FOR. The environment test is a SAFELIST of " +
+				"development names, not a blocklist of 'production': 'staging' is not a " +
+				"development environment, so it discloses nothing however the flag is " +
+				"set. Under the old `!IsProduction()` rule this row was want:true and a " +
+				"staging host published a sign-in credential to anyone.",
 		},
-		{name: "an unrecognised environment still needs the flag", appEnv: "staging", want: false},
+		{name: "an unrecognised environment still refuses without the flag", appEnv: "staging", want: false},
+		{
+			name:   "a typo for production does not fail open",
+			appEnv: "produciton",
+			flag:   "true",
+			want:   false,
+			why: "the blocklist's worst case: 'produciton' is not the literal string " +
+				"'production', so `!IsProduction()` let it through and it disclosed. A " +
+				"safelist refuses every name it does not recognise, typos included.",
+		},
 	}
 
 	for _, tc := range cases {
@@ -233,11 +247,42 @@ func TestPortalDisclosureFlagIgnored_TruthTable(t *testing.T) {
 			why:    "nobody asked for anything, so there is nothing being ignored",
 		},
 		{
+			name:   "flag set on staging is ignored and MUST warn",
+			appEnv: "staging",
+			flag:   "true",
+			want:   true,
+			why: "the headline of this change. staging is not on the safelist, so the " +
+				"flag has no effect — and this is the operator who most plausibly set it " +
+				"believing it works. Under the old `!IsProduction()` rule this was " +
+				"want:false and staging disclosed in silence.",
+		},
+		{
+			name:   "flag set on a typo for production is ignored",
+			appEnv: "produciton",
+			flag:   "true",
+			want:   true,
+			why:    "an unrecognised name is off the safelist, so the flag is ignored and the operator is told",
+		},
+		{
+			name:   "flag set with APP_ENV unset is ignored — defaults to production",
+			appEnv: "",
+			flag:   "true",
+			want:   true,
+			why:    "the APP_ENV default is production, which is not on the safelist",
+		},
+		{
 			name:   "development with the flag is working as asked",
 			appEnv: "development",
 			flag:   "true",
 			want:   false,
 			why:    "this configuration DOES disclose — warning here would contradict the truth table",
+		},
+		{
+			name:   "test with the flag is working as asked",
+			appEnv: "test",
+			flag:   "true",
+			want:   false,
+			why:    "test is on the safelist and discloses; a warning here would fire in every E2E run",
 		},
 		{
 			name:   "development without the flag is the ordinary case",
@@ -265,7 +310,7 @@ func TestPortalDisclosureFlagIgnored_TruthTable(t *testing.T) {
 // warning that stops covering an ignored case, or one that starts firing on a
 // case that works — and this fails.
 func TestPortalDisclosureFlagIgnored_IsExactlyWhatTheRuleDiscards(t *testing.T) {
-	for _, appEnv := range []string{"production", "development", "test", "staging"} {
+	for _, appEnv := range []string{"production", "development", "test", "staging", "produciton", ""} {
 		for _, flag := range []string{"true", "false"} {
 			t.Run(appEnv+"/"+flag, func(t *testing.T) {
 				cfg := discloseCase{appEnv: appEnv, flag: flag}.load(t)

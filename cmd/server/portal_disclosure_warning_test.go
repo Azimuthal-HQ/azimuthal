@@ -31,33 +31,71 @@ func warnOutput(t *testing.T, cfg *config.Config) string {
 	return buf.String()
 }
 
-// TestWarnIfDisclosureFlagIgnored_EmittedOnTheIgnoredCombination is the
+// TestWarnIfDisclosureFlagIgnored_EmittedOnEveryIgnoredCombination is the
 // emission test. Delete the logger.Warn call in serve.go and it fails.
 //
-// It asserts on the VARIABLE NAME rather than the full sentence. The name is the
-// stable, greppable part — it is what an operator pastes into a search — while
-// the prose around it should be free to improve without a test standing in the
+// It covers more than "production" deliberately: the environment test is now a
+// safelist, so the flag is ignored — and must be warned about — on staging and
+// on a typo for production too. Staging is the case that matters most: it is the
+// operator most likely to have set the flag believing it works, and under the
+// blocklist this replaced it disclosed in total silence.
+//
+// It asserts on the VARIABLE NAMES rather than the full sentence. The names are
+// the stable, greppable part — what an operator pastes into a search — while the
+// prose around them should be free to improve without a test standing in the
 // way. Asserting the whole sentence would make this a change-detector.
-func TestWarnIfDisclosureFlagIgnored_EmittedOnTheIgnoredCombination(t *testing.T) {
-	got := warnOutput(t, &config.Config{AppEnv: "production", PortalDiscloseLink: true})
+func TestWarnIfDisclosureFlagIgnored_EmittedOnEveryIgnoredCombination(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		appEnv string
+		why    string
+	}{
+		{
+			name:   "production",
+			appEnv: "production",
+			why:    "the classic case: safe but silently ignored on a production server",
+		},
+		{
+			name:   "staging is off the safelist",
+			appEnv: "staging",
+			why: "the operator most likely to believe the flag works, and the one the old " +
+				"blocklist warned nothing about while it disclosed",
+		},
+		{
+			name:   "a typo for production is off the safelist",
+			appEnv: "produciton",
+			why:    "an unrecognised name discloses nothing, so the flag is ignored and must be reported",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := warnOutput(t, &config.Config{AppEnv: tc.appEnv, PortalDiscloseLink: true})
 
-	if got == "" {
-		t.Fatal("nothing was logged for AZIMUTHAL_PORTAL_DISCLOSE_LINK=true on a production " +
-			"server. That combination is silently ignored, and the silence is the whole " +
-			"defect this warning closes — see warnIfDisclosureFlagIgnored.")
-	}
-	if !strings.Contains(got, "AZIMUTHAL_PORTAL_DISCLOSE_LINK") {
-		t.Errorf("the warning must name the variable an operator set, got %q", got)
-	}
-	if !strings.Contains(got, "APP_ENV") {
-		t.Errorf("the warning must name the setting that overrode it, or an operator cannot "+
-			"tell what to change, got %q", got)
-	}
-	// A warning, not an error: nothing is broken and nothing is unsafe. Logged
-	// at Error this would page somebody at 3am over a server that is behaving
-	// exactly as designed.
-	if !strings.Contains(got, `"level":"WARN"`) {
-		t.Errorf("expected a WARN line, got %q", got)
+			if got == "" {
+				t.Fatalf("nothing was logged for AZIMUTHAL_PORTAL_DISCLOSE_LINK=true with "+
+					"APP_ENV=%q. That combination is silently ignored, and the silence is the "+
+					"whole defect this warning closes — see warnIfDisclosureFlagIgnored.\n%s",
+					tc.appEnv, tc.why)
+			}
+			if !strings.Contains(got, "AZIMUTHAL_PORTAL_DISCLOSE_LINK") {
+				t.Errorf("the warning must name the variable an operator set, got %q", got)
+			}
+			if !strings.Contains(got, "APP_ENV") {
+				t.Errorf("the warning must name the setting that overrode it, or an operator "+
+					"cannot tell what to change, got %q", got)
+			}
+			// The message must carry the operator's own APP_ENV value, or a
+			// staging operator reads a production-only sentence as "not about me".
+			if !strings.Contains(got, tc.appEnv) {
+				t.Errorf("the warning must name the actual APP_ENV %q so the operator sees "+
+					"their own value, got %q", tc.appEnv, got)
+			}
+			// A warning, not an error: nothing is broken and nothing is unsafe.
+			// Logged at Error this would page somebody at 3am over a server that
+			// is behaving exactly as designed.
+			if !strings.Contains(got, `"level":"WARN"`) {
+				t.Errorf("expected a WARN line, got %q", got)
+			}
+		})
 	}
 }
 

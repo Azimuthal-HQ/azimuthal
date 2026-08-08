@@ -93,7 +93,8 @@ type Config struct {
 	// PortalDiscloseLink is the operator's REQUEST that the portal's
 	// request-link response body carry the sign-in URL. It is not the answer:
 	// read PortalLinkDisclosureAllowed(), which is the answer, and which also
-	// refuses in production.
+	// refuses outside a development environment — production, staging, or any
+	// name not on the disclosure safelist.
 	//
 	// Disclosure is an authentication bypass wherever it is on. POST
 	// /portal/{key}/auth/request-link is unauthenticated by necessity — an
@@ -391,14 +392,20 @@ func (c *Config) IsProduction() bool {
 //   - PortalDiscloseLink is what makes disclosure deliberate. The rule it
 //     replaced was a conjunction of two settings that were BOTH defaults, so
 //     the unsafe state was the one an operator reached by doing nothing.
-//   - !IsProduction() is what makes it un-footgunnable. An operator who copies
-//     a development .env onto a production host — the way this class recurs —
-//     gets the flag they did not mean to bring, and production refuses it
-//     anyway.
+//   - appEnvPermitsPortalDisclosure is what makes it un-footgunnable, and it is
+//     a SAFELIST. An operator who copies a development .env onto a production
+//     host — the way this class recurs — gets the flag they did not mean to
+//     bring, and production is not on the safelist, so disclosure is refused
+//     anyway. This conjunct used to be `!IsProduction()`, a blocklist that
+//     failed OPEN: everything that was not the literal string "production"
+//     passed, so APP_ENV=staging disclosed and so did a typo like "produciton".
+//     Disclosure is an authentication bypass, so the environment test now fails
+//     CLOSED — see appEnvPermitsPortalDisclosure for the safelisted set.
 //
-// A production server therefore never discloses, whatever the flag says. It is
-// still a runtime degrade rather than a boot refusal: validate() does not reject
-// the combination, on the same reasoning that keeps it from rejecting
+// A production server — or any server whose APP_ENV names no development
+// environment — therefore never discloses, whatever the flag says. It is still
+// a runtime degrade rather than a boot refusal: validate() does not reject the
+// combination, on the same reasoning that keeps it from rejecting
 // PortalLinkDeliveryLink in production.
 //
 // RESOLVED — this comment used to leave the question open ("whether an operator
@@ -411,22 +418,51 @@ func (c *Config) IsProduction() bool {
 // property is enforced here regardless. So the flag stays ignored and the
 // operator is told: see PortalDisclosureFlagIgnored.
 func (c *Config) PortalLinkDisclosureAllowed() bool {
-	return c.PortalDiscloseLink && !c.IsProduction()
+	return c.PortalDiscloseLink && c.appEnvPermitsPortalDisclosure()
 }
 
-// PortalDisclosureFlagIgnored reports the one combination
+// appEnvPermitsPortalDisclosure reports whether APP_ENV names an environment in
+// which the portal is allowed to disclose a sign-in link at all. It is the
+// environment half of PortalLinkDisclosureAllowed, factored out so it and
+// PortalDisclosureFlagIgnored — which is its exact complement — cannot drift.
+//
+// It is a SAFELIST, not a blocklist, and that distinction is the whole point.
+// The rule this replaced was `!IsProduction()`: everything that was not the
+// literal string "production" passed, so APP_ENV=staging disclosed and so did a
+// typo like "produciton" — a blocklist that fails OPEN on every value its author
+// did not anticipate, which for an authentication bypass is the wrong way to
+// fail. The safelist fails CLOSED: disclosure is permitted only for the
+// explicitly-development environment names this repository actually uses —
+// "development" (a developer's machine) and "test" (the E2E harness and CI; see
+// web/playwright.config.ts and .env.test). "production", "staging", an unknown
+// name, an empty string, a typo — every one is refused.
+//
+// The set is expressed through IsDevelopment/IsTest rather than a literal list
+// so the two definitions of what those environments are cannot disagree.
+func (c *Config) appEnvPermitsPortalDisclosure() bool {
+	return c.IsDevelopment() || c.IsTest()
+}
+
+// PortalDisclosureFlagIgnored reports the combinations
 // PortalLinkDisclosureAllowed silently discards: an operator asked for
-// disclosure and production overruled them.
+// disclosure and the environment is not one where disclosure is permitted.
 //
 // It exists to be warned about, not to be acted on — cmd/server/serve.go logs
-// one line at startup when it is true. The predicate is deliberately NARROW: it
-// is not "the flag is set" and not "we are in production", but exactly the pair
-// where the setting has no effect. A warning that also fired on dev+flag would
-// be telling an operator their working configuration is wrong, and a warning
-// that cries wolf is one operators learn to scroll past — which would leave the
-// real case no better off than the silence it replaced.
+// one line at startup when it is true. The predicate is the exact complement of
+// the environment safelist, so it fires for EVERY environment where the flag has
+// no effect — production, yes, but staging most of all, because that is the
+// operator who most plausibly set the flag believing it works and got nothing.
+// Under the `!IsProduction()` rule this replaced, the warning fired only on
+// production while a staging host disclosed in silence; the flip to a safelist
+// is exactly what lets this warn on staging, unknown names, and typos too.
+//
+// It stays deliberately NARROW in the other direction: not "the flag is set",
+// but the flag set AND the environment refusing it. A warning that also fired on
+// development+flag would be telling an operator their working configuration is
+// wrong, and a warning that cries wolf is one operators learn to scroll past —
+// which would leave the real case no better off than the silence it replaced.
 func (c *Config) PortalDisclosureFlagIgnored() bool {
-	return c.PortalDiscloseLink && c.IsProduction()
+	return c.PortalDiscloseLink && !c.appEnvPermitsPortalDisclosure()
 }
 
 // parseAllowedOrigins splits a comma-separated origin list. When the env var

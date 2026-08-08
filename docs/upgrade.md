@@ -159,13 +159,16 @@ does. Both are detailed below.
   can name. That body used to carry it whenever delivery was `link` **and** the environment was not
   `production` — and both of those were the defaults, so the unsafe state was the one an operator
   reached by doing nothing. Disclosure now requires the new `AZIMUTHAL_PORTAL_DISCLOSE_LINK`
-  (default `false`) **and** an `APP_ENV` that is not `production`; `AZIMUTHAL_PORTAL_LINK_DELIVERY`
-  no longer influences it at all. Setting the flag on a production server is harmless and does
-  nothing — the server logs a startup warning naming both variables rather than refusing to boot,
-  so a configuration that is already safe cannot lock you out. Two things worth knowing: that
-  warning is at `warn` level, so `LOG_LEVEL=error` hides it, and "not `production`" is a literal
-  string comparison — an `APP_ENV=staging` host with the flag set *will* disclose, and gets no
-  warning, because `staging` is not `production` to this code.
+  (default `false`) **and** an `APP_ENV` that names a development environment — `development` or
+  `test`; `AZIMUTHAL_PORTAL_LINK_DELIVERY` no longer influences it at all. Setting the flag on a
+  production server is harmless and does nothing — the server logs a startup warning naming both
+  variables rather than refusing to boot, so a configuration that is already safe cannot lock you
+  out. Two things worth knowing: that warning is at `warn` level, so `LOG_LEVEL=error` hides it, and
+  the environment test is a **safelist**, not a blocklist — only `development` and `test` disclose.
+  (v0.4.1 shipped this as a literal `APP_ENV != production` comparison, which fails open: an
+  `APP_ENV=staging` host with the flag set *would* disclose and got no warning, because `staging`
+  is not `production`. v0.4.2 replaced the comparison with the safelist above, so `staging`, an
+  unknown name, or a typo like `produciton` now discloses nothing and *does* emit the warning.)
 
 - **Signing out revokes tokens on every device**, not just the one signing out. Logout now deletes
   every session row for the user and bumps their token generation, which invalidates outstanding
