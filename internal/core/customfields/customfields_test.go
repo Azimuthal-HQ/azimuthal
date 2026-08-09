@@ -388,9 +388,21 @@ func TestLegacyValuesSurvive(t *testing.T) {
 		t.Errorf("expected legacy read-only value 'Falcon', got %+v", legacy)
 	}
 
-	// Writes to the now-legacy field are refused.
-	if err := f.setItemValue(ctx, item, def.Slug, "Hawk"); !errors.Is(err, ErrUndefinedField) {
-		t.Errorf("legacy field must be read-only, got %v", err)
+	// Writes to the now-legacy field are refused — and refused as ARCHIVED, not
+	// as never-defined. The field existed, so the surface can say so; before the
+	// C3 fix this returned ErrUndefinedField ("no active custom field with this
+	// slug"), which the detail form surfaced as the bare "Could not save."
+	archivedErr := f.setItemValue(ctx, item, def.Slug, "Hawk")
+	if !errors.Is(archivedErr, ErrFieldArchived) {
+		t.Errorf("archived field write must refuse with ErrFieldArchived, got %v", archivedErr)
+	}
+	// The two read-only refusals must stay distinct sentinels: collapsing them
+	// (e.g. aliasing one to the other) would take the honest message away again.
+	if errors.Is(archivedErr, ErrUndefinedField) {
+		t.Error("an archived field is not the never-defined case — ErrFieldArchived and ErrUndefinedField must stay distinct")
+	}
+	if !strings.Contains(archivedErr.Error(), "archived") {
+		t.Errorf("the archived refusal must name archival for the form to render it honestly, got %q", archivedErr.Error())
 	}
 
 	// Deleting the definition entirely still preserves the value.

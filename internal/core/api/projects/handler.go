@@ -2282,6 +2282,12 @@ func handleCustomFieldError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, customfields.ErrNotFound),
 		errors.Is(err, customfields.ErrUndefinedField),
+		// ErrFieldArchived rides the same 404 as the never-defined case: same
+		// status, same envelope shape, only a more honest message. It names a
+		// state (archived) any member can already list — field definitions are
+		// member-readable on this org-internal surface — so the wording
+		// discloses nothing the 404 was hiding.
+		errors.Is(err, customfields.ErrFieldArchived),
 		errors.Is(err, customfields.ErrFieldNotInScope),
 		errors.Is(err, customfields.ErrScopeNotFound),
 		errors.Is(err, customfields.ErrSpaceNotFound),

@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ItemDetailPage } from '../ItemDetailPage';
 
@@ -87,15 +88,22 @@ const baseItem = {
 };
 
 function renderDetail() {
+  // CustomFieldsSection (rendered in the rail) reads useQueryClient to refetch
+  // on a failed save, so the tree needs a provider exactly as production does —
+  // the same reason the render is wrapped in a router. The api layer is mocked
+  // wholesale, so this client's cache is never actually consulted.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     // The real route: App.tsx mounts this page at backlog/:itemKey, and the
     // page reads `itemKey`. Spelling it :itemId here would still pass — the
     // query is mocked — while testing a route the product does not have.
-    <MemoryRouter initialEntries={['/vector/s1/backlog/VEC-7']}>
-      <Routes>
-        <Route path="/vector/:spaceId/backlog/:itemKey" element={<ItemDetailPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/vector/s1/backlog/VEC-7']}>
+        <Routes>
+          <Route path="/vector/:spaceId/backlog/:itemKey" element={<ItemDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

@@ -2,7 +2,43 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CustomFieldsSection } from '../CustomFieldsSection';
 
-const setMutate = vi.fn();
+// MockAPIError stands in for the api module's APIError: the component reads
+// `err instanceof APIError` to decide the failure carried a server message, so
+// the class the test rejects with must be the same one the mock exports. It is
+// built through vi.hoisted because the vi.mock factory below reads it eagerly
+// (`APIError: MockAPIError`), and that factory is hoisted above a plain class
+// declaration — which would still be in its temporal dead zone at that point.
+const { MockAPIError } = vi.hoisted(() => {
+  class MockAPIError extends Error {
+    code: string;
+    status: number;
+    constructor(status: number, code: string, message: string) {
+      super(message);
+      this.name = 'APIError';
+      this.code = code;
+      this.status = status;
+    }
+  }
+  return { MockAPIError };
+});
+
+// saveError is what the next field save rejects with (null = it succeeds). The
+// mocked mutate invokes onError with it synchronously, which is what react-query
+// does on a failed mutation.
+let saveError: unknown = null;
+const setMutate = vi.fn(
+  (_vars: { slug: string; value: string }, opts?: { onError?: (e: unknown) => void }) => {
+    if (saveError) opts?.onError?.(saveError);
+  },
+);
+
+// invalidateSpy stands in for queryClient.invalidateQueries — the save-error
+// path must refetch the entity's fields so a definition that moved out from
+// under the open form (archived, detached, deleted) re-renders as read-only.
+const invalidateSpy = vi.fn();
+vi.mock('@tanstack/react-query', () => ({
+  useQueryClient: () => ({ invalidateQueries: invalidateSpy }),
+}));
 
 // serverFields is what the query currently holds. Reassigning it and
 // re-rendering is a refetch: the component reads a new array with a new value,
@@ -12,9 +48,11 @@ const setMutate = vi.fn();
 // The seeding effect depends on `field.value`, a string, so a refetch returning
 // the same text never re-runs it — a test that re-rendered with identical data
 // would pass with the guard deleted and assert nothing (CLAUDE.md section 2).
+// options is widened to string[] so single-select cases below (which carry
+// real option lists) stay assignable to serverFields' inferred element type.
 const initialFields = () => [
-  { slug: 'points', name: 'Points', field_type: 'number', options: [], value: '5', required: false, legacy: false },
-  { slug: 'squad', name: 'Squad', field_type: 'text', options: [], value: 'Falcon', required: false, legacy: true },
+  { slug: 'points', name: 'Points', field_type: 'number', options: [] as string[], value: '5', required: false, legacy: false },
+  { slug: 'squad', name: 'Squad', field_type: 'text', options: [] as string[], value: 'Falcon', required: false, legacy: true },
 ];
 let serverFields = initialFields();
 
@@ -37,10 +75,19 @@ vi.mock('../../lib/api', () => ({
   useEntityFields: () => useEntityFieldsMock(),
   useSetEntityField: () => ({ mutate: setMutate }),
   friendlyErrorMessage: (_e: unknown, fallback: string) => fallback,
+  APIError: MockAPIError,
+  queryKeys: {
+    entityFields: (spaceId: string, kind: string, entityId: string) =>
+      ['entityFields', spaceId, kind, entityId],
+  },
 }));
 
 afterEach(() => {
-  setMutate.mockReset();
+  // mockClear, not mockReset: the mutate stub keeps its onError-invoking
+  // implementation across tests; only the recorded calls are cleared.
+  setMutate.mockClear();
+  invalidateSpy.mockClear();
+  saveError = null;
   useEntityFieldsMock.mockReset();
   serverFields = initialFields();
   useEntityFieldsMock.mockImplementation(() => ({
@@ -178,5 +225,78 @@ describe('CustomFieldsSection', () => {
     rerender(<CustomFieldsSection {...sectionProps} />);
 
     expect((screen.getByLabelText('Points') as HTMLInputElement).value).toBe('9');
+  });
+
+  // THE C3 DEFECT, both halves. A definition archived while this page is open
+  // leaves a stale form: the control is still editable with its required
+  // asterisk, and the save is refused with a bare "Could not save." The fix
+  // surfaces the server's honest message AND refetches so the row re-renders as
+  // read-only legacy — the asterisk gone — within one round trip.
+  const ARCHIVED_MESSAGE =
+    'this custom field was archived; its stored value is read-only and cannot be changed';
+
+  it('surfaces the server refusal and refetches so an archived field re-renders read-only', () => {
+    // A required, editable single-select — the exact control the maintainer
+    // watched stay editable after archiving the definition mid-edit.
+    serverFields = [
+      { slug: 'stage', name: 'Stage', field_type: 'single_select', options: ['alpha', 'beta'], value: 'alpha', required: true, legacy: false },
+    ];
+    saveError = new MockAPIError(404, 'NOT_FOUND', ARCHIVED_MESSAGE);
+
+    const { rerender } = render(<CustomFieldsSection {...sectionProps} />);
+
+    // Before: an editable select carrying the required marker.
+    const select = screen.getByLabelText(/Stage/) as HTMLSelectElement;
+    expect(select.tagName).toBe('SELECT');
+    expect(screen.getByTitle('Required in this space')).toBeInTheDocument();
+
+    // Changing it saves, and the server refuses with the archived message.
+    fireEvent.change(select, { target: { value: 'beta' } });
+
+    // Half 1 — the server's own message renders, not the generic fallback.
+    // Fails-before: the old code ran it through friendlyErrorMessage, which the
+    // mock collapses to the fallback, so "Could not save." showed instead.
+    expect(screen.getByText(ARCHIVED_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText('Could not save.')).toBeNull();
+
+    // Half 2 — the failed save invalidated this entity's field query.
+    // Fails-before: the old code invalidated on success only, never on error.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['entityFields', 's1', 'item', 'i1'],
+    });
+
+    // The refetch that invalidation triggers brings the field back as archived
+    // legacy; the row must flip to the read-only control with the asterisk gone.
+    serverFields = [
+      { slug: 'stage', name: 'Stage', field_type: 'single_select', options: ['alpha', 'beta'], value: 'alpha', required: true, legacy: true },
+    ];
+    rerender(<CustomFieldsSection {...sectionProps} />);
+
+    expect(screen.queryByLabelText(/Stage/)).toBeNull(); // no editable control
+    expect(screen.queryByTitle('Required in this space')).toBeNull(); // asterisk gone
+    expect(screen.getByText('legacy')).toBeInTheDocument();
+    expect(screen.getByText('alpha')).toBeInTheDocument(); // stored value shown read-only
+  });
+
+  // The general fix, not the archived one alone: any structured save failure
+  // shows the server's message and refetches. A transport/parse failure that
+  // carries no envelope falls back to the generic line.
+  it('falls back to the generic line when the failure carries no server message', () => {
+    serverFields = [
+      { slug: 'points', name: 'Points', field_type: 'number', options: [], value: '5', required: false, legacy: false },
+    ];
+    saveError = new Error('network down'); // not an APIError — no envelope
+
+    render(<CustomFieldsSection {...sectionProps} />);
+    const input = screen.getByLabelText('Points');
+    fireEvent.change(input, { target: { value: '8' } });
+    fireEvent.blur(input);
+
+    expect(screen.getByText('Could not save.')).toBeInTheDocument();
+    // Even a transport failure refetches — the form may be stale for a reason
+    // the error body could not name.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['entityFields', 's1', 'item', 'i1'],
+    });
   });
 });
