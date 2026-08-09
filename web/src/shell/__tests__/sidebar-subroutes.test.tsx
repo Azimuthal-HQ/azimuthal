@@ -84,3 +84,32 @@ describe('module sidebar on every sub-route', () => {
     expect(screen.getByTestId(`child-${sub}`)).toBeInTheDocument();
   });
 });
+
+/**
+ * C2 gap: the converged tag surface (ModuleLabelsRoute, path `labels`) renders
+ * in any module's chrome, but only Vector's sidebar used to carry the way in.
+ * Beacon reached it not at all and Codex only through page chips. Every module's
+ * sidebar now exposes a "Tags" nav item; a regression that drops it from Beacon
+ * or Codex fails here by the missing link. The href pins the route segment to
+ * `labels` — the same segment a blank-screen regression (e2e projects.spec)
+ * depends on not being renamed in passing.
+ */
+describe('the Tags nav item is reachable from every module', () => {
+  it.each(MODULE_KEYS)('%s sidebar links Tags to its own labels route', (module) => {
+    render(
+      <MemoryRouter initialEntries={[`/${module}/space-1/board`]}>
+        <Routes>
+          <Route path=":module/:spaceId" element={<SpaceLayout />}>
+            {SUB_ROUTES.map((s) => (
+              <Route key={s} path={s} element={<div data-testid={`child-${s}`} />} />
+            ))}
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const sidebar = screen.getByTestId('space-sidebar');
+    const tags = within(sidebar).getByRole('link', { name: 'Tags' });
+    expect(tags).toHaveAttribute('href', `/${module}/space-1/labels`);
+  });
+});

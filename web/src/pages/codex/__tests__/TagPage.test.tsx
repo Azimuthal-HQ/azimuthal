@@ -133,22 +133,34 @@ describe('the tag browse', () => {
     expect(rows[1]).toHaveAttribute('href', '/codex/space-2/pages/p2');
   });
 
-  it('renders all three kinds, each linking into its own module with its own ref', () => {
+  it('links all three kinds by entity_id, never by the human ref', () => {
     useEntitiesWithTagMock.mockReturnValue({ data: MIXED, isLoading: false, error: null });
     renderTagPage();
 
     const rows = screen.getAllByTestId('codex-tag-page-row');
     expect(rows).toHaveLength(3);
-    // A ticket goes to Beacon's ticket detail by id; an item goes to Vector's
-    // backlog by its item_key — the routes those surfaces actually answer on —
-    // never to a Codex path built from the browse's own URL.
+
+    // Every arm addresses the entity by its entity_id — the UUID each detail
+    // route resolves — into its OWN module, never a Codex path built from the
+    // browse's own URL. Rows are page (p1), ticket (t1), item (i1).
+    expect(rows[0]).toHaveAttribute('href', '/codex/space-1/pages/p1');
     expect(rows[1]).toHaveAttribute('href', '/beacon/space-3/tickets/t1');
-    expect(rows[2]).toHaveAttribute('href', '/vector/space-4/backlog/BOAR-7');
-    // Tickets and items lead with their stable human ref; a reader told
-    // "DESK-42" by a colleague finds it by that string.
+    // The item is the regression this test exists to pin. Its fixture ref
+    // ("BOAR-7") is deliberately NOT its entity_id ("i1"): the item route's
+    // :itemKey param is a UUID despite the name, so a link built from the ref
+    // 400s and the detail page reads "The item could not be loaded." A
+    // regression to ref-linking fails here by VALUE — the href would end
+    // "BOAR-7" — not by the luck of a coincidentally-equal id.
+    expect(rows[2]).toHaveAttribute('href', '/vector/space-4/backlog/i1');
+    expect(rows[2].getAttribute('href')).not.toContain('BOAR-7');
+
+    // …while the ref stays what the row DISPLAYS: a ticket and an item each
+    // lead with their stable human reference, so a reader told "DESK-42" or
+    // "BOAR-7" by a colleague finds the row by that string.
     expect(rows[1]).toHaveTextContent('DESK-42');
     expect(rows[2]).toHaveTextContent('BOAR-7');
     expect(rows[1]).toHaveAttribute('data-entity-type', 'ticket');
+    expect(rows[2]).toHaveAttribute('data-entity-type', 'project_item');
   });
 
   it('is queried by the label from the URL, decoded', () => {

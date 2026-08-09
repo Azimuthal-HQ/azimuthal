@@ -1,11 +1,11 @@
 import { NavLink } from 'react-router-dom';
-import { BarChart3, Columns3, ListFilter, Plus, Ticket } from 'lucide-react';
+import { BarChart3, Columns3, ListFilter, Plus, Tags, Ticket } from 'lucide-react';
 import type { Space } from '../../lib/api';
 import { useQueues } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { cn } from '../../lib/utils';
 import { spacePath } from '../modules';
-import { SidebarChrome, SidebarNavItem, useSidebarIsCollapsed } from './SidebarChrome';
+import { SidebarChrome, SidebarNavItem, SidebarSection, useSidebarIsCollapsed } from './SidebarChrome';
 import { SpacePicker } from '../SpacePicker';
 import { useSidebarCollapsed } from '../hooks/useSidebarCollapsed';
 
@@ -26,6 +26,15 @@ export function BeaconSidebar({ space, spaceId }: { space: Space | undefined; sp
       </nav>
 
       <QueuesSection spaceId={spaceId} />
+
+      {/* The module-neutral tags index (ModuleLabelsRoute), reachable from every
+          module's chrome — Vector has always carried this item; Beacon and
+          Codex now match it so the converged tag surface has a way in from all
+          three. The route segment stays `labels` (a P0 blank-screen regression
+          pins it); the surface it opens is Tags. */}
+      <SidebarSection label="Configure">
+        <SidebarNavItem to={spacePath('beacon', spaceId, 'labels')} icon={Tags} label="Tags" />
+      </SidebarSection>
     </SidebarChrome>
   );
 }

@@ -32,15 +32,23 @@ import { getCurrentOrgId } from '../../lib/auth';
 
 /**
  * Where a browse row links to: the entity's own detail surface, in its own
- * module's chrome. Items are addressed by item_key — that is what their detail
- * route takes — and the ref IS the item_key, composed server-side.
+ * module's chrome. All three kinds are addressed by their entity_id — the UUID
+ * every detail route actually resolves.
+ *
+ * The item arm is the trap this once fell into. Its route param is *named*
+ * `:itemKey` (App.tsx, and `ItemDetailPage` reads it under that name), but the
+ * name is a misnomer: the page feeds the raw segment straight to
+ * `useProjectItem` as an id, and the API's `itemIDFromURL` parses it as a UUID —
+ * so linking by the human ref ("VEC-14") answered 400 and the row rendered "The
+ * item could not be loaded." The ref stays what it is on the row: display text
+ * (see the row body below), never an address.
  */
 function entityPath(e: TaggedEntity): string {
   switch (e.entity_type) {
     case 'ticket':
       return `/beacon/${e.space_id}/tickets/${e.entity_id}`;
     case 'project_item':
-      return `/vector/${e.space_id}/backlog/${encodeURIComponent(e.ref)}`;
+      return `/vector/${e.space_id}/backlog/${e.entity_id}`;
     default:
       return `/codex/${e.space_id}/pages/${e.entity_id}`;
   }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate, useSearchParams } from 'react-router-dom';
-import { Clock, FileText, PenLine, Plus, Search, Star } from 'lucide-react';
+import { Clock, FileText, PenLine, Plus, Search, Star, Tags } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
   friendlyErrorMessage,
@@ -23,7 +23,7 @@ import {
   DialogClose,
 } from '../../components/ui/dialog';
 import { spacePath } from '../modules';
-import { SidebarChrome, SidebarNavItem, useSidebarIsCollapsed } from './SidebarChrome';
+import { SidebarChrome, SidebarNavItem, SidebarSection, useSidebarIsCollapsed } from './SidebarChrome';
 import { SpacePicker } from '../SpacePicker';
 import { useSidebarCollapsed } from '../hooks/useSidebarCollapsed';
 
@@ -89,6 +89,15 @@ export function CodexSidebar({ space, spaceId }: { space: Space | undefined; spa
           <SidebarNavItem to={spacePath('codex', spaceId, 'starred')} icon={Star} label="Starred" />
           <SidebarNavItem to={spacePath('codex', spaceId, 'drafts')} icon={PenLine} label="Drafts" />
         </nav>
+        {/* The module-neutral tags index (ModuleLabelsRoute), reachable from
+            every module's chrome — Codex reached tags only through page chips
+            before this. It lives in the fixed region so the page tree below,
+            which owns the scroll, never pushes it out of reach. The route
+            segment stays `labels` (a P0 blank-screen regression pins it); the
+            surface it opens is Tags. */}
+        <SidebarSection label="Configure">
+          <SidebarNavItem to={spacePath('codex', spaceId, 'labels')} icon={Tags} label="Tags" />
+        </SidebarSection>
       </div>
 
       <PageTree spaceId={spaceId} query={search.trim()} queryDebounced={searchDebounced.trim()} />

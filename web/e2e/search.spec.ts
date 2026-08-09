@@ -167,4 +167,64 @@ test.describe('Cross-module search', () => {
 
     await assertNoErrors(page)
   })
+
+  test('the tag browse opens a project item at the id its detail route resolves', async ({
+    page,
+  }) => {
+    // The item arm of the convergence — and the regression the browse's item
+    // link carried. Rows linked items by their human key (VEC-14), but the
+    // detail route parses its segment as a UUID, so the item row landed on "The
+    // item could not be loaded." The ticket-only browse leg above asserted the
+    // row's attributes but never FOLLOWED it, which is exactly how this
+    // survived; here the item row is followed all the way to a loaded page.
+    await createUserAndLogin(page)
+    const { orgId } = await getCurrentUser(page)
+
+    const term = `zaphod${Math.random().toString(36).slice(2, 7)}`
+    const tag = `itag${Math.random().toString(36).slice(2, 7)}`
+    const vector = await createSpace(page, orgId, 'vector', 'Tagged Vector')
+
+    // An item, created and tagged through the API. Its human key is composed
+    // server-side and is NOT its id — the distinction the browse link must
+    // respect, and the only reason this test can tell a correct link from a
+    // coincidence.
+    const itemRes = await page.request.post(
+      `/api/v1/orgs/${orgId}/spaces/${vector}/projects/items`,
+      {
+        headers: await jsonHeaders(page),
+        data: { title: `${term} rewrite`, kind: 'task', priority: 'medium' },
+      },
+    )
+    expect(itemRes.status()).toBe(201)
+    const itemId = ((await itemRes.json()) as { id: string }).id
+
+    const tagRes = await page.request.put(
+      `/api/v1/orgs/${orgId}/spaces/${vector}/projects/items/${itemId}/tags`,
+      { headers: await jsonHeaders(page), data: { tags: [tag] } },
+    )
+    expect(tagRes.ok(), `tagging the item failed: ${tagRes.status()}`).toBeTruthy()
+
+    // The browse lists the item under the tag. The label is unique to this run,
+    // so the count is exact rather than a "contains" over the org.
+    await page.goto(`/vector/${vector}/tags/${tag}`)
+    const row = page.getByTestId('codex-tag-page-row')
+    await expect(row).toHaveCount(1)
+    await expect(row).toHaveAttribute('data-entity-type', 'project_item')
+    // The href pins the id, not the key: a regression to key-linking would end
+    // this href with the human ref and 400 the moment it was followed.
+    await expect(row).toHaveAttribute('href', `/vector/${vector}/backlog/${itemId}`)
+
+    // Follow it — and the detail page LOADS. This is the assertion the
+    // ticket-only leg could not make: assertNoErrors catches the "could not be
+    // loaded" friendly-error the broken link produced, and the visible title
+    // is positive proof the item resolved.
+    await row.click()
+    await expect(page).toHaveURL(new RegExp(`/vector/${vector}/backlog/${itemId}$`), {
+      timeout: 10000,
+    })
+    await expect(page.getByRole('heading', { name: `${term} rewrite` })).toBeVisible({
+      timeout: 10000,
+    })
+    await assertNoErrors(page)
+  })
 })
