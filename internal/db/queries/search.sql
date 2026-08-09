@@ -44,6 +44,28 @@
 -- named here rather than left for a reader to wonder about.
 --
 --
+-- WHY THE TEXT MATCH IS CONDITIONAL, AND WHAT RANKS A TAG-ONLY SEARCH
+-- ------------------------------------------------------------------
+-- A query carrying a `tag:` filter must run whether or not it has free text: a
+-- structured filter is itself a reason to search. So the `@@` match is guarded
+-- by has_text exactly as the tag arm is guarded by filter_tag —
+-- `(NOT has_text OR search_vector @@ …)` — and when has_text is false the text
+-- predicate drops out rather than matching nothing. The whole-set guard against
+-- an unbounded read stays upstream: the service short-circuits an empty tsquery
+-- with NO tag filter to no_searchable_terms before the fan-out, and a query that
+-- reaches here with has_text false always carries filter_tag true.
+--
+-- Ranking then needs a key ts_rank cannot supply: ts_rank against an empty
+-- tsquery is a constant, so it orders nothing. A tag-only search is therefore a
+-- LISTING of what carries the tag, newest first — the sort key carries a
+-- fixed-width UTC timestamp instead of the rank, with a constant rank underneath
+-- it. Ranked relevance resumes the moment there is text to rank. The key stays
+-- fixed-width text COLLATE "C" in both modes so the Go merge byte-orders the
+-- three halves identically, and the (sort_key, id) keyset cursor is stable
+-- across pages in both — one search's pages are generated and consumed in a
+-- single mode throughout, so the two widths never meet in a comparison.
+--
+--
 -- THE SORT KEY
 -- ------------
 -- search_sort_key (049) turns ts_rank's `real` into fixed-width zero-padded
@@ -93,14 +115,20 @@ SELECT p.id, p.space_id, p.parent_id, p.title, p.path, p.version, p.author_id,
 FROM pages p
 JOIN spaces s ON s.id = p.space_id AND s.deleted_at IS NULL
 CROSS JOIN LATERAL (
-    SELECT CAST(search_sort_key(
-               ts_rank(p.search_vector,
-                       websearch_to_tsquery('english', sqlc.arg(query)::text), 32)
-           ) AS text) COLLATE "C" AS sort_key
+    -- has_text: ts_rank when there is text to rank, recency (newest first)
+    -- otherwise — see the header's "WHAT RANKS A TAG-ONLY SEARCH".
+    SELECT (CASE WHEN sqlc.arg(has_text)::boolean
+                 THEN CAST(search_sort_key(
+                          ts_rank(p.search_vector,
+                                  websearch_to_tsquery('english', sqlc.arg(query)::text), 32)
+                      ) AS text)
+                 ELSE to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')
+            END) COLLATE "C" AS sort_key
 ) k
 WHERE p.deleted_at IS NULL
   AND s.org_id = sqlc.arg(org_id)
-  AND p.search_vector @@ websearch_to_tsquery('english', sqlc.arg(query)::text)
+  AND (NOT sqlc.arg(has_text)::boolean
+       OR p.search_vector @@ websearch_to_tsquery('english', sqlc.arg(query)::text))
   AND (p.space_id = ANY(sqlc.arg(readable_space_ids)::uuid[])
        OR p.id = ANY(sqlc.arg(shared_page_ids)::uuid[])
        OR EXISTS (
@@ -144,14 +172,20 @@ SELECT t.id, t.space_id, t.number, t.title, t.status, t.priority,
 FROM tickets t
 JOIN spaces s ON s.id = t.space_id AND s.deleted_at IS NULL
 CROSS JOIN LATERAL (
-    SELECT CAST(search_sort_key(
-               ts_rank(t.search_vector,
-                       websearch_to_tsquery('english', sqlc.arg(query)::text), 32)
-           ) AS text) COLLATE "C" AS sort_key
+    -- has_text: ts_rank when there is text to rank, recency (newest first)
+    -- otherwise — see the header's "WHAT RANKS A TAG-ONLY SEARCH".
+    SELECT (CASE WHEN sqlc.arg(has_text)::boolean
+                 THEN CAST(search_sort_key(
+                          ts_rank(t.search_vector,
+                                  websearch_to_tsquery('english', sqlc.arg(query)::text), 32)
+                      ) AS text)
+                 ELSE to_char(t.updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')
+            END) COLLATE "C" AS sort_key
 ) k
 WHERE t.deleted_at IS NULL
   AND s.org_id = sqlc.arg(org_id)
-  AND t.search_vector @@ websearch_to_tsquery('english', sqlc.arg(query)::text)
+  AND (NOT sqlc.arg(has_text)::boolean
+       OR t.search_vector @@ websearch_to_tsquery('english', sqlc.arg(query)::text))
   AND (t.space_id = ANY(sqlc.arg(readable_space_ids)::uuid[])
        OR t.id = ANY(sqlc.arg(shared_ticket_ids)::uuid[]))
   AND (NOT sqlc.arg(filter_tag)::boolean
@@ -178,14 +212,20 @@ SELECT i.id, i.space_id, i.number, i.item_key, i.kind, i.title, i.status,
 FROM project_items i
 JOIN spaces s ON s.id = i.space_id AND s.deleted_at IS NULL
 CROSS JOIN LATERAL (
-    SELECT CAST(search_sort_key(
-               ts_rank(i.search_vector,
-                       websearch_to_tsquery('english', sqlc.arg(query)::text), 32)
-           ) AS text) COLLATE "C" AS sort_key
+    -- has_text: ts_rank when there is text to rank, recency (newest first)
+    -- otherwise — see the header's "WHAT RANKS A TAG-ONLY SEARCH".
+    SELECT (CASE WHEN sqlc.arg(has_text)::boolean
+                 THEN CAST(search_sort_key(
+                          ts_rank(i.search_vector,
+                                  websearch_to_tsquery('english', sqlc.arg(query)::text), 32)
+                      ) AS text)
+                 ELSE to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')
+            END) COLLATE "C" AS sort_key
 ) k
 WHERE i.deleted_at IS NULL
   AND s.org_id = sqlc.arg(org_id)
-  AND i.search_vector @@ websearch_to_tsquery('english', sqlc.arg(query)::text)
+  AND (NOT sqlc.arg(has_text)::boolean
+       OR i.search_vector @@ websearch_to_tsquery('english', sqlc.arg(query)::text))
   AND (i.space_id = ANY(sqlc.arg(readable_space_ids)::uuid[])
        OR i.id = ANY(sqlc.arg(shared_item_ids)::uuid[]))
   AND (NOT sqlc.arg(filter_tag)::boolean

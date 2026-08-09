@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,9 +28,10 @@ import (
 // searchWire is the response shape, decoded loosely on purpose — a field that
 // must be ABSENT cannot be asserted through a struct with a zero value for it.
 type searchWire struct {
-	Results []map[string]any `json:"results"`
-	Modules []string         `json:"modules"`
-	State   string           `json:"state"`
+	Results    []map[string]any `json:"results"`
+	Modules    []string         `json:"modules"`
+	State      string           `json:"state"`
+	NextCursor string           `json:"next_cursor"`
 }
 
 func decodeSearch(t *testing.T, body []byte) searchWire {
@@ -268,6 +271,106 @@ func TestSearchEndpoint_BadCursorIs400(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	res := ts.do(t, req)
 	require.Equal(t, http.StatusBadRequest, res.StatusCode)
+}
+
+// TestSearchEndpoint_TagOnlyPagesByRecencyAcrossModules is the C1 ordering and
+// cursor guarantee end to end: a tag-only search lists what carries the tag,
+// newest first, interleaved across modules, and its (sort_key, id) cursor pages
+// through the listing with no gap and no repeat.
+//
+// The rows are seeded with explicit, interleaved updated_at so the correct order
+// crosses the module boundary — page one ends on a ticket, page two starts on a
+// page — which is exactly where a per-module cursor or a rank-only sort key
+// would drop or repeat a row. set_updated_at is a BEFORE UPDATE trigger, so the
+// explicit values given at INSERT survive.
+//
+// Fails-before: unreachable before the fix — a tag-only query answered
+// no_searchable_terms and returned nothing to page through.
+func TestSearchEndpoint_TagOnlyPagesByRecencyAcrossModules(t *testing.T) {
+	ts := newTestServer(t)
+	codex := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "codex")
+	beacon := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "beacon")
+	testutil.SetSpaceVisibility(t, ts.DB.Pool, codex.ID, "hidden")
+	testutil.SetSpaceVisibility(t, ts.DB.Pool, beacon.ID, "hidden")
+
+	var tagID uuid.UUID
+	require.NoError(t, ts.DB.Pool.QueryRow(context.Background(),
+		`INSERT INTO tags (org_id, slug, name) VALUES ($1, 'runbooks', 'runbooks') RETURNING id`,
+		ts.OrgID).Scan(&tagID))
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedPageAt := func(title string, at time.Time) uuid.UUID {
+		id := uuid.New()
+		_, err := ts.DB.Pool.Exec(context.Background(),
+			`INSERT INTO pages (id, space_id, title, content, author_id, path, updated_at)
+			 VALUES ($1,$2,$3,'body',$4,$5,$6)`,
+			id, codex.ID, title, ts.UserID, id.String(), at)
+		require.NoError(t, err)
+		_, err = ts.DB.Pool.Exec(context.Background(),
+			`INSERT INTO entity_tags (entity_type, entity_id, tag_id) VALUES ('page',$1,$2)`, id, tagID)
+		require.NoError(t, err)
+		return id
+	}
+	seedTicketAt := func(number int32, title string, at time.Time) uuid.UUID {
+		id := uuid.New()
+		_, err := ts.DB.Pool.Exec(context.Background(),
+			`INSERT INTO tickets (id, space_id, number, title, description, reporter_id, updated_at)
+			 VALUES ($1,$2,$3,$4,'body',$5,$6)`,
+			id, beacon.ID, number, title, ts.UserID, at)
+		require.NoError(t, err)
+		_, err = ts.DB.Pool.Exec(context.Background(),
+			`INSERT INTO entity_tags (entity_type, entity_id, tag_id) VALUES ('ticket',$1,$2)`, id, tagID)
+		require.NoError(t, err)
+		return id
+	}
+
+	// Newest to oldest: page, ticket, page, page — so the ordering interleaves
+	// the two modules and the page-one/page-two boundary falls between modules.
+	pageNew := seedPageAt("Newest page", base.AddDate(0, 3, 0))
+	ticketMid := seedTicketAt(1, "Middle ticket", base.AddDate(0, 2, 0))
+	pageMid := seedPageAt("Middle page", base.AddDate(0, 1, 0))
+	pageOld := seedPageAt("Oldest page", base)
+
+	member := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	grantSpaceRole(t, ts, codex.ID, member.ID, "viewer")
+	grantSpaceRole(t, ts, beacon.ID, member.ID, "viewer")
+	token := ts.tokenFor(t, member.ID, member.Email)
+
+	call := func(q string) searchWire {
+		req, err := http.NewRequest(http.MethodGet,
+			ts.url("/api/v1/orgs/"+ts.OrgID.String()+"/search?"+q), nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+token)
+		res := ts.do(t, req)
+		require.Equal(t, http.StatusOK, res.StatusCode, "%s", res.Body)
+		return decodeSearch(t, res.Body)
+	}
+	idOf := func(w searchWire) []string {
+		out := make([]string, 0, len(w.Results))
+		for _, r := range w.Results {
+			out = append(out, fmt.Sprint(r["id"]))
+		}
+		return out
+	}
+
+	want := []string{pageNew.String(), ticketMid.String(), pageMid.String(), pageOld.String()}
+
+	// The whole listing in one page: newest first, interleaved across modules.
+	full := call("q=tag:runbooks&limit=25")
+	require.Equal(t, "ok", full.State)
+	require.Equal(t, want, idOf(full), "a tag-only search lists the tagged set newest first across modules")
+
+	// Two pages of two, walking the cursor. The boundary is between a ticket and
+	// a page — the case a per-module cursor gets wrong.
+	page1 := call("q=tag:runbooks&limit=2")
+	require.Equal(t, want[:2], idOf(page1), "page one is the two newest")
+	require.NotEmpty(t, page1.NextCursor, "a truncated page issues a cursor")
+
+	page2 := call("q=tag:runbooks&limit=2&cursor=" + url.QueryEscape(page1.NextCursor))
+	require.Equal(t, want[2:], idOf(page2), "page two is the rest — no gap, no repeat")
+
+	require.Equal(t, want, append(idOf(page1), idOf(page2)...),
+		"the cursor pages through the recency listing without skipping or repeating a row")
 }
 
 // TestMatrixAPI23_SearchQueriesDoNotGrowWithResults is case 23 for the search
