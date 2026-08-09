@@ -27,6 +27,7 @@ import { MovePageDialog } from '../../components/MovePageDialog';
 import { CodexDocRenderer } from '../../components/codex/CodexDocRenderer';
 import { PageEditor } from '../../components/codex/PageEditor';
 import { EntityTags } from '../../components/tags/EntityTags';
+import { RelationsSection } from '../../components/RelationsSection';
 import { codexMeasureClasses } from '../../components/codex/editorStyles';
 // The revision panel moved out of this file when it stopped being a bare
 // ledger: an author column, a two-version text comparison and restore are
@@ -441,6 +442,21 @@ export function WikiPage() {
                       </p>
                     </div>
                   )}
+
+                  {/* Relations (C4): the shared entity-generic panel, mounted
+                      on the page reading surface as its own block above
+                      Comments. Its own `mt-6 border-t` gives the section
+                      spacing — the same way ItemDetailPage and TicketDetailPage
+                      carry it — so a reader can see and add a page's links
+                      (page→page defaults to a wiki link) without leaving the
+                      page. The write path this reaches has been generic since
+                      A4; this is the control that was missing. */}
+                  <RelationsSection
+                    orgId={orgId}
+                    spaceId={spaceId}
+                    entityType="page"
+                    entityId={activePage.id}
+                  />
 
                   {/* Comments */}
                   <div className="mt-10 border-t border-[var(--color-border)] pt-8">

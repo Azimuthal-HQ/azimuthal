@@ -97,4 +97,81 @@ test.describe('Relations', () => {
     ).toBeVisible({ timeout: 5000 })
     await assertNoErrors(page)
   })
+
+  /**
+   * C4: the journey the maintainer actually attempted. A page in one space is
+   * linked to a page in ANOTHER space through the panel on the page detail
+   * view — the control that never existed until now, even though the write
+   * path has accepted the link since A4. Both directions must render (the
+   * incoming arm the read query unions), and following either far link must
+   * land on the other page in ITS OWN space's chrome, since the href is built
+   * from far_space_id rather than the near page's space.
+   */
+  test('a page links to a page in another space through the panel, and both far links cross spaces', async ({ page }) => {
+    await createUserAndLogin(page)
+
+    // Titles carry the run stamp so the org-wide page suggest cannot match a
+    // leftover from another worker, and so each far link's accessible name is
+    // unique to this test.
+    const stamp = Date.now()
+    const pageATitle = `Origin Page ${stamp}`
+    const pageBTitle = `Target Page ${stamp}`
+
+    // Two codex spaces, one page in each — the cross-space fixture the whole
+    // journey needs.
+    const spaceA = await createSpace(page, 'Cross Space Wiki A', 'codex')
+    await page.getByRole('button', { name: 'New page' }).click()
+    await page.fill('#page-title', pageATitle)
+    await page.locator('[role="dialog"] button:has-text("Create Page")').click()
+    await expect(page.getByTestId('wiki-page-title')).toContainText(pageATitle, { timeout: 5000 })
+
+    const spaceB = await createSpace(page, 'Cross Space Wiki B', 'codex')
+    await page.getByRole('button', { name: 'New page' }).click()
+    await page.fill('#page-title', pageBTitle)
+    await page.locator('[role="dialog"] button:has-text("Create Page")').click()
+    await expect(page.getByTestId('wiki-page-title')).toContainText(pageBTitle, { timeout: 5000 })
+
+    // Back onto page A — its single page auto-selects — where the panel lives.
+    await page.goto(`/codex/${spaceA}`)
+    await expect(page.getByTestId('wiki-page-title')).toContainText(pageATitle, { timeout: 10000 })
+    await expect(page.getByTestId('relations-section')).toBeVisible()
+
+    // A page's only target is a page, so the add-row goes straight to the
+    // picker: no target-type select to switch, and wiki_link is the default.
+    await expect(page.getByLabel('Relation target type')).toHaveCount(0)
+
+    const created = page.waitForResponse(
+      (r) => r.request().method() === 'POST' && /\/relations$/.test(r.url()),
+    )
+    await page.getByTestId('relation-page-ref').fill(pageBTitle)
+    await page.getByTestId('relation-page-ref-suggestions').getByText(pageBTitle).click()
+    const createdResp = await created
+    expect(createdResp.status(), 'the page→page relation POST must succeed').toBe(201)
+    // The default the C4 change adds reaches the wire as the payload, not just
+    // the select's displayed value.
+    const body = JSON.parse(createdResp.request().postData() ?? '{}')
+    expect(body.to_type).toBe('page')
+    expect(body.kind).toBe('wiki_link')
+
+    // Outgoing far side on A: page B's title, linked into B's OWN space.
+    const farLink = page.getByTestId('relations-section').getByRole('link', { name: pageBTitle })
+    await expect(farLink).toBeVisible({ timeout: 5000 })
+    await expect(farLink).toHaveAttribute('href', new RegExp(`/codex/${spaceB}/pages/`))
+
+    await farLink.click()
+    await expect(page).toHaveURL(new RegExp(`/codex/${spaceB}/pages/`), { timeout: 10000 })
+    await expect(page.getByTestId('wiki-page-title')).toContainText(pageBTitle, { timeout: 5000 })
+
+    // The reciprocal, with no second write: page B's panel shows the incoming
+    // link back to A, into A's own space, and it returns there when followed.
+    await expect(page.getByTestId('relations-section')).toBeVisible()
+    const backLink = page.getByTestId('relations-section').getByRole('link', { name: pageATitle })
+    await expect(backLink).toBeVisible({ timeout: 5000 })
+    await expect(backLink).toHaveAttribute('href', new RegExp(`/codex/${spaceA}/pages/`))
+
+    await backLink.click()
+    await expect(page).toHaveURL(new RegExp(`/codex/${spaceA}/pages/`), { timeout: 10000 })
+    await expect(page.getByTestId('wiki-page-title')).toContainText(pageATitle, { timeout: 5000 })
+    await assertNoErrors(page)
+  })
 })
