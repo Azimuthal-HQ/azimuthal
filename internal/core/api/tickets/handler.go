@@ -1155,6 +1155,10 @@ func handleTicketFieldError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, customfields.ErrEntityNotFound):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, tickets.ErrNotFound.Error())
 	case errors.Is(err, customfields.ErrUndefinedField),
+		// ErrFieldArchived: the archived twin of the never-defined refusal,
+		// answered with the same 404 and an honest message (the disclosure
+		// reasoning lives on the sentinel and in handleCustomFieldError).
+		errors.Is(err, customfields.ErrFieldArchived),
 		errors.Is(err, customfields.ErrFieldNotInScope):
 		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, err.Error())
 	case errors.Is(err, customfields.ErrInvalidValue),

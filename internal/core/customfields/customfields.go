@@ -77,6 +77,22 @@ var (
 	ErrUndefinedField  = errors.New("no active custom field with this slug")
 	ErrInvalidValue    = errors.New("value does not match the field type")
 
+	// ErrFieldArchived is ErrUndefinedField's archived twin: the field once
+	// existed and its stored value still renders read-only ("legacy"), so a
+	// write is refused by naming archival rather than claiming the slug was
+	// never defined. Distinguishing the two is the whole of the C3 fix — it lets
+	// the detail form say "this field was archived" instead of the bare
+	// "Could not save." it showed while leaving an archived control editable
+	// with its required marker.
+	//
+	// handleCustomFieldError (items) and handleTicketFieldError (tickets) answer
+	// it with the SAME 404 as ErrUndefinedField, so the status contract and the
+	// scoping battery's envelope parity are untouched — only the message text
+	// changes. Naming "archived" discloses nothing a member could not already
+	// learn: field definitions are member-readable on this org-internal surface,
+	// so the archived state is listable regardless of what this refusal says.
+	ErrFieldArchived = errors.New("this custom field was archived; its stored value is read-only and cannot be changed")
+
 	// ErrInvalidEntityType refuses a value outside the migration 053 CHECK
 	// vocabulary before it reaches the database as a constraint violation.
 	ErrInvalidEntityType = errors.New("entity type must be ticket, project_item, or page")
@@ -621,7 +637,7 @@ func composeRendered(defs []*FieldDef, scopes []FieldScope, stored []StoredValue
 // the clear is refused with an error naming the field: required is enforced at
 // the write, and a required field cannot be written back to absent. Values for
 // undefined, archived, or unattached fields cannot be written — they are
-// read-only (ErrUndefinedField / ErrFieldNotInScope).
+// read-only (ErrUndefinedField / ErrFieldArchived / ErrFieldNotInScope).
 //
 // The space predicate travels INTO the statement (UpsertEntityFieldValue /
 // DeleteEntityFieldValue): an entity outside spaceID matches zero rows and
@@ -656,7 +672,11 @@ func (s *Service) SetValue(ctx context.Context, orgID, spaceID uuid.UUID, entity
 
 // writableField resolves the definition and attachment a value write goes
 // through: the field must exist, be active, and be attached to this
-// (space, entity type) form — anything else is read-only here.
+// (space, entity type) form — anything else is read-only here. Each read-only
+// outcome carries its own sentinel so the surface can name the cause rather
+// than fall back to a generic refusal: never defined (ErrUndefinedField),
+// defined but archived (ErrFieldArchived), and defined but not attached to this
+// form (ErrFieldNotInScope).
 func (s *Service) writableField(ctx context.Context, orgID, spaceID uuid.UUID, entityType, slug string) (*FieldDef, *FieldScope, error) {
 	def, err := s.defs.GetByOrgSlug(ctx, orgID, slug)
 	if errors.Is(err, ErrNotFound) {
@@ -666,7 +686,7 @@ func (s *Service) writableField(ctx context.Context, orgID, spaceID uuid.UUID, e
 		return nil, nil, fmt.Errorf("resolving custom field: %w", err)
 	}
 	if def.ArchivedAt != nil {
-		return nil, nil, ErrUndefinedField
+		return nil, nil, ErrFieldArchived
 	}
 	scope, err := s.scopes.Get(ctx, def.ID, spaceID, entityType)
 	if errors.Is(err, ErrScopeNotFound) {

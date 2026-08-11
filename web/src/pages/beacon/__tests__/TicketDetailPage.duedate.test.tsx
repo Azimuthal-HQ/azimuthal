@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TicketDetailPage } from '../TicketDetailPage';
 
@@ -79,12 +80,19 @@ const baseTicket = {
 };
 
 function renderDetail() {
+  // CustomFieldsSection (rendered in the rail) reads useQueryClient to refetch
+  // on a failed save, so the tree needs a provider exactly as production does —
+  // the same reason the render is wrapped in a router. The api layer is mocked
+  // wholesale, so this client's cache is never actually consulted.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter initialEntries={['/beacon/s1/tickets/ticket-1']}>
-      <Routes>
-        <Route path="/beacon/:spaceId/tickets/:ticketId" element={<TicketDetailPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/beacon/s1/tickets/ticket-1']}>
+        <Routes>
+          <Route path="/beacon/:spaceId/tickets/:ticketId" element={<TicketDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
