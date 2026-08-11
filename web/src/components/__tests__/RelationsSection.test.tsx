@@ -52,7 +52,22 @@ const restrictedRelation: Relation = {
   far_space_id: null,
 };
 
-function renderSection(entityType: 'project_item' | 'ticket' = 'project_item') {
+// C4: an incoming link the read query unioned — a ticket that named this page.
+// It must render its own identity and a link into Beacon, in the ticket's OWN
+// space, so the page shows the reciprocal without any new write path.
+const ticketIncomingRelation: Relation = {
+  id: 'rel-3',
+  kind: 'relates_to',
+  direction: 'incoming',
+  far_readable: true,
+  far_id: 'ticket-42',
+  far_type: 'ticket',
+  far_title: 'Investigate the outage',
+  far_status: 'open',
+  far_space_id: 'space-desk',
+};
+
+function renderSection(entityType: 'project_item' | 'ticket' | 'page' = 'project_item') {
   return render(
     <MemoryRouter>
       <RelationsSection orgId="org-1" spaceId="space-1" entityType={entityType} entityId="ent-1" />
@@ -148,5 +163,92 @@ describe('RelationsSection', () => {
       to_type: 'project_item',
       kind: 'relates_to',
     });
+  });
+
+  // C4: the panel a page's routes have been waiting for. A page links to a
+  // page — the org-wide PageRefField, the maintainer's blocked cross-space
+  // use case — and page→page defaults to a wiki link.
+  it('renders on a page and offers the page picker directly, with no work-item target', () => {
+    renderSection('page');
+
+    expect(screen.getByTestId('relations-section')).toBeInTheDocument();
+    // A page's only target is a page, so there is no target-type select — the
+    // presence of one would mean the work-item picker leaked onto this surface.
+    expect(screen.queryByLabelText('Relation target type')).not.toBeInTheDocument();
+    expect(screen.getByTestId('relation-page-ref')).toBeInTheDocument();
+  });
+
+  it('a page defaults its relation kind to wiki link', () => {
+    renderSection('page');
+
+    const select = screen.getByLabelText('Relation kind') as HTMLSelectElement;
+    // The default the C4 change adds — an item or ticket still defaults to
+    // relates_to, so this assertion fails if the page near side is not special.
+    expect(select.value).toBe('wiki_link');
+  });
+
+  it('creating a page→page relation submits a typed page target with the wiki_link default', () => {
+    pageSuggestionsHook.mockImplementation((orgId: string, q: string) => ({
+      data:
+        orgId && q
+          ? [{ page_id: 'page-9', title: 'Sibling page', space_id: 'space-b', space_key: 'DOCB', space_name: 'Book B' }]
+          : [],
+      isLoading: false,
+    }));
+    renderSection('page');
+
+    const input = screen.getByTestId('relation-page-ref');
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'sibling' } });
+    fireEvent.click(screen.getByTestId('relation-page-ref-option-page-9'));
+
+    expect(createMutate).toHaveBeenCalledWith({
+      to_id: 'page-9',
+      to_type: 'page',
+      kind: 'wiki_link',
+    });
+  });
+
+  it('a page can still submit any kind — the wiki_link default does not lock the select', () => {
+    pageSuggestionsHook.mockImplementation((orgId: string, q: string) => ({
+      data:
+        orgId && q
+          ? [{ page_id: 'page-9', title: 'Sibling page', space_id: 'space-b', space_key: 'DOCB', space_name: 'Book B' }]
+          : [],
+      isLoading: false,
+    }));
+    renderSection('page');
+
+    // Override the default, then submit: the chosen kind must reach the wire.
+    fireEvent.change(screen.getByLabelText('Relation kind'), { target: { value: 'relates_to' } });
+    const input = screen.getByTestId('relation-page-ref');
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'sibling' } });
+    fireEvent.click(screen.getByTestId('relation-page-ref-option-page-9'));
+
+    expect(createMutate).toHaveBeenCalledWith({
+      to_id: 'page-9',
+      to_type: 'page',
+      kind: 'relates_to',
+    });
+  });
+
+  it('renders an incoming relation from a ticket with its identity and a link into its own space', () => {
+    relationsHook.mockReturnValue({ data: [ticketIncomingRelation] });
+    renderSection('page');
+
+    const link = screen.getByTestId('relation-far-link-rel-3');
+    expect(link).toHaveTextContent('Investigate the outage');
+    // The ticket's OWN space, in Beacon — the reciprocal renders with a real
+    // identity, not the restricted placeholder.
+    expect(link).toHaveAttribute('href', '/beacon/space-desk/tickets/ticket-42');
+  });
+
+  it('keeps an unreadable far side identity-free on the page surface too', () => {
+    relationsHook.mockReturnValue({ data: [restrictedRelation] });
+    renderSection('page');
+
+    expect(screen.getByText('Restricted item')).toBeInTheDocument();
+    expect(screen.queryByTestId('relation-far-link-rel-2')).not.toBeInTheDocument();
   });
 });

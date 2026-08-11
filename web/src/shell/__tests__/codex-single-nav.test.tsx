@@ -84,6 +84,25 @@ vi.mock('../../lib/api', () => ({
   useSpacePageShares: vi.fn(() => ({ data: [] })),
   pageShareState: vi.fn(() => ({ shared: false, viaCascade: false })),
   friendlyErrorMessage: vi.fn((_err: unknown, fallback: string) => fallback),
+  // C4 mounts RelationsSection on the page read surface, so the WikiPage this
+  // shell renders now reaches these relation hooks and the page picker's
+  // suggest. Stubbed empty — a navigation test asserts nothing about
+  // relations. The kind vocabulary and its exhaustiveness guard are owned by
+  // RelationsSection.test.tsx (which uses the REAL constant); this copy exists
+  // only so the read surface's kind select has options to map, and the nav
+  // test never reads them.
+  RELATION_KINDS: [
+    { value: 'relates_to', label: 'relates to' },
+    { value: 'blocks', label: 'blocks' },
+    { value: 'is_blocked_by', label: 'is blocked by' },
+    { value: 'duplicates', label: 'duplicates' },
+    { value: 'wiki_link', label: 'wiki link' },
+  ],
+  useRelations: vi.fn(() => ({ data: [] })),
+  useCreateRelation: vi.fn(() => ({ mutate: vi.fn(), mutateAsync: vi.fn() })),
+  useDeleteRelation: vi.fn(() => ({ mutate: vi.fn() })),
+  useItemSearch: vi.fn(() => ({ data: [] })),
+  usePageSuggestions: vi.fn(() => ({ data: [], isLoading: false })),
 }));
 
 vi.mock('../../lib/auth', () => ({
@@ -120,13 +139,19 @@ describe('Codex single navigation panel (ADR-0005)', () => {
   it('renders exactly one page search affordance', () => {
     renderCodexPageView();
 
-    // One search input — the sidebar's scoped search…
-    const searchInputs = screen.getAllByPlaceholderText(/search/i);
+    // One page-navigation search — the sidebar's scoped search. Scoped to the
+    // sidebar deliberately: ADR-0005's claim is that the SIDEBAR owns page
+    // navigation, not that no other input on the page may say "search". The
+    // content area now legitimately carries its own (the C4 relations panel's
+    // page picker, "Search pages…"), so a document-wide count would fail here
+    // for a reason unrelated to the single-nav invariant this asserts.
+    const sidebar = screen.getByTestId('space-sidebar');
+    const searchInputs = within(sidebar).getAllByPlaceholderText(/search/i);
     expect(searchInputs).toHaveLength(1);
     expect(searchInputs[0]).toHaveAccessibleName('Search this wiki');
     // …and no second search affordance disguised as a button (the old
     // sidebar row that navigated to the placeholder route).
-    expect(screen.queryByRole('button', { name: /search/i })).not.toBeInTheDocument();
+    expect(within(sidebar).queryByRole('button', { name: /search/i })).not.toBeInTheDocument();
   });
 
   it('renders exactly one page tree, inside the sidebar', () => {

@@ -18,7 +18,7 @@ export interface RelationsSectionProps {
   orgId: string;
   spaceId: string;
   /** The entity whose panel this is — the near side of every relation shown. */
-  entityType: Extract<RelationEntityType, 'project_item' | 'ticket'>;
+  entityType: RelationEntityType;
   entityId: string;
 }
 
@@ -32,24 +32,39 @@ export interface RelationsSectionProps {
  * Target pickers by near side:
  *  - a project item links to another WORK ITEM (the in-space search this
  *    section has always had) or to a PAGE (the org-wide suggest typeahead);
- *  - a ticket links to a PAGE. Ticket-to-ticket linking has no picker yet —
- *    the API accepts it, and a picker can join this select without reshaping
- *    anything here.
+ *  - a ticket links to a PAGE;
+ *  - a page (C4) links to a PAGE — the same org-wide PageRefField, which is
+ *    exactly the cross-space page→page link the write path has accepted since
+ *    A4 but no surface could reach. Its default kind is `wiki_link`, the kind
+ *    built for that meaning; the full kind vocabulary stays offered.
+ *
+ * A ticket target is deliberately NOT offered here (C4). TicketRefField is a
+ * free-text field that resolves to a ticket's `ref` string, not its id — a
+ * relation target is a typed (type, id), and submitting a ref where the API
+ * needs a UUID is the exact addressing bug C2 found. Wiring one would mean a
+ * new id-resolving picker or reshaping TicketRefField into a selection field
+ * its own contract forbids; ticket-to-ticket/ticket-target linking waits for
+ * that picker and joins this select without reshaping anything here. The
+ * reciprocal already works: a ticket or item that names a page renders on the
+ * page's panel via the incoming direction the read query unions.
  *
  * A readable far side is a LINK to the entity it names, built from far_type +
  * far_space_id — the far side's OWN space, because relations cross spaces and
- * this panel's space is not a substitute. An unreadable far side stays the
- * identity-free placeholder row (D82): the panel may say a link exists, and
- * nothing more.
+ * this panel's space is not a substitute. For a page near side both ends are
+ * pages, so both resolve to `/codex/{far_space_id}/...` links. An unreadable
+ * far side stays the identity-free placeholder row (D82): the panel may say a
+ * link exists, and nothing more.
  */
 export function RelationsSection({ orgId, spaceId, entityType, entityId }: RelationsSectionProps) {
   const { data: relations = [] } = useRelations(spaceId, entityType, entityId);
   const createRelationMutation = useCreateRelation(spaceId, entityType, entityId);
   const deleteRelationMutation = useDeleteRelation(spaceId, entityType, entityId);
-  const [relKind, setRelKind] = useState('relates_to');
+  // page→page defaults to wiki_link — the kind built for that meaning; every
+  // other near side keeps the neutral relates_to. The full select stays live.
+  const [relKind, setRelKind] = useState(entityType === 'page' ? 'wiki_link' : 'relates_to');
 
   // Which picker the add-row shows. Items default to their historical item
-  // search; tickets have only the page picker today.
+  // search; tickets and pages have only the org-wide page picker.
   const targetChoices: Array<{ value: 'project_item' | 'page'; label: string }> =
     entityType === 'project_item'
       ? [

@@ -108,6 +108,15 @@ vi.mock('../../../lib/api', async (importOriginal) => {
     useCreateComment: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useEffectiveAccess: () => ({ data: { org_admin: false, role: 'member' } }),
     useSpacePageShares: () => ({ data: [] }),
+    // C4 mounts RelationsSection on the page read surface, so WikiPage now
+    // reaches these relation hooks and the page picker's suggest. Stubbed to
+    // empty — this is a sanitiser test, not a relations one. (RELATION_KINDS
+    // comes through from `...actual`, so the kind select still renders.)
+    useRelations: () => ({ data: [] }),
+    useCreateRelation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    useDeleteRelation: () => ({ mutate: vi.fn() }),
+    useItemSearch: () => ({ data: [] }),
+    usePageSuggestions: () => ({ data: [], isLoading: false }),
   };
 });
 
