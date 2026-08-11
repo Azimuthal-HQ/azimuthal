@@ -89,8 +89,14 @@ type Result struct {
 // never a hint: none may be widened, and the service refuses to run the fan-out
 // when they are all empty.
 type FanoutParams struct {
-	OrgID            uuid.UUID
-	Query            string
+	OrgID uuid.UUID
+	Query string
+	// HasText reports whether Query has a non-empty tsquery to match and rank.
+	// When false the module queries drop the `@@` text predicate and order by
+	// recency instead of ts_rank — a tag-only search is a listing, newest first.
+	// It reaches here false only alongside a tag filter; the service refuses an
+	// empty tsquery with no filter upstream.
+	HasText          bool
 	ReadableSpaceIDs []uuid.UUID
 	SharedPageIDs    []uuid.UUID
 	SharedTicketIDs  []uuid.UUID
@@ -172,6 +178,12 @@ func NewService(store Store) *Service { return &Service{store: store} }
 // fan-out, because an empty tsquery matches nothing and would otherwise return
 // a plausible empty page — which is precisely the shape that makes every
 // "the unreadable row does not appear" assertion pass vacuously.
+//
+// The emptiness check is empty tsquery AND no tag filter, not empty tsquery
+// alone: a `tag:` filter is itself a reason to search, so `tag:x` with no free
+// text runs (a listing of what carries the tag) rather than answering
+// no_searchable_terms. That state stays correct for a query that genuinely
+// cannot match anything — pure stopwords with no filter.
 func (s *Service) Search(ctx context.Context, req Request) (Page, error) {
 	q := Parse(req.Raw)
 	page := Page{Results: []Result{}, Modules: q.Modules, TagSlug: q.TagSlug, State: StateOK}
@@ -185,7 +197,8 @@ func (s *Service) Search(ctx context.Context, req Request) (Page, error) {
 	if err != nil {
 		return Page{}, fmt.Errorf("parsing the search query: %w", err)
 	}
-	if strings.TrimSpace(parsed) == "" {
+	hasText := strings.TrimSpace(parsed) != ""
+	if !hasText && !q.TagFiltered() {
 		page.State = StateNoSearchableTerms
 		return page, nil
 	}
@@ -200,6 +213,7 @@ func (s *Service) Search(ctx context.Context, req Request) (Page, error) {
 	p := FanoutParams{
 		OrgID:            req.OrgID,
 		Query:            q.Text,
+		HasText:          hasText,
 		ReadableSpaceIDs: req.ReadableSpaceIDs,
 		SharedPageIDs:    req.SharedPageIDs,
 		SharedTicketIDs:  req.SharedTicketIDs,

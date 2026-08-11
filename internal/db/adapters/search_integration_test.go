@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -89,6 +90,40 @@ func (f *searchFixture) item(t *testing.T, spaceID uuid.UUID, num int, key, titl
 	return id
 }
 
+// pageAt inserts a page with an explicit updated_at, so recency ordering is
+// deterministic. set_updated_at (migration 009) is a BEFORE UPDATE trigger, so
+// it does not fire on INSERT and the value is preserved.
+func (f *searchFixture) pageAt(t *testing.T, spaceID uuid.UUID, title string, updatedAt time.Time) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	_, err := f.pool.Exec(context.Background(),
+		`INSERT INTO pages (id, space_id, title, content, author_id, path, updated_at)
+		 VALUES ($1,$2,$3,'body',$4,$5,$6)`,
+		id, spaceID, title, f.userID, id.String(), updatedAt)
+	require.NoError(t, err)
+	return id
+}
+
+// tag creates an org-scoped tag and returns its id.
+func (f *searchFixture) tag(t *testing.T, slug string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	require.NoError(t, f.pool.QueryRow(context.Background(),
+		`INSERT INTO tags (org_id, slug, name) VALUES ($1,$2,$2) RETURNING id`,
+		f.orgID, slug).Scan(&id))
+	return id
+}
+
+// tagEntity associates a tag with an entity. entityType is 'page', 'ticket' or
+// 'project_item', matching the search queries' own entity_type literals.
+func (f *searchFixture) tagEntity(t *testing.T, entityType string, entityID, tagID uuid.UUID) {
+	t.Helper()
+	_, err := f.pool.Exec(context.Background(),
+		`INSERT INTO entity_tags (entity_type, entity_id, tag_id) VALUES ($1,$2,$3)`,
+		entityType, entityID, tagID)
+	require.NoError(t, err)
+}
+
 func ids(rows []search.Result) []uuid.UUID {
 	out := make([]uuid.UUID, 0, len(rows))
 	for _, r := range rows {
@@ -117,7 +152,7 @@ func TestSearch_HiddenSpaceNeverLeaks(t *testing.T) {
 	theirsItem := f.item(t, f.otherSp, 2, "HID-2", "Kestrel embargo", "body")
 
 	readable := []uuid.UUID{f.openSp}
-	p := search.FanoutParams{OrgID: f.orgID, Query: "kestrel", ReadableSpaceIDs: readable, Limit: 50}
+	p := search.FanoutParams{OrgID: f.orgID, Query: "kestrel", HasText: true, ReadableSpaceIDs: readable, Limit: 50}
 
 	pages, err := f.adapter.SearchPages(ctx, p)
 	require.NoError(t, err)
@@ -163,7 +198,7 @@ func TestSearch_SharedSubtreeDescendantIsFindable(t *testing.T) {
 	subSpaces, subPatterns := se.CascadeSubtreeArrays()
 
 	rows, err := f.adapter.SearchPages(ctx, search.FanoutParams{
-		OrgID: f.orgID, Query: "kestrel",
+		OrgID: f.orgID, Query: "kestrel", HasText: true,
 		ReadableSpaceIDs: []uuid.UUID{f.openSp}, // deliberately NOT otherSp
 		SharedPageIDs:    se.DirectIDs(access.ShareEntityPage),
 		SubtreeSpaceIDs:  subSpaces,
@@ -218,7 +253,7 @@ func TestSearch_CascadeSubtreeDoesNotWidenAcrossSpaces(t *testing.T) {
 	subSpaces, subPatterns := se.CascadeSubtreeArrays()
 
 	rows, err := f.adapter.SearchPages(ctx, search.FanoutParams{
-		OrgID: f.orgID, Query: "kestrel",
+		OrgID: f.orgID, Query: "kestrel", HasText: true,
 		ReadableSpaceIDs: nil, // shares are the ONLY access, so the arm is isolated
 		SharedPageIDs:    se.DirectIDs(access.ShareEntityPage),
 		SubtreeSpaceIDs:  subSpaces,
@@ -270,6 +305,7 @@ func TestSearch_NonMatchingQueryReturnsNothingForASharedViewer(t *testing.T) {
 
 	base := search.FanoutParams{
 		OrgID:            f.orgID,
+		HasText:          true, // both copies below set a non-empty Query
 		ReadableSpaceIDs: []uuid.UUID{f.openSp},
 		SharedPageIDs:    se.DirectIDs(access.ShareEntityPage),
 		SubtreeSpaceIDs:  subSpaces,
@@ -316,7 +352,7 @@ func TestSearch_TwoViewersDivergeOnOneQuery(t *testing.T) {
 	})
 
 	rowsA, err := f.adapter.SearchPages(ctx, search.FanoutParams{
-		OrgID: f.orgID, Query: "kestrel",
+		OrgID: f.orgID, Query: "kestrel", HasText: true,
 		ReadableSpaceIDs: []uuid.UUID{f.openSp},
 		SharedPageIDs:    seA.DirectIDs(access.ShareEntityPage),
 		Limit:            50,
@@ -324,7 +360,7 @@ func TestSearch_TwoViewersDivergeOnOneQuery(t *testing.T) {
 	require.NoError(t, err)
 
 	rowsB, err := f.adapter.SearchPages(ctx, search.FanoutParams{
-		OrgID: f.orgID, Query: "kestrel",
+		OrgID: f.orgID, Query: "kestrel", HasText: true,
 		ReadableSpaceIDs: []uuid.UUID{f.otherSp},
 		SharedPageIDs:    seB.DirectIDs(access.ShareEntityPage),
 		Limit:            50,
@@ -338,11 +374,11 @@ func TestSearch_TwoViewersDivergeOnOneQuery(t *testing.T) {
 	// The divergence that matters: strip the shares and the two viewers see
 	// disjoint sets. Same query, same corpus, different answers.
 	onlyA, err := f.adapter.SearchPages(ctx, search.FanoutParams{
-		OrgID: f.orgID, Query: "kestrel", ReadableSpaceIDs: []uuid.UUID{f.openSp}, Limit: 50,
+		OrgID: f.orgID, Query: "kestrel", HasText: true, ReadableSpaceIDs: []uuid.UUID{f.openSp}, Limit: 50,
 	})
 	require.NoError(t, err)
 	onlyB, err := f.adapter.SearchPages(ctx, search.FanoutParams{
-		OrgID: f.orgID, Query: "kestrel", ReadableSpaceIDs: []uuid.UUID{f.otherSp}, Limit: 50,
+		OrgID: f.orgID, Query: "kestrel", HasText: true, ReadableSpaceIDs: []uuid.UUID{f.otherSp}, Limit: 50,
 	})
 	require.NoError(t, err)
 	require.Equal(t, []uuid.UUID{aPage}, ids(onlyA))
@@ -358,7 +394,7 @@ func TestSearch_IndexIsFreshOnWriteAndUpdate(t *testing.T) {
 	readable := []uuid.UUID{f.openSp}
 
 	tkt := f.ticket(t, f.openSp, 1, "Helmfile rollout", "body")
-	p := search.FanoutParams{OrgID: f.orgID, Query: "helmfile", ReadableSpaceIDs: readable, Limit: 50}
+	p := search.FanoutParams{OrgID: f.orgID, Query: "helmfile", HasText: true, ReadableSpaceIDs: readable, Limit: 50}
 
 	rows, err := f.adapter.SearchTickets(ctx, p)
 	require.NoError(t, err)
@@ -392,7 +428,7 @@ func TestSearch_TitleOutranksBodyAcrossModules(t *testing.T) {
 	titleTicket := f.ticket(t, f.openSp, 1, "Kestrel", "unrelated prose")
 	bodyTicket := f.ticket(t, f.openSp, 2, "Unrelated heading", "kestrel appears only here")
 
-	p := search.FanoutParams{OrgID: f.orgID, Query: "kestrel", ReadableSpaceIDs: readable, Limit: 50}
+	p := search.FanoutParams{OrgID: f.orgID, Query: "kestrel", HasText: true, ReadableSpaceIDs: readable, Limit: 50}
 	pages, err := f.adapter.SearchPages(ctx, p)
 	require.NoError(t, err)
 	tickets, err := f.adapter.SearchTickets(ctx, p)
@@ -429,7 +465,7 @@ func TestSearch_ItemKeyIsSearchable(t *testing.T) {
 	f.item(t, f.openSp, 2, "VEC-15", "Rollback plan", "body")
 
 	rows, err := f.adapter.SearchProjectItems(ctx, search.FanoutParams{
-		OrgID: f.orgID, Query: "VEC-14", ReadableSpaceIDs: []uuid.UUID{f.openSp}, Limit: 50,
+		OrgID: f.orgID, Query: "VEC-14", HasText: true, ReadableSpaceIDs: []uuid.UUID{f.openSp}, Limit: 50,
 	})
 	require.NoError(t, err)
 	require.Equal(t, []uuid.UUID{target}, ids(rows), "an item is findable by its key")
@@ -512,4 +548,125 @@ func TestSearch_SnippetsHighlightWithoutMarkup(t *testing.T) {
 	gotI, err := f.adapter.Snippets(ctx, search.ModuleVector, "kestrel", []uuid.UUID{item})
 	require.NoError(t, err)
 	require.Contains(t, gotI[item], stx+"kestrel"+etx)
+}
+
+// TestSearch_TagOnlyFiltersEachKind is C1 at the SQL layer, for all three
+// module queries: a bare tag: query (HasText false, so no `@@` text predicate)
+// returns the tagged row of every kind and excludes an untagged sibling in the
+// SAME readable space. Without the conditional text predicate the query would
+// have matched an empty tsquery and returned nothing; without the tag arm being
+// what filters, the untagged sibling would come back too.
+//
+// Fails-before: this test cannot even be written against the old query — a bare
+// tag: query never reached the fan-out. Against the SQL as edited, dropping the
+// tag arm surfaces the untagged sibling, and reinstating the unconditional `@@`
+// match returns nothing (empty tsquery matches no row).
+func TestSearch_TagOnlyFiltersEachKind(t *testing.T) {
+	ctx := context.Background()
+	f := newSearchFixture(t)
+	tagID := f.tag(t, "runbooks")
+	readable := []uuid.UUID{f.openSp}
+
+	// One tagged and one untagged row per kind, all in the readable space.
+	taggedPage := f.page(t, f.openSp, "Anything at all", "body", "")
+	untaggedPage := f.page(t, f.openSp, "Anything at all", "body", "")
+	f.tagEntity(t, "page", taggedPage, tagID)
+
+	taggedTicket := f.ticket(t, f.openSp, 1, "Anything", "body")
+	untaggedTicket := f.ticket(t, f.openSp, 2, "Anything", "body")
+	f.tagEntity(t, "ticket", taggedTicket, tagID)
+
+	taggedItem := f.item(t, f.openSp, 1, "OPEN-1", "Anything", "body")
+	untaggedItem := f.item(t, f.openSp, 2, "OPEN-2", "Anything", "body")
+	f.tagEntity(t, "project_item", taggedItem, tagID)
+
+	// A tagged row in a space the viewer cannot read: the tag filter widens what
+	// the query runs, never what it may see.
+	hidden := f.page(t, f.otherSp, "Anything at all", "body", "")
+	f.tagEntity(t, "page", hidden, tagID)
+
+	// HasText false, tag filter on — the bare tag: shape the service builds.
+	p := search.FanoutParams{
+		OrgID: f.orgID, HasText: false, FilterTag: true, TagID: tagID,
+		ReadableSpaceIDs: readable, Limit: 50,
+	}
+
+	pages, err := f.adapter.SearchPages(ctx, p)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{taggedPage}, ids(pages), "pages: only the tagged, readable page")
+	require.NotContains(t, ids(pages), untaggedPage, "an untagged page is filtered out by the tag arm")
+	require.NotContains(t, ids(pages), hidden, "a tagged page in an unreadable space still never leaks")
+
+	tickets, err := f.adapter.SearchTickets(ctx, p)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{taggedTicket}, ids(tickets), "tickets: only the tagged one")
+	require.NotContains(t, ids(tickets), untaggedTicket)
+
+	items, err := f.adapter.SearchProjectItems(ctx, p)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{taggedItem}, ids(items), "items: only the tagged one")
+	require.NotContains(t, ids(items), untaggedItem)
+}
+
+// TestSearch_TagOnlyOrdersByRecencyAndPagesStably pins the ranking decision for
+// a tag-only search and its cursor. ts_rank against an empty tsquery is a
+// constant and cannot order anything, so a tag-only search is a listing newest
+// first; the (sort_key, id) keyset must page through it with no gap and no
+// repeat, exactly as the ranked path does.
+//
+// The untagged page is the NEWEST of all: were the tag arm not applied, a
+// recency listing would put it first, so its absence proves the filter is doing
+// the ordering's gatekeeping rather than "return everything, newest first".
+//
+// Fails-before: unwritable against the old query — a tag-only search never ran.
+// Against the edited query, reverting the sort-key lateral to the ts_rank-only
+// key collapses every row onto a constant, the order falls to the id tiebreaker,
+// and the recency-order assertion fails.
+func TestSearch_TagOnlyOrdersByRecencyAndPagesStably(t *testing.T) {
+	ctx := context.Background()
+	f := newSearchFixture(t)
+	tagID := f.tag(t, "runbooks")
+
+	// Three tagged pages, oldest to newest, plus a NEWER untagged one.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	p1 := f.pageAt(t, f.openSp, "First", base)
+	p2 := f.pageAt(t, f.openSp, "Second", base.AddDate(0, 1, 0))
+	p3 := f.pageAt(t, f.openSp, "Third", base.AddDate(0, 2, 0))
+	untagged := f.pageAt(t, f.openSp, "Newest untagged", base.AddDate(1, 0, 0))
+	for _, id := range []uuid.UUID{p1, p2, p3} {
+		f.tagEntity(t, "page", id, tagID)
+	}
+
+	base3 := search.FanoutParams{
+		OrgID: f.orgID, HasText: false, FilterTag: true, TagID: tagID,
+		ReadableSpaceIDs: []uuid.UUID{f.openSp},
+	}
+
+	// The whole listing, newest first, and the untagged newest row absent.
+	full := base3
+	full.Limit = 50
+	all, err := f.adapter.SearchPages(ctx, full)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{p3, p2, p1}, ids(all), "a tag-only search lists the tagged set newest first")
+	require.NotContains(t, ids(all), untagged, "the untagged row is filtered even though it is the newest")
+
+	// Page one: two rows, then a keyset cursor built from the LAST returned row.
+	pg := base3
+	pg.Limit = 2
+	page1, err := f.adapter.SearchPages(ctx, pg)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{p3, p2}, ids(page1), "page one is the two newest, in order")
+
+	// Page two resumes strictly after the last row of page one.
+	pg2 := base3
+	pg2.Limit = 2
+	pg2.CursorKey = page1[1].SortKey
+	pg2.CursorID = page1[1].ID
+	page2, err := f.adapter.SearchPages(ctx, pg2)
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{p1}, ids(page2), "page two is the remaining row — no gap, no repeat")
+
+	// The two pages together are the whole listing exactly once.
+	require.Equal(t, []uuid.UUID{p3, p2, p1}, append(ids(page1), ids(page2)...),
+		"the keyset pages through the recency ordering without skipping or repeating a row")
 }

@@ -22,16 +22,22 @@ SELECT p.id, p.space_id, p.parent_id, p.title, p.path, p.version, p.author_id,
 FROM pages p
 JOIN spaces s ON s.id = p.space_id AND s.deleted_at IS NULL
 CROSS JOIN LATERAL (
-    SELECT CAST(search_sort_key(
-               ts_rank(p.search_vector,
-                       websearch_to_tsquery('english', $1::text), 32)
-           ) AS text) COLLATE "C" AS sort_key
+    -- has_text: ts_rank when there is text to rank, recency (newest first)
+    -- otherwise — see the header's "WHAT RANKS A TAG-ONLY SEARCH".
+    SELECT (CASE WHEN $1::boolean
+                 THEN CAST(search_sort_key(
+                          ts_rank(p.search_vector,
+                                  websearch_to_tsquery('english', $2::text), 32)
+                      ) AS text)
+                 ELSE to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')
+            END) COLLATE "C" AS sort_key
 ) k
 WHERE p.deleted_at IS NULL
-  AND s.org_id = $2
-  AND p.search_vector @@ websearch_to_tsquery('english', $1::text)
-  AND (p.space_id = ANY($3::uuid[])
-       OR p.id = ANY($4::uuid[])
+  AND s.org_id = $3
+  AND (NOT $1::boolean
+       OR p.search_vector @@ websearch_to_tsquery('english', $2::text))
+  AND (p.space_id = ANY($4::uuid[])
+       OR p.id = ANY($5::uuid[])
        OR EXISTS (
            -- The two unnests are in one SELECT list on purpose. Since PG10
            -- multiple set-returning functions there expand in LOCKSTEP — row i
@@ -41,23 +47,24 @@ WHERE p.deleted_at IS NULL
            -- from one call (CascadeSubtreeArrays) so they are always the same
            -- length, and lockstep is therefore exact rather than NULL-padded.
            SELECT 1
-           FROM (SELECT unnest($5::uuid[]) AS space_id,
-                        unnest($6::text[])  AS pattern) AS root
+           FROM (SELECT unnest($6::uuid[]) AS space_id,
+                        unnest($7::text[])  AS pattern) AS root
            WHERE p.space_id = root.space_id
              AND p.path LIKE root.pattern
        ))
-  AND (NOT $7::boolean
+  AND (NOT $8::boolean
        OR EXISTS (SELECT 1 FROM entity_tags et
                   WHERE et.entity_type = 'page' AND et.entity_id = p.id
-                    AND et.tag_id = $8::uuid))
-  AND ($9::text = ''
-       OR k.sort_key < $9::text
-       OR (k.sort_key = $9::text AND p.id < $10::uuid))
+                    AND et.tag_id = $9::uuid))
+  AND ($10::text = ''
+       OR k.sort_key < $10::text
+       OR (k.sort_key = $10::text AND p.id < $11::uuid))
 ORDER BY k.sort_key DESC, p.id DESC
-LIMIT $11
+LIMIT $12
 `
 
 type GlobalSearchPagesParams struct {
+	HasText          bool        `json:"has_text"`
 	Query            string      `json:"query"`
 	OrgID            uuid.UUID   `json:"org_id"`
 	ReadableSpaceIds []uuid.UUID `json:"readable_space_ids"`
@@ -128,6 +135,27 @@ type GlobalSearchPagesRow struct {
 // deterministic expression over the same parameter; the risk is bounded and
 // named here rather than left for a reader to wonder about.
 //
+// WHY THE TEXT MATCH IS CONDITIONAL, AND WHAT RANKS A TAG-ONLY SEARCH
+// ------------------------------------------------------------------
+// A query carrying a `tag:` filter must run whether or not it has free text: a
+// structured filter is itself a reason to search. So the `@@` match is guarded
+// by has_text exactly as the tag arm is guarded by filter_tag —
+// `(NOT has_text OR search_vector @@ …)` — and when has_text is false the text
+// predicate drops out rather than matching nothing. The whole-set guard against
+// an unbounded read stays upstream: the service short-circuits an empty tsquery
+// with NO tag filter to no_searchable_terms before the fan-out, and a query that
+// reaches here with has_text false always carries filter_tag true.
+//
+// Ranking then needs a key ts_rank cannot supply: ts_rank against an empty
+// tsquery is a constant, so it orders nothing. A tag-only search is therefore a
+// LISTING of what carries the tag, newest first — the sort key carries a
+// fixed-width UTC timestamp instead of the rank, with a constant rank underneath
+// it. Ranked relevance resumes the moment there is text to rank. The key stays
+// fixed-width text COLLATE "C" in both modes so the Go merge byte-orders the
+// three halves identically, and the (sort_key, id) keyset cursor is stable
+// across pages in both — one search's pages are generated and consumed in a
+// single mode throughout, so the two widths never meet in a comparison.
+//
 // THE SORT KEY
 // ------------
 // search_sort_key (049) turns ts_rank's `real` into fixed-width zero-padded
@@ -169,6 +197,7 @@ type GlobalSearchPagesRow struct {
 // ticket and item queries below carry the same arm over their own entity_type.
 func (q *Queries) GlobalSearchPages(ctx context.Context, arg GlobalSearchPagesParams) ([]GlobalSearchPagesRow, error) {
 	rows, err := q.db.Query(ctx, globalSearchPages,
+		arg.HasText,
 		arg.Query,
 		arg.OrgID,
 		arg.ReadableSpaceIds,
@@ -221,28 +250,35 @@ SELECT i.id, i.space_id, i.number, i.item_key, i.kind, i.title, i.status,
 FROM project_items i
 JOIN spaces s ON s.id = i.space_id AND s.deleted_at IS NULL
 CROSS JOIN LATERAL (
-    SELECT CAST(search_sort_key(
-               ts_rank(i.search_vector,
-                       websearch_to_tsquery('english', $1::text), 32)
-           ) AS text) COLLATE "C" AS sort_key
+    -- has_text: ts_rank when there is text to rank, recency (newest first)
+    -- otherwise — see the header's "WHAT RANKS A TAG-ONLY SEARCH".
+    SELECT (CASE WHEN $1::boolean
+                 THEN CAST(search_sort_key(
+                          ts_rank(i.search_vector,
+                                  websearch_to_tsquery('english', $2::text), 32)
+                      ) AS text)
+                 ELSE to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')
+            END) COLLATE "C" AS sort_key
 ) k
 WHERE i.deleted_at IS NULL
-  AND s.org_id = $2
-  AND i.search_vector @@ websearch_to_tsquery('english', $1::text)
-  AND (i.space_id = ANY($3::uuid[])
-       OR i.id = ANY($4::uuid[]))
-  AND (NOT $5::boolean
+  AND s.org_id = $3
+  AND (NOT $1::boolean
+       OR i.search_vector @@ websearch_to_tsquery('english', $2::text))
+  AND (i.space_id = ANY($4::uuid[])
+       OR i.id = ANY($5::uuid[]))
+  AND (NOT $6::boolean
        OR EXISTS (SELECT 1 FROM entity_tags et
                   WHERE et.entity_type = 'project_item' AND et.entity_id = i.id
-                    AND et.tag_id = $6::uuid))
-  AND ($7::text = ''
-       OR k.sort_key < $7::text
-       OR (k.sort_key = $7::text AND i.id < $8::uuid))
+                    AND et.tag_id = $7::uuid))
+  AND ($8::text = ''
+       OR k.sort_key < $8::text
+       OR (k.sort_key = $8::text AND i.id < $9::uuid))
 ORDER BY k.sort_key DESC, i.id DESC
-LIMIT $9
+LIMIT $10
 `
 
 type GlobalSearchProjectItemsParams struct {
+	HasText          bool        `json:"has_text"`
 	Query            string      `json:"query"`
 	OrgID            uuid.UUID   `json:"org_id"`
 	ReadableSpaceIds []uuid.UUID `json:"readable_space_ids"`
@@ -278,6 +314,7 @@ type GlobalSearchProjectItemsRow struct {
 // "VEC-14" finds the item by its key.
 func (q *Queries) GlobalSearchProjectItems(ctx context.Context, arg GlobalSearchProjectItemsParams) ([]GlobalSearchProjectItemsRow, error) {
 	rows, err := q.db.Query(ctx, globalSearchProjectItems,
+		arg.HasText,
 		arg.Query,
 		arg.OrgID,
 		arg.ReadableSpaceIds,
@@ -330,28 +367,35 @@ SELECT t.id, t.space_id, t.number, t.title, t.status, t.priority,
 FROM tickets t
 JOIN spaces s ON s.id = t.space_id AND s.deleted_at IS NULL
 CROSS JOIN LATERAL (
-    SELECT CAST(search_sort_key(
-               ts_rank(t.search_vector,
-                       websearch_to_tsquery('english', $1::text), 32)
-           ) AS text) COLLATE "C" AS sort_key
+    -- has_text: ts_rank when there is text to rank, recency (newest first)
+    -- otherwise — see the header's "WHAT RANKS A TAG-ONLY SEARCH".
+    SELECT (CASE WHEN $1::boolean
+                 THEN CAST(search_sort_key(
+                          ts_rank(t.search_vector,
+                                  websearch_to_tsquery('english', $2::text), 32)
+                      ) AS text)
+                 ELSE to_char(t.updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')
+            END) COLLATE "C" AS sort_key
 ) k
 WHERE t.deleted_at IS NULL
-  AND s.org_id = $2
-  AND t.search_vector @@ websearch_to_tsquery('english', $1::text)
-  AND (t.space_id = ANY($3::uuid[])
-       OR t.id = ANY($4::uuid[]))
-  AND (NOT $5::boolean
+  AND s.org_id = $3
+  AND (NOT $1::boolean
+       OR t.search_vector @@ websearch_to_tsquery('english', $2::text))
+  AND (t.space_id = ANY($4::uuid[])
+       OR t.id = ANY($5::uuid[]))
+  AND (NOT $6::boolean
        OR EXISTS (SELECT 1 FROM entity_tags et
                   WHERE et.entity_type = 'ticket' AND et.entity_id = t.id
-                    AND et.tag_id = $6::uuid))
-  AND ($7::text = ''
-       OR k.sort_key < $7::text
-       OR (k.sort_key = $7::text AND t.id < $8::uuid))
+                    AND et.tag_id = $7::uuid))
+  AND ($8::text = ''
+       OR k.sort_key < $8::text
+       OR (k.sort_key = $8::text AND t.id < $9::uuid))
 ORDER BY k.sort_key DESC, t.id DESC
-LIMIT $9
+LIMIT $10
 `
 
 type GlobalSearchTicketsParams struct {
+	HasText          bool        `json:"has_text"`
 	Query            string      `json:"query"`
 	OrgID            uuid.UUID   `json:"org_id"`
 	ReadableSpaceIds []uuid.UUID `json:"readable_space_ids"`
@@ -388,6 +432,7 @@ type GlobalSearchTicketsRow struct {
 // Reference lookup is the /ticketref resolver's job, which is exact.
 func (q *Queries) GlobalSearchTickets(ctx context.Context, arg GlobalSearchTicketsParams) ([]GlobalSearchTicketsRow, error) {
 	rows, err := q.db.Query(ctx, globalSearchTickets,
+		arg.HasText,
 		arg.Query,
 		arg.OrgID,
 		arg.ReadableSpaceIds,

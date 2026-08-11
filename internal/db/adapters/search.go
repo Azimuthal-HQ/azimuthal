@@ -66,6 +66,7 @@ func (a *SearchAdapter) ResolveTagSlug(ctx context.Context, orgID uuid.UUID, slu
 func (a *SearchAdapter) SearchPages(ctx context.Context, p search.FanoutParams) ([]search.Result, error) {
 	rows, err := a.q.GlobalSearchPages(ctx, generated.GlobalSearchPagesParams{
 		Query:            p.Query,
+		HasText:          p.HasText,
 		OrgID:            p.OrgID,
 		ReadableSpaceIds: p.ReadableSpaceIDs,
 		SharedPageIds:    p.SharedPageIDs,
@@ -103,6 +104,7 @@ func (a *SearchAdapter) SearchPages(ctx context.Context, p search.FanoutParams) 
 func (a *SearchAdapter) SearchTickets(ctx context.Context, p search.FanoutParams) ([]search.Result, error) {
 	rows, err := a.q.GlobalSearchTickets(ctx, generated.GlobalSearchTicketsParams{
 		Query:            p.Query,
+		HasText:          p.HasText,
 		OrgID:            p.OrgID,
 		ReadableSpaceIds: p.ReadableSpaceIDs,
 		SharedTicketIds:  p.SharedTicketIDs,
@@ -139,6 +141,7 @@ func (a *SearchAdapter) SearchTickets(ctx context.Context, p search.FanoutParams
 func (a *SearchAdapter) SearchProjectItems(ctx context.Context, p search.FanoutParams) ([]search.Result, error) {
 	rows, err := a.q.GlobalSearchProjectItems(ctx, generated.GlobalSearchProjectItemsParams{
 		Query:            p.Query,
+		HasText:          p.HasText,
 		OrgID:            p.OrgID,
 		ReadableSpaceIds: p.ReadableSpaceIDs,
 		SharedItemIds:    p.SharedItemIDs,

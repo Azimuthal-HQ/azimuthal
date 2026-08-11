@@ -190,6 +190,11 @@ func TestSearch_TypeFilterSkipsWholeBranches(t *testing.T) {
 		// type: beside it narrows exactly as it would without the tag.
 		{"tag:runbooks widget", []Module{ModuleCodex, ModuleBeacon, ModuleVector}},
 		{"type:ticket tag:runbooks widget", []Module{ModuleBeacon}},
+		// And with NO free text at all: a tag-only query still fans out, and a
+		// type: beside it still narrows. This is the C1 case — before the fix a
+		// tag-only query short-circuited and issued no branch at all.
+		{"tag:runbooks", []Module{ModuleCodex, ModuleBeacon, ModuleVector}},
+		{"type:ticket tag:runbooks", []Module{ModuleBeacon}},
 	} {
 		st := &fakeStore{}
 		req := readableReq(sp)
@@ -245,6 +250,63 @@ func TestSearch_DistinctEmptyStates(t *testing.T) {
 		require.Empty(t, got.Results)
 		require.Empty(t, st.calls)
 	})
+}
+
+// TestSearch_TagOnlyQueryRuns is the C1 defect at the service layer: a query
+// whose only content is a tag filter must reach the fan-out, not short-circuit
+// to no_searchable_terms. Before the fix the guard was "empty tsquery" alone,
+// so a bare tag: query answered no_searchable_terms and never called the store —
+// every tag-only search in the product's history did.
+//
+// Fails-before: revert the guard to `strings.TrimSpace(parsed) == ""` and both
+// assertions fail — the state becomes no_searchable_terms and st.calls is empty.
+func TestSearch_TagOnlyQueryRuns(t *testing.T) {
+	sp := uuid.New()
+	st := &fakeStore{parsed: "  ", tagID: uuid.New()} // empty tsquery, a real tag id
+	req := readableReq(sp)
+	req.Raw = "tag:runbooks"
+
+	got, err := NewService(st).Search(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, StateOK, got.State, "a tag-only query runs; it is not 'no searchable terms'")
+	require.Len(t, st.calls, 3, "the fan-out runs across all three modules")
+	require.True(t, st.lastParam.FilterTag, "the tag filter is applied")
+	require.Equal(t, st.tagID, st.lastParam.TagID)
+}
+
+// TestSearch_TextPredicateFlagTracksTheParsedQuery pins has_text — the flag the
+// module queries switch their text match and ranking on. It is true exactly when
+// the parsed tsquery is non-empty. A tag-only or stopword-plus-tag query passes
+// it false, which is what makes those queries list by recency instead of
+// matching an empty tsquery; a query with real text passes it true, which keeps
+// the ranked, text-matched path exactly as it was.
+//
+// Every row here reaches the fan-out — the point is which mode it runs in.
+// Mutating the flag to a constant fails this in one direction or the other.
+func TestSearch_TextPredicateFlagTracksTheParsedQuery(t *testing.T) {
+	sp := uuid.New()
+	for _, tc := range []struct {
+		name    string
+		raw     string
+		parsed  string // fakeStore ParsedQuery override
+		wantHas bool
+	}{
+		{"real text", "widget", "'widget'", true},
+		{"text and tag", "widget tag:runbooks", "'widget'", true},
+		{"tag only", "tag:runbooks", "  ", false},
+		{"stopwords and tag", "the of a tag:runbooks", "  ", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &fakeStore{parsed: tc.parsed, tagID: uuid.New()}
+			req := readableReq(sp)
+			req.Raw = tc.raw
+			got, err := NewService(st).Search(context.Background(), req)
+			require.NoError(t, err)
+			require.Equal(t, StateOK, got.State)
+			require.Len(t, st.calls, 3, "the fan-out must run for %q", tc.raw)
+			require.Equal(t, tc.wantHas, st.lastParam.HasText, "has_text for %q", tc.raw)
+		})
+	}
 }
 
 // TestSearch_ShareOnlyScopeStillSearches guards the access short-circuit against

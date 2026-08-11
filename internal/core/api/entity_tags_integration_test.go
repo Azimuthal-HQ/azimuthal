@@ -345,3 +345,70 @@ func TestEntityTags_TagSearchReturnsAllThreeKinds(t *testing.T) {
 	require.NotContains(t, ids, untaggedTicket,
 		"an entity matching the text but not the tag must be filtered out")
 }
+
+// TestEntityTags_BareTagSearchListsAllThreeKinds is the C1 fix end to end, and
+// the sibling of TestEntityTags_TagSearchReturnsAllThreeKinds for a query with
+// NO free text: `tag:kestrel_ops` alone must run and list the tagged page,
+// ticket and item — not answer "no searchable terms". A structured filter is
+// itself a reason to search.
+//
+// The untagged ticket is the row that proves the tag filter is what filters:
+// with no text there is nothing else that could exclude it, so its absence means
+// the query listed the tagged set rather than everything readable. And a bare
+// tag: with a type: still narrows to one module.
+//
+// Fails-before: before the fix the wire state was "no_searchable_terms" and the
+// results were empty — the assertions on state, on the three ids, and on the
+// three modules all fail.
+func TestEntityTags_BareTagSearchListsAllThreeKinds(t *testing.T) {
+	t.Parallel()
+	f := newTagFixture(t)
+
+	beacon := createScopedSpace(t, f.ts, "Bare Desk", "bare-desk", "beacon")
+	vector := createScopedSpace(t, f.ts, "Bare Board", "bare-board", "vector")
+	grantSpaceRole(t, f.ts, uuid.MustParse(beacon), f.author.ID, "contributor")
+	grantSpaceRole(t, f.ts, uuid.MustParse(vector), f.author.ID, "contributor")
+
+	taggedTicket := f.createTicketRow(t, beacon, 1, "Kestrel incident", f.author.ID)
+	untaggedTicket := f.createTicketRow(t, beacon, 2, "Kestrel bystander", f.author.ID)
+	taggedItem := f.createItemRow(t, vector, "BARB", 1, "Kestrel follow-up", f.author.ID)
+
+	f.mustSetTags(t, f.authorTok, f.spaceID, f.pageID, []string{"kestrel_ops"})
+	require.Equal(t, http.StatusOK,
+		f.ts.putAs(t, f.authorTok, f.ticketTagsPath(beacon, taggedTicket), map[string]any{"tags": []string{"kestrel_ops"}}).StatusCode)
+	require.Equal(t, http.StatusOK,
+		f.ts.putAs(t, f.authorTok, f.itemTagsPath(vector, taggedItem), map[string]any{"tags": []string{"kestrel_ops"}}).StatusCode)
+
+	call := func(q string) searchWire {
+		req, err := http.NewRequest(http.MethodGet,
+			f.ts.url("/api/v1/orgs/"+f.ts.OrgID.String()+"/search?q="+q), nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+f.authorTok)
+		res := f.ts.do(t, req)
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		return decodeSearch(t, res.Body)
+	}
+
+	// Bare tag: no free text at all.
+	wire := call("tag:kestrel_ops")
+	require.Equal(t, "ok", wire.State,
+		"a tag-only query runs; the pre-C1 answer of no_searchable_terms is the defect")
+	require.ElementsMatch(t, []string{"codex", "beacon", "vector"}, wire.Modules,
+		"a tag filter does not narrow the fan-out")
+	got := make([]string, 0, len(wire.Results))
+	for _, r := range wire.Results {
+		got = append(got, fmt.Sprint(r["id"]))
+	}
+	require.ElementsMatch(t, []string{f.pageID, taggedTicket, taggedItem}, got,
+		"the tagged page, ticket and item are all listed for a bare tag: query")
+	require.NotContains(t, got, untaggedTicket,
+		"with no text, only the tag can exclude it — so its absence proves the filter filters")
+
+	// A bare tag: with a type: still narrows to one module.
+	narrowed := call("type:beacon%20tag:kestrel_ops")
+	require.Equal(t, "ok", narrowed.State)
+	require.Equal(t, []string{"beacon"}, narrowed.Modules, "type: narrows the bare-tag fan-out")
+	require.Len(t, narrowed.Results, 1)
+	require.Equal(t, taggedTicket, fmt.Sprint(narrowed.Results[0]["id"]))
+	require.Equal(t, "beacon", fmt.Sprint(narrowed.Results[0]["module"]))
+}
