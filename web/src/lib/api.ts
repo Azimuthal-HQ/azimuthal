@@ -3262,6 +3262,8 @@ export function useUpdateTicket(spaceId: string, ticketId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
+      // A field edit is a ticket.updated audit event the History tab (D5) shows.
+      queryClient.invalidateQueries({ queryKey: queryKeys.history(spaceId, 'ticket', ticketId) });
     },
   });
 }
@@ -3273,6 +3275,9 @@ export function useTransitionTicketStatus(spaceId: string, ticketId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
+      // The status change is an audit event the History tab (D5) shows, so its
+      // feed must re-read or a close/reopen would not appear until reload.
+      queryClient.invalidateQueries({ queryKey: queryKeys.history(spaceId, 'ticket', ticketId) });
       // A gated transition CREATES an approval request, so the block that
       // renders it must re-read. This lives HERE rather than in the page for a
       // reason worth keeping: a component-level useQueryClient throws "No
@@ -3463,6 +3468,8 @@ export function useUpdateProjectItem(spaceId: string, itemId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItem(spaceId, itemId) });
+      // A field edit is an item.updated audit event the History tab (D5) shows.
+      queryClient.invalidateQueries({ queryKey: queryKeys.history(spaceId, 'project_item', itemId) });
     },
   });
 }
@@ -3474,6 +3481,9 @@ export function useTransitionProjectItemStatus(spaceId: string, itemId: string) 
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItems(spaceId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.projectItem(spaceId, itemId) });
+      // The status change is an audit event the History tab (D5) shows, so its
+      // feed must re-read or the change would not appear until reload.
+      queryClient.invalidateQueries({ queryKey: queryKeys.history(spaceId, 'project_item', itemId) });
       // A gated transition CREATES an approval request, so the block that
       // renders it must re-read. This lives HERE rather than in the page for a
       // reason worth keeping: a component-level useQueryClient throws "No
@@ -3721,6 +3731,8 @@ export function useAssignTicket(spaceId: string, ticketId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.ticket(spaceId, ticketId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.tickets(spaceId) });
+      // Assigning writes a ticket.assigned/unassigned audit event History shows.
+      queryClient.invalidateQueries({ queryKey: queryKeys.history(spaceId, 'ticket', ticketId) });
     },
   });
 }
