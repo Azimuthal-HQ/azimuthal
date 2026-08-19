@@ -737,9 +737,7 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/{ticketID}/comments", cfg.CommentHandler.ListTicketComments)
 			r.Post("/{ticketID}/comments", cfg.CommentHandler.CreateTicketComment)
 		}
-		if cfg.HistoryHandler != nil {
-			r.Get("/{ticketID}/history", cfg.HistoryHandler.ListTicketHistory)
-		}
+		mountHistoryRoute(r, cfg.HistoryHandler, "/{ticketID}", (*historyapi.Handler).ListTicketHistory)
 		mountRelationRoutes(r, cfg.RelationHandler, "/{ticketID}",
 			(*relationsapi.Handler).ListTicketRelations, (*relationsapi.Handler).CreateTicketRelation, false)
 	})
@@ -771,9 +769,7 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/items/{itemID}/comments", cfg.CommentHandler.ListItemComments)
 			r.Post("/items/{itemID}/comments", cfg.CommentHandler.CreateItemComment)
 		}
-		if cfg.HistoryHandler != nil {
-			r.Get("/items/{itemID}/history", cfg.HistoryHandler.ListItemHistory)
-		}
+		mountHistoryRoute(r, cfg.HistoryHandler, "/items/{itemID}", (*historyapi.Handler).ListItemHistory)
 		// The item URLs predate the entity-generic mount and did not move;
 		// only their registration did, out of ProjectHandler.Routes() and
 		// into the same per-subtree convention comments use.
@@ -828,4 +824,23 @@ func mountRelationRoutes(
 	if withDelete {
 		r.Delete("/relations/{relationID}", h.DeleteRelation)
 	}
+}
+
+// mountHistoryRoute registers one entity subtree's History read (D5): the
+// satellite is ONE handler mounted per subtree, so each call fixes only the id
+// pattern and the read wrapper. A method expression rather than a bound value,
+// because h may legitimately be nil — a nil handler leaves the route unmounted,
+// exactly like a nil CommentHandler, and the harness's dark-dependency walk is
+// what keeps that state out of the test server. Living here rather than inline
+// keeps mountSpaceResources' two entity subtrees free of the nil branch.
+func mountHistoryRoute(
+	r chi.Router,
+	h *historyapi.Handler,
+	idPattern string,
+	list func(*historyapi.Handler, http.ResponseWriter, *http.Request),
+) {
+	if h == nil {
+		return
+	}
+	r.Get(idPattern+"/history", func(w http.ResponseWriter, req *http.Request) { list(h, w, req) })
 }
