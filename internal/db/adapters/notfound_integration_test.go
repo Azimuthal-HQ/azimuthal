@@ -37,7 +37,7 @@ func TestUserAdapter_GetByEmail_Nonexistent_ReturnsErrNotFound(t *testing.T) {
 	org := testutil.CreateTestOrg(t, db.Pool)
 	adapter := adapters.NewUserAdapter(db.Pool, org.ID)
 
-	_, err := adapter.GetByEmail(context.Background(), "nobody@azimuthal.dev")
+	_, err := adapter.GetByEmailAcrossOrgs(context.Background(), "nobody@azimuthal.dev")
 	require.ErrorIs(t, err, auth.ErrNotFound)
 }
 

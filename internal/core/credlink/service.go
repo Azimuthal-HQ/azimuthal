@@ -226,12 +226,6 @@ func (s *Service) deliver(ctx context.Context, toEmail string, purpose Purpose, 
 	return true
 }
 
-// DeliverByEmailConfigured reports whether a relay is configured — the handler
-// reads it to decide the email-change no-relay trade.
-func (s *Service) DeliverByEmailConfigured() bool {
-	return s.cfg.DeliverByEmail && s.sender != nil
-}
-
 func (s *Service) linkURL(rawToken string) string {
 	return strings.TrimRight(s.cfg.BaseURL, "/") + "/credential/" + rawToken
 }

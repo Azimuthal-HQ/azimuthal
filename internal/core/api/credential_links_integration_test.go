@@ -635,6 +635,108 @@ func TestCredentialLink_CreatedUserHasDefaultGrant(t *testing.T) {
 		"no password until the sign-in link is redeemed")
 }
 
+// TestCredentialLink_EmailChangeConsumeCollisionRefused: if the pending address
+// is claimed by someone else between request and confirm, the confirm is a
+// conflict and nothing moves — the guarded write catches the race the
+// request-time check cannot.
+//
+// FAILS-BEFORE: drop the uniqueViolation -> ErrEmailTaken mapping in the
+// email_change branch of Consume and the confirm 500s (or worse, the constraint
+// error escapes unmapped).
+func TestCredentialLink_EmailChangeConsumeCollisionRefused(t *testing.T) {
+	ts := newTestServer(t)
+	person := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	token, _ := loginAs(t, ts, person.Email)
+
+	raced := "raced@example.com"
+	r := requestEmailChange(t, ts, token, raced, "testpassword123")
+	require.Equal(t, http.StatusAccepted, r.StatusCode, "%s", r.Body)
+	linkURL := ts.CredentialLinks.LastURLTo(raced)
+
+	// Someone else claims the address before the confirm.
+	require.Equal(t, http.StatusCreated,
+		ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/credential-links/users", ts.OrgID),
+			map[string]string{"email": raced, "name": "First"}, true).StatusCode)
+
+	requireErrorCode(t, consumeCred(t, ts, credTokenFromURL(t, linkURL), ""),
+		http.StatusConflict, "CONFLICT")
+
+	// The requester's address did not move.
+	require.Equal(t, http.StatusOK, meWith(t, ts, token), "the failed confirm leaves the session live")
+	require.Equal(t, http.StatusOK, loginWith(t, ts, person.Email, "testpassword123").StatusCode)
+}
+
+// TestCredentialLink_ConsumeForDeactivatedAccountRefused: a link for an account
+// that is deactivated between issue and redemption is refused, indistinguishably
+// from an invalid one.
+//
+// FAILS-BEFORE: drop the is_active check in Consume and a deactivated account
+// could set a password and sign back in through a stale link.
+func TestCredentialLink_ConsumeForDeactivatedAccountRefused(t *testing.T) {
+	ts := newTestServer(t)
+	url, userID := adminCreateUserLink(t, ts, "frozen@example.com", "Frozen", "member")
+
+	_, err := ts.DB.Pool.Exec(context.Background(),
+		`UPDATE users SET is_active = false WHERE id = $1`, userID)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusNotFound, consumeCred(t, ts, credTokenFromURL(t, url), "wont-work-123").StatusCode)
+}
+
+// ── validation / error branches ──────────────────────────────────────────────
+
+// TestCredentialLink_PublicEndpointValidation: the public endpoints reject
+// malformed bodies (BAD_REQUEST) and missing fields (VALIDATION_ERROR), and an
+// unknown token inspects/consumes as 404.
+func TestCredentialLink_PublicEndpointValidation(t *testing.T) {
+	ts := newTestServer(t)
+
+	// Malformed JSON → BAD_REQUEST on each public route.
+	for _, path := range []string{
+		"/api/v1/credential-links/forgot-password",
+		"/api/v1/credential-links/inspect",
+		"/api/v1/credential-links/consume",
+	} {
+		requireErrorCode(t, attdRaw(t, ts, http.MethodPost, path, "{not-json"), http.StatusBadRequest, "BAD_REQUEST")
+	}
+
+	// Missing email on forgot-password → VALIDATION_ERROR.
+	requireErrorCode(t, forgotPassword(t, ts, ""), http.StatusBadRequest, "VALIDATION_ERROR")
+
+	// Unknown token → 404 on inspect and consume alike.
+	require.Equal(t, http.StatusNotFound, inspectCred(t, ts, "no-such-token-xyz").StatusCode)
+	require.Equal(t, http.StatusNotFound, consumeCred(t, ts, "no-such-token-xyz", "some-password-1").StatusCode)
+}
+
+// TestCredentialLink_AdminAndEmailChangeValidation: the admin issuance and
+// authenticated email-change routes reject malformed input.
+func TestCredentialLink_AdminAndEmailChangeValidation(t *testing.T) {
+	ts := newTestServer(t)
+	createPath := fmt.Sprintf("/api/v1/orgs/%s/credential-links/users", ts.OrgID)
+
+	// A malformed email, and an unknown role, are validation errors.
+	requireErrorCode(t, ts.post(t, createPath, map[string]string{"email": "not-an-email", "name": "X"}, true),
+		http.StatusBadRequest, "VALIDATION_ERROR")
+	requireErrorCode(t, ts.post(t, createPath, map[string]string{"email": "ok@example.com", "name": "X", "role": "wizard"}, true),
+		http.StatusBadRequest, "VALIDATION_ERROR")
+
+	// Creating the same email twice in one org is a conflict.
+	require.Equal(t, http.StatusCreated, ts.post(t, createPath, map[string]string{"email": "dupe@example.com", "name": "Dupe"}, true).StatusCode)
+	requireErrorCode(t, ts.post(t, createPath, map[string]string{"email": "dupe@example.com", "name": "Dupe Again"}, true),
+		http.StatusConflict, "CONFLICT")
+
+	// Reset for a malformed address is a validation error.
+	requireErrorCode(t, adminResetLink(t, ts, "bad-address"), http.StatusBadRequest, "VALIDATION_ERROR")
+
+	// Email change with missing fields is a validation error (reauth is checked
+	// after the fields are present).
+	person := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	token, _ := loginAs(t, ts, person.Email)
+	requireErrorCode(t, requestEmailChange(t, ts, token, "", ""), http.StatusBadRequest, "VALIDATION_ERROR")
+	requireErrorCode(t, requestEmailChange(t, ts, token, "not-an-email", "testpassword123"),
+		http.StatusBadRequest, "VALIDATION_ERROR")
+}
+
 // ── audit ────────────────────────────────────────────────────────────────────
 
 // TestCredentialLink_AuditRowsAreWritten: issuance records an issued event by the
