@@ -105,6 +105,16 @@ export function LoginPage() {
             </Button>
           </form>
 
+          <p className="mt-4 text-center text-[var(--text-sm)]">
+            <Link
+              to="/forgot-password"
+              className="font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]"
+              data-testid="login-forgot-password"
+            >
+              Forgot password?
+            </Link>
+          </p>
+
           <p className="mt-6 text-center text-[var(--text-sm)] text-[var(--color-text-muted)]">
             Don&apos;t have an account?{' '}
             <Link

@@ -39,6 +39,8 @@ import { ViewBuilderPage } from './pages/views/ViewBuilderPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { WorkflowAdminPage } from './pages/settings/WorkflowAdminPage';
 import { InviteAcceptPage } from './pages/auth/InviteAcceptPage';
+import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
+import { CredentialLinkPage } from './pages/auth/CredentialLinkPage';
 import { SharedEntityPage } from './pages/shared/SharedEntityPage';
 import { RequirePortalSession } from './components/portal/RequirePortalSession';
 import { PortalLayout } from './pages/portal/PortalLayout';
@@ -62,6 +64,15 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Self-service password reset (D1). Public: no account is signed in. */}
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      {/* Credential-link redemption (D1): sign-in handoff, password reset, and
+          email-change confirmation all land here. Public — the token in the URL
+          is the credential, like the invite and portal redemption pages, and
+          {APP_BASE_URL}/credential/{rawToken} is the CONTRACT the backend emits
+          (internal/core/credlink/service.go), so this declaration is what makes
+          an issued link resolve. */}
+      <Route path="/credential/:token" element={<CredentialLinkPage />} />
       {/* Invite acceptance is public: the token in the URL is the credential
           (P2.5 W2). It must stay outside the auth wall. */}
       <Route path="/invite/:token" element={<InviteAcceptPage />} />

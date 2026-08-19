@@ -4822,6 +4822,138 @@ export function useRemovePerson(orgId: string) {
   });
 }
 
+// ── Credential links (D1) ────────────────────────────────────────────────────
+// One mechanism for three internal-user credential handoffs. The public
+// endpoints (forgot-password / inspect / consume) carry `credential: 'none'`:
+// they authenticate by possession of the raw token, and a stray internal 401
+// must not clear a signed-out visitor's tokens or bounce them to /login (the
+// portal-redemption precedent).
+
+export type CredentialPurpose = 'signin' | 'password_reset' | 'email_change';
+
+export interface CredentialInspection {
+  purpose: CredentialPurpose;
+  /** Present only for the email_change purpose. */
+  new_email?: string;
+}
+
+export interface CredentialConsumeResult {
+  status: string;
+  purpose: CredentialPurpose;
+  /** Present only for the signin purpose — a redeemed sign-in link signs in. */
+  access_token?: string;
+  refresh_token?: string;
+}
+
+/** A one-time link returned to an authorised caller (an admin, or the
+ * reauthenticated requester in the no-relay email-change case). */
+export interface CredentialLinkResult {
+  status: string;
+  url?: string;
+  expires_at?: string;
+  user_id?: string;
+  delivered?: boolean;
+}
+
+async function requestForgotPassword(email: string): Promise<void> {
+  await apiFetch<{ status: string }>(
+    '/credential-links/forgot-password',
+    { method: 'POST', body: JSON.stringify({ email }) },
+    undefined,
+    { credential: 'none' },
+  );
+}
+
+async function inspectCredentialLink(token: string): Promise<CredentialInspection> {
+  return apiFetch<CredentialInspection>(
+    '/credential-links/inspect',
+    { method: 'POST', body: JSON.stringify({ token }) },
+    undefined,
+    { credential: 'none' },
+  );
+}
+
+async function consumeCredentialLink(token: string, password?: string): Promise<CredentialConsumeResult> {
+  return apiFetch<CredentialConsumeResult>(
+    '/credential-links/consume',
+    { method: 'POST', body: JSON.stringify(password ? { token, password } : { token }) },
+    undefined,
+    { credential: 'none' },
+  );
+}
+
+async function requestEmailChange(body: { new_email: string; current_password: string }): Promise<CredentialLinkResult> {
+  return apiFetch<CredentialLinkResult>('/auth/me/email-change', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+async function adminCreateUserWithLink(
+  orgId: string,
+  body: { email: string; name: string; role?: string },
+): Promise<CredentialLinkResult> {
+  return apiFetch<CredentialLinkResult>(`/orgs/${orgId}/credential-links/users`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+async function adminIssueResetLink(orgId: string, email: string): Promise<CredentialLinkResult> {
+  return apiFetch<CredentialLinkResult>(`/orgs/${orgId}/credential-links/reset`, {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function useForgotPassword() {
+  return useMutation<void, APIError, string>({ mutationFn: requestForgotPassword });
+}
+
+export function useInspectCredentialLink(token: string, opts?: QueryOpts<CredentialInspection>) {
+  return useQuery<CredentialInspection, APIError>({
+    queryKey: ['credentialLink', token] as const,
+    queryFn: () => inspectCredentialLink(token),
+    enabled: !!token,
+    retry: false,
+    ...opts,
+  });
+}
+
+export function useConsumeCredentialLink() {
+  return useMutation<CredentialConsumeResult, APIError, { token: string; password?: string }>({
+    mutationFn: ({ token, password }) => consumeCredentialLink(token, password),
+    onSuccess: (data) => {
+      // A redeemed sign-in link carries a session; store it so the app is
+      // authenticated on the redirect. A reset or an email change mints none.
+      if (data.access_token && data.refresh_token) {
+        setToken(data.access_token);
+        setRefreshToken(data.refresh_token);
+      }
+    },
+  });
+}
+
+export function useRequestEmailChange() {
+  return useMutation<CredentialLinkResult, APIError, { new_email: string; current_password: string }>({
+    mutationFn: requestEmailChange,
+  });
+}
+
+export function useAdminCreateUserWithLink(orgId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<CredentialLinkResult, APIError, { email: string; name: string; role?: string }>({
+    mutationFn: (body) => adminCreateUserWithLink(orgId, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) }),
+  });
+}
+
+export function useAdminIssueResetLink(orgId: string) {
+  return useMutation<CredentialLinkResult, APIError, string>({
+    mutationFn: (email) => adminIssueResetLink(orgId, email),
+  });
+}
+
 export function useAccessMatrix(orgId: string, opts?: QueryOpts<AccessMatrix>) {
   return useQuery<AccessMatrix, APIError>({
     queryKey: queryKeys.accessMatrix(orgId),

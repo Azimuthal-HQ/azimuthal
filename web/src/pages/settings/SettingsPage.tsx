@@ -6,7 +6,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { SegmentedControl } from '../../components/ui/segmented';
 import { useTheme } from '../../components/theme/ThemeProvider';
 import { useAuth } from '../../lib/auth';
-import { friendlyErrorMessage, useUpdateProfile, useUploadOwnAvatar } from '../../lib/api';
+import {
+  friendlyErrorMessage,
+  useRequestEmailChange,
+  useUpdateProfile,
+  useUploadOwnAvatar,
+  type CredentialLinkResult,
+} from '../../lib/api';
 import { cn } from '../../lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -49,6 +55,14 @@ export function SettingsPage() {
   const [profileSaveSuccess, setProfileSaveSuccess] = useState(false);
   const updateProfileMutation = useUpdateProfile();
 
+  // Email change (D1): a credential action, not a profile edit — it
+  // reauthenticates with the current password and confirms through a link, so it
+  // lives in its own control rather than the (disabled) email field above.
+  const [newEmail, setNewEmail] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [emailChangeResult, setEmailChangeResult] = useState<CredentialLinkResult | null>(null);
+  const emailChange = useRequestEmailChange();
+
   // Self avatar upload.
   const uploadAvatar = useUploadOwnAvatar();
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -63,12 +77,27 @@ export function SettingsPage() {
 
   async function handleSaveProfile() {
     try {
-      await updateProfileMutation.mutateAsync({ display_name: displayName.trim(), email: email.trim() });
+      // Display name only — email travels through the confirmation flow below.
+      await updateProfileMutation.mutateAsync({ display_name: displayName.trim() });
       setProfileSaveSuccess(true);
       setTimeout(() => setProfileSaveSuccess(false), 3000);
     } catch {
       // error handled by mutation state
     }
+  }
+
+  function handleRequestEmailChange() {
+    setEmailChangeResult(null);
+    emailChange.mutate(
+      { new_email: newEmail.trim(), current_password: currentPassword },
+      {
+        onSuccess: (res) => {
+          setEmailChangeResult(res);
+          setNewEmail('');
+          setCurrentPassword('');
+        },
+      },
+    );
   }
 
   // Appearance state
@@ -212,6 +241,77 @@ export function SettingsPage() {
                   )}
                   <Button onClick={handleSaveProfile} disabled={updateProfileMutation.isPending}>
                     {updateProfileMutation.isPending ? 'Saving...' : 'Save Changes'}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Change email — a credential action (reauth + confirmation). */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Change Email Address</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                  Changing your email needs your current password. We’ll send a confirmation link to the
+                  new address; opening it applies the change and signs you out of every device.
+                </p>
+                <div className="space-y-2">
+                  <label htmlFor="newEmail" className="block text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                    New email
+                  </label>
+                  <Input
+                    id="newEmail"
+                    type="email"
+                    placeholder="you@example.com"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    data-testid="email-change-new"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="currentPassword" className="block text-[var(--text-sm)] font-medium text-[var(--color-text)]">
+                    Current password
+                  </label>
+                  <Input
+                    id="currentPassword"
+                    type="password"
+                    autoComplete="current-password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    data-testid="email-change-password"
+                  />
+                </div>
+
+                {emailChange.error && (
+                  <p className="text-[var(--text-sm)] text-[var(--color-danger)]" data-testid="email-change-error">
+                    {friendlyErrorMessage(emailChange.error, 'The email change could not be started.')}
+                  </p>
+                )}
+
+                {emailChangeResult && (
+                  emailChangeResult.url ? (
+                    <div className="space-y-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3" data-testid="email-change-link">
+                      <p className="text-[var(--text-sm)] text-[var(--color-text-muted)]">
+                        No mail relay is configured, so here is your one-time confirmation link. Open it to
+                        finish — it works once and expires.
+                      </p>
+                      <code className="block break-all text-[var(--text-xs)] text-[var(--color-text)]">{emailChangeResult.url}</code>
+                    </div>
+                  ) : (
+                    <p className="text-[var(--text-sm)] text-[var(--color-success)]" data-testid="email-change-sent">
+                      Confirmation link sent to your new address. Open it to finish.
+                    </p>
+                  )
+                )}
+
+                <div className="flex justify-end">
+                  <Button
+                    onClick={handleRequestEmailChange}
+                    disabled={emailChange.isPending || !newEmail.trim() || !currentPassword}
+                    data-testid="email-change-submit"
+                  >
+                    {emailChange.isPending ? 'Sending...' : 'Send confirmation'}
                   </Button>
                 </div>
               </CardContent>
