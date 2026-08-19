@@ -1,0 +1,48 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PORTAL TRIAL OVERRIDE — try the customer portal end to end WITHOUT an SMTP relay.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# WHAT IT IS FOR. On a stock install the customer portal can only deliver its
+# sign-in links by email, so exercising the requester flow needs a working SMTP
+# relay. This override removes that requirement for a local trial: layer it on
+# the production compose file and the portal will hand you the sign-in URL in the
+# API response instead of mailing it.
+#
+#   docker compose -f build/docker-compose.yml -f build/docker-compose.portal-trial.yml up -d
+#
+# WHAT IT DOES, AND WHY IT IS DANGEROUS. It sets exactly two variables on the app:
+#
+#   APP_ENV: development
+#   AZIMUTHAL_PORTAL_DISCLOSE_LINK: "true"
+#
+# Together — and ONLY together; the server safelists development/test and refuses
+# disclosure in production whatever the flag says, see
+# config.Config.PortalLinkDisclosureAllowed — these make
+# POST /portal/{key}/auth/request-link return the sign-in URL in its response
+# body. That endpoint is UNAUTHENTICATED and answers for any address, so a
+# disclosed URL signs the caller in as anyone they can name: it is an
+# authentication bypass. That is precisely what lets a solo operator try the
+# requester flow with no mail server — and precisely why this file MUST NEVER
+# reach a deployment that holds real data.
+#
+# WHY IT IS A SEPARATE, EXPLICITLY-NAMED FILE. It is named for the trial, not
+# `override`, so `docker compose up` never merges it implicitly: turning on an
+# authentication bypass has to be a deliberate second `-f` you can see on the
+# command line. Turn it back off by dropping that `-f` and bringing the stack up
+# on build/docker-compose.yml alone (APP_ENV returns to production, disclosure
+# goes dark).
+#
+# (Naming note: build/docker-compose.dev.yml is already taken — it is the
+# standalone Postgres+MinIO+MailHog stack that README's "Run locally" flow brings
+# up for `go run` development, a different thing from this app-env override — so
+# this trial override carries its own name rather than colliding with it.)
+#
+# The full walk-through — create the portal, request a link, find the URL, sign in
+# incognito, raise a request, see it staff-side, turn this off — is in
+# docs/self-hosting.md, "Try the portal in five minutes".
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  app:
+    environment:
+      APP_ENV: development
+      AZIMUTHAL_PORTAL_DISCLOSE_LINK: "true"

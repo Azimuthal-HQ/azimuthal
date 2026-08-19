@@ -147,12 +147,87 @@ All of these are forwarded by `build/docker-compose.yml` — set any of them in 
 | `AZIMUTHAL_ALLOWED_ORIGINS` | (empty) | Comma-separated CORS allow-list. Empty means no CORS headers are emitted and the browser enforces same-origin, which is correct for this deployment — the frontend is served by the same binary on the same origin. Set it only if you serve the frontend from somewhere else. |
 | `AZIMUTHAL_QUEUE_ENABLED` | `true` | Runs the background job queue in-process. |
 | `AZIMUTHAL_PORTAL_LINK_DELIVERY` | `link` | How a customer-portal sign-in link reaches a requester. Set this to `email` for any instance with the portal exposed to real customers, and set `SMTP_HOST` and `SMTP_FROM` with it — `email` without a relay is refused at startup. `link` means the operator is responsible for getting the URL to the requester, and on this deployment there is no way to do that, so the practical effect of leaving it at `link` in production is that portal sign-in links go nowhere. An unrecognised value is refused at startup. **This setting no longer decides disclosure** — see the row below. |
-| `AZIMUTHAL_PORTAL_DISCLOSE_LINK` | `false` | Return the portal sign-in URL in the body of the unauthenticated request-link response. Inert on this deployment for two independent reasons: `build/docker-compose.yml` sets `APP_ENV: production`, and disclosure requires this flag **and** a development `APP_ENV` — a **safelist** of `development` and `test` only, so `production`, `staging`, or any unrecognised name refuses it. Setting it here is harmless and does nothing; the server logs a startup warning naming both variables rather than failing, so a working configuration is never locked out over a combination that is already safe. Leave it off in any case: `POST /portal/{key}/auth/request-link` is unauthenticated by design and accepts any address, so a disclosed URL signs the caller in as anyone they can name. |
+| `AZIMUTHAL_PORTAL_DISCLOSE_LINK` | `false` | Return the portal sign-in URL in the body of the unauthenticated request-link response. Inert on this deployment for two independent reasons: `build/docker-compose.yml` sets `APP_ENV: production`, and disclosure requires this flag **and** a development `APP_ENV` — a **safelist** of `development` and `test` only, so `production`, `staging`, or any unrecognised name refuses it. Setting it here is harmless and does nothing; the server logs a startup warning naming both variables rather than failing, so a working configuration is never locked out over a combination that is already safe. Leave it off in any case: `POST /portal/{key}/auth/request-link` is unauthenticated by design and accepts any address, so a disclosed URL signs the caller in as anyone they can name. To try the portal locally without a mail server, prefer the `build/docker-compose.portal-trial.yml` override over setting this by hand — see [Try the portal in five minutes](#try-the-portal-in-five-minutes). |
 | `AZIMUTHAL_PORTAL_LINK_TTL` | `1h` | How long a portal sign-in link stays redeemable. Must be positive. |
 | `AZIMUTHAL_PORTAL_SESSION_TTL` | `72h` | Lifetime of the session a redeemed portal link produces. Must be positive. |
 | `AZIMUTHAL_CREDENTIAL_LINK_TTL` | `60m` | How long an internal-user credential link stays redeemable — the one window for all three purposes: an admin-issued sign-in link, a password reset (self-service or admin-issued), and an email-change confirmation. A credential sitting in an inbox, so the default is short. Must be positive. Whether these links are *emailed* is not a mode here — it follows whether a relay is configured (`SMTP_HOST` set explicitly): with one, forgot-password and email-change email the link; without one, forgot-password delivers nothing (issue an admin link instead) and email-change returns the link to the reauthenticated requester. |
 | `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. Required when `AZIMUTHAL_INVITE_DELIVERY=email`. |
 | `STORAGE_USE_SSL` | `false` | Reach the object-storage endpoint over TLS. An `https://` prefix on `STORAGE_ENDPOINT` forces this to `true` regardless of what you set. The bundled Compose file sets `http://storage:9000`, so MinIO is reached over the internal network on plain HTTP. |
+
+## Try the portal in five minutes
+
+The customer portal lets people outside your organisation raise and track requests without an
+Azimuthal account. On a production install its sign-in links are **emailed**, so exercising the
+requester side normally needs an SMTP relay. For a **local trial**, a committed override turns on
+*link disclosure* instead: the request-link API returns the sign-in URL in its own response, so you
+can sign in with no mail server.
+
+> **This is an authentication bypass — never layer it onto a deployment with real data.**
+> `POST /portal/{key}/auth/request-link` is unauthenticated and answers for any address, so a
+> disclosed sign-in URL signs the caller in as whoever they named. The server only honours
+> disclosure on a development or test `APP_ENV` and refuses it in production
+> (`config.Config.PortalLinkDisclosureAllowed`); the override sets `APP_ENV: development` precisely
+> so the flag takes effect, which is exactly why it must stay off any deployment that holds real
+> data.
+
+**1 — Start the stack with the trial override.** Layer `build/docker-compose.portal-trial.yml` on
+the production compose file. It is named for the trial rather than `override` on purpose, so Compose
+never merges it implicitly — disclosure is on only when you ask for it, visibly, on the command
+line:
+
+```bash
+docker compose -f build/docker-compose.yml -f build/docker-compose.portal-trial.yml up -d
+```
+
+If you deploy from the curl'd Quick Start files rather than a source checkout, fetch the override
+next to your `docker-compose.yml` (pinned to the same release) and drop the `build/` prefix from
+both `-f` paths. Create an admin user if you have not already (see
+[First-Run](#first-run-create-an-admin-user)) and log in at `http://localhost:8080/login`.
+
+**2 — Create a portal on a Beacon space.** A portal attaches only to a Beacon (service-desk) space.
+Open such a space, go to **Settings**, and in the **Customer portal** card give the portal a public
+name and intro, then create it. The card then shows the portal's key and its full customer URL,
+`http://localhost:8080/portal/{key}` — that URL is the customer's front door.
+
+**3 — Request a link, and read the URL from the API response.** Open the customer URL in a
+**signed-out** browser; an incognito/private window is the simplest way to be sure you are not
+carrying your staff session. Enter any email address and submit — the page confirms with a
+deliberately conditional "if that address can raise requests here…" and nothing more.
+
+The sign-in page **never displays the link**, by design: showing it would hand a working sign-in
+credential to anyone who typed an address into an unauthenticated form. With the trial override on,
+the URL rides in the **API response body** instead, where only you — running the trial — can see it:
+
+```bash
+curl -sS -X POST http://localhost:8080/api/v1/portal/{key}/auth/request-link \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"tester@example.com"}'
+# → {"status":"sent","delivered":false,"magic_link_url":"http://localhost:8080/portal/{key}/signin/…"}
+```
+
+The endpoint answers `202` for *every* address, known or not — so the form cannot be used to
+enumerate your customers — and `magic_link_url` is present only because the override enabled
+disclosure. Copy that URL.
+
+**4 — Sign in and raise a request.** Paste `magic_link_url` into the incognito window. It redeems
+the one-time link, lands on the requester's request list, and **New request** opens the compose
+form; fill in a summary and description and submit. You are now a customer with a live request.
+
+**5 — See it from the staff side.** Back in your staff window, open the same Beacon space's tickets:
+the request is there as a ticket, flagged as coming from the portal, with the requester's address on
+it. A **public** reply from staff appears on the requester's thread; an **internal** note stays
+invisible to them.
+
+**6 — Turn the override off.** When you are done, bring the stack back up on the production compose
+file alone:
+
+```bash
+docker compose -f build/docker-compose.yml up -d
+```
+
+`APP_ENV` returns to `production` and link disclosure goes dark. To run a portal for real customers,
+set `AZIMUTHAL_PORTAL_LINK_DELIVERY=email` with `SMTP_HOST` and `SMTP_FROM` so links are mailed, and
+leave `AZIMUTHAL_PORTAL_DISCLOSE_LINK` off.
 
 ## Running Migrations Manually
 

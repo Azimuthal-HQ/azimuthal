@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Mail } from 'lucide-react';
 import { friendlyErrorMessage, useRequestPortalLink } from '../../lib/api';
+import { getToken } from '../../lib/auth';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
 import { Field, FieldLabel } from '../../components/ui/field';
@@ -28,10 +29,29 @@ import { EmptyState } from '../../shell/EmptyState';
  * enumerate a company's customers. Copy that said "we've emailed you" would
  * undo that server-side decision in the browser, so the terminal state is
  * phrased conditionally.
+ *
+ * THE STAFF SIGNPOST IS AN AFFORDANCE, AND IT IS ZERO-CONTEXT ON PURPOSE. A
+ * signed-in staff member who follows a portal URL hits this guest form and no
+ * signpost otherwise tells them the internal app is where they raise and work
+ * tickets — portal and internal sessions are separate token audiences by
+ * design (`internal/core/portal/token.go`), and that isolation is not being
+ * touched here. So this is a client-side hint only: it reads the PRESENCE of a
+ * stored internal token — never its contents. `getToken` returns the raw string
+ * and the only thing done with it is a null check; it is not decoded, not sent
+ * anywhere, and never reaches a portal request. The line it renders names no
+ * space, no organisation and no identity — "staff" and "Beacon" are generic
+ * role and product words — so it cannot become the context leak the
+ * zero-context sweep exists to catch, and the guest form stays fully usable
+ * beneath it (a staff member may legitimately be testing as a requester).
  */
 export function PortalSignInPage() {
   const { portalKey = '' } = useParams();
   const requestLink = useRequestPortalLink(portalKey);
+
+  // Presence, not contents: is there an internal session in this browser at
+  // all? Deliberately not `isAuthenticated()`, which decodes the token and
+  // checks expiry — a signpost has no business reading either.
+  const signedInAsStaff = getToken() !== null;
 
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
@@ -89,6 +109,19 @@ export function PortalSignInPage() {
   return (
     <Card>
       <CardContent className="p-[var(--space-6)]" data-testid="portal-signin-page">
+        {signedInAsStaff && (
+          <p
+            className="mb-[var(--space-4)] text-[var(--text-sm)] text-[var(--color-text-muted)]"
+            data-testid="portal-staff-signpost"
+          >
+            You appear to be signed in as staff — raise and work tickets in{' '}
+            <a href="/beacon" className="text-[var(--color-primary)] hover:underline">
+              Beacon
+            </a>
+            .
+          </p>
+        )}
+
         <h2 className="mb-[var(--space-1)] text-[var(--text-lg)] font-semibold text-[var(--color-text)]">
           Sign in to track your requests
         </h2>
