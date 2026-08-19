@@ -73,6 +73,20 @@ func (p Priority) IsValid() bool {
 	return allPriorities[p]
 }
 
+// IsDone reports whether s is a terminal ("done") status.
+//
+// This is the no-workflow discriminator for resolved_at: a space with no
+// workflow falls back to this hardcoded state machine, where there is no
+// workflow_states.category to consult, so the terminal statuses ARE the done
+// set. Resolved and closed are exactly the two states seeded with category
+// 'done' in the default ticket workflow (migration 016), which
+// TestTicketStateMachine_MatchesTheSeededWorkflow keeps the two in step. The
+// workflow-governed path never calls this — there the category is authoritative
+// and the write derives done-ness in SQL from the target state.
+func (s Status) IsDone() bool {
+	return s == StatusResolved || s == StatusClosed
+}
+
 // CanTransitionTo reports whether the state machine allows moving from the
 // current status to next.
 func (s Status) CanTransitionTo(next Status) bool {

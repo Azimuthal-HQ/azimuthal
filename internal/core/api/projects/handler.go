@@ -775,7 +775,9 @@ func (h *Handler) applyItemTransition(w http.ResponseWriter, r *http.Request, t 
 		_ = h.auditLog.Log(r.Context(), audit.Event{
 			Type: audit.EventTypeItemStatusChange, ActorID: claims.UserID.String(),
 			OrgID: claims.OrgID, ResourceType: "item", ResourceID: t.itemID.String(),
-			Metadata: map[string]string{"to": t.status},
+			// from/to both, so History can render old -> new. expectStatus is the
+			// status the gate read and the CAS matched — the state left behind.
+			Metadata: map[string]string{"from": t.expectStatus, "to": t.status},
 		})
 		respond.JSON(w, http.StatusOK, item)
 		return

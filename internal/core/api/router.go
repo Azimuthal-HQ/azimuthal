@@ -14,6 +14,7 @@ import (
 	credlinksapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/credlinks"
 	dashboardsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/dashboards"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
+	historyapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/history"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
@@ -40,6 +41,11 @@ type RouterConfig struct {
 	ProjectHandler *projectsapi.Handler
 	SpaceHandler   *spacesapi.Handler
 	CommentHandler *commentsapi.Handler
+	// HistoryHandler serves the per-entity audit History surface (D5): the
+	// space-read GET routes on tickets and project items. One core, mounted per
+	// entity subtree the way comments are — the entity kind comes from which
+	// route was hit. nil leaves the history routes unmounted.
+	HistoryHandler *historyapi.Handler
 	// RelationHandler serves the entity-generic relation satellite: one core,
 	// mounted per entity subtree (projects items, tickets, wiki pages) the way
 	// comments are — the from side of a relation comes from which route was
@@ -731,6 +737,9 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/{ticketID}/comments", cfg.CommentHandler.ListTicketComments)
 			r.Post("/{ticketID}/comments", cfg.CommentHandler.CreateTicketComment)
 		}
+		if cfg.HistoryHandler != nil {
+			r.Get("/{ticketID}/history", cfg.HistoryHandler.ListTicketHistory)
+		}
 		mountRelationRoutes(r, cfg.RelationHandler, "/{ticketID}",
 			(*relationsapi.Handler).ListTicketRelations, (*relationsapi.Handler).CreateTicketRelation, false)
 	})
@@ -761,6 +770,9 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 		if cfg.CommentHandler != nil {
 			r.Get("/items/{itemID}/comments", cfg.CommentHandler.ListItemComments)
 			r.Post("/items/{itemID}/comments", cfg.CommentHandler.CreateItemComment)
+		}
+		if cfg.HistoryHandler != nil {
+			r.Get("/items/{itemID}/history", cfg.HistoryHandler.ListItemHistory)
 		}
 		// The item URLs predate the entity-generic mount and did not move;
 		// only their registration did, out of ProjectHandler.Routes() and

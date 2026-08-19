@@ -303,7 +303,11 @@ func writeTransitionAuditTx(ctx context.Context, qtx *generated.Queries, in work
 		kind = "item"
 	}
 
-	meta := map[string]string{"to": in.ToStatus}
+	// from/to both, so the History surface (D5) can render old -> new without
+	// reconstructing "old" from the previous event. ExpectFromStatus is the
+	// status the entity was in when the gate read it (the compare-and-swap the
+	// write just matched under), so it is exactly the state left behind.
+	meta := map[string]string{"from": in.ExpectFromStatus, "to": in.ToStatus}
 	if in.TransitionID != nil {
 		meta["workflow_transition_id"] = in.TransitionID.String()
 	}

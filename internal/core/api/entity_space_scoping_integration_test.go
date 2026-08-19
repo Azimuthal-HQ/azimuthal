@@ -79,6 +79,10 @@ const (
 	secretTag       = "xspace_secret_tag"
 	secretTicketTag = "xspace_secret_ticket_tag"
 	secretItemTag   = "xspace_secret_item_tag"
+	// Audit history (D5): the secret rides the status-change payload, so a leaked
+	// row names which entity's history produced it.
+	secretTicketHistory = "XSPACE-SECRET-TICKET-HISTORY"
+	secretItemHistory   = "XSPACE-SECRET-ITEM-HISTORY"
 )
 
 func newScopeFixture(t *testing.T) *scopeFixture {
@@ -121,6 +125,10 @@ func newScopeFixture(t *testing.T) *scopeFixture {
 	// rows' existence (count, kinds, directions) even with far sides redacted.
 	f.mkRelation(t, f.itemB, "project_item", f.ticketB, "ticket")
 	f.mkRelation(t, f.pageB, "page", f.itemB, "project_item")
+	// Audit history hanging off the space-B entities. entity_kind is the AUDIT
+	// kind: "item" for a project item (not "project_item").
+	f.mkAuditEvent(t, "ticket", f.ticketB, "ticket.status_changed", secretTicketHistory)
+	f.mkAuditEvent(t, "item", f.itemB, "item.status_changed", secretItemHistory)
 	// And the matching dependents in A, so the positive direction has something
 	// to find.
 	f.mkComment(t, "project_item", f.itemA, "Ordinary comment in A")
@@ -131,8 +139,20 @@ func newScopeFixture(t *testing.T) *scopeFixture {
 	f.mkTag(t, "project_item", f.itemA, "ordinary_item_tag")
 	f.mkRelation(t, f.itemA, "project_item", f.pageA, "page")
 	f.mkRelation(t, f.ticketA, "ticket", f.itemA, "project_item")
+	f.mkAuditEvent(t, "ticket", f.ticketA, "ticket.status_changed", "ordinary-ticket-history")
+	f.mkAuditEvent(t, "item", f.itemA, "item.status_changed", "ordinary-item-history")
 
 	return f
+}
+
+func (f *scopeFixture) mkAuditEvent(t *testing.T, entityKind string, entityID uuid.UUID, action, secret string) {
+	t.Helper()
+	payload := fmt.Sprintf(`{"from":"open","to":%q}`, secret)
+	_, err := f.ts.DB.Pool.Exec(context.Background(),
+		`INSERT INTO audit_log (id, org_id, actor_id, action, entity_kind, entity_id, payload)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		uuid.New(), f.ts.OrgID, f.ts.UserID, action, entityKind, entityID, []byte(payload))
+	require.NoError(t, err)
 }
 
 func (f *scopeFixture) mkItem(t *testing.T, spaceID uuid.UUID, title string) uuid.UUID {
@@ -290,6 +310,19 @@ var scopeCases = []scopeCase{
 		listRoute: true,
 	},
 	{
+		// D5: the item History list reconciles its entity against the URL's space
+		// exactly as comments do — the audit log has no space column, so an item
+		// in another space answers the same empty list an absent item does.
+		name: "ItemHistory",
+		path: func(f *scopeFixture, s, e uuid.UUID) string {
+			return f.base(s) + "/projects/items/" + e.String() + "/history"
+		},
+		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.itemA },
+		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.itemB },
+		secret:    secretItemHistory,
+		listRoute: true,
+	},
+	{
 		name:    "GetSprint",
 		path:    func(f *scopeFixture, s, e uuid.UUID) string { return f.base(s) + "/projects/sprints/" + e.String() },
 		legit:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.spaceA.ID, f.sprintA },
@@ -336,6 +369,17 @@ var scopeCases = []scopeCase{
 		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketA },
 		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketB },
 		secret:    secretItem,
+		listRoute: true,
+	},
+	{
+		// D5: the ticket History list, same reconciliation as TicketRelations.
+		name: "TicketHistory",
+		path: func(f *scopeFixture, s, e uuid.UUID) string {
+			return f.base(s) + "/tickets/" + e.String() + "/history"
+		},
+		legit:     func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketA },
+		crossed:   func(f *scopeFixture) (uuid.UUID, uuid.UUID) { return f.beaconA.ID, f.ticketB },
+		secret:    secretTicketHistory,
 		listRoute: true,
 	},
 	{

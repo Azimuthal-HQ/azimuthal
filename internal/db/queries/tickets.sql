@@ -57,9 +57,18 @@ WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
 -- name: UpdateTicketStatus :one
+-- The no-workflow status path: a space with no workflow assigned falls back to
+-- the hardcoded state machine (tickets.ValidateTransition), which has no
+-- workflow_states row and so no category to read. There the "done" set is the
+-- terminal status names themselves (resolved, closed) — see tickets.Status.IsDone,
+-- which the adapter evaluates and passes as @is_done. resolved_at then follows
+-- the same rule as the workflow twin above: set on entering done (COALESCE keeps
+-- the first-reached moment across a done -> done move), cleared on leaving it.
 UPDATE tickets
-SET status = $2, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = @status,
+    resolved_at = CASE WHEN @is_done::boolean THEN COALESCE(resolved_at, now()) ELSE NULL END,
+    updated_at = now()
+WHERE id = @id AND deleted_at IS NULL
 RETURNING *;
 
 -- name: UpdateTicketWorkflowState :one
@@ -83,10 +92,35 @@ RETURNING *;
 -- Zero rows is the lost race, and it is not a failure the caller may treat as
 -- "not found": the row is there, and what expired is the caller's assumption
 -- about it. The adapter maps it to a conflict.
+--
+-- resolved_at is maintained HERE, on the workflow-governed transition — the one
+-- path where the discriminator is authoritative. workflow_states.category is
+-- that discriminator: the target state's category, looked up by the id this
+-- statement is writing, decides. Category 'done' sets resolved_at; any other
+-- category clears it, which is what makes a reopen (done -> todo/in_progress)
+-- clear it. COALESCE keeps the moment the ticket FIRST reached done across a
+-- done -> done move (resolved -> closed keeps the resolve time rather than
+-- restamping to the close time), because the column answers "when did this
+-- reach done", not "when was its status last touched". A reopen is the ELSE
+-- branch and clears it, so the next entry into done stamps afresh.
+--
+-- The column is "when did this reach done, if it's currently done." SLA
+-- tooling, when it exists, reads the HISTORY (every close and reopen is an
+-- audit event with a timestamp), not this column. There is deliberately NO
+-- backfill: historical resolution moments aren't recorded anywhere
+-- recoverable, and inventing them would poison future metrics — so a ticket
+-- that was already done before this wiring shipped stays NULL until its next
+-- transition, which is the honest consequence rather than a bug.
 UPDATE tickets
-SET status = @status, workflow_state_id = @workflow_state_id, updated_at = now()
-WHERE id = @ticket_id AND space_id = @space_id AND deleted_at IS NULL
-  AND status = @expect_status
+SET status = @status, workflow_state_id = @workflow_state_id,
+    resolved_at = CASE
+        WHEN (SELECT ws.category FROM workflow_states ws WHERE ws.id = @workflow_state_id) = 'done'
+            THEN COALESCE(tickets.resolved_at, now())
+        ELSE NULL
+    END,
+    updated_at = now()
+WHERE tickets.id = @ticket_id AND tickets.space_id = @space_id AND tickets.deleted_at IS NULL
+  AND tickets.status = @expect_status
 RETURNING *;
 
 -- name: SoftDeleteTicketInSpace :exec

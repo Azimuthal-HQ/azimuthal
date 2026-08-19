@@ -620,7 +620,9 @@ func (h *Handler) applyTicketTransition(w http.ResponseWriter, r *http.Request, 
 		_ = h.auditLog.Log(r.Context(), audit.Event{
 			Type: audit.EventTypeTicketStatusChange, ActorID: t.actorID.String(),
 			OrgID: t.actorOrgID, ResourceType: "ticket", ResourceID: t.ticketID.String(),
-			Metadata: map[string]string{"to": string(t.status)},
+			// from/to both, so History can render old -> new. expectStatus is the
+			// status the gate read and the CAS matched — the state left behind.
+			Metadata: map[string]string{"from": string(t.expectStatus), "to": string(t.status)},
 		})
 		h.respondTicket(w, r, http.StatusOK, ticket)
 		return

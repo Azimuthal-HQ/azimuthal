@@ -540,6 +540,28 @@ components:
         error:
           $ref: '#/components/schemas/api.SwaggerErrorDetail'
       type: object
+    api.SwaggerHistoryResponse:
+      properties:
+        action:
+          example: ticket.status_changed
+          type: string
+        actor_id:
+          example: 874d6314-6353-45e9-ab2a-5fe930ea4dbc
+          type: string
+        actor_name:
+          example: Admin User
+          type: string
+        created_at:
+          example: "2026-01-15T10:30:00Z"
+          type: string
+        id:
+          example: c3d4e5f6-a7b8-9012-cdef-123456789012
+          type: string
+        payload:
+          additionalProperties:
+            type: string
+          type: object
+      type: object
     api.SwaggerKanbanColumn:
       properties:
         status:
@@ -6645,6 +6667,61 @@ paths:
       summary: Set an item custom field value
       tags:
       - projects
+  /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/history:
+    get:
+      description: Returns the entity-lifecycle audit events (status changes, field
+        edits, creation) for a project item, newest first.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Item ID (UUID)
+        in: path
+        name: itemID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.SwaggerHistoryResponse'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List item history
+      tags:
+      - history
   /orgs/{orgID}/spaces/{spaceID}/projects/items/{itemID}/rank:
     post:
       description: Repositions a project item by specifying the item that should come
@@ -9010,6 +9087,61 @@ paths:
       summary: Set a ticket custom field value
       tags:
       - tickets
+  /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/history:
+    get:
+      description: Returns the entity-lifecycle audit events (status changes, assignment,
+        field edits, creation) for a ticket, newest first.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      - description: Space ID (UUID)
+        in: path
+        name: spaceID
+        required: true
+        schema:
+          type: string
+      - description: Ticket ID (UUID)
+        in: path
+        name: ticketID
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/api.SwaggerHistoryResponse'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List ticket history
+      tags:
+      - history
   /orgs/{orgID}/spaces/{spaceID}/tickets/{ticketID}/relations:
     get:
       description: Returns all relations touching a ticket, in both directions, with

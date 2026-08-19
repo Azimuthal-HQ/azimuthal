@@ -112,9 +112,17 @@ WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
 -- name: UpdateProjectItemStatus :one
+-- The no-workflow status path (item twin of UpdateTicketStatus). A space with no
+-- workflow has no workflow_states row to read a category from, so the "done" set
+-- is the terminal status names — projects.IsDoneStatus ({done, closed, resolved}),
+-- which the adapter evaluates and passes as @is_done. resolved_at then follows
+-- the same set-on-done / clear-on-leave / COALESCE-preserve rule as the workflow
+-- twin above.
 UPDATE project_items
-SET status = $2, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = @status,
+    resolved_at = CASE WHEN @is_done::boolean THEN COALESCE(resolved_at, now()) ELSE NULL END,
+    updated_at = now()
+WHERE id = @id AND deleted_at IS NULL
 RETURNING *;
 
 -- name: UpdateProjectItemWorkflowState :one
@@ -129,10 +137,22 @@ RETURNING *;
 -- `status = @expect_status` is the compare-and-swap; see the ticket twin in
 -- tickets.sql for what it protects (D91) and why zero rows is a conflict rather
 -- than a miss.
+--
+-- resolved_at follows the target state's workflow_states.category exactly as the
+-- ticket twin does — 'done' sets it, any other category clears it, COALESCE
+-- keeps the first-reached moment across a done -> done move. See the long note
+-- on UpdateTicketWorkflowState in tickets.sql for the "when did this reach done"
+-- semantics and the deliberate no-backfill.
 UPDATE project_items
-SET status = @status, workflow_state_id = @workflow_state_id, updated_at = now()
-WHERE id = @item_id AND space_id = @space_id AND deleted_at IS NULL
-  AND status = @expect_status
+SET status = @status, workflow_state_id = @workflow_state_id,
+    resolved_at = CASE
+        WHEN (SELECT ws.category FROM workflow_states ws WHERE ws.id = @workflow_state_id) = 'done'
+            THEN COALESCE(project_items.resolved_at, now())
+        ELSE NULL
+    END,
+    updated_at = now()
+WHERE project_items.id = @item_id AND project_items.space_id = @space_id AND project_items.deleted_at IS NULL
+  AND project_items.status = @expect_status
 RETURNING *;
 
 -- name: AssignProjectItemToSprintInSpace :exec
