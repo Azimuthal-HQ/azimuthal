@@ -46,17 +46,21 @@ func TestBackup_TarArchiveRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	archivePath := filepath.Join(tmpDir, "test.tar.gz")
 
+	dumpBytes := []byte("-- fake pg_dump output\nSELECT 1;\n")
+	avatarBytes := []byte("\x89PNG\r\n\x1a\nfake-image-bytes")
+
 	manifest := backupManifest{
 		AzimuthalVersion: "test",
 		BackupTimestamp:  time.Now().UTC().Truncate(time.Second),
 		PostgresVersion:  "PostgreSQL 16",
-		Files:            []string{"database.sql", "storage/avatar.png"},
 	}
+	// Record the two members exactly as runBackup does, so the manifest carries
+	// their SHA-256 and validateManifest exercises real integrity verification
+	// rather than the legacy no-digest path.
+	manifest.recordFile("database.sql", dumpBytes)
+	manifest.recordFile("storage/avatar.png", avatarBytes)
 	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
 	require.NoError(t, err)
-
-	dumpBytes := []byte("-- fake pg_dump output\nSELECT 1;\n")
-	avatarBytes := []byte("\x89PNG\r\n\x1a\nfake-image-bytes")
 
 	out, err := os.Create(archivePath) //nolint:gosec // G304 — archivePath is a t.TempDir() path
 	require.NoError(t, err)
@@ -115,6 +119,139 @@ func TestRestore_ManifestRequiresManifestFile(t *testing.T) {
 	_, err := validateManifest(entries)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "manifest.json not found")
+}
+
+// --- Per-file digests: integrity verification on restore ---------------------
+//
+// The manifest records a SHA-256 per member. Restore verifies them when they
+// are present and refuses a member whose bytes have changed; an older archive
+// that carries none restores with a warning rather than a refusal. These four
+// tests pin all of that, and none needs a postgres server — validateManifest
+// operates on the in-memory entry map.
+
+// TestRestore_VerifiesPerFileDigests is the positive control: an archive whose
+// members match their recorded digests must validate, and the digests must
+// actually be checked rather than merely stored.
+func TestRestore_VerifiesPerFileDigests(t *testing.T) {
+	dump := []byte("-- dump\nSELECT 1;\n")
+	avatar := []byte("\x89PNG fake avatar bytes")
+
+	manifest := backupManifest{AzimuthalVersion: "test", BackupTimestamp: time.Now().UTC()}
+	manifest.recordFile("database.sql", dump)
+	manifest.recordFile("storage/avatar.png", avatar)
+	manifestJSON, err := json.Marshal(manifest)
+	require.NoError(t, err)
+
+	entries := map[string][]byte{
+		"manifest.json":      manifestJSON,
+		"database.sql":       dump,
+		"storage/avatar.png": avatar,
+	}
+
+	out := captureStdout(t, func() {
+		_, err = validateManifest(entries)
+	})
+	require.NoError(t, err, "an archive whose bytes match its recorded digests must validate")
+	require.Contains(t, out, "Verified SHA-256 for 2 files",
+		"a digested archive must report that it verified integrity; stdout was:\n%s", out)
+}
+
+// TestRestore_TamperedMemberIsRefused is the T3 fails-before regression: flip a
+// byte in a member and restore must refuse it, by name, before touching
+// anything.
+//
+// Verified in both directions: with the digest comparison removed from
+// verifyManifestedFiles, validateManifest returns nil here and the flipped byte
+// rides through to the database — which is the defect this guards.
+func TestRestore_TamperedMemberIsRefused(t *testing.T) {
+	dump := []byte("-- dump\nSELECT 1;\n")
+	avatar := []byte("original avatar bytes")
+
+	manifest := backupManifest{AzimuthalVersion: "test", BackupTimestamp: time.Now().UTC()}
+	manifest.recordFile("database.sql", dump)
+	manifest.recordFile("storage/avatar.png", avatar)
+	manifestJSON, err := json.Marshal(manifest)
+	require.NoError(t, err)
+
+	// Flip one byte of a member AFTER its digest was recorded — a truncated or
+	// tampered archive, exactly what the digest exists to catch.
+	tampered := append([]byte(nil), avatar...)
+	tampered[0] ^= 0xFF
+
+	entries := map[string][]byte{
+		"manifest.json":      manifestJSON,
+		"database.sql":       dump,
+		"storage/avatar.png": tampered,
+	}
+
+	_, err = validateManifest(entries)
+	require.Error(t, err, "a member that no longer matches its recorded digest must be refused")
+	require.Contains(t, err.Error(), "storage/avatar.png",
+		"the refusal must name the member that failed; got %q", err.Error())
+	require.Contains(t, err.Error(), "integrity",
+		"the refusal must say the integrity check failed; got %q", err.Error())
+}
+
+// TestRestore_StrippedDigestIsRefused covers the all-or-nothing rule: once a
+// manifest carries any digests, every listed file must carry one. A manifest
+// that lists a file but omits its digest is not a legacy archive — it is the
+// shape a tamperer leaves after rewriting a member and deleting its digest — so
+// it is refused rather than restored unverified.
+func TestRestore_StrippedDigestIsRefused(t *testing.T) {
+	dump := []byte("-- dump\nSELECT 1;\n")
+	avatar := []byte("avatar bytes")
+
+	manifest := backupManifest{AzimuthalVersion: "test", BackupTimestamp: time.Now().UTC()}
+	manifest.recordFile("database.sql", dump)
+	manifest.recordFile("storage/avatar.png", avatar)
+	// Strip one file's digest while leaving it listed in Files.
+	delete(manifest.FileDigests, "storage/avatar.png")
+	manifestJSON, err := json.Marshal(manifest)
+	require.NoError(t, err)
+
+	entries := map[string][]byte{
+		"manifest.json":      manifestJSON,
+		"database.sql":       dump,
+		"storage/avatar.png": avatar,
+	}
+
+	_, err = validateManifest(entries)
+	require.Error(t, err, "a digested manifest missing one file's digest must be refused")
+	require.Contains(t, err.Error(), "storage/avatar.png")
+	require.Contains(t, err.Error(), "stripped digest",
+		"the refusal must explain the inconsistency; got %q", err.Error())
+}
+
+// TestRestore_LegacyArchiveWithoutDigestsWarnsAndProceeds is the compatibility
+// half: an archive taken before per-file digests existed carries none, and must
+// restore with a warning rather than a refusal. The maintainer keeps his own
+// archives — "no users" is not "no old archives".
+func TestRestore_LegacyArchiveWithoutDigestsWarnsAndProceeds(t *testing.T) {
+	// A manifest with Files but no FileDigests — exactly what an older azimuthal
+	// wrote. Marshalled and re-read so the omitempty map really is absent.
+	manifest := backupManifest{
+		AzimuthalVersion: "0.4.0",
+		BackupTimestamp:  time.Now().UTC(),
+		Files:            []string{"database.sql"},
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	require.NoError(t, err)
+	require.NotContains(t, string(manifestJSON), "file_digests",
+		"a legacy manifest must omit the digest field entirely, or this test does not model one")
+
+	entries := map[string][]byte{
+		"manifest.json": manifestJSON,
+		"database.sql":  []byte("-- legacy dump"),
+	}
+
+	var got *backupManifest
+	out := captureStdout(t, func() {
+		got, err = validateManifest(entries)
+	})
+	require.NoError(t, err, "a legacy archive without digests must not be refused")
+	require.NotNil(t, got)
+	require.Contains(t, out, "predates per-file digests",
+		"a legacy archive must warn that it is restoring without integrity verification; stdout was:\n%s", out)
 }
 
 // TestStripStoragePrefix_RoundTrip verifies the storage prefix helper used

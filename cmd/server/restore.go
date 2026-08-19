@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,13 +173,63 @@ func validateManifest(entries map[string][]byte) (*backupManifest, error) {
 	}
 	fmt.Printf("  Files in archive:  %d\n", len(manifest.Files))
 
-	for _, f := range manifest.Files {
-		if _, exists := entries[f]; !exists {
-			return nil, fmt.Errorf("invalid backup: manifest references %q but file not in archive", f)
-		}
+	if err := verifyManifestedFiles(&manifest, entries); err != nil {
+		return nil, err
 	}
+
 	fmt.Println("  Manifest valid.")
 	return &manifest, nil
+}
+
+// verifyManifestedFiles checks that every file the manifest lists is present in
+// the archive and, when the manifest carries digests, that each member's bytes
+// still hash to what the backup recorded.
+//
+// # Present digests are verified; their absence is a warning, not a refusal
+//
+// An archive written before per-file digests existed carries no FileDigests at
+// all. Refusing it would strand every backup the operator already holds — "no
+// users" is not "no old archives" — so the empty case restores with a printed
+// warning and no integrity check, exactly the data it would have restored
+// before this field was added. An archive that DOES carry digests is held to
+// them: a truncated or altered member is caught here, named, and refused before
+// restore touches the database or object store.
+//
+// When digests are present they must be COMPLETE. A manifest that lists a file
+// but omits its digest is not a legacy archive — it is a new-style one with a
+// hole, which is the exact shape a tamperer produces by stripping the digest of
+// the member they rewrote. That is a refusal, not a silent skip.
+func verifyManifestedFiles(manifest *backupManifest, entries map[string][]byte) error {
+	haveDigests := len(manifest.FileDigests) > 0
+
+	for _, f := range manifest.Files {
+		data, exists := entries[f]
+		if !exists {
+			return fmt.Errorf("invalid backup: manifest references %q but file not in archive", f)
+		}
+		if !haveDigests {
+			continue
+		}
+		want, ok := manifest.FileDigests[f]
+		if !ok {
+			return fmt.Errorf("invalid backup: manifest carries digests but none for %q — the "+
+				"manifest is inconsistent with itself, which is what a stripped digest looks like; "+
+				"refusing to restore", f)
+		}
+		sum := sha256.Sum256(data)
+		if got := hex.EncodeToString(sum[:]); got != want {
+			return fmt.Errorf("invalid backup: %q fails its integrity check — the manifest records "+
+				"sha256 %s but the archive contains %s. The archive is truncated or tampered; "+
+				"refusing to restore", f, want, got)
+		}
+	}
+
+	if haveDigests {
+		fmt.Printf("  Verified SHA-256 for %d files.\n", len(manifest.Files))
+	} else {
+		fmt.Println("  Warning: this archive predates per-file digests — restoring without integrity verification.")
+	}
+	return nil
 }
 
 // errNoDatabaseDump is returned when an archive carries no database.sql.
