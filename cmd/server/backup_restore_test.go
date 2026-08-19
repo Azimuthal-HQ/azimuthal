@@ -422,12 +422,14 @@ func TestBackupRestore_PostgresRoundTrip(t *testing.T) {
 // The distinction matters more than it looks.
 // TestRestorePostgres_PartialRestoreIsAFailure is the only gate anywhere on the
 // more dangerous half of D105 — a restore that half-applies and reports
-// success. CI's `test` job runs on ubuntu-latest and merely *relies on* the
-// runner image happening to ship psql; nothing asserts it. If a future runner
-// image drops it, every test here would skip, the fail-loud property would lose
-// all coverage, and CI would still report every gate green. That is the exact
-// shape of the defect this file exists to close — a gate that appears to cover
-// something and does not — one level down.
+// success. CI's `test` job now installs postgresql-client-16 explicitly —
+// matching the postgres:16 service it runs the suite against — so these tests
+// RUN there rather than depend on the runner image happening to ship a client.
+// The hard-fail below is the backstop to that step: if the client ever goes
+// missing (the install dropped, a base image changed), this FAILS the job
+// rather than skipping. A skip would silently drop the only coverage of the
+// fail-loud restore behaviour while CI still reported every gate green — the
+// exact shape of the defect this file exists to close, one level down.
 //
 // `CI` is the right variable precisely because it is not ours: GitHub Actions
 // sets it on every runner, so the hard-fail cannot be lost by editing a

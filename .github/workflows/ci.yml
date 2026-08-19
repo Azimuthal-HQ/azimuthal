@@ -493,6 +493,26 @@ jobs:
           which gcc && gcc --version || \
             (sudo apt-get update -qq && sudo apt-get install -y -q build-essential)
 
+      # cmd/server's backup/restore tests fork pg_dump and psql from the runner's
+      # PATH (requirePostgresClientTools in backup_restore_test.go). That gate is
+      # FATAL in CI on purpose — a runner without the client tools must fail this
+      # job, not silently skip the only unit coverage of the fail-loud restore
+      # behaviour (D105). ubuntu-latest happens to ship a client, but "happens to"
+      # is exactly the fragility those tests warn about, and a client OLDER than
+      # the postgres:16 service started above makes pg_dump refuse the dump. So
+      # install the matching major explicitly, and the five backup/restore tests
+      # RUN here deterministically rather than on the runner image's goodwill.
+      # Keep this major in step with the `postgres:16-alpine` service above.
+      - name: Install PostgreSQL client tools (pg_dump/psql for cmd/server backup tests)
+        run: |
+          if command -v pg_dump >/dev/null 2>&1; then
+            echo "pg_dump already on PATH: $(pg_dump --version)"
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -q postgresql-client-16
+          echo "pg_dump: $(pg_dump --version)"
+          echo "psql:    $(psql --version)"
+
       # -count=1 is load-bearing, and it is here because leaving it out produced
       # a hollow gate the first time this job had a warm build cache.
       #
