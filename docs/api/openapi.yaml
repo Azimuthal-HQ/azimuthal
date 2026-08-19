@@ -921,11 +921,94 @@ components:
         display_name:
           type: string
         email:
+          description: |-
+            Email is accepted for backward compatibility but NO LONGER APPLIED here:
+            an unchanged (or omitted) address is fine, a different one is refused and
+            pointed at the confirmation flow. See the security note on UpdateMe.
           type: string
       type: object
     avatar.avatarResponse:
       properties:
         avatar_url:
+          type: string
+      type: object
+    credlinks.consumeRequest:
+      properties:
+        password:
+          type: string
+        token:
+          type: string
+      type: object
+    credlinks.consumeResponse:
+      properties:
+        access_token:
+          description: |-
+            The token pair is present only for the signin purpose (a redeemed sign-in
+            link signs the user in); a reset or an email change deliberately mints no
+            session — every existing one has just been revoked.
+          type: string
+        purpose:
+          type: string
+        refresh_token:
+          type: string
+        status:
+          type: string
+      type: object
+    credlinks.createUserRequest:
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+      type: object
+    credlinks.emailChangeRequest:
+      properties:
+        current_password:
+          type: string
+        new_email:
+          type: string
+      type: object
+    credlinks.forgotPasswordRequest:
+      properties:
+        email:
+          type: string
+      type: object
+    credlinks.inspectRequest:
+      properties:
+        token:
+          type: string
+      type: object
+    credlinks.inspectResponse:
+      properties:
+        new_email:
+          description: NewEmail is present only for the email_change purpose.
+          type: string
+        purpose:
+          type: string
+      type: object
+    credlinks.issueResetRequest:
+      properties:
+        email:
+          type: string
+      type: object
+    credlinks.linkResponse:
+      properties:
+        delivered:
+          type: boolean
+        expires_at:
+          type: string
+        status:
+          type: string
+        url:
+          type: string
+        user_id:
+          type: string
+      type: object
+    credlinks.statusResponse:
+      properties:
+        status:
           type: string
       type: object
     generated.ProjectItem:
@@ -1945,8 +2028,9 @@ paths:
       tags:
       - auth
     patch:
-      description: Updates the display name and email of the currently authenticated
-        user.
+      description: Updates the display name of the currently authenticated user. Email
+        is NOT changed here — a request naming a different address is refused and
+        directed to POST /auth/me/email-change (reauth + confirmation, the C.2-c fix).
       requestBody:
         content:
           application/json:
@@ -1985,7 +2069,7 @@ paths:
           description: Internal error
       security:
       - BearerAuth: []
-      summary: Update current user
+      summary: Update current user (display name)
       tags:
       - auth
   /auth/me/avatar:
@@ -2045,6 +2129,61 @@ paths:
       security:
       - BearerAuth: []
       summary: Set my avatar
+      tags:
+      - auth
+  /auth/me/email-change:
+    post:
+      description: Requires the current password (reauth) — that alone closes the
+        token-thief vector the old direct email-write left open (C.2-c). With a relay
+        the confirmation link goes to the NEW address and 202 is returned; without
+        a relay the link is returned to the reauthenticated requester (weaker — no
+        proof of new-address control — but the reauth plus generation bump is the
+        security content).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/credlinks.emailChangeRequest'
+                description: New email and current password
+                summary: body
+        description: New email and current password
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/credlinks.linkResponse'
+          description: 'No relay: link returned to the requester'
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/credlinks.statusResponse'
+          description: Confirmation link emailed to the new address
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Wrong current password
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Address already in use
+      security:
+      - BearerAuth: []
+      summary: Request an email change
       tags:
       - auth
   /auth/refresh:
@@ -2131,6 +2270,110 @@ paths:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
           description: Internal error
       summary: Register new user
+      tags:
+      - auth
+  /credential-links/consume:
+    post:
+      description: Redeems a link once. A sign-in link sets a password and signs in
+        (token pair returned); a password reset sets a password and revokes every
+        session; an email change binds the pending address and bumps the token generation.
+        Possession of the token is the credential.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/credlinks.consumeRequest'
+                description: Token, plus password for signin/reset
+                summary: body
+        description: Token, plus password for signin/reset
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/credlinks.consumeResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid or expired
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Address now in use
+      summary: Consume a credential link (public)
+      tags:
+      - auth
+  /credential-links/forgot-password:
+    post:
+      description: Issues a password-reset link and, when a mail relay is configured,
+        emails it. Answers 202 identically whether the address is known — it is not
+        an account-existence oracle — and NEVER returns the link in the body (this
+        is unauthenticated; the admin-issued link is the no-relay answer).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/credlinks.forgotPasswordRequest'
+                description: Email address
+                summary: body
+        description: Email address
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/credlinks.statusResponse'
+          description: Accepted
+      summary: Request a password reset (public)
+      tags:
+      - auth
+  /credential-links/inspect:
+    post:
+      description: A non-consuming validity check so the redemption page can render
+        the right form. Possession of the token is the credential. An invalid, consumed,
+        superseded or expired link is 404, indistinguishably.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/credlinks.inspectRequest'
+                description: Raw token
+                summary: body
+        description: Raw token
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/credlinks.inspectResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Invalid or expired
+      summary: Inspect a credential link (public)
       tags:
       - auth
   /health:
@@ -2585,6 +2828,107 @@ paths:
       summary: Deployment flags
       tags:
       - spaces
+  /orgs/{orgID}/credential-links/reset:
+    post:
+      description: Mints a one-time password-reset link for a member of this org,
+        returned to the admin once. An address that is not a member here (including
+        one that exists only in another org) is 404 — indistinguishable from never-existed.
+        Org admins only; non-admins receive 404.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/credlinks.issueResetRequest'
+                description: Member email
+                summary: body
+        description: Member email
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/credlinks.linkResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an org admin, or no such member
+      security:
+      - BearerAuth: []
+      summary: Issue a password-reset link (admin)
+      tags:
+      - admin
+  /orgs/{orgID}/credential-links/users:
+    post:
+      description: Creates an account with a default grant and no password, and returns
+        a one-time sign-in link the admin hands over. The user sets their own password
+        on redemption. Org admins only; non-admins receive 404.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: orgID
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - type: object
+              - $ref: '#/components/schemas/credlinks.createUserRequest'
+                description: Email, name, and optional org role
+                summary: body
+        description: Email, name, and optional org role
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/credlinks.linkResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Validation error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Not an org admin
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.SwaggerErrorResponse'
+          description: Email already a member
+      security:
+      - BearerAuth: []
+      summary: Create a member with a sign-in link (admin)
+      tags:
+      - admin
   /orgs/{orgID}/custom-fields:
     get:
       parameters:

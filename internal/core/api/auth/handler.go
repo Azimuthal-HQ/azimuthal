@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/mail"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -573,13 +572,25 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 
 type updateMeRequest struct {
 	DisplayName string `json:"display_name"`
-	Email       string `json:"email"`
+	// Email is accepted for backward compatibility but NO LONGER APPLIED here:
+	// an unchanged (or omitted) address is fine, a different one is refused and
+	// pointed at the confirmation flow. See the security note on UpdateMe.
+	Email string `json:"email"`
 }
 
-// UpdateMe updates the current authenticated user's display name and email.
+// UpdateMe updates the current authenticated user's display name.
 //
-// @Summary      Update current user
-// @Description  Updates the display name and email of the currently authenticated user.
+// SECURITY (C.2-c): this endpoint used to apply a new email directly, with only
+// a bearer token — no reauthentication, no confirmation of the new address, and
+// no token_generation bump. An XSS/token thief could silently re-bind the
+// account to an address they control. Email changes now travel ONLY through the
+// reauthenticated, confirmed credential-link flow (POST /auth/me/email-change),
+// which proves the current password up front and bumps the generation on
+// confirm. UpdateMe therefore touches display_name alone; a request naming a
+// different address is refused rather than honoured.
+//
+// @Summary      Update current user (display name)
+// @Description  Updates the display name of the currently authenticated user. Email is NOT changed here — a request naming a different address is refused and directed to POST /auth/me/email-change (reauth + confirmation, the C.2-c fix).
 // @Tags         auth
 // @Accept       json
 // @Produce      json
@@ -604,22 +615,25 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	displayName := strings.TrimSpace(req.DisplayName)
-	email := strings.TrimSpace(req.Email)
-
 	if displayName == "" {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "display_name is required")
 		return
 	}
-	if email == "" {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "email is required")
+
+	// Resolve the account so the current email can be preserved verbatim — the
+	// write below passes it back unchanged, so no email can move through here.
+	current, err := h.users.GetUser(r.Context(), claims.UserID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
 		return
 	}
-	if _, err := mail.ParseAddress(email); err != nil {
-		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "invalid email address")
+	if email := strings.TrimSpace(req.Email); email != "" && !strings.EqualFold(email, current.Email) {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation,
+			"email changes go through the confirmation flow — POST /auth/me/email-change")
 		return
 	}
 
-	updated, err := h.users.UpdateProfile(r.Context(), claims.UserID, displayName, email)
+	updated, err := h.users.UpdateProfile(r.Context(), claims.UserID, displayName, current.Email)
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to update profile")
 		return

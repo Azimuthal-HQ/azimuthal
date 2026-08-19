@@ -153,7 +153,16 @@ func (s *Service) RequestEmailChange(ctx context.Context, userID, orgID uuid.UUI
 	} else if found {
 		return Issued{}, ErrEmailTaken
 	}
-	return s.mint(ctx, userID, PurposeEmailChange, &newEmail, &userID)
+	issued, err := s.mint(ctx, userID, PurposeEmailChange, &newEmail, &userID)
+	if err != nil {
+		return Issued{}, err
+	}
+	// With a relay the link goes to the NEW address, proving control of it; the
+	// handler then hides the URL. Without a relay Delivered stays false and the
+	// handler returns the URL to the reauthenticated requester (the no-relay
+	// trade).
+	issued.Delivered = s.deliver(ctx, newEmail, PurposeEmailChange, issued)
+	return issued, nil
 }
 
 // CreateUserWithSignInLink provisions a member and mints its sign-in link (admin

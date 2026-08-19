@@ -85,23 +85,23 @@ var attdOverLongRef = strings.Repeat("z", 201)
 // auth: PATCH /api/v1/auth/me
 // ---------------------------------------------------------------------------
 
-// TestAuthTeamTicketDomain_UpdateMePersistsTheProfile: the accepted path of
+// TestAuthTeamTicketDomain_UpdateMePersistsTheDisplayName: the accepted path of
 // UpdateMe, proven by reading the change back rather than by trusting the
-// response body.
+// response body. Since C.2-c, UpdateMe writes the DISPLAY NAME only — email is a
+// credential action that travels through the reauthenticated confirmation flow
+// (TestCredentialLink_* covers it), so this asserts the email is left untouched.
 //
-// Defect this catches: UpdateMe echoing the request instead of persisting it
-// — a handler that built its 200 response from `req` rather than from the
-// row `UpdateProfile` returned would satisfy any assertion made on the
-// response alone, and the user's rename would silently vanish on their next
-// sign-in. The follow-up GET /auth/me and the direct row read are what make
-// that impossible: both read the database, neither reads the request.
-func TestAuthTeamTicketDomain_UpdateMePersistsTheProfile(t *testing.T) {
+// Defect this catches: UpdateMe echoing the request instead of persisting it,
+// AND UpdateMe silently moving the email again — a handler that passed req.Email
+// through to UpdateProfile would re-open exactly the C.2-c vector. The follow-up
+// GET /auth/me and the direct row read are what make that impossible: both read
+// the database, neither reads the request.
+func TestAuthTeamTicketDomain_UpdateMePersistsTheDisplayName(t *testing.T) {
 	ts := newTestServer(t)
 	beforeName, beforeEmail := attdProfile(t, ts, ts.UserID)
 
-	newEmail := "attd-renamed@azimuthal.dev"
 	r := ts.patch(t, "/api/v1/auth/me",
-		map[string]string{"display_name": "Attd Renamed", "email": newEmail}, true)
+		map[string]string{"display_name": "Attd Renamed"}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "update me: %s", r.Body)
 	requireSnakeCaseKeys(t, r.Body)
 
@@ -115,16 +115,16 @@ func TestAuthTeamTicketDomain_UpdateMePersistsTheProfile(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.Body, &got))
 	require.Equal(t, ts.UserID.String(), got.ID)
 	require.Equal(t, "Attd Renamed", got.DisplayName)
-	require.Equal(t, newEmail, got.Email)
+	require.Equal(t, beforeEmail, got.Email, "UpdateMe must not touch the email")
 	require.Equal(t, ts.OrgID.String(), got.OrgID)
 	require.True(t, got.IsActive)
 
-	// It really moved: both the row and the read endpoint agree.
+	// It really moved, and the email did not: both the row and the read endpoint
+	// agree.
 	afterName, afterEmail := attdProfile(t, ts, ts.UserID)
 	require.Equal(t, "Attd Renamed", afterName)
-	require.Equal(t, newEmail, afterEmail)
+	require.Equal(t, beforeEmail, afterEmail, "the email is exactly what it was")
 	require.NotEqual(t, beforeName, afterName, "premise: the fixture name was different")
-	require.NotEqual(t, beforeEmail, afterEmail, "premise: the fixture email was different")
 
 	me := ts.get(t, "/api/v1/auth/me", true)
 	require.Equal(t, http.StatusOK, me.StatusCode, "me: %s", me.Body)
@@ -134,32 +134,41 @@ func TestAuthTeamTicketDomain_UpdateMePersistsTheProfile(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(me.Body, &meBody))
 	require.Equal(t, "Attd Renamed", meBody.DisplayName)
-	require.Equal(t, newEmail, meBody.Email)
+	require.Equal(t, beforeEmail, meBody.Email)
 
-	// Leading and trailing whitespace is trimmed, not stored — otherwise
-	// " a@b.dev " would be a second, unreachable account identity.
+	// Leading and trailing whitespace on the display name is trimmed. Sending the
+	// CURRENT email (unchanged, whitespace and all) is accepted — only a
+	// DIFFERENT address is refused.
 	r = ts.patch(t, "/api/v1/auth/me",
-		map[string]string{"display_name": "  Trimmed  ", "email": "  attd-trim@azimuthal.dev  "}, true)
+		map[string]string{"display_name": "  Trimmed  ", "email": "  " + beforeEmail + "  "}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "trim: %s", r.Body)
 	trimName, trimEmail := attdProfile(t, ts, ts.UserID)
 	require.Equal(t, "Trimmed", trimName)
-	require.Equal(t, "attd-trim@azimuthal.dev", trimEmail)
+	require.Equal(t, beforeEmail, trimEmail)
+
+	// A DIFFERENT email is refused with a validation error and writes nothing —
+	// the C.2-c fix, that email cannot move through this endpoint at all.
+	r = ts.patch(t, "/api/v1/auth/me",
+		map[string]string{"display_name": "Trimmed", "email": "attd-elsewhere@azimuthal.dev"}, true)
+	requireErrorCode(t, r, http.StatusBadRequest, "VALIDATION_ERROR")
+	_, stillEmail := attdProfile(t, ts, ts.UserID)
+	require.Equal(t, beforeEmail, stillEmail, "a refused email change leaves the address untouched")
 }
 
 // TestAuthTeamTicketDomain_UpdateMeRefusalsLeaveTheProfileUntouched: every
 // refusal on PATCH /auth/me, each with its own code, and the row unchanged
 // after all of them.
 //
-// Defect this catches: dropping any one of UpdateMe's four guards. Without
-// the decode check a garbled body would proceed on a zero-valued struct and
-// be reported as "display_name is required" — a VALIDATION_ERROR for what is
-// really a malformed request. Without the blank-name check a user could
-// erase their own display name and become an empty row in every picker and
-// mention list. Without mail.ParseAddress the users table accepts strings
-// that no mail transport can deliver to, and the account's only recovery
-// channel is gone. The final row read is what proves each refusal wrote
-// nothing: a handler that validated after calling UpdateProfile would answer
-// 400 and still have changed the record.
+// Defect this catches: dropping the decode check or the blank-name guard, and —
+// since C.2-c — UpdateMe honouring an email change. Without the decode check a
+// garbled body would proceed on a zero-valued struct and be reported as
+// "display_name is required" — a VALIDATION_ERROR for what is really a malformed
+// request. Without the blank-name check a user could erase their own display
+// name and become an empty row in every picker and mention list. Without the
+// different-email refusal, email would silently move through PATCH /me again —
+// the exact vector C.2-c closed. The final row read is what proves each refusal
+// wrote nothing: a handler that validated after calling UpdateProfile would
+// answer 400 and still have changed the record.
 func TestAuthTeamTicketDomain_UpdateMeRefusalsLeaveTheProfileUntouched(t *testing.T) {
 	ts := newTestServer(t)
 	beforeName, beforeEmail := attdProfile(t, ts, ts.UserID)
@@ -181,18 +190,17 @@ func TestAuthTeamTicketDomain_UpdateMeRefusalsLeaveTheProfileUntouched(t *testin
 		})
 	}
 
-	// Decoded but unacceptable is VALIDATION_ERROR.
+	// Decoded but unacceptable is VALIDATION_ERROR, and writes nothing. The email
+	// cases all name a DIFFERENT address than the fixture's — UpdateMe refuses any
+	// email change and routes it to the confirmation flow, so a malformed address
+	// and a well-formed foreign one are refused alike (format is validated by the
+	// email-change endpoint, not here).
 	for name, body := range map[string]map[string]string{
-		"missing_display_name":    {"email": "attd-ok@azimuthal.dev"},
-		"blank_display_name":      {"display_name": "", "email": "attd-ok@azimuthal.dev"},
-		"whitespace_display_name": {"display_name": "   \t  ", "email": "attd-ok@azimuthal.dev"},
-		"missing_email":           {"display_name": "Fine"},
-		"blank_email":             {"display_name": "Fine", "email": ""},
-		"whitespace_email":        {"display_name": "Fine", "email": "   "},
-		"email_no_at":             {"display_name": "Fine", "email": "not-an-email"},
-		"email_no_domain":         {"display_name": "Fine", "email": "someone@"},
-		"email_two_addresses":     {"display_name": "Fine", "email": "a@b.dev, c@d.dev"},
-		"email_bare_domain":       {"display_name": "Fine", "email": "azimuthal.dev"},
+		"missing_display_name":    {"email": beforeEmail},
+		"blank_display_name":      {"display_name": "", "email": beforeEmail},
+		"whitespace_display_name": {"display_name": "   \t  ", "email": beforeEmail},
+		"email_change_malformed":  {"display_name": "Fine", "email": "not-an-email"},
+		"email_change_wellformed": {"display_name": "Fine", "email": "attd-elsewhere@azimuthal.dev"},
 	} {
 		t.Run("invalid/"+name, func(t *testing.T) {
 			requireErrorCode(t, ts.patch(t, "/api/v1/auth/me", body, true),
@@ -205,10 +213,10 @@ func TestAuthTeamTicketDomain_UpdateMeRefusalsLeaveTheProfileUntouched(t *testin
 	require.Equal(t, beforeName, afterName, "a refused PATCH must not have renamed the user")
 	require.Equal(t, beforeEmail, afterEmail, "a refused PATCH must not have changed the email")
 
-	// The same shape SUCCEEDS once it is valid — without this the assertions
-	// above would also pass against a handler that refused everything.
+	// A display-name-only PATCH SUCCEEDS — without this the assertions above would
+	// also pass against a handler that refused everything.
 	r := ts.patch(t, "/api/v1/auth/me",
-		map[string]string{"display_name": "Fine", "email": "attd-ok@azimuthal.dev"}, true)
+		map[string]string{"display_name": "Fine"}, true)
 	require.Equal(t, http.StatusOK, r.StatusCode, "control: a valid PATCH is accepted: %s", r.Body)
 }
 

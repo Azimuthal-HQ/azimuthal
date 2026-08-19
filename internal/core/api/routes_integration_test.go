@@ -23,6 +23,7 @@ import (
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	avatarapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/avatar"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	credlinksapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/credlinks"
 	dashboardsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/dashboards"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
@@ -42,6 +43,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/attachments"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/credlink"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/dashboards"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/invites"
@@ -104,6 +106,11 @@ type testServer struct {
 	// softer version of the dark-dependency problem and the exact shape the
 	// comments handler has been in since it was written.
 	PortalNotifications *portalNotificationRecorder
+	// CredentialLinks captures credential links the server "emails", so a test
+	// can follow a forgot-password or email-change link without a mailbox — the
+	// same affordance portal disclosure gives the sign-in flow. DeliverByEmail is
+	// on for this handler (see the wiring), so both flows record here.
+	CredentialLinks *credlinkSenderRecorder
 }
 
 // tokenFor issues an access token for an arbitrary user of the org —
@@ -291,6 +298,20 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		nil,
 		portal.Config{LinkTTL: time.Hour, DiscloseLink: true, BaseURL: "http://portal.test"},
 	)
+	// Internal-user credential links (D1). A recording sender with
+	// DeliverByEmail on so a test can follow an emailed forgot-password or
+	// email-change link — the credential-link analogue of portal disclosure. The
+	// admin issuance and no-relay email-change paths return the URL in the body
+	// regardless, so those need no recorder.
+	credlinkRecorder := &credlinkSenderRecorder{}
+	credlinkSvc := credlink.NewService(
+		adapters.NewCredentialLinkAdapter(pool),
+		userSvc,
+		credlinkRecorder,
+		credlink.Config{TTL: time.Hour, BaseURL: "http://localhost:8082", DeliverByEmail: true},
+	)
+	credlinkHandler := credlinksapi.NewHandler(credlinkSvc, userSvc, jwtSvc, sessionSvc).WithAuditLogger(auditLog)
+
 	portalNotifs := &portalNotificationRecorder{}
 	portalHandler := portalapi.NewHandler(portalSvc).
 		WithAuditLogger(auditLog).
@@ -325,18 +346,19 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 				adapters.NewBoardConfigAdapter(pool),
 				adapters.NewWorkflowStatusAdapter(pool),
 			)),
-		RelationHandler:     relationsapi.NewHandler(relationSvc),
-		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(adapters.NewSpaceCreateAdapter(db.Pool)).WithAuditLogger(auditLog),
-		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
-		NotificationHandler: notificationsapi.NewHandler(queries, accessResolver),
-		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
-		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
-		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
-		ShareHandler:        shareHandler,
-		AttachmentHandler:   attachmentHandler,
-		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
-		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc, sessionSvc).WithAuditLogger(auditLog),
-		AvatarHandler:       avatarHandler,
+		RelationHandler:       relationsapi.NewHandler(relationSvc),
+		SpaceHandler:          spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(adapters.NewSpaceCreateAdapter(db.Pool)).WithAuditLogger(auditLog),
+		CommentHandler:        commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
+		NotificationHandler:   notificationsapi.NewHandler(queries, accessResolver),
+		WorkflowHandler:       workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
+		TeamHandler:           teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
+		GrantHandler:          grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
+		ShareHandler:          shareHandler,
+		AttachmentHandler:     attachmentHandler,
+		AdminHandler:          adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog),
+		InviteHandler:         invitesapi.NewHandler(inviteSvc, jwtSvc, sessionSvc).WithAuditLogger(auditLog),
+		CredentialLinkHandler: credlinkHandler,
+		AvatarHandler:         avatarHandler,
 		// Saved views (P4). One adapter satisfies three seams — the view rows,
 		// the two cross-space result fan-outs, and the P5 grouped fan-outs.
 		ViewHandler: viewsapi.NewHandler(viewSvc, views.NewQueueService(savedViewAdapter)),
@@ -380,6 +402,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		JWT: jwtSvc, Sessions: sessionSvc, TeamService: teamSvc, GrantService: grantSvc,
 		RouterCfg: cfg, AuditLog: auditLog, AvatarBlobs: avatarBlobs,
 		PortalNotifications: portalNotifs,
+		CredentialLinks:     credlinkRecorder,
 	}
 }
 
@@ -2092,4 +2115,48 @@ func (r *portalNotificationRecorder) All() []jobs.NotificationArgs {
 	out := make([]jobs.NotificationArgs, len(r.args))
 	copy(out, r.args)
 	return out
+}
+
+// recordedCredLink is one credential link the recorder captured.
+type recordedCredLink struct {
+	Email   string
+	Purpose credlink.Purpose
+	URL     string
+}
+
+// credlinkSenderRecorder captures the credential links the server "delivers", so
+// a test can follow a forgot-password or email-change link without a mailbox. It
+// implements credlink.Sender.
+type credlinkSenderRecorder struct {
+	mu   sync.Mutex
+	sent []recordedCredLink
+}
+
+func (r *credlinkSenderRecorder) SendCredentialLink(_ context.Context, toEmail string, purpose credlink.Purpose, linkURL string, _ time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sent = append(r.sent, recordedCredLink{Email: toEmail, Purpose: purpose, URL: linkURL})
+	return nil
+}
+
+// All returns a copy of what was recorded.
+func (r *credlinkSenderRecorder) All() []recordedCredLink {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]recordedCredLink, len(r.sent))
+	copy(out, r.sent)
+	return out
+}
+
+// LastURLTo returns the most recent link URL delivered to an address, or "" if
+// nothing was delivered there.
+func (r *credlinkSenderRecorder) LastURLTo(email string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.sent) - 1; i >= 0; i-- {
+		if r.sent[i].Email == email {
+			return r.sent[i].URL
+		}
+	}
+	return ""
 }

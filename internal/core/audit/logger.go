@@ -142,6 +142,16 @@ const (
 	// EventTypeUserAvatarChanged records an avatar image being set.
 	EventTypeUserAvatarChanged EventType = "user.avatar_changed"
 
+	// EventTypeCredentialLinkIssued records an admin minting a credential link —
+	// a sign-in handoff for a newly created account, or a password-reset link for
+	// an existing member. The payload's "purpose" says which; the raw token is
+	// never recorded (only the admin, the target user, and the purpose).
+	EventTypeCredentialLinkIssued EventType = "credential_link.issued"
+	// EventTypeCredentialLinkConsumed records a credential link being redeemed —
+	// a password set (signin/password_reset) or an email bound (email_change).
+	// The actor is the account itself; the payload's "purpose" says what happened.
+	EventTypeCredentialLinkConsumed EventType = "credential_link.consumed"
+
 	// EventTypeShareCreated records an entity share being created (P3,
 	// ADR-0008).
 	EventTypeShareCreated EventType = "share.created"

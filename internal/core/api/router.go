@@ -11,6 +11,7 @@ import (
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	avatarapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/avatar"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	credlinksapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/credlinks"
 	dashboardsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/dashboards"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
@@ -66,6 +67,12 @@ type RouterConfig struct {
 	// RequireOrgAdmin404 and the public token-authenticated acceptance
 	// routes. nil leaves both unmounted.
 	InviteHandler *invitesapi.Handler
+	// CredentialLinkHandler serves the internal-user credential links (D1): the
+	// public forgot-password / inspect / consume routes (token is the
+	// credential), the authenticated email-change request mounted beside /me, and
+	// the org-admin issuance routes behind RequireOrgAdmin404. nil leaves them
+	// all unmounted.
+	CredentialLinkHandler *credlinksapi.Handler
 	// AvatarHandler serves user avatar upload (self + admin) and the
 	// org-member-readable serve endpoint. nil leaves the routes unmounted
 	// (e.g. when object storage is unavailable).
@@ -171,6 +178,13 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			if cfg.AvatarHandler != nil {
 				r.Put("/me/avatar", cfg.AvatarHandler.SelfUpload)
 			}
+			// Email change is a credential action, not a profile edit: it
+			// reauthenticates and routes through a confirmation link (C.2-c), so
+			// it lives on the credential-link handler even though it hangs off
+			// /me. UpdateMe no longer touches email at all.
+			if cfg.CredentialLinkHandler != nil {
+				r.Post("/me/email-change", cfg.CredentialLinkHandler.RequestEmailChange)
+			}
 		})
 	})
 
@@ -206,6 +220,18 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 				r.Use(portalapi.RequirePortalSession(cfg.PortalService))
 				r.Mount("/", cfg.PortalHandler.SessionRoutes())
 			})
+		})
+	}
+
+	// Internal-user credential links (D1). Mounted OUTSIDE the /api/v1 group for
+	// the same reason as the public invite and portal subtrees: possession of the
+	// raw token is the credential, and forgot-password is reached by someone who
+	// is by definition signed out — neither can satisfy RequireAuth. The admin
+	// issuance routes live under /orgs/{orgID} (mountAdminSurface); the
+	// authenticated email-change request hangs off /auth/me above.
+	if cfg.CredentialLinkHandler != nil {
+		r.Route("/api/v1/credential-links", func(r chi.Router) {
+			r.Mount("/", cfg.CredentialLinkHandler.PublicRoutes())
 		})
 	}
 
@@ -437,6 +463,15 @@ func mountAdminSurface(r chi.Router, cfg RouterConfig) {
 		r.Route("/invites", func(r chi.Router) {
 			r.Use(orgAdmin404Guard(cfg))
 			r.Mount("/", cfg.InviteHandler.AdminRoutes())
+		})
+	}
+	if cfg.CredentialLinkHandler != nil {
+		// Admin credential-link issuance: create a member behind a sign-in link,
+		// mint a reset link. Same org-admin-404 posture as the rest of this
+		// surface — a non-admin cannot tell the routes exist.
+		r.Route("/credential-links", func(r chi.Router) {
+			r.Use(orgAdmin404Guard(cfg))
+			r.Mount("/", cfg.CredentialLinkHandler.AdminRoutes())
 		})
 	}
 }

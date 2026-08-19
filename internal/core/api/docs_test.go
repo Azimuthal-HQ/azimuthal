@@ -156,6 +156,14 @@ func TestDocsSpec_AllProtectedEndpointsHaveSecurity(t *testing.T) {
 		"/portal/{portalKey}":                   {"get": true},
 		"/portal/{portalKey}/auth/request-link": {"post": true},
 		"/portal/auth/redeem":                   {"post": true},
+		// Internal-user credential links (D1). Possession of the raw crypto/rand
+		// token is the credential (inspect/consume), and forgot-password is
+		// reached by someone signed out — none can carry a BearerAuth
+		// requirement. The authenticated email-change request and the org-admin
+		// issuance routes are NOT listed and keep their security requirement.
+		"/credential-links/forgot-password": {"post": true},
+		"/credential-links/inspect":         {"post": true},
+		"/credential-links/consume":         {"post": true},
 	}
 
 	var unsecured []string
