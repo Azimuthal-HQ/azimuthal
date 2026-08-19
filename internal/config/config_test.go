@@ -280,6 +280,41 @@ func TestConfig_AdministrationDefaults(t *testing.T) {
 	}
 }
 
+func TestConfig_CredentialLinkTTLDefault(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The maintainer's ruling: sixty minutes, for all three purposes.
+	if cfg.CredentialLinkTTL != 60*time.Minute {
+		t.Errorf("CredentialLinkTTL must default to sixty minutes, got %v", cfg.CredentialLinkTTL)
+	}
+}
+
+func TestConfig_CredentialLinkTTLInvalidRejected(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+
+	t.Setenv("AZIMUTHAL_CREDENTIAL_LINK_TTL", "not-a-duration")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected a configuration error for an unparseable AZIMUTHAL_CREDENTIAL_LINK_TTL")
+	} else if !strings.Contains(err.Error(), "AZIMUTHAL_CREDENTIAL_LINK_TTL") {
+		t.Errorf("error must name the offending variable, got %q", err.Error())
+	}
+
+	// Zero and negative windows are refused — a link that is born expired is a
+	// silent lockout, not a short window.
+	t.Setenv("AZIMUTHAL_CREDENTIAL_LINK_TTL", "0s")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected a configuration error for a non-positive AZIMUTHAL_CREDENTIAL_LINK_TTL")
+	}
+	t.Setenv("AZIMUTHAL_CREDENTIAL_LINK_TTL", "-5m")
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected a configuration error for a negative AZIMUTHAL_CREDENTIAL_LINK_TTL")
+	}
+}
+
 func TestConfig_InviteDeliveryEmail_RequiresExplicitSMTP(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
 	t.Setenv("AZIMUTHAL_INVITE_DELIVERY", "email")

@@ -90,6 +90,14 @@ type Config struct {
 	PortalLinkTTL      time.Duration
 	PortalSessionTTL   time.Duration
 
+	// CredentialLinkTTL is how long an internal-user credential link — a
+	// sign-in handoff, a password-reset link, or an email-change confirmation —
+	// stays redeemable. One knob covers all three purposes: they share the
+	// credential_links machinery and the same "a credential is sitting in an
+	// inbox, keep the window short" reasoning that gives PortalLinkTTL its 1h
+	// default. Sixty minutes by default, and must be positive.
+	CredentialLinkTTL time.Duration
+
 	// PortalDiscloseLink is the operator's REQUEST that the portal's
 	// request-link response body carry the sign-in URL. It is not the answer:
 	// read PortalLinkDisclosureAllowed(), which is the answer, and which also
@@ -226,6 +234,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("AZIMUTHAL_PORTAL_DISCLOSE_LINK", false)
 	v.SetDefault("AZIMUTHAL_PORTAL_LINK_TTL", "1h")
 	v.SetDefault("AZIMUTHAL_PORTAL_SESSION_TTL", "72h")
+	v.SetDefault("AZIMUTHAL_CREDENTIAL_LINK_TTL", "60m")
 }
 
 // Load reads configuration from environment variables and returns a validated Config.
@@ -317,6 +326,18 @@ func (c *Config) parseDurations(v *viper.Viper) error {
 		return fmt.Errorf("invalid AZIMUTHAL_PORTAL_SESSION_TTL %q: must be positive", v.GetString("AZIMUTHAL_PORTAL_SESSION_TTL"))
 	}
 	c.PortalSessionTTL = portalSessionTTL
+
+	// One window for all three credential-link purposes (sign-in handoff,
+	// password reset, email change). Same "a credential is sitting in an inbox"
+	// reasoning as the portal link's 1h, defaulted to sixty minutes.
+	credentialLinkTTL, err := time.ParseDuration(v.GetString("AZIMUTHAL_CREDENTIAL_LINK_TTL"))
+	if err != nil {
+		return fmt.Errorf("invalid AZIMUTHAL_CREDENTIAL_LINK_TTL %q: %w", v.GetString("AZIMUTHAL_CREDENTIAL_LINK_TTL"), err)
+	}
+	if credentialLinkTTL <= 0 {
+		return fmt.Errorf("invalid AZIMUTHAL_CREDENTIAL_LINK_TTL %q: must be positive", v.GetString("AZIMUTHAL_CREDENTIAL_LINK_TTL"))
+	}
+	c.CredentialLinkTTL = credentialLinkTTL
 	return nil
 }
 
