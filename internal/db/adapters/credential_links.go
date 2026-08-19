@@ -209,13 +209,12 @@ func (a *CredentialLinkAdapter) CreateUserWithSignInLink(ctx context.Context, p 
 			return fmt.Errorf("credential link adapter: creating user: %w", err)
 		}
 
-		invitedBy := p.CreatedBy
 		if _, err := q.CreateMembership(ctx, generated.CreateMembershipParams{
 			ID:        uuid.New(),
 			OrgID:     p.OrgID,
 			UserID:    userID,
 			Role:      p.Role,
-			InvitedBy: pgUUID(&invitedBy),
+			InvitedBy: pgUUID(p.CreatedBy),
 		}); err != nil {
 			return fmt.Errorf("credential link adapter: creating membership: %w", err)
 		}
@@ -230,7 +229,7 @@ func (a *CredentialLinkAdapter) CreateUserWithSignInLink(ctx context.Context, p 
 			TokenHash: tokenHash,
 			NewEmail:  nil,
 			ExpiresAt: pgTimestamp(expiresAt),
-			CreatedBy: pgUUID(&invitedBy),
+			CreatedBy: pgUUID(p.CreatedBy),
 		}); err != nil {
 			return fmt.Errorf("credential link adapter: creating link: %w", err)
 		}

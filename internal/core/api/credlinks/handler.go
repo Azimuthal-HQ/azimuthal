@@ -356,12 +356,13 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actor := claims.UserID
 	issued, userID, err := h.svc.CreateUserWithSignInLink(r.Context(), credlink.NewUser{
 		OrgID:       orgID,
 		Email:       req.Email,
 		DisplayName: req.Name,
 		Role:        req.Role,
-		CreatedBy:   claims.UserID,
+		CreatedBy:   &actor,
 	})
 	if err != nil {
 		switch {

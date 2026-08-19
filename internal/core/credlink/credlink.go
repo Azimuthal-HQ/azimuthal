@@ -138,8 +138,10 @@ type NewUser struct {
 	// Role is the org membership role (owner/admin/member). Validated by the
 	// caller against the org-role vocabulary.
 	Role string
-	// CreatedBy is the admin minting the account and its link.
-	CreatedBy uuid.UUID
+	// CreatedBy is the admin minting the account and its link, or nil for the
+	// break-glass CLI path, which has no acting user (created_by / invited_by are
+	// then stored NULL rather than a dangling zero UUID).
+	CreatedBy *uuid.UUID
 }
 
 // Sender delivers a credential link out of band. Mirrors invites.Sender /

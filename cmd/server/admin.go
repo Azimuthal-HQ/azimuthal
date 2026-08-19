@@ -14,7 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spf13/cobra"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/config"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/credlink"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -32,6 +34,7 @@ var (
 	createUserName     string
 	createUserPassword string
 	createUserRole     string
+	createUserLink     bool
 )
 
 var createUserCmd = &cobra.Command{
@@ -43,12 +46,16 @@ var createUserCmd = &cobra.Command{
 func init() {
 	createUserCmd.Flags().StringVar(&createUserEmail, "email", "", "user email address (required)")
 	createUserCmd.Flags().StringVar(&createUserName, "name", "", "display name (required)")
-	createUserCmd.Flags().StringVar(&createUserPassword, "password", "", "initial password (required)")
+	createUserCmd.Flags().StringVar(&createUserPassword, "password", "",
+		"initial password (required unless --link is set)")
 	createUserCmd.Flags().StringVar(&createUserRole, "role", "owner",
 		"org membership role: owner, admin, or member (owner/admin are org admins under ADR-0007)")
+	createUserCmd.Flags().BoolVar(&createUserLink, "link", false,
+		"create the account WITHOUT a password and print a one-time sign-in link instead; the user sets their own password on redemption (mutually exclusive with --password)")
 	_ = createUserCmd.MarkFlagRequired("email")
 	_ = createUserCmd.MarkFlagRequired("name")
-	_ = createUserCmd.MarkFlagRequired("password")
+	// --password is no longer unconditionally required: --link is the alternative.
+	// Exactly-one-of is checked at runtime in runCreateUser.
 
 	adminCmd.AddCommand(createUserCmd)
 	adminCmd.AddCommand(resetPasswordCmd)
@@ -243,6 +250,17 @@ func isUniqueViolation(err error) bool {
 // runCreateUser connects to the database and creates a user, organization, and membership.
 func runCreateUser(cmd *cobra.Command, _ []string) error {
 	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
+
+	// Exactly one credential mode. --password is break-glass (the admin knows the
+	// password); --link hands over a one-time sign-in link and the user sets their
+	// own password, which is the mode the maintainer's ruling prefers.
+	if createUserLink && createUserPassword != "" {
+		return errors.New("--link and --password are mutually exclusive: --link creates the account without a password")
+	}
+	if !createUserLink && createUserPassword == "" {
+		return errors.New("either --password or --link is required")
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -272,6 +290,10 @@ func runCreateUser(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("setting up organization: %w", err)
 	}
 
+	if createUserLink {
+		return runCreateUserWithLink(ctx, cfg, pool, orgID, orgSlug)
+	}
+
 	userSvc := auth.NewUserService(adapters.NewUserAdapter(pool, orgID))
 	u, err := userSvc.CreateUser(ctx, createUserEmail, createUserName, createUserPassword)
 	if err != nil {
@@ -294,6 +316,35 @@ func runCreateUser(cmd *cobra.Command, _ []string) error {
 	}
 
 	printCreateUserSuccess(u, orgSlug, createUserRole)
+	return nil
+}
+
+// runCreateUserWithLink provisions the passwordless account and mints its
+// one-time sign-in link, reusing the same credlink machinery the admin API does.
+// The org is set up by the caller; the default team is seeded here so the link
+// flow can enrol into it (ADR-0006). CreatedBy is nil — a break-glass CLI has no
+// acting user, so created_by / invited_by are stored NULL.
+func runCreateUserWithLink(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, orgID uuid.UUID, orgSlug string) error {
+	if err := adapters.NewTeamAdapter(pool).SeedDefaultTeam(ctx, orgID); err != nil {
+		return fmt.Errorf("seeding default team: %w", err)
+	}
+	svc := credlink.NewService(
+		adapters.NewCredentialLinkAdapter(pool),
+		auth.NewUserService(adapters.NewUserAdapter(pool, orgID)),
+		nil, // no relay: the CLI prints the link for the admin to hand over
+		credlink.Config{TTL: cfg.CredentialLinkTTL, BaseURL: cfg.AppBaseURL, DeliverByEmail: false},
+	)
+	issued, userID, err := svc.CreateUserWithSignInLink(ctx, credlink.NewUser{
+		OrgID:       orgID,
+		Email:       createUserEmail,
+		DisplayName: createUserName,
+		Role:        createUserRole,
+		CreatedBy:   nil,
+	})
+	if err != nil {
+		return fmt.Errorf("creating user: %w", err)
+	}
+	printCreateUserLinkSuccess(userID, createUserEmail, orgSlug, createUserRole, issued.URL)
 	return nil
 }
 
@@ -320,6 +371,18 @@ func printCreateUserSuccess(u *auth.User, orgSlug, role string) {
 	fmt.Println("Login at: http://localhost:8080/login")
 	fmt.Printf("Email:    %s\n", u.Email)
 	fmt.Println("Password: <the password you provided>")
+}
+
+func printCreateUserLinkSuccess(userID uuid.UUID, email, orgSlug, role, url string) {
+	fmt.Printf("\u2713 User created: %s (no password set)\n", email)
+	fmt.Printf("\u2713 Organization ready (slug: %s)\n", orgSlug)
+	fmt.Printf("\u2713 User added as %s (id: %s)\n", role, userID)
+	fmt.Println()
+	fmt.Println("Hand this ONE-TIME sign-in link to the user. It is shown once, works")
+	fmt.Println("once, and expires (AZIMUTHAL_CREDENTIAL_LINK_TTL, default 60m). They set")
+	fmt.Println("their own password when they open it:")
+	fmt.Println()
+	fmt.Printf("  %s\n", url)
 }
 
 // --- reset-password ---
