@@ -1,0 +1,187 @@
+name: Weekly image rebuild + rescan
+
+# The dominant supply-chain fix for this project is REBUILD-TO-PATCH: most
+# base-image CVEs are resolved by rebuilding on a fresher base rather than by
+# any code change (29 packages sat in that state at last count). But nothing
+# rebuilt main's image between releases, and no workflow had a `schedule:`
+# trigger at all — so a month-old published image could accumulate fixable
+# HIGH/CRITICAL CVEs with nothing watching. This job rebuilds the SHIPPED image
+# recipe (build/Dockerfile) from the default branch every week and scans it with
+# the same Trivy settings the CI container-scan gate uses.
+#
+# ── FAILING LOUDLY: which mechanism, and why ─────────────────────────────────
+# A scheduled run that merely goes red is a red X in the Actions tab that nobody
+# opens — the exact "silent red" this is meant to avoid. So on a SCHEDULED
+# failure this job also files (or refreshes) a tracking issue. A new issue and
+# its comments reach the maintainer through GitHub's ordinary notifications,
+# which a failed scheduled run does not; the run still goes red as well, so both
+# signals exist. The issue is deduplicated by a label, so a persistent problem
+# updates one thread rather than opening a new issue every week.
+#
+# ── Rehearsal vs enforcement ─────────────────────────────────────────────────
+# push (this file changed) and plain workflow_dispatch runs are REHEARSALS: they
+# build and scan — proving the pipeline works — but do NOT fail over pre-existing
+# main CVEs and do NOT file an issue. Only the scheduled run (or a dispatch that
+# explicitly asks) enforces. That keeps the proof run on the introducing branch
+# green while leaving the weekly job with real teeth. The push trigger is also
+# what lets this workflow prove itself before it reaches the default branch,
+# where a schedule/dispatch-only workflow could not yet run.
+
+on:
+  schedule:
+    # Mondays 07:17 UTC — off the top of the hour so it does not pile onto the
+    # scheduling crowd, and weekly is enough to catch base-image rollovers.
+    - cron: '17 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      enforce:
+        description: 'Fail the run and file an issue on HIGH/CRITICAL findings (a scheduled run always enforces)'
+        type: boolean
+        default: false
+  push:
+    paths:
+      - '.github/workflows/rescan.yml'
+
+concurrency:
+  group: rescan-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: azimuthal-rescan
+
+jobs:
+  rebuild-and-scan:
+    name: Rebuild main's image and scan it
+    runs-on: ubuntu-latest
+    # Scanning gates the public repository only, matching ci.yml's scanner jobs;
+    # a differently-named mirror has no image to publish and nothing to rescan.
+    if: endsWith(github.repository, '/azimuthal')
+    permissions:
+      contents: read
+      issues: write # file/refresh the tracking issue on a scheduled failure
+    steps:
+      - uses: actions/checkout@v4
+
+      # Scheduled runs always enforce; a manual dispatch enforces only when
+      # asked; a push (self-test) never does.
+      - name: Decide enforcement
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event.inputs.enforce }}" = "true" ]; then
+            echo "enforce=true" >> "$GITHUB_OUTPUT"
+            echo "This run ENFORCES: HIGH/CRITICAL findings fail it and file an issue."
+          else
+            echo "enforce=false" >> "$GITHUB_OUTPUT"
+            echo "This run is a rehearsal: it builds and reports but does not fail or file an issue."
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the recipe that actually ships (build/Dockerfile), not
+      # Dockerfile.ci — the point is to rescan what a release would produce TODAY
+      # on a fresh base. linux/amd64 only: base-package CVEs are not
+      # arch-specific, and one platform keeps the weekly job cheap. --load puts
+      # the image in the daemon so Trivy scans it locally with no registry push.
+      - name: Build the shipped image recipe from this ref
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --file build/Dockerfile \
+            --tag "${IMAGE}:scan" \
+            --build-arg VERSION=rescan \
+            --load \
+            .
+
+      # Human-readable report, always produced, never failing — this is what the
+      # issue body quotes and what a reader skims in the log.
+      - name: Trivy report (table, non-failing)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:scan
+          format: table
+          output: trivy-report.txt
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+          exit-code: '0'
+
+      - name: Show the report in the run log
+        if: always()
+        run: cat trivy-report.txt || echo "(no report captured)"
+
+      # The gate. Same settings as the report, but it FAILS on findings — and
+      # only on an enforcing run, so a rehearsal never goes red over CVEs that
+      # already exist on main.
+      - name: Trivy gate (fail on HIGH/CRITICAL)
+        id: gate
+        if: steps.mode.outputs.enforce == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:scan
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+          exit-code: '1'
+
+      # LOUD failure: on an enforcing run that failed, file or refresh one
+      # tracking issue so the maintainer is notified rather than having to notice
+      # a red run. Runs on failure of the whole job (a CVE gate failure or a
+      # build break both warrant a look).
+      - name: File or refresh the tracking issue
+        if: failure() && steps.mode.outputs.enforce == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const label = 'image-rescan';
+            const title = 'Weekly image rescan: fixable HIGH/CRITICAL vulnerabilities in main';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            let report = '';
+            try { report = fs.readFileSync('trivy-report.txt', 'utf8'); } catch (e) { /* build may have failed first */ }
+            if (report.length > 50000) report = report.slice(0, 50000) + '\n...(truncated)...';
+
+            const body = [
+              `The scheduled rebuild + rescan of \`main\`'s image failed.`,
+              '',
+              'A fresh rebuild of the shipped image (`build/Dockerfile`) still carries fixable',
+              'HIGH/CRITICAL CVEs, or the image failed to build. When it is CVEs, rebuild-to-patch is',
+              'not enough on its own — cut a rebuilt release, or bump the flagged dependency and then',
+              'release.',
+              '',
+              `Run: ${runUrl}`,
+              '',
+              '<details><summary>Trivy report</summary>',
+              '',
+              '```',
+              (report.trim() || '(no report captured — the build likely failed before the scan)'),
+              '```',
+              '',
+              '</details>',
+            ].join('\n');
+
+            // Ensure the dedup label exists.
+            try {
+              await github.rest.issues.getLabel({ ...context.repo, name: label });
+            } catch (e) {
+              await github.rest.issues.createLabel({
+                ...context.repo, name: label, color: 'b60205',
+                description: 'Automated weekly image rebuild + rescan findings',
+              });
+            }
+
+            const existing = await github.rest.issues.listForRepo({
+              ...context.repo, state: 'open', labels: label, per_page: 1,
+            });
+            if (existing.data.length > 0) {
+              const n = existing.data[0].number;
+              await github.rest.issues.createComment({ ...context.repo, issue_number: n, body });
+              core.notice(`Refreshed tracking issue #${n}`);
+            } else {
+              const created = await github.rest.issues.create({
+                ...context.repo, title, labels: [label], body,
+              });
+              core.notice(`Filed tracking issue #${created.data.number}`);
+            }
