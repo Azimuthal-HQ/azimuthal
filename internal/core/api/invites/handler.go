@@ -63,10 +63,16 @@ func (h *Handler) AdminRoutes() chi.Router {
 // PublicRoutes returns the token-authenticated acceptance routes, mounted
 // at /api/v1/invites with no auth middleware — possession of the raw token
 // is the credential.
-func (h *Handler) PublicRoutes() chi.Router {
+//
+// limit is the per-IP rate-limit middleware for the invite-accept class,
+// applied to BOTH public routes because both are raw-token-guessing surfaces:
+// inspecting a token probes for a valid one, accepting spends it. The router
+// always passes a non-nil middleware (rl.For returns a pass-through when rate
+// limiting is disabled), so callers wire it unconditionally.
+func (h *Handler) PublicRoutes(limit func(http.Handler) http.Handler) chi.Router {
 	r := chi.NewRouter()
-	r.Get("/{token}", h.Inspect)
-	r.Post("/accept", h.Accept)
+	r.With(limit).Get("/{token}", h.Inspect)
+	r.With(limit).Post("/accept", h.Accept)
 	return r
 }
 

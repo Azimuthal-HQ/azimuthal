@@ -1077,6 +1077,12 @@ jobs:
       APP_PORT: "8082"
       BASE_URL: http://localhost:8082
       AZIMUTHAL_BINARY: /tmp/azimuthal-test
+      # The auth rate limiter is per client IP, and the whole Playwright suite
+      # drives the server from one loopback IP, so a per-IP bucket would refuse
+      # legitimate test logins. Playwright's webServer passes this job env through
+      # to the spawned server (parent process.env is inherited). Mirrors the same
+      # line in .env.test, which covers the make-driven local/regression runs.
+      AZIMUTHAL_AUTH_RATE_LIMIT_ENABLED: "false"
       # Whole-suite budget. web/playwright.config.ts defaults globalTimeout to
       # PW_GLOBAL_TIMEOUT (300000 = 5 min), and the 176-test suite now runs right
       # at that edge on this runner — a run that lands at ~5.0m aborts mid-suite

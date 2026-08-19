@@ -69,14 +69,26 @@ services:
       # rather than refusing.
       AZIMUTHAL_PORTAL_DISCLOSE_LINK: ${AZIMUTHAL_PORTAL_DISCLOSE_LINK}
 
-      # Email. SMTP_HOST is bare for a second reason beyond the one above:
-      # config.validate tests it with a RAW os.Getenv, to tell "the operator
-      # configured a relay" from "the localhost default". A `:-localhost` here
-      # satisfied that check unconditionally and silently disabled the guard
-      # that refuses AZIMUTHAL_INVITE_DELIVERY=email without a relay.
+      # Email. SMTP_HOST and SMTP_FROM are bare for a second reason beyond the one
+      # above: config.validate tests BOTH with a RAW os.Getenv (D140), to tell
+      # "the operator configured a relay / from-address" from the "localhost" and
+      # "azimuthal@localhost" defaults. A `:-default` here would satisfy those
+      # checks unconditionally and silently disable the guard that refuses
+      # AZIMUTHAL_INVITE_DELIVERY=email without an explicit relay and from-address.
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
       SMTP_FROM: ${SMTP_FROM}
+      # SMTP transport security and auth (D3). Default TLS mode is "none" (local
+      # relay); set starttls/implicit and the username/password for a real relay.
+      SMTP_TLS: ${SMTP_TLS}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+
+      # Auth-surface rate limiting (D3). Per-IP token bucket on the
+      # unauthenticated auth endpoints; process-local, so per instance.
+      AZIMUTHAL_AUTH_RATE_LIMIT_ENABLED: ${AZIMUTHAL_AUTH_RATE_LIMIT_ENABLED}
+      AZIMUTHAL_AUTH_RATE_LIMIT_PER_MINUTE: ${AZIMUTHAL_AUTH_RATE_LIMIT_PER_MINUTE}
+      AZIMUTHAL_AUTH_RATE_LIMIT_BURST: ${AZIMUTHAL_AUTH_RATE_LIMIT_BURST}
 
       # Operations
       AZIMUTHAL_TICKET_REF_REQUIRED: ${AZIMUTHAL_TICKET_REF_REQUIRED}

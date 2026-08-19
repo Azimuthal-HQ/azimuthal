@@ -191,11 +191,20 @@ func requesterStatus(internal string) string {
 // PublicRoutes are unauthenticated by design: possession of a magic-link token
 // is the credential, exactly as it is for invite acceptance
 // (internal/core/api/invites PublicRoutes).
-func (h *Handler) PublicRoutes() chi.Router {
+//
+// requestLinkLimit and redeemLimit are the per-IP rate-limit middlewares for
+// the two auth-critical operations here: requesting a sign-in link (an
+// email-enumeration-by-timing and spam vector) and redeeming a magic-link token
+// (the portal's actual authentication step, so a token-guessing surface). They
+// key on separate classes, so a burst of redemptions cannot starve legitimate
+// link requests and vice versa. Describe carries no limiter — it returns only a
+// portal's public name and blurb. The router always passes non-nil middlewares
+// (a pass-through when rate limiting is disabled).
+func (h *Handler) PublicRoutes(requestLinkLimit, redeemLimit func(http.Handler) http.Handler) chi.Router {
 	r := chi.NewRouter()
 	r.Get("/{portalKey}", h.Describe)
-	r.Post("/{portalKey}/auth/request-link", h.RequestLink)
-	r.Post("/auth/redeem", h.Redeem)
+	r.With(requestLinkLimit).Post("/{portalKey}/auth/request-link", h.RequestLink)
+	r.With(redeemLimit).Post("/auth/redeem", h.Redeem)
 	return r
 }
 

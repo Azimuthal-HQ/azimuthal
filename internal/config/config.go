@@ -40,9 +40,32 @@ type Config struct {
 	AllowedOrigins []string
 
 	// Email
-	SMTPHost string
-	SMTPPort int
-	SMTPFrom string
+	SMTPHost     string
+	SMTPPort     int
+	SMTPFrom     string
+	SMTPUsername string
+	SMTPPassword string
+	// SMTPTLS selects transport security for the SMTP connection: "none"
+	// (plaintext, the default — appropriate for a local relay such as mailhog),
+	// "starttls" (connect in the clear, then upgrade with STARTTLS), or
+	// "implicit" (TLS from the first byte, the classic submissions-over-465
+	// style). Validated at Load — an unrecognised value is refused rather than
+	// silently run as plaintext.
+	SMTPTLS string
+
+	// Auth-surface rate limiting (D3). An in-memory per-(client IP, route-class)
+	// token bucket on the unauthenticated, auth-critical endpoints: login,
+	// invite acceptance, and the portal's request-link and redeem. It is
+	// PROCESS-LOCAL by design — Azimuthal is a single binary with no shared
+	// cache — so a multi-replica deployment limits per instance rather than per
+	// cluster (see internal/core/auth.TokenBucketLimiter). Enabled by default;
+	// PerMinute is the sustained per-key refill and Burst the reservoir, both
+	// required positive at Load when enabled. The test harness disables it,
+	// because a suite drives every endpoint from a single IP and would otherwise
+	// share one per-IP bucket.
+	AuthRateLimitEnabled   bool
+	AuthRateLimitPerMinute int
+	AuthRateLimitBurst     int
 
 	// Administration (P2.5). AllowRegistration gates POST /auth/register —
 	// false (the default) 404s it and makes invites the only way in.
@@ -148,6 +171,19 @@ const (
 	DefaultBcryptCost = 12
 )
 
+// SMTP transport-security modes for SMTP_TLS.
+const (
+	// SMTPTLSNone is plaintext SMTP — no STARTTLS, no implicit TLS. The default,
+	// for a local relay (mailhog) or a trusted-network internal relay.
+	SMTPTLSNone = "none"
+	// SMTPTLSStartTLS connects in the clear and upgrades the connection with the
+	// STARTTLS command before authenticating or sending.
+	SMTPTLSStartTLS = "starttls"
+	// SMTPTLSImplicit wraps the whole connection in TLS from the first byte, the
+	// classic submissions style (typically port 465).
+	SMTPTLSImplicit = "implicit"
+)
+
 // Invite delivery modes.
 const (
 	// InviteDeliveryLink returns the invite URL to the admin, who sends it
@@ -202,6 +238,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("SMTP_HOST", "localhost")
 	v.SetDefault("SMTP_PORT", 1025)
 	v.SetDefault("SMTP_FROM", "azimuthal@localhost")
+	// Plaintext by default: the stock local relay (mailhog) speaks no TLS, and
+	// making TLS the default would break the out-of-the-box dev experience. An
+	// operator with a real relay opts into starttls/implicit.
+	v.SetDefault("SMTP_TLS", SMTPTLSNone)
+	// Auth-surface rate limiting: on by default with limits generous enough that
+	// a human never meets them (a short burst, then a steady refill) while a
+	// line-speed guessing attack is throttled hard. Per client IP.
+	v.SetDefault("AZIMUTHAL_AUTH_RATE_LIMIT_ENABLED", true)
+	v.SetDefault("AZIMUTHAL_AUTH_RATE_LIMIT_PER_MINUTE", 30)
+	v.SetDefault("AZIMUTHAL_AUTH_RATE_LIMIT_BURST", 10)
 	// APP_ENV defaults to production, not development.
 	//
 	// An unset variable must describe the deployment that actually exists when
@@ -262,9 +308,16 @@ func Load() (*Config, error) {
 		SMTPHost:           v.GetString("SMTP_HOST"),
 		SMTPPort:           v.GetInt("SMTP_PORT"),
 		SMTPFrom:           v.GetString("SMTP_FROM"),
+		SMTPUsername:       v.GetString("SMTP_USERNAME"),
+		SMTPPassword:       v.GetString("SMTP_PASSWORD"),
+		SMTPTLS:            v.GetString("SMTP_TLS"),
 		AppEnv:             v.GetString("APP_ENV"),
 		AppPort:            v.GetInt("APP_PORT"),
 		AppBaseURL:         v.GetString("APP_BASE_URL"),
+
+		AuthRateLimitEnabled:   v.GetBool("AZIMUTHAL_AUTH_RATE_LIMIT_ENABLED"),
+		AuthRateLimitPerMinute: v.GetInt("AZIMUTHAL_AUTH_RATE_LIMIT_PER_MINUTE"),
+		AuthRateLimitBurst:     v.GetInt("AZIMUTHAL_AUTH_RATE_LIMIT_BURST"),
 	}
 
 	if err := cfg.parseLogLevel(v); err != nil {
@@ -539,31 +592,111 @@ func parseAllowedOrigins(raw string) []string {
 // strings, and TestDeliveryModeConstantsAgree fails the moment that stops being
 // true. That is the same arrangement MinBcryptCost uses against the auth
 // package, for the same reason.
-func validateDeliveryMode(envVar, mode, smtpFrom string) []string {
+//
+// BOTH the SMTP_HOST and SMTP_FROM checks read raw os.Getenv, not the config
+// fields (D140). Each carries a viper default — "localhost" and
+// "azimuthal@localhost" — so the field is never empty and cannot distinguish
+// "an operator configured a relay" from "nobody set anything". The SMTP_FROM
+// check used c.SMTPFrom until D3 and was therefore DEAD: the default made the
+// branch unreachable, so email delivery was permitted with an unset From and
+// mail would go out as azimuthal@localhost, which real relays reject or junk.
+// Reading it raw makes the check mean what it says — and is why
+// build/docker-compose.yml must forward SMTP_HOST and SMTP_FROM bare (a
+// `${KEY:-default}` there satisfies these unconditionally and silently disables
+// them). TestConfig_InviteDeliveryEmail_RequiresExplicitSMTPFrom pins it.
+func validateDeliveryMode(envVar, mode string) []string {
 	var errs []string
 	switch mode {
 	case InviteDeliveryLink:
 		// Nothing is sent, so no relay is needed.
 	case InviteDeliveryEmail:
 		// Fail loudly at startup rather than dropping mail at send time.
-		//
-		// Deliberately a raw os.Getenv rather than c.SMTPHost: SMTP_HOST carries
-		// a "localhost" default for a dev relay, so the config field is never
-		// empty and could not distinguish "an operator configured a relay" from
-		// "nobody set anything". This is also why build/docker-compose.yml must
-		// forward SMTP_HOST bare — a `${SMTP_HOST:-localhost}` there satisfies
-		// this check unconditionally and silently disables it.
 		if os.Getenv("SMTP_HOST") == "" {
 			errs = append(errs, envVar+"=email requires SMTP_HOST to be set explicitly")
 		}
-		if smtpFrom == "" {
-			errs = append(errs, envVar+"=email requires SMTP_FROM")
+		if os.Getenv("SMTP_FROM") == "" {
+			errs = append(errs, envVar+"=email requires SMTP_FROM to be set explicitly")
 		}
 	default:
 		errs = append(errs, fmt.Sprintf("invalid %s %q: must be %q or %q",
 			envVar, mode, InviteDeliveryLink, InviteDeliveryEmail))
 	}
 	return errs
+}
+
+// validateSMTPSecurity refuses the SMTP transport settings that are
+// contradictory or unrecognised. It does NOT refuse auth-without-TLS — that is
+// a WARN, not a refusal (see SMTPAuthWithoutTLS and cmd/server/serve.go): an
+// operator's lab is allowed to be a lab, and a hard refusal shipped in a
+// security patch could lock out a working local setup over a combination that
+// is disclosed rather than dangerous.
+//
+// What it does refuse:
+//   - an SMTP_TLS that is not one of the three known modes — the same reasoning
+//     as every other malformed setting here: a value the server would guess at
+//     is worse than one it rejects;
+//   - SMTP_USERNAME or SMTP_PASSWORD set without the other — auth needs both, so
+//     exactly one is an incomplete credential the operator will read as
+//     configured when it authenticates nothing.
+func validateSMTPSecurity(c *Config) []string {
+	var errs []string
+
+	switch c.SMTPTLS {
+	case SMTPTLSNone, SMTPTLSStartTLS, SMTPTLSImplicit:
+		// Recognised.
+	default:
+		errs = append(errs, fmt.Sprintf("invalid SMTP_TLS %q: must be %q, %q or %q",
+			c.SMTPTLS, SMTPTLSNone, SMTPTLSStartTLS, SMTPTLSImplicit))
+	}
+
+	if (c.SMTPUsername == "") != (c.SMTPPassword == "") {
+		errs = append(errs, "SMTP auth requires both SMTP_USERNAME and SMTP_PASSWORD, or neither")
+	}
+
+	return errs
+}
+
+// validateAuthRateLimit refuses a limiter that is turned on but told to admit
+// nothing. When enabled, both knobs must be positive: a non-positive PerMinute
+// never refills and a non-positive Burst starts every key empty, so either would
+// refuse every login on a running server — a far worse outage than a rejected
+// boot. When disabled, the values are inert and not checked.
+func validateAuthRateLimit(c *Config) []string {
+	if !c.AuthRateLimitEnabled {
+		return nil
+	}
+	var errs []string
+	if c.AuthRateLimitPerMinute <= 0 {
+		errs = append(errs, fmt.Sprintf(
+			"AZIMUTHAL_AUTH_RATE_LIMIT_PER_MINUTE must be a positive integer when rate limiting is enabled, got %d",
+			c.AuthRateLimitPerMinute))
+	}
+	if c.AuthRateLimitBurst <= 0 {
+		errs = append(errs, fmt.Sprintf(
+			"AZIMUTHAL_AUTH_RATE_LIMIT_BURST must be a positive integer when rate limiting is enabled, got %d",
+			c.AuthRateLimitBurst))
+	}
+	return errs
+}
+
+// SMTPAuthConfigured reports whether SMTP username/password auth is in force
+// (both set — validateSMTPSecurity has already refused exactly one).
+func (c *Config) SMTPAuthConfigured() bool {
+	return c.SMTPUsername != "" && c.SMTPPassword != ""
+}
+
+// SMTPUsesTLS reports whether the SMTP connection is encrypted (STARTTLS or
+// implicit TLS), as opposed to plaintext.
+func (c *Config) SMTPUsesTLS() bool {
+	return c.SMTPTLS == SMTPTLSStartTLS || c.SMTPTLS == SMTPTLSImplicit
+}
+
+// SMTPAuthWithoutTLS reports the WARN case: credentials are configured but the
+// connection is plaintext, so the username and password go out on the wire in
+// the clear. It is deliberately a warning rather than a boot refusal — see
+// validateSMTPSecurity — and cmd/server/serve.go logs one line naming the risk.
+func (c *Config) SMTPAuthWithoutTLS() bool {
+	return c.SMTPAuthConfigured() && !c.SMTPUsesTLS()
 }
 
 // validate checks that all required configuration is present.
@@ -576,7 +709,7 @@ func (c *Config) validate() error {
 	}
 
 	errs = append(errs, validateDeliveryMode(
-		"AZIMUTHAL_INVITE_DELIVERY", c.InviteDelivery, c.SMTPFrom)...)
+		"AZIMUTHAL_INVITE_DELIVERY", c.InviteDelivery)...)
 
 	// The portal's sign-in links run the identical rule. Before this existed an
 	// unrecognised value passed validation and then matched neither branch in
@@ -594,7 +727,10 @@ func (c *Config) validate() error {
 	// PortalLinkDisclosureAllowed — the flag is ignored there rather than
 	// rejected).
 	errs = append(errs, validateDeliveryMode(
-		"AZIMUTHAL_PORTAL_LINK_DELIVERY", c.PortalLinkDelivery, c.SMTPFrom)...)
+		"AZIMUTHAL_PORTAL_LINK_DELIVERY", c.PortalLinkDelivery)...)
+
+	errs = append(errs, validateSMTPSecurity(c)...)
+	errs = append(errs, validateAuthRateLimit(c)...)
 
 	// No APP_ENV exemption, by design — see the BcryptCost field comment.
 	if c.BcryptCost < MinBcryptCost || c.BcryptCost > MaxBcryptCost {

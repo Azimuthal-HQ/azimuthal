@@ -151,8 +151,42 @@ All of these are forwarded by `build/docker-compose.yml` — set any of them in 
 | `AZIMUTHAL_PORTAL_LINK_TTL` | `1h` | How long a portal sign-in link stays redeemable. Must be positive. |
 | `AZIMUTHAL_PORTAL_SESSION_TTL` | `72h` | Lifetime of the session a redeemed portal link produces. Must be positive. |
 | `AZIMUTHAL_CREDENTIAL_LINK_TTL` | `60m` | How long an internal-user credential link stays redeemable — the one window for all three purposes: an admin-issued sign-in link, a password reset (self-service or admin-issued), and an email-change confirmation. A credential sitting in an inbox, so the default is short. Must be positive. Whether these links are *emailed* is not a mode here — it follows whether a relay is configured (`SMTP_HOST` set explicitly): with one, forgot-password and email-change email the link; without one, forgot-password delivers nothing (issue an admin link instead) and email-change returns the link to the reauthenticated requester. |
-| `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. Required when `AZIMUTHAL_INVITE_DELIVERY=email`. |
+| `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. Required (set explicitly) when `AZIMUTHAL_INVITE_DELIVERY=email` or `AZIMUTHAL_PORTAL_LINK_DELIVERY=email` — the default is not accepted for email delivery, because mail sent as `azimuthal@localhost` is rejected or junked by real relays. |
+| `SMTP_TLS` | `none` | Transport security for the SMTP connection: `none` (plaintext — for a local relay such as mailhog, or a trusted internal network), `starttls` (connect in the clear, upgrade with STARTTLS), or `implicit` (TLS from the first byte, the classic port-465 style). An unrecognised value is refused at startup. |
+| `SMTP_USERNAME` | (empty) | Username for SMTP `PLAIN` authentication. Set it together with `SMTP_PASSWORD` — exactly one of the two is refused at startup. |
+| `SMTP_PASSWORD` | (empty) | Password for SMTP `PLAIN` authentication. If you set auth with `SMTP_TLS=none`, the server **boots with a warning**: the credentials travel in the clear. Use `starttls` or `implicit` for anything but a trusted local relay. |
+| `AZIMUTHAL_AUTH_RATE_LIMIT_ENABLED` | `true` | Rate-limit the unauthenticated, auth-critical endpoints (login, invite acceptance, the internal-user credential links — forgot-password, inspect and consume — and the portal request-link and redeem) with a per-client-IP token bucket. On by default. See the note below. |
+| `AZIMUTHAL_AUTH_RATE_LIMIT_PER_MINUTE` | `30` | Sustained requests per minute allowed per client IP, per route class. Must be positive when rate limiting is enabled. |
+| `AZIMUTHAL_AUTH_RATE_LIMIT_BURST` | `10` | Largest instantaneous burst allowed per client IP, per route class, before the sustained rate applies. Must be positive when rate limiting is enabled. |
 | `STORAGE_USE_SSL` | `false` | Reach the object-storage endpoint over TLS. An `https://` prefix on `STORAGE_ENDPOINT` forces this to `true` regardless of what you set. The bundled Compose file sets `http://storage:9000`, so MinIO is reached over the internal network on plain HTTP. |
+
+### Auth-surface rate limiting
+
+The unauthenticated endpoints where an attacker would stuff credentials or
+enumerate accounts — `POST /auth/login`, invite inspection and acceptance, the
+internal-user credential links (`forgot-password`, `inspect` and `consume`), and
+the portal's request-link and redeem — carry a per-client-IP **token bucket**.
+A client gets `AZIMUTHAL_AUTH_RATE_LIMIT_BURST` requests immediately, then one
+every `60 / AZIMUTHAL_AUTH_RATE_LIMIT_PER_MINUTE` seconds; over the limit the
+endpoint answers **`429 Too Many Requests`** with a `Retry-After` header and no
+detail in the body (so it cannot itself become the oracle it exists to close).
+Each of the endpoints above is a separate bucket, so exhausting one does not
+lock out the others, and the client IP is taken from the same extraction the
+audit log records against.
+
+Two things worth knowing:
+
+- **It is per instance, not per cluster.** The bucket lives in the process, so
+  if you run more than one replica behind a load balancer each limits
+  independently — a round-robin balancer loosens the effective limit by roughly
+  the replica count. Azimuthal is a single binary with no shared cache, and this
+  is the honest consequence; it is fine at the scale this targets.
+- **It keys on the client IP as the server sees it.** Behind a reverse proxy
+  that terminates the connection, that is the proxy's address unless the proxy
+  is configured to preserve the client's — so many users can share one bucket.
+  Size `BURST`/`PER_MINUTE` for the number of people who legitimately sit behind
+  one address, or disable it (`AZIMUTHAL_AUTH_RATE_LIMIT_ENABLED=false`) if your
+  proxy already does this job.
 
 ## Try the portal in five minutes
 

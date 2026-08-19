@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/api/respond"
@@ -70,21 +69,12 @@ func (h *Handler) WithRegistrationPolicy(allow bool) *Handler {
 	return h
 }
 
-// Routes returns a chi.Router with the PUBLIC auth endpoints mounted.
-//
-// Logout is deliberately absent, and moving it out was a repair. Mounted here
-// it sat outside the RequireAuth group in NewRouter, and nothing in that router
-// mounts OptionalAuth — so no middleware ever put claims on the context at that
-// path and Logout's own nil-claims branch answered 401 to every caller, valid
-// bearer token included. It is now mounted beside /me, inside the group; see
-// the comment there.
-func (h *Handler) Routes() chi.Router {
-	r := chi.NewRouter()
-	r.Post("/login", h.Login)
-	r.Post("/register", h.Register)
-	r.Post("/refresh", h.Refresh)
-	return r
-}
+// The PUBLIC auth endpoints (login, register, refresh) are registered directly
+// by internal/core/api.NewRouter rather than mounted from a Routes() method
+// here, so that login can carry its own rate-limit class and D1's
+// forgot-password endpoint has a one-line registration point beside it. Logout,
+// logout-all and /me sit inside NewRouter's RequireAuth group; see the comment
+// there. This handler exposes each endpoint as a method for that wiring.
 
 type loginRequest struct {
 	Email    string `json:"email"`
@@ -189,7 +179,7 @@ func (h *Handler) finishLogin(w http.ResponseWriter, r *http.Request, user *auth
 	// logout revokes THIS row and leaves other devices signed in. A session
 	// that could not be opened is a failed login: minting a sessionless pair
 	// would hand back tokens the very next request refuses.
-	sess, err := h.sessions.CreateSession(r.Context(), user.ID, r.UserAgent(), clientIP(r))
+	sess, err := h.sessions.CreateSession(r.Context(), user.ID, r.UserAgent(), ClientIP(r))
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to start session")
 		return
@@ -294,7 +284,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	// Registration logs the new user straight in, so it opens a session and
 	// binds the pair to it, exactly as login does — a token minted here with
 	// no session would be refused on its first use.
-	sess, err := h.sessions.CreateSession(r.Context(), user.ID, r.UserAgent(), clientIP(r))
+	sess, err := h.sessions.CreateSession(r.Context(), user.ID, r.UserAgent(), ClientIP(r))
 	if err != nil {
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to start session")
 		return
@@ -523,12 +513,16 @@ func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }
 
-// clientIP is a best-effort extraction of the caller's address for the
+// ClientIP is a best-effort extraction of the caller's address for the
 // session's audit columns (ip_address is INET and nullable, so an
 // unparseable or proxied value simply stores NULL). It strips the port that
 // r.RemoteAddr always carries; anything fancier (X-Forwarded-For trust) is a
 // deployment concern this does not pretend to solve.
-func clientIP(r *http.Request) string {
+//
+// Exported so the auth rate limiter keys on the SAME extraction the audit trail
+// records against, rather than growing a second, subtly different parser. One
+// extraction, shared — see internal/core/api/ratelimit.go.
+func ClientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

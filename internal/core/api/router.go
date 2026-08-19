@@ -128,6 +128,12 @@ type RouterConfig struct {
 	// unmounted; every real construction site wires one, and the capability
 	// guards fail closed without a resolution on the context.
 	AccessResolver *access.Resolver
+	// RateLimit configures the per-IP token bucket applied to the
+	// unauthenticated, auth-critical routes (login, invite acceptance, portal
+	// request-link and redeem). The zero value is a working "disabled", so the
+	// integration harness leaves it unset; production fills it from
+	// internal/config. See ratelimit.go.
+	RateLimit RateLimitConfig
 }
 
 // NewRouter builds the unified chi router with all routes and middleware.
@@ -153,9 +159,24 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	// API documentation (no auth required)
 	RegisterDocsRoutes(r)
 
+	// The per-IP rate limiter for the unauthenticated auth surface. Built once
+	// and shared; rl.For(class) hands each route its class-bound middleware, a
+	// pass-through when disabled. See ratelimit.go.
+	rl := newRateLimit(cfg.RateLimit)
+
 	// Auth endpoints (mostly public, /me is protected)
 	r.Route("/api/v1/auth", func(r chi.Router) {
-		r.Mount("/", cfg.AuthHandler.Routes())
+		// The public routes are registered inline rather than mounted from
+		// AuthHandler.Routes() because login carries its own rate-limit class
+		// (credential stuffing). Register and refresh are unlimited by design:
+		// register is 404 unless opened, and a refresh token is high-entropy, so
+		// neither is a line-speed guessing surface the way login is. (D1's
+		// forgot-password did not land here as the seam once anticipated — it is
+		// on its own credential-link handler at /api/v1/credential-links, rate
+		// limited there; see mountPublicCredentialLinks.)
+		r.With(rl.For(RateClassLogin)).Post("/login", cfg.AuthHandler.Login)
+		r.Post("/register", cfg.AuthHandler.Register)
+		r.Post("/refresh", cfg.AuthHandler.Refresh)
 
 		// /me and /logout require authentication — the same JWT middleware as
 		// all other protected endpoints, to avoid redirect loops.
@@ -192,7 +213,7 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	// credential, exactly like a password-reset link. No auth middleware.
 	if cfg.InviteHandler != nil {
 		r.Route("/api/v1/invites", func(r chi.Router) {
-			r.Mount("/", cfg.InviteHandler.PublicRoutes())
+			r.Mount("/", cfg.InviteHandler.PublicRoutes(rl.For(RateClassInviteAccept)))
 		})
 	}
 
@@ -215,7 +236,8 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	// routes above are outside it and are meant to be.
 	if cfg.PortalHandler != nil {
 		r.Route("/api/v1/portal", func(r chi.Router) {
-			r.Mount("/", cfg.PortalHandler.PublicRoutes())
+			r.Mount("/", cfg.PortalHandler.PublicRoutes(
+				rl.For(RateClassPortalRequestLink), rl.For(RateClassPortalRedeem)))
 			r.Route("/{portalKey}/my", func(r chi.Router) {
 				r.Use(portalapi.RequirePortalSession(cfg.PortalService))
 				r.Mount("/", cfg.PortalHandler.SessionRoutes())
@@ -223,7 +245,7 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 		})
 	}
 
-	mountPublicCredentialLinks(r, cfg)
+	mountPublicCredentialLinks(r, cfg, rl)
 
 	// Protected API endpoints
 	r.Route("/api/v1", func(r chi.Router) {
@@ -429,14 +451,18 @@ func mountAuthedEmailChange(r chi.Router, cfg RouterConfig) {
 // routes (D1) OUTSIDE the /api/v1 group, for the same reason as the public invite
 // and portal subtrees: possession of the raw token is the credential, and
 // forgot-password is reached by someone who is by definition signed out — neither
-// can satisfy RequireAuth. The admin issuance routes live under /orgs/{orgID}
-// (mountAdminSurface); the authenticated email-change request hangs off /auth/me.
-func mountPublicCredentialLinks(r chi.Router, cfg RouterConfig) {
+// can satisfy RequireAuth. Being unauthenticated by design, they are also the
+// auth-rate limiter's surface: forgot-password takes the request-link class and
+// inspect/consume the redeem class (see PublicRoutes). The admin issuance routes
+// live under /orgs/{orgID} (mountAdminSurface); the authenticated email-change
+// request hangs off /auth/me.
+func mountPublicCredentialLinks(r chi.Router, cfg RouterConfig, rl *rateLimit) {
 	if cfg.CredentialLinkHandler == nil {
 		return
 	}
 	r.Route("/api/v1/credential-links", func(r chi.Router) {
-		r.Mount("/", cfg.CredentialLinkHandler.PublicRoutes())
+		r.Mount("/", cfg.CredentialLinkHandler.PublicRoutes(
+			rl.For(RateClassForgotPassword), rl.For(RateClassCredentialRedeem)))
 	})
 }
 

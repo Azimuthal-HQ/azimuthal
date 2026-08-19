@@ -159,9 +159,19 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 	queries := generated.New(pool)
 
 	// Build the email sender — NoopSender when SMTP host is not configured.
+	// Transport security (STARTTLS / implicit TLS) and username/password auth
+	// come from config; validateSMTPSecurity has already refused contradictory
+	// combinations, and serve.go has warned on auth-over-plaintext.
 	var sender email.Sender
 	if cfg.SMTPHost != "" {
-		sender = email.NewSMTPSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPFrom)
+		sender = email.NewSMTPSender(email.SMTPConfig{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			From:     cfg.SMTPFrom,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			TLS:      cfg.SMTPTLS,
+		})
 	} else {
 		sender = &email.NoopSender{}
 	}
@@ -518,6 +528,11 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		ReadyPinger:      pool,
 		SpaceOrgResolver: spaceOrgResolver(queries),
 		AccessResolver:   accessResolver,
+		RateLimit: api.RateLimitConfig{
+			Enabled:   cfg.AuthRateLimitEnabled,
+			PerMinute: cfg.AuthRateLimitPerMinute,
+			Burst:     cfg.AuthRateLimitBurst,
+		},
 	}), nil
 }
 
