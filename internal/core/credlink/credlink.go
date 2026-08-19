@@ -31,13 +31,14 @@ import (
 type Purpose string
 
 const (
-	// PurposeSignIn: the redeemer sets a password and is signed in.
+	// PurposeSignIn is the admin-issued sign-in handoff: the redeemer sets a
+	// password and is signed in.
 	PurposeSignIn Purpose = "signin"
-	// PurposePasswordReset: the redeemer sets a password; every existing session
-	// dies (generation bump + session revocation). No auto sign-in — a reset is a
+	// PurposePasswordReset sets a password and kills every existing session
+	// (generation bump + session revocation). No auto sign-in — a reset is a
 	// break-glass event, and the user then authenticates fresh.
 	PurposePasswordReset Purpose = "password_reset"
-	// PurposeEmailChange: the pending new address is bound and generation bumped.
+	// PurposeEmailChange binds the pending new address and bumps the generation.
 	PurposeEmailChange Purpose = "email_change"
 )
 

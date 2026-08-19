@@ -100,70 +100,94 @@ func (a *CredentialLinkAdapter) Consume(ctx context.Context, tokenHash string, p
 		if err != nil {
 			return fmt.Errorf("credential link adapter: consume: %w", err)
 		}
-
-		// The account must still be live. A soft-deleted user is not returned by
-		// GetUserByID (WHERE deleted_at IS NULL); a deactivated one is. Both are
-		// refused, indistinguishably, so a redeemer learns nothing from the state
-		// of an account they do not control.
-		user, err := q.GetUserByID(ctx, row.UserID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return credlink.ErrInvalidLink
-		}
-		if err != nil {
-			return fmt.Errorf("credential link adapter: loading account: %w", err)
-		}
-		if !user.IsActive {
-			return credlink.ErrInvalidLink
-		}
-
-		purpose := credlink.Purpose(row.Purpose)
-		switch purpose {
-		case credlink.PurposeSignIn, credlink.PurposePasswordReset:
-			if passwordHash == nil {
-				return credlink.ErrPasswordRequired
-			}
-			if err := q.UpdateUserPasswordHash(ctx, generated.UpdateUserPasswordHashParams{
-				ID:           row.UserID,
-				PasswordHash: passwordHash,
-			}); err != nil {
-				return fmt.Errorf("credential link adapter: setting password: %w", err)
-			}
-			if purpose == credlink.PurposePasswordReset {
-				// A reset is a break-glass event: every existing session dies. The
-				// password write already bumped token_generation (killing every
-				// JWT); revoking the session rows closes the other axis.
-				if err := q.RevokeAllUserSessions(ctx, row.UserID); err != nil {
-					return fmt.Errorf("credential link adapter: revoking sessions: %w", err)
-				}
-			}
-		case credlink.PurposeEmailChange:
-			if row.NewEmail == nil {
-				// The payload CHECK makes this impossible, but fail closed rather
-				// than bind an empty address.
-				return credlink.ErrInvalidLink
-			}
-			out.NewEmail = *row.NewEmail
-			if _, err := q.UpdateUserEmail(ctx, generated.UpdateUserEmailParams{
-				ID:    row.UserID,
-				Email: *row.NewEmail,
-			}); err != nil {
-				if _, ok := uniqueViolation(err); ok {
-					return credlink.ErrEmailTaken
-				}
-				return fmt.Errorf("credential link adapter: applying email: %w", err)
-			}
-		default:
-			return credlink.ErrInvalidLink
-		}
-
-		out.UserID = row.UserID
-		out.Purpose = purpose
-		return nil
+		out, err = applyConsumedEffect(ctx, q, row, passwordHash)
+		return err
 	})
 	if err != nil {
 		return credlink.Consumed{}, err
 	}
 	return out, nil
+}
+
+// applyConsumedEffect performs the per-purpose write for a just-consumed link,
+// inside the same transaction. The account must still be live: a soft-deleted
+// user is not returned by GetUserByID (WHERE deleted_at IS NULL), a deactivated
+// one is, and both are refused with the same ErrInvalidLink so a redeemer learns
+// nothing from the state of an account they do not control.
+func applyConsumedEffect(ctx context.Context, q *generated.Queries, row generated.ConsumeCredentialLinkRow, passwordHash *string) (credlink.Consumed, error) {
+	user, err := q.GetUserByID(ctx, row.UserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return credlink.Consumed{}, credlink.ErrInvalidLink
+	}
+	if err != nil {
+		return credlink.Consumed{}, fmt.Errorf("credential link adapter: loading account: %w", err)
+	}
+	if !user.IsActive {
+		return credlink.Consumed{}, credlink.ErrInvalidLink
+	}
+
+	purpose := credlink.Purpose(row.Purpose)
+	switch purpose {
+	case credlink.PurposeSignIn, credlink.PurposePasswordReset:
+		if err := applyPasswordEffect(ctx, q, row.UserID, purpose, passwordHash); err != nil {
+			return credlink.Consumed{}, err
+		}
+	case credlink.PurposeEmailChange:
+		if err := applyEmailEffect(ctx, q, row); err != nil {
+			return credlink.Consumed{}, err
+		}
+	default:
+		return credlink.Consumed{}, credlink.ErrInvalidLink
+	}
+
+	out := credlink.Consumed{UserID: row.UserID, Purpose: purpose}
+	if row.NewEmail != nil {
+		out.NewEmail = *row.NewEmail
+	}
+	return out, nil
+}
+
+// applyPasswordEffect sets the new password (bumping token_generation) and, for a
+// reset, revokes every session row — the other revocation axis.
+func applyPasswordEffect(ctx context.Context, q *generated.Queries, userID uuid.UUID, purpose credlink.Purpose, passwordHash *string) error {
+	if passwordHash == nil {
+		return credlink.ErrPasswordRequired
+	}
+	if err := q.UpdateUserPasswordHash(ctx, generated.UpdateUserPasswordHashParams{
+		ID:           userID,
+		PasswordHash: passwordHash,
+	}); err != nil {
+		return fmt.Errorf("credential link adapter: setting password: %w", err)
+	}
+	if purpose == credlink.PurposePasswordReset {
+		// A reset is a break-glass event: every existing session dies. The
+		// password write already bumped token_generation (killing every JWT);
+		// revoking the session rows closes the other axis.
+		if err := q.RevokeAllUserSessions(ctx, userID); err != nil {
+			return fmt.Errorf("credential link adapter: revoking sessions: %w", err)
+		}
+	}
+	return nil
+}
+
+// applyEmailEffect binds the pending address (bumping token_generation), mapping
+// a uniqueness collision to ErrEmailTaken.
+func applyEmailEffect(ctx context.Context, q *generated.Queries, row generated.ConsumeCredentialLinkRow) error {
+	if row.NewEmail == nil {
+		// The payload CHECK makes this impossible, but fail closed rather than
+		// bind an empty address.
+		return credlink.ErrInvalidLink
+	}
+	if _, err := q.UpdateUserEmail(ctx, generated.UpdateUserEmailParams{
+		ID:    row.UserID,
+		Email: *row.NewEmail,
+	}); err != nil {
+		if _, ok := uniqueViolation(err); ok {
+			return credlink.ErrEmailTaken
+		}
+		return fmt.Errorf("credential link adapter: applying email: %w", err)
+	}
+	return nil
 }
 
 // FindUserInOrg resolves a user by email within orgID (never globally).

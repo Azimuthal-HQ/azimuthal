@@ -146,11 +146,11 @@ const (
 	// a sign-in handoff for a newly created account, or a password-reset link for
 	// an existing member. The payload's "purpose" says which; the raw token is
 	// never recorded (only the admin, the target user, and the purpose).
-	EventTypeCredentialLinkIssued EventType = "credential_link.issued"
+	EventTypeCredentialLinkIssued EventType = "credential_link.issued" //nolint:gosec // G101 — an audit event-type name, not a credential (low-confidence false positive the high-confidence scanner ignores)
 	// EventTypeCredentialLinkConsumed records a credential link being redeemed —
 	// a password set (signin/password_reset) or an email bound (email_change).
 	// The actor is the account itself; the payload's "purpose" says what happened.
-	EventTypeCredentialLinkConsumed EventType = "credential_link.consumed"
+	EventTypeCredentialLinkConsumed EventType = "credential_link.consumed" //nolint:gosec // G101 — an audit event-type name, not a credential (low-confidence false positive the high-confidence scanner ignores)
 
 	// EventTypeShareCreated records an entity share being created (P3,
 	// ADR-0008).

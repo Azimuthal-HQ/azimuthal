@@ -251,14 +251,8 @@ func isUniqueViolation(err error) bool {
 func runCreateUser(cmd *cobra.Command, _ []string) error {
 	cmd.SilenceUsage = true // runtime failure, not a usage error — see TestCommands_SilenceUsageOnRuntimeFailure
 
-	// Exactly one credential mode. --password is break-glass (the admin knows the
-	// password); --link hands over a one-time sign-in link and the user sets their
-	// own password, which is the mode the maintainer's ruling prefers.
-	if createUserLink && createUserPassword != "" {
-		return errors.New("--link and --password are mutually exclusive: --link creates the account without a password")
-	}
-	if !createUserLink && createUserPassword == "" {
-		return errors.New("either --password or --link is required")
+	if err := validateCreateUserFlags(); err != nil {
+		return err
 	}
 
 	cfg, err := loadConfig()
@@ -277,14 +271,6 @@ func runCreateUser(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 
-	queries := generated.New(pool)
-
-	switch createUserRole {
-	case "owner", "admin", "member":
-	default:
-		return fmt.Errorf("invalid --role %q: must be owner, admin, or member", createUserRole)
-	}
-
 	orgID, orgSlug, err := ensureOrgForUser(ctx, pool, createUserName)
 	if err != nil {
 		return fmt.Errorf("setting up organization: %w", err)
@@ -293,28 +279,46 @@ func runCreateUser(cmd *cobra.Command, _ []string) error {
 	if createUserLink {
 		return runCreateUserWithLink(ctx, cfg, pool, orgID, orgSlug)
 	}
+	return runCreateUserWithPassword(ctx, pool, orgID, orgSlug)
+}
 
+// validateCreateUserFlags enforces exactly-one credential mode and a known role.
+// --password is break-glass (the admin knows the password); --link hands over a
+// one-time sign-in link and the user sets their own, which the maintainer prefers.
+func validateCreateUserFlags() error {
+	if createUserLink && createUserPassword != "" {
+		return errors.New("--link and --password are mutually exclusive: --link creates the account without a password")
+	}
+	if !createUserLink && createUserPassword == "" {
+		return errors.New("either --password or --link is required")
+	}
+	switch createUserRole {
+	case "owner", "admin", "member":
+		return nil
+	default:
+		return fmt.Errorf("invalid --role %q: must be owner, admin, or member", createUserRole)
+	}
+}
+
+// runCreateUserWithPassword is the break-glass path: the admin sets the password.
+func runCreateUserWithPassword(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, orgSlug string) error {
 	userSvc := auth.NewUserService(adapters.NewUserAdapter(pool, orgID))
 	u, err := userSvc.CreateUser(ctx, createUserEmail, createUserName, createUserPassword)
 	if err != nil {
 		return fmt.Errorf("creating user: %w", err)
 	}
-
-	_, err = queries.CreateMembership(ctx, generated.CreateMembershipParams{
+	if _, err := generated.New(pool).CreateMembership(ctx, generated.CreateMembershipParams{
 		ID:        uuid.New(),
 		OrgID:     orgID,
 		UserID:    u.ID,
 		Role:      createUserRole,
 		InvitedBy: pgtype.UUID{},
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("creating membership: %w", err)
 	}
-
 	if err := provisionDefaultTeam(ctx, pool, orgID, u.ID); err != nil {
 		return err
 	}
-
 	printCreateUserSuccess(u, orgSlug, createUserRole)
 	return nil
 }

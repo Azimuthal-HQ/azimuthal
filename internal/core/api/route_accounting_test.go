@@ -41,7 +41,7 @@ import (
 //	                with you", so it leaks neither existence nor shared-ness.
 //
 // A route added without a row here fails this test — that is the point.
-var routeAccounting = map[string]string{
+var routeAccounting = map[string]string{ //nolint:gosec // G101 — route path→description map; the "token"/"link"/"credential" words are prose, not secrets (low-confidence false positive the high-confidence scanner, which also skips tests, ignores)
 	// Public surface. /health and /ready expose liveness only; the docs
 	// routes serve the committed OpenAPI spec; the auth endpoints are the
 	// front door.

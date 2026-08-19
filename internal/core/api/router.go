@@ -178,13 +178,7 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 			if cfg.AvatarHandler != nil {
 				r.Put("/me/avatar", cfg.AvatarHandler.SelfUpload)
 			}
-			// Email change is a credential action, not a profile edit: it
-			// reauthenticates and routes through a confirmation link (C.2-c), so
-			// it lives on the credential-link handler even though it hangs off
-			// /me. UpdateMe no longer touches email at all.
-			if cfg.CredentialLinkHandler != nil {
-				r.Post("/me/email-change", cfg.CredentialLinkHandler.RequestEmailChange)
-			}
+			mountAuthedEmailChange(r, cfg)
 		})
 	})
 
@@ -223,17 +217,7 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 		})
 	}
 
-	// Internal-user credential links (D1). Mounted OUTSIDE the /api/v1 group for
-	// the same reason as the public invite and portal subtrees: possession of the
-	// raw token is the credential, and forgot-password is reached by someone who
-	// is by definition signed out — neither can satisfy RequireAuth. The admin
-	// issuance routes live under /orgs/{orgID} (mountAdminSurface); the
-	// authenticated email-change request hangs off /auth/me above.
-	if cfg.CredentialLinkHandler != nil {
-		r.Route("/api/v1/credential-links", func(r chi.Router) {
-			r.Mount("/", cfg.CredentialLinkHandler.PublicRoutes())
-		})
-	}
+	mountPublicCredentialLinks(r, cfg)
 
 	// Protected API endpoints
 	r.Route("/api/v1", func(r chi.Router) {
@@ -421,6 +405,33 @@ func buildSpaceGuards(cfg RouterConfig) (spaceGuard, readableGuard, writeFloor f
 		writeFloor = RequireWriteFloor(access.CapCreateItems)
 	}
 	return spaceGuard, readableGuard, writeFloor
+}
+
+// mountAuthedEmailChange mounts the authenticated email-change request beside
+// /auth/me. Email change is a credential action, not a profile edit: it
+// reauthenticates and routes through a confirmation link (C.2-c), so it lives on
+// the credential-link handler even though it hangs off /me — and UpdateMe no
+// longer touches email at all.
+func mountAuthedEmailChange(r chi.Router, cfg RouterConfig) {
+	if cfg.CredentialLinkHandler == nil {
+		return
+	}
+	r.Post("/me/email-change", cfg.CredentialLinkHandler.RequestEmailChange)
+}
+
+// mountPublicCredentialLinks mounts the internal-user credential-link public
+// routes (D1) OUTSIDE the /api/v1 group, for the same reason as the public invite
+// and portal subtrees: possession of the raw token is the credential, and
+// forgot-password is reached by someone who is by definition signed out — neither
+// can satisfy RequireAuth. The admin issuance routes live under /orgs/{orgID}
+// (mountAdminSurface); the authenticated email-change request hangs off /auth/me.
+func mountPublicCredentialLinks(r chi.Router, cfg RouterConfig) {
+	if cfg.CredentialLinkHandler == nil {
+		return
+	}
+	r.Route("/api/v1/credential-links", func(r chi.Router) {
+		r.Mount("/", cfg.CredentialLinkHandler.PublicRoutes())
+	})
 }
 
 // mountAdminSurface registers the P2.5 administration surface under the

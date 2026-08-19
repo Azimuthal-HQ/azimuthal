@@ -200,18 +200,7 @@ func (h *Handler) Consume(w http.ResponseWriter, r *http.Request) {
 
 	consumed, err := h.svc.Consume(r.Context(), req.Token, req.Password)
 	if err != nil {
-		switch {
-		case errors.Is(err, credlink.ErrPasswordTooShort):
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "password must be at least 8 characters")
-		case errors.Is(err, credlink.ErrPasswordRequired):
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "a password is required to redeem this link")
-		case errors.Is(err, credlink.ErrEmailTaken):
-			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "that email address is already in use")
-		case errors.Is(err, credlink.ErrInvalidLink):
-			respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "this link is invalid or has expired")
-		default:
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to redeem this link")
-		}
+		writeConsumeError(w, r, err)
 		return
 	}
 
@@ -222,23 +211,9 @@ func (h *Handler) Consume(w http.ResponseWriter, r *http.Request) {
 	resp := consumeResponse{Purpose: string(consumed.Purpose)}
 	switch consumed.Purpose {
 	case credlink.PurposeSignIn:
-		if userErr != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "password set, but sign-in failed — sign in normally")
+		if !h.signInAfterConsume(w, r, user, userErr, &resp) {
 			return
 		}
-		sess, err := h.sessions.CreateSession(r.Context(), user.ID, r.UserAgent(), "")
-		if err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "password set, but sign-in failed — sign in normally")
-			return
-		}
-		pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role, user.TokenGeneration, sess.ID)
-		if err != nil {
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "password set, but sign-in failed — sign in normally")
-			return
-		}
-		resp.Status = "signed_in"
-		resp.AccessToken = pair.AccessToken
-		resp.RefreshToken = pair.RefreshToken
 	case credlink.PurposePasswordReset:
 		resp.Status = "password_reset"
 	case credlink.PurposeEmailChange:
@@ -247,6 +222,47 @@ func (h *Handler) Consume(w http.ResponseWriter, r *http.Request) {
 
 	h.logConsumed(r, consumed, user, userErr)
 	respond.JSON(w, http.StatusOK, resp)
+}
+
+// writeConsumeError maps a Consume failure to its response.
+func writeConsumeError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, credlink.ErrPasswordTooShort):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "password must be at least 8 characters")
+	case errors.Is(err, credlink.ErrPasswordRequired):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "a password is required to redeem this link")
+	case errors.Is(err, credlink.ErrEmailTaken):
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "that email address is already in use")
+	case errors.Is(err, credlink.ErrInvalidLink):
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "this link is invalid or has expired")
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to redeem this link")
+	}
+}
+
+// signInAfterConsume mints the post-sign-in session for a redeemed sign-in link,
+// writing the token pair into resp. Returns false (having already written an
+// error response) when the mint fails.
+func (h *Handler) signInAfterConsume(w http.ResponseWriter, r *http.Request, user *auth.User, userErr error, resp *consumeResponse) bool {
+	const failed = "password set, but sign-in failed — sign in normally"
+	if userErr != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, failed)
+		return false
+	}
+	sess, err := h.sessions.CreateSession(r.Context(), user.ID, r.UserAgent(), "")
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, failed)
+		return false
+	}
+	pair, err := h.jwt.IssueTokenPair(user.ID, user.Email, user.OrgID.String(), user.Role, user.TokenGeneration, sess.ID)
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, failed)
+		return false
+	}
+	resp.Status = "signed_in"
+	resp.AccessToken = pair.AccessToken
+	resp.RefreshToken = pair.RefreshToken
+	return true
 }
 
 // ── authenticated email-change request ───────────────────────────────────────
@@ -286,26 +302,14 @@ func (h *Handler) RequestEmailChange(w http.ResponseWriter, r *http.Request) {
 	// Reauthenticate against the current password before issuing anything. This
 	// is the whole security content of the request half: an XSS/token thief who
 	// holds a bearer token does not hold the password.
-	user, err := h.users.GetUser(r.Context(), claims.UserID)
-	if err != nil {
-		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
-		return
-	}
-	if err := auth.ComparePassword(user.PasswordHash, req.CurrentPassword); err != nil {
-		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "current password is incorrect")
+	user, ok := h.reauthenticate(w, r, claims.UserID, req.CurrentPassword)
+	if !ok {
 		return
 	}
 
 	issued, err := h.svc.RequestEmailChange(r.Context(), user.ID, user.OrgID, user.Email, req.NewEmail)
 	if err != nil {
-		switch {
-		case errors.Is(err, credlink.ErrInvalidEmail):
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "a valid, different email address is required")
-		case errors.Is(err, credlink.ErrEmailTaken):
-			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "that email address is already in use")
-		default:
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to start the email change")
-		}
+		writeEmailChangeError(w, r, err)
 		return
 	}
 
@@ -321,6 +325,33 @@ func (h *Handler) RequestEmailChange(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: issued.ExpiresAt,
 		Delivered: false,
 	})
+}
+
+// reauthenticate loads the user and verifies the current password. On failure it
+// writes a 401 and returns ok=false.
+func (h *Handler) reauthenticate(w http.ResponseWriter, r *http.Request, userID uuid.UUID, password string) (*auth.User, bool) {
+	user, err := h.users.GetUser(r.Context(), userID)
+	if err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "authentication required")
+		return nil, false
+	}
+	if err := auth.ComparePassword(user.PasswordHash, password); err != nil {
+		respond.Error(w, r, http.StatusUnauthorized, respond.CodeUnauthorized, "current password is incorrect")
+		return nil, false
+	}
+	return user, true
+}
+
+// writeEmailChangeError maps a RequestEmailChange failure to its response.
+func writeEmailChangeError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, credlink.ErrInvalidEmail):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "a valid, different email address is required")
+	case errors.Is(err, credlink.ErrEmailTaken):
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "that email address is already in use")
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to start the email change")
+	}
 }
 
 // ── admin issuance ───────────────────────────────────────────────────────────

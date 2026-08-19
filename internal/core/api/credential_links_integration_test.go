@@ -322,6 +322,29 @@ func TestCredentialLink_ForgotPasswordDoesNotRevealWhetherAddressIsKnown(t *test
 		"the bodies must be byte-identical — this endpoint reveals nothing")
 }
 
+// TestCredentialLink_ForgotPasswordForInactiveOrMalformedIsANoOp: a deactivated
+// account and a malformed address both get the same 202 with nothing delivered —
+// neither the account state nor the address shape leaks, and no reset link is
+// minted for an account that cannot use one.
+func TestCredentialLink_ForgotPasswordForInactiveOrMalformedIsANoOp(t *testing.T) {
+	ts := newTestServer(t)
+	person := testutil.CreateTestUserWithRole(t, ts.DB.Pool, ts.OrgID, "member")
+	_, err := ts.DB.Pool.Exec(context.Background(), `UPDATE users SET is_active = false WHERE id = $1`, person.ID)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusAccepted, forgotPassword(t, ts, person.Email).StatusCode)
+	require.Empty(t, ts.CredentialLinks.LastURLTo(person.Email), "a deactivated account gets no reset link")
+	var minted int
+	require.NoError(t, ts.DB.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM credential_links WHERE user_id = $1`, person.ID).Scan(&minted))
+	require.Equal(t, 0, minted, "nothing is minted for a deactivated account")
+
+	// A malformed-but-non-empty address is a no-op success too (the handler's
+	// empty-field guard does not fire, so this reaches the service's own check).
+	require.Equal(t, http.StatusAccepted, forgotPassword(t, ts, "not-an-email").StatusCode)
+	require.Empty(t, ts.CredentialLinks.All(), "nothing is delivered for a malformed address")
+}
+
 // TestCredentialLink_ForgotPasswordNeverReturnsTheURL: the unauthenticated
 // response never carries the link, under any configuration — the admin-issued
 // link is the no-relay answer.
@@ -735,6 +758,10 @@ func TestCredentialLink_AdminAndEmailChangeValidation(t *testing.T) {
 	requireErrorCode(t, requestEmailChange(t, ts, token, "", ""), http.StatusBadRequest, "VALIDATION_ERROR")
 	requireErrorCode(t, requestEmailChange(t, ts, token, "not-an-email", "testpassword123"),
 		http.StatusBadRequest, "VALIDATION_ERROR")
+	// Changing to the address you already hold is a conflict — there is nothing
+	// to confirm, and it must not mint a link.
+	requireErrorCode(t, requestEmailChange(t, ts, token, person.Email, "testpassword123"),
+		http.StatusConflict, "CONFLICT")
 }
 
 // ── audit ────────────────────────────────────────────────────────────────────

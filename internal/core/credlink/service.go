@@ -48,7 +48,11 @@ func (s *Service) Inspect(ctx context.Context, rawToken string) (Inspection, err
 	if rawToken == "" {
 		return Inspection{}, ErrInvalidLink
 	}
-	return s.store.Inspect(ctx, HashToken(rawToken))
+	insp, err := s.store.Inspect(ctx, HashToken(rawToken))
+	if err != nil {
+		return Inspection{}, fmt.Errorf("inspecting credential link: %w", err)
+	}
+	return insp, nil
 }
 
 // Consume redeems a link and applies its effect (see Store.Consume). password is
@@ -70,7 +74,11 @@ func (s *Service) Consume(ctx context.Context, rawToken, password string) (Consu
 		}
 		hash = &h
 	}
-	return s.store.Consume(ctx, HashToken(rawToken), hash)
+	consumed, err := s.store.Consume(ctx, HashToken(rawToken), hash)
+	if err != nil {
+		return Consumed{}, fmt.Errorf("consuming credential link: %w", err)
+	}
+	return consumed, nil
 }
 
 // RequestReset is the self-service forgot-password flow. It resolves the address
@@ -193,7 +201,7 @@ func (s *Service) CreateUserWithSignInLink(ctx context.Context, p NewUser) (Issu
 	expiresAt := time.Now().UTC().Add(s.cfg.TTL)
 	userID, err := s.store.CreateUserWithSignInLink(ctx, p, hash, expiresAt)
 	if err != nil {
-		return Issued{}, uuid.Nil, err
+		return Issued{}, uuid.Nil, fmt.Errorf("creating user with sign-in link: %w", err)
 	}
 	return Issued{RawToken: raw, URL: s.linkURL(raw), ExpiresAt: expiresAt}, userID, nil
 }
