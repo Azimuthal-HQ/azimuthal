@@ -32,8 +32,16 @@ type UserRepository interface {
 	Create(ctx context.Context, u *User) error
 	// GetByID retrieves a user by primary key. Returns ErrNotFound if absent.
 	GetByID(ctx context.Context, id uuid.UUID) (*User, error)
-	// GetByEmail retrieves a user by email address. Returns ErrNotFound if absent.
-	GetByEmail(ctx context.Context, email string) (*User, error)
+	// GetByEmailAcrossOrgs retrieves a user by email address GLOBALLY, across
+	// every org. Email is unique only per-org (users UNIQUE(org_id, email)), so
+	// this can return an arbitrary org's row when an address exists in more than
+	// one — a footgun for any caller that holds an org. The ONLY legitimate
+	// callers are the org-less authentication entry points that have no org in
+	// hand: password login (Authenticate) and the self-service forgot-password
+	// request. Every caller that holds an org scopes with GetUserByEmailAndOrg
+	// instead — the relations-repo precedent (#100): there is no ungated read to
+	// reach for by mistake, because this one names its danger.
+	GetByEmailAcrossOrgs(ctx context.Context, email string) (*User, error)
 	// Update persists changes to an existing user record.
 	Update(ctx context.Context, u *User) error
 	// UpdateProfile persists changes to a user's display name and email.
@@ -113,9 +121,12 @@ func (s *UserService) GetUser(ctx context.Context, id uuid.UUID) (*User, error) 
 	return u, nil
 }
 
-// GetUserByEmail retrieves a user by email address.
-func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*User, error) {
-	u, err := s.repo.GetByEmail(ctx, email)
+// GetUserByEmailAcrossOrgs retrieves a user by email GLOBALLY. See the
+// UserRepository.GetByEmailAcrossOrgs contract: the only legitimate callers are
+// the org-less authentication entry points (login and forgot-password); anything
+// holding an org must scope to it.
+func (s *UserService) GetUserByEmailAcrossOrgs(ctx context.Context, email string) (*User, error) {
+	u, err := s.repo.GetByEmailAcrossOrgs(ctx, email)
 	if err != nil {
 		return nil, fmt.Errorf("getting user by email: %w", err)
 	}
@@ -177,7 +188,9 @@ func (s *UserService) RevokeTokens(ctx context.Context, id uuid.UUID) error {
 // Returns ErrInvalidCredentials if the email is unknown or the password is wrong.
 // Returns ErrAccountInactive if the account has been deactivated.
 func (s *UserService) Authenticate(ctx context.Context, email, password string) (*User, error) {
-	u, err := s.repo.GetByEmail(ctx, email)
+	// Login is org-less by necessity — the credential is email+password with no
+	// org in hand — so this is one of the two sanctioned global lookups.
+	u, err := s.repo.GetByEmailAcrossOrgs(ctx, email)
 	if err != nil {
 		// Don't reveal whether the email exists.
 		return nil, ErrInvalidCredentials

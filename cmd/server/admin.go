@@ -358,7 +358,7 @@ func runResetPassword(cmd *cobra.Command, _ []string) error {
 	defer pool.Close()
 
 	userSvc := auth.NewUserService(adapters.NewUserAdapter(pool, uuid.Nil))
-	u, err := userSvc.GetUserByEmail(ctx, resetEmail)
+	u, err := userSvc.GetUserByEmailAcrossOrgs(ctx, resetEmail)
 	if err != nil {
 		return fmt.Errorf("finding user: %w", err)
 	}
@@ -368,8 +368,17 @@ func runResetPassword(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("hashing password: %w", err)
 	}
 
-	u.PasswordHash = hash
-	if err := userSvc.UpdateUser(ctx, u); err != nil {
+	// Route the write through UpdateUserPasswordHash, NOT userSvc.UpdateUser:
+	// the latter's UPDATE statement touches only display_name/avatar_url/role/
+	// is_active, so the old code hashed a password and then never stored it (and
+	// reset the account's role to "member" besides). UpdateUserPasswordHash is
+	// the statement that persists password_hash and welds in the
+	// token_generation bump, so a break-glass reset also signs the account out
+	// everywhere — which is what a reset must do.
+	if err := generated.New(pool).UpdateUserPasswordHash(ctx, generated.UpdateUserPasswordHashParams{
+		ID:           u.ID,
+		PasswordHash: &hash,
+	}); err != nil {
 		return fmt.Errorf("updating password: %w", err)
 	}
 

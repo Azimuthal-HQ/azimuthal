@@ -61,14 +61,14 @@ func TestUserAdapter_Delete(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestUserAdapter_GetByEmail(t *testing.T) {
+func TestUserAdapter_GetByEmailAcrossOrgs(t *testing.T) {
 	db := testutil.NewTestDB(t)
 	org := testutil.CreateTestOrg(t, db.Pool)
 	user := testutil.CreateTestUser(t, db.Pool, org.ID)
 	adapter := adapters.NewUserAdapter(db.Pool, org.ID)
 	ctx := context.Background()
 
-	fetched, err := adapter.GetByEmail(ctx, user.Email)
+	fetched, err := adapter.GetByEmailAcrossOrgs(ctx, user.Email)
 	require.NoError(t, err)
 	require.Equal(t, user.ID, fetched.ID)
 }

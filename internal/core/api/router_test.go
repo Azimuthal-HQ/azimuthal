@@ -66,7 +66,7 @@ func (m *mockUserRepo) GetByID(_ context.Context, id uuid.UUID) (*auth.User, err
 	return u, nil
 }
 
-func (m *mockUserRepo) GetByEmail(_ context.Context, email string) (*auth.User, error) {
+func (m *mockUserRepo) GetByEmailAcrossOrgs(_ context.Context, email string) (*auth.User, error) {
 	for _, u := range m.users {
 		if u.Email == email {
 			return u, nil

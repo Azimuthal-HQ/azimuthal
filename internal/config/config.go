@@ -384,6 +384,18 @@ func (c *Config) parseBcryptCost(v *viper.Viper) error {
 	return nil
 }
 
+// SMTPConfigured reports whether the operator configured a real mail relay, as
+// opposed to the localhost default SMTPHost carries. It reads SMTP_HOST raw for
+// the same reason validateDeliveryMode does: the parsed config field is never
+// empty (it defaults to "localhost"), so it cannot tell "an operator configured
+// a relay" from "nobody set anything". This is the credential-link feature's
+// gate on whether forgot-password and email-change may email a link at all —
+// deliberately the raw-relay test, not the InviteDelivery-style mode knob, which
+// credential links do not have.
+func (c *Config) SMTPConfigured() bool {
+	return os.Getenv("SMTP_HOST") != ""
+}
+
 // IsTest reports whether the application is running in test mode.
 func (c *Config) IsTest() bool {
 	return c.AppEnv == "test"

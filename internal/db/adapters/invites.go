@@ -73,11 +73,13 @@ func (a *InviteAdapter) Create(ctx context.Context, inv invites.Invite, tokenHas
 }
 
 // checkInviteCreatable rejects invites for existing members (the invited
-// email may already hold an account — login-path semantics: the account
-// GetUserByEmail resolves) and invites naming a team that is not a live
-// team of the org.
+// email may already hold an account IN THIS ORG) and invites naming a team
+// that is not a live team of the org. The account lookup is org-scoped: an
+// address that exists only in another org is a stranger here (per-org unique
+// email), so inviting it creates a fresh account rather than re-inviting a
+// member — which is why the global GetUserByEmail was wrong here.
 func (a *InviteAdapter) checkInviteCreatable(ctx context.Context, inv invites.Invite) error {
-	if u, err := a.q.GetUserByEmail(ctx, inv.Email); err == nil {
+	if u, err := a.q.GetUserByEmailAndOrg(ctx, generated.GetUserByEmailAndOrgParams{OrgID: inv.OrgID, Email: inv.Email}); err == nil {
 		if _, mErr := a.q.GetMembership(ctx, generated.GetMembershipParams{OrgID: inv.OrgID, UserID: u.ID}); mErr == nil {
 			return invites.ErrAlreadyMember
 		} else if !errors.Is(mErr, pgx.ErrNoRows) {
@@ -187,7 +189,7 @@ func (a *InviteAdapter) InspectByTokenHash(ctx context.Context, tokenHash string
 		return invites.Inspection{}, fmt.Errorf("invite adapter inspect: loading org: %w", err)
 	}
 	existing := false
-	if _, err := a.q.GetUserByEmail(ctx, row.Email); err == nil {
+	if _, err := a.q.GetUserByEmailAndOrg(ctx, generated.GetUserByEmailAndOrgParams{OrgID: row.OrgID, Email: row.Email}); err == nil {
 		existing = true
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return invites.Inspection{}, fmt.Errorf("invite adapter inspect: checking email: %w", err)
@@ -281,7 +283,7 @@ func loadAcceptableInvite(ctx context.Context, q *generated.Queries, tokenHash s
 // existing account holding the invited email (existing=true), or a fresh
 // user created inside the transaction.
 func resolveAcceptUser(ctx context.Context, q *generated.Queries, row generated.Invite, newUser *invites.NewUser) (generated.User, bool, error) {
-	existingUser, err := q.GetUserByEmail(ctx, row.Email)
+	existingUser, err := q.GetUserByEmailAndOrg(ctx, generated.GetUserByEmailAndOrgParams{OrgID: row.OrgID, Email: row.Email})
 	switch {
 	case err == nil:
 		if !existingUser.IsActive {
