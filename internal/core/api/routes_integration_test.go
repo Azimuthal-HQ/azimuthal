@@ -385,6 +385,10 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 			return s.OrgID, nil
 		},
 		AccessResolver: accessResolver,
+		// /ready pings this, exactly as cmd/server/main.go wires the pool. Left
+		// nil, /ready would answer 503 and TestIntegration_ReadyEndpoint would
+		// read as a passing 503 while the endpoint had never touched a store.
+		ReadyPinger: pool,
 	}
 	router := api.NewRouter(cfg)
 
@@ -482,9 +486,13 @@ func TestIntegration_HealthEndpoint(t *testing.T) {
 	var result map[string]string
 	require.NoError(t, json.Unmarshal(r.Body, &result))
 	require.Equal(t, "ok", result["status"])
+	// The queue word is read live per request (nil QueueStatusFunc in this
+	// harness ⇒ "disabled"), not captured at boot.
+	require.Equal(t, "disabled", result["queue"])
 }
 
-// TestIntegration_ReadyEndpoint verifies GET /ready returns 200 with {"status":"ready"}.
+// TestIntegration_ReadyEndpoint verifies GET /ready returns 200 with {"status":"ready"}
+// when the datastore is reachable (the harness wires a healthy pool as ReadyPinger).
 func TestIntegration_ReadyEndpoint(t *testing.T) {
 	ts := newTestServer(t)
 	r := ts.get(t, "/ready", false)

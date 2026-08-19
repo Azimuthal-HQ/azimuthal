@@ -2389,8 +2389,8 @@ paths:
       - auth
   /health:
     get:
-      description: Returns {"status":"ok"} when the server is running. Includes queue
-        status.
+      description: Returns {"status":"ok","queue":"ok|error|disabled"} — queue status
+        is read live, not captured at boot.
       responses:
         "200":
           content:
@@ -2398,7 +2398,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.healthResponse'
           description: Server is alive
-      summary: Liveness probe
+      summary: Liveness probe with queue status
       tags:
       - health
   /invites/{token}:
@@ -14290,7 +14290,8 @@ paths:
       - portal
   /ready:
     get:
-      description: Returns {"status":"ready"} when the server is ready to accept traffic.
+      description: Returns {"status":"ready"} (200) when the datastore is reachable,
+        or {"status":"unavailable"} (503) when it is not.
       responses:
         "200":
           content:
@@ -14298,6 +14299,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/api.healthResponse'
           description: Server is ready
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.healthResponse'
+          description: Server cannot reach its datastore
       summary: Readiness probe
       tags:
       - health

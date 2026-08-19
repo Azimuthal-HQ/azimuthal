@@ -91,15 +91,26 @@ tar -xzOf backup-pre-upgrade.tar.gz database.sql \
 backup step has ever produced (`azimuthal backup` only ever writes a gzip-compressed tar). It
 failed with "No such file or directory" at the worst possible moment, mid-rollback.*
 
-Alternatively, restore the whole archive — database *and* object storage — with the app
-container's own command. The image now ships the PostgreSQL client tools, so this works inside
-the container and, unlike the `tar`-and-pipe form above, also restores attachments:
+Alternatively, restore the whole archive — database *and* object storage — with the
+`/azimuthal restore` command. Run it in a **one-off container while the app stays stopped** (step 1
+already brought everything down; do not start the app before restoring). The image now ships the
+PostgreSQL client tools, and unlike the `tar`-and-pipe form above this also restores attachments:
 
 ```bash
-docker compose up -d          # the app container must be running to exec into it
-docker cp backup-pre-upgrade.tar.gz "$(docker compose ps -q app)":/tmp/restore.tar.gz
-docker compose exec app /azimuthal restore --input /tmp/restore.tar.gz
+docker compose up -d db storage   # infrastructure only — the app stays down
+docker compose run --rm \
+  -v "$PWD/backup-pre-upgrade.tar.gz:/tmp/restore.tar.gz:ro" \
+  app /azimuthal restore --input /tmp/restore.tar.gz
 ```
+
+> **Restore refuses to run while a server is up.** `serve` holds a PostgreSQL advisory lock for its
+> whole lifetime, and `restore` takes the *same* lock — failing with "the server is running; stop
+> it before restoring" when a server holds it — because a `--clean --if-exists` restore drops and
+> recreates every table and must not race a live process's writes. That is why this runs as a
+> one-off `docker compose run` container with the app stopped, not `docker compose exec` into a
+> running one. An earlier revision of this step ran `docker compose up -d` (starting the app) and
+> then `exec`ed the restore inside it — which now refuses, and always should have: the invariant is
+> enforced in the binary rather than left to the reader.
 
 Both forms abort on the first failing statement (`-v ON_ERROR_STOP=1`) rather than reporting
 success over a partial restore. If either exits non-zero, do not proceed — the database is in an

@@ -139,7 +139,19 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 		return nil, deps, noop, fmt.Errorf("connecting to database: %w", err)
 	}
 
+	// Hold the datastore lock (shared mode) for the whole lifetime of this
+	// server, so a `restore` invocation refuses rather than dropping and
+	// recreating tables underneath a live process. Taken before migrations
+	// because a booting server — migrations included — is already "running" for
+	// the purpose a restore must not race. See cmd/server/dblock.go.
+	storeLock, err := serveAcquireStoreLock(ctx, cfg.DatabaseURL)
+	if err != nil {
+		pool.Close()
+		return nil, deps, noop, fmt.Errorf("acquiring datastore lock: %w", err)
+	}
+
 	if err := db.Migrate(ctx, pool); err != nil {
+		storeLock.Release()
 		pool.Close()
 		return nil, deps, noop, fmt.Errorf("running migrations: %w", err)
 	}
@@ -155,12 +167,20 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 	}
 
 	// Start the River background queue unless disabled by config.
-	queueStatus := "disabled"
+	//
+	// queueStatusFn is the LIVE queue-status source for /health, read at each
+	// request rather than captured once here. nil means the queue is disabled
+	// and /health reports "disabled"; a running queue's own Status() reports
+	// "ok"/"error". This closure used to be a string set to "ok" the moment the
+	// queue started and never updated, so a queue that died after boot still
+	// reported "ok" forever.
+	var queueStatusFn func() string
 	var notifEnqueuer jobs.NotificationEnqueuer = jobs.NoopNotificationEnqueuer{}
 
 	if cfg.QueueEnabled {
 		q, err := jobs.NewQueue(ctx, pool, sender, queries)
 		if err != nil {
+			storeLock.Release()
 			pool.Close()
 			return nil, deps, noop, fmt.Errorf("creating job queue: %w", err)
 		}
@@ -177,14 +197,15 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 			return q.Stop(ctx)
 		}
 		notifEnqueuer = q
-		queueStatus = "ok"
+		queueStatusFn = q.Status
 		slog.Info("job queue started")
 	} else {
 		slog.Warn("job queue disabled via AZIMUTHAL_QUEUE_ENABLED=false")
 	}
 
-	handler, err := buildRouter(cfg, pool, queries, notifEnqueuer, sender, queueStatus)
+	handler, err := buildRouter(cfg, pool, queries, notifEnqueuer, sender, queueStatusFn)
 	if err != nil {
+		storeLock.Release()
 		pool.Close()
 		return nil, deps, noop, err
 	}
@@ -197,12 +218,15 @@ func newServer(cfg *config.Config) (*http.Server, *serverDeps, func(), error) { 
 		IdleTimeout:  60 * time.Second,
 	}
 
-	return srv, deps, func() { pool.Close() }, nil
+	// Release order at shutdown: drop the datastore lock, then close the pool.
+	// The lock is held right up to process exit so a restore cannot start while
+	// the server is still draining in-flight work.
+	return srv, deps, func() { storeLock.Release(); pool.Close() }, nil
 }
 
 // buildRouter constructs all domain services with DB-backed adapters and
 // returns the fully wired API router.
-func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, sender email.Sender, queueStatus string) (http.Handler, error) { //nolint:funlen // router wiring naturally enumerates all dependencies, like newServer above
+func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Queries, notifEnqueuer jobs.NotificationEnqueuer, sender email.Sender, queueStatusFn func() string) (http.Handler, error) { //nolint:funlen // router wiring naturally enumerates all dependencies, like newServer above
 	// The signing key lives in the database so restarts never invalidate
 	// tokens. JWTPrivateKeyPath is only consulted as a one-time import for
 	// deployments upgrading from the legacy file-based key.
@@ -488,9 +512,12 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		SearchHandler:         searchHandler,
 		SPAHandler:            spaHandler,
 		AllowedOrigins:        cfg.AllowedOrigins,
-		QueueStatus:           queueStatus,
-		SpaceOrgResolver:      spaceOrgResolver(queries),
-		AccessResolver:        accessResolver,
+		QueueStatusFunc:       queueStatusFn,
+		// /ready pings this to decide 200 vs 503 — an instance that cannot reach
+		// its store is not ready to be routed traffic. *pgxpool.Pool.Ping.
+		ReadyPinger:      pool,
+		SpaceOrgResolver: spaceOrgResolver(queries),
+		AccessResolver:   accessResolver,
 	}), nil
 }
 

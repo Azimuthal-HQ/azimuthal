@@ -111,8 +111,15 @@ type RouterConfig struct {
 	// echoed Access-Control-Allow-Origin: * on every response. Leave it unset
 	// and you now get the restrictive behaviour, not the permissive one.
 	AllowedOrigins []string
-	// QueueStatus is reported in the /health response: "ok", "disabled", or "error".
-	QueueStatus string
+	// QueueStatusFunc reports the job queue's status for the /health body, read
+	// at request time rather than captured at boot. It returns "ok"/"error"
+	// from the live queue; a nil func means the queue is disabled and /health
+	// reports "disabled". See HandleHealthWithQueue and cmd/server/main.go.
+	QueueStatusFunc func() string
+	// ReadyPinger backs the /ready datastore check. *pgxpool.Pool satisfies it.
+	// A nil pinger makes /ready answer 503 — an instance that cannot reach its
+	// store is not ready — so every real construction site wires the pool.
+	ReadyPinger DBPinger
 	// SpaceOrgResolver backs the RequireSpaceInOrg middleware that enforces
 	// the single /orgs/{orgID}/spaces/{spaceID}/... scoping convention.
 	SpaceOrgResolver SpaceOrgResolver
@@ -136,13 +143,12 @@ func NewRouter(cfg RouterConfig) http.Handler { //nolint:funlen // router setup 
 	// "allow everything". See RouterConfig.AllowedOrigins.
 	r.Use(NewCORS(cfg.AllowedOrigins))
 
-	// Public endpoints (no auth required)
-	queueStatus := cfg.QueueStatus
-	if queueStatus == "" {
-		queueStatus = "disabled"
-	}
-	r.Get("/health", HandleHealthWithQueue(queueStatus))
-	r.Get("/ready", HandleReady)
+	// Public endpoints (no auth required). /health is liveness (cheap, always
+	// 200 while the process runs, with the queue's live status); /ready is
+	// readiness (pings the datastore, 503 when it is unreachable). A nil
+	// QueueStatusFunc reports "disabled"; a nil ReadyPinger answers 503.
+	r.Get("/health", HandleHealthWithQueue(cfg.QueueStatusFunc))
+	r.Get("/ready", HandleReady(cfg.ReadyPinger))
 
 	// API documentation (no auth required)
 	RegisterDocsRoutes(r)

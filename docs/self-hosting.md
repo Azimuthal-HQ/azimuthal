@@ -234,9 +234,21 @@ container.
 
 ### Restoring from Backup
 
+**Stop the application first, and restore in a one-off container — never inside the live one.**
+
 ```bash
-docker cp ./backup-2026-04-04.tar.gz "$(docker compose ps -q app)":/tmp/backup.tar.gz
-docker compose exec app /azimuthal restore --input /tmp/backup.tar.gz
+# 1. Stop the server so nothing writes to the database while it is dropped and
+#    recreated. Restore refuses to run while a server is up (see the note below).
+docker compose stop app
+
+# 2. Restore in a one-off container, mounting the archive read-only. This is a
+#    fresh `run` container, not `exec` into the live app (which is now stopped).
+docker compose run --rm \
+  -v "$PWD/backup-2026-04-04.tar.gz:/tmp/backup.tar.gz:ro" \
+  app /azimuthal restore --input /tmp/backup.tar.gz
+
+# 3. Bring the application back up.
+docker compose up -d app
 ```
 
 Restore prints the archive's manifest — including which PostgreSQL server the dump came from —
@@ -244,6 +256,17 @@ before it changes anything, so you can check you are restoring what you think yo
 
 Restore is idempotent and safe to run multiple times: the dump is taken with `--clean
 --if-exists`, and object storage is rewritten with overwriting puts.
+
+> **Why stop the app first — and why the tool now insists.** Restore replays a `--clean
+> --if-exists` dump: it **drops and recreates every table**. Run against a live server — whose
+> request handlers and background job queue are still writing — it corrupts both the restore and
+> the running process. So `serve` takes a PostgreSQL advisory lock at startup and holds it for its
+> whole lifetime, and `restore` takes the *same* lock and **refuses with "the server is running;
+> stop it before restoring" when a server holds it**, before it touches anything. That is why the
+> restore runs in a one-off `docker compose run` container after `docker compose stop app`, rather
+> than `docker compose exec` inside the live one. Earlier revisions of this document told you to
+> run restore inside the running container; that silently violated the very invariant restore
+> depends on, and it is now enforced in the binary rather than left to the reader.
 
 **A restore that fails part-way exits non-zero and says why.** It does not report success over a
 partial recovery. If the command reports an error, treat the database as being in an

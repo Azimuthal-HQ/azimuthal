@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
@@ -108,4 +110,70 @@ func TestQueue_Start(t *testing.T) {
 	startCtx, cancel := context.WithCancel(ctx)
 	cancel() // cancel before Start so river exits immediately
 	_ = q.Start(startCtx)
+}
+
+// TestQueue_Status_ReflectsLiveState is the fails-before test for the /health
+// queue snapshot at the queue layer. Status() reads the client's actual state,
+// so it flips from "ok" to "error" when the client stops — the live transition
+// the boot-time string ("ok" forever, "error" never assigned in non-test code)
+// could not express.
+//
+// It does not depend on the River tables existing: it asserts the not-stopped
+// default and the post-stop transition, both driven by the client's own
+// lifecycle, not by whether any job can be processed.
+//
+// It also hammers Status() concurrently with Start() so that -race guards the
+// read: Status is served on HTTP-handler goroutines while the queue's Start
+// goroutine is still coming up, and reading River's stop channel unguarded there
+// is a data race (this is how that race was found). Revert the guard in
+// queue.go and this test fails under -race.
+func TestQueue_Status_ReflectsLiveState(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dbURL)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	q, err := jobs.NewQueue(ctx, pool, &email.NoopSender{}, generated.New(pool))
+	require.NoError(t, err)
+
+	// A queue that has not stopped reads "ok" — the live default, never a
+	// captured constant.
+	require.Equal(t, "ok", q.Status(), "an un-stopped queue must report ok")
+
+	// Start it on a context we control, exactly as cmd/server/main.go does,
+	// while a second goroutine reads Status() throughout — the concurrent shape
+	// -race must stay clean on. Then cancel to bring it down. Whatever River does
+	// in between (with or without its tables), the client ends up stopped.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	startReturned := make(chan struct{})
+	pollDone := make(chan struct{})
+	go func() {
+		_ = q.Start(runCtx)
+		close(startReturned)
+	}()
+	go func() {
+		defer close(pollDone)
+		for {
+			select {
+			case <-startReturned:
+				return
+			default:
+				_ = q.Status() // concurrent read; must not race the Start write
+			}
+		}
+	}()
+	<-startReturned
+	<-pollDone
+	cancelRun()
+
+	// The SAME accessor now reports "error": the transition the boot-time
+	// snapshot could never show.
+	require.Eventually(t, func() bool { return q.Status() == "error" },
+		5*time.Second, 20*time.Millisecond,
+		"a stopped queue must report error, not the boot-time ok")
 }
