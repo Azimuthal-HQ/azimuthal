@@ -20,6 +20,7 @@ import { Input } from '../../components/ui/input';
 import { cn, formatUTCDate, toRFC3339Date } from '../../lib/utils';
 import { Markdown } from '../../components/Markdown';
 import { ApprovalBlock } from '../../components/workflow/ApprovalBlock';
+import { HistoryView } from '../../components/history/HistoryView';
 import { statusOptionsFor, statusOptionLabel } from '../../lib/workflow/statusOptions';
 import {
   runStatusChange,
@@ -34,6 +35,7 @@ import {
   useUpdateTicket,
   useMembers,
   useComments,
+  useHistory,
   useCreateComment,
   useMe,
   useSpace,
@@ -72,6 +74,13 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
  * knows these four and no others.
  */
 const FALLBACK_STATUSES: TicketStatus[] = ['open', 'in_progress', 'resolved', 'closed'];
+
+// The two sibling feeds under the detail body. Comments live in Activity;
+// History is the audit trail. They are toggled, never interleaved.
+const ACTIVITY_TABS: SegmentedOption<'activity' | 'history'>[] = [
+  { value: 'activity', label: 'Activity' },
+  { value: 'history', label: 'History' },
+];
 
 const sideSelectClass = cn(
   'h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
@@ -196,12 +205,20 @@ export function TicketDetailPage() {
   const { data: members } = useMembers(orgId, spaceId);
   const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, 'ticket', ticketId ?? '');
   const createCommentMutation = useCreateComment(orgId, spaceId, 'ticket', ticketId ?? '');
+  // History is a sibling of Activity, not a replacement: the two are separate
+  // surfaces toggled below, never interleaved (the JSM model). The audit feed is
+  // read-only, so there is no mutation counterpart.
+  const { data: history, isLoading: historyLoading, error: historyError } =
+    useHistory(orgId, spaceId, 'ticket', ticketId ?? '');
 
   // Always includes the ticket's CURRENT status, which the workflow never
   // offers (no state has an edge to itself) and a <select> renders blank
   // without.
   const statusOptions = statusOptionsFor(ticket?.status ?? '', transitions, FALLBACK_STATUSES);
 
+  // Which of the two sibling feeds is showing. Activity (comments) is the
+  // default, as it is the surface an agent works in; History is one click away.
+  const [activityTab, setActivityTab] = useState<'activity' | 'history'>('activity');
   const [newComment, setNewComment] = useState('');
   // Internal is the default and the safe direction: a note that stays inside
   // when it should have gone out costs a delay; the reverse cannot be undone.
@@ -402,10 +419,28 @@ export function TicketDetailPage() {
             entityId={ticket.id}
           />
 
-          {/* Comments section */}
+          {/* Activity / History — two sibling feeds, toggled, never interleaved
+              (the JSM model): comments live in Activity, the audit trail in
+              History. */}
           <div className="mt-6 border-t border-[var(--color-border)] pt-5">
-            <h3 className="mb-4 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">Activity</h3>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
+                {activityTab === 'history' ? 'History' : 'Activity'}
+              </h3>
+              <SegmentedControl
+                options={ACTIVITY_TABS}
+                value={activityTab}
+                onChange={setActivityTab}
+                aria-label="Activity or history"
+                fullWidth={false}
+                testId="activity-history-toggle"
+              />
+            </div>
 
+            {activityTab === 'history' ? (
+              <HistoryView events={history} isLoading={historyLoading} error={historyError} />
+            ) : (
+              <>
             <div className="mb-6 space-y-4">
               {(comments ?? []).length === 0 && (
                 <p className="text-[var(--text-sm)] italic text-[var(--color-text-muted)]">No comments yet.</p>
@@ -503,6 +538,8 @@ export function TicketDetailPage() {
                 </button>
               </div>
             </div>
+              </>
+            )}
           </div>
         </DetailMain>
 

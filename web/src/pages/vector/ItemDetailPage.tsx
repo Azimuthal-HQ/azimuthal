@@ -4,6 +4,7 @@ import { ArrowLeft, Clock, AlertCircle } from 'lucide-react';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { SegmentedControl, type SegmentedOption } from '../../components/ui/segmented';
 import {
   DetailLayout,
   DetailMain,
@@ -20,6 +21,7 @@ import { CustomFieldsSection } from '../../components/CustomFieldsSection';
 import { PriorityPill, normalizePriority } from '../../components/priority';
 import { cn, formatUTCDate, toRFC3339Date } from '../../lib/utils';
 import { ApprovalBlock } from '../../components/workflow/ApprovalBlock';
+import { HistoryView } from '../../components/history/HistoryView';
 import {
   runStatusChange,
   statusOutcomeMessage,
@@ -34,6 +36,7 @@ import {
   useTransitionProjectItemStatus,
   useMembers,
   useComments,
+  useHistory,
   useCreateComment,
   useMe,
   useSpace,
@@ -70,6 +73,13 @@ const STATUS_LABEL: Record<string, string> = {
  * server enforces nothing and this list is as good as it ever was.
  */
 const FALLBACK_STATUSES = ['open', 'in_progress', 'in_review', 'done', 'closed'];
+
+// The two sibling feeds under the detail body: comments in Activity, the audit
+// trail in History. Toggled, never interleaved.
+const ACTIVITY_TABS: SegmentedOption<'activity' | 'history'>[] = [
+  { value: 'activity', label: 'Activity' },
+  { value: 'history', label: 'History' },
+];
 
 const sideSelectClass = cn(
   'h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
@@ -115,6 +125,10 @@ export function ItemDetailPage() {
   const { data: itemTypes } = useItemTypes(orgId);
   const { data: comments, refetch: refetchComments } = useComments(orgId, spaceId, 'project_item', itemId);
   const createCommentMutation = useCreateComment(orgId, spaceId, 'project_item', itemId);
+  // History is a sibling of Activity, not a replacement — toggled below, never
+  // interleaved (the JSM model). Read-only, so no mutation counterpart.
+  const { data: history, isLoading: historyLoading, error: historyError } =
+    useHistory(orgId, spaceId, 'project_item', itemId);
 
   // Sprint membership (W2): completed sprints are not offered as targets, but
   // one stays listed while it owns this item so the control shows the truth.
@@ -124,6 +138,7 @@ export function ItemDetailPage() {
   const [dueDateError, setDueDateError] = useState<string | null>(null);
   const [statusOutcome, setStatusOutcome] = useState<StatusOutcome>({ kind: 'idle' });
 
+  const [activityTab, setActivityTab] = useState<'activity' | 'history'>('activity');
   const [newComment, setNewComment] = useState('');
 
   // Edit mode for title + description
@@ -365,10 +380,27 @@ export function ItemDetailPage() {
             entityId={itemId}
           />
 
-          {/* Comments section */}
+          {/* Activity / History — two sibling feeds, toggled, never interleaved
+              (the JSM model): comments in Activity, the audit trail in History. */}
           <div className="mt-6 border-t border-[var(--color-border)] pt-5">
-            <h3 className="mb-4 text-[var(--text-sm)] font-semibold text-[var(--color-text)]">Activity</h3>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-[var(--text-sm)] font-semibold text-[var(--color-text)]">
+                {activityTab === 'history' ? 'History' : 'Activity'}
+              </h3>
+              <SegmentedControl
+                options={ACTIVITY_TABS}
+                value={activityTab}
+                onChange={setActivityTab}
+                aria-label="Activity or history"
+                fullWidth={false}
+                testId="activity-history-toggle"
+              />
+            </div>
 
+            {activityTab === 'history' ? (
+              <HistoryView events={history} isLoading={historyLoading} error={historyError} />
+            ) : (
+              <>
             <div className="mb-6 space-y-4">
               {(comments ?? []).length === 0 && (
                 <p className="text-[var(--text-sm)] italic text-[var(--color-text-muted)]">No comments yet.</p>
@@ -416,6 +448,8 @@ export function ItemDetailPage() {
                 </button>
               </div>
             </div>
+              </>
+            )}
           </div>
         </DetailMain>
 

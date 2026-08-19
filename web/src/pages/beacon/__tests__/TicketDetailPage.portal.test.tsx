@@ -16,6 +16,7 @@ import { TicketDetailPage } from '../TicketDetailPage';
 const state = vi.hoisted(() => ({
   ticket: null as Record<string, unknown> | null,
   comments: [] as Record<string, unknown>[],
+  history: [] as Record<string, unknown>[],
   createComment: vi.fn(),
   refetchComments: vi.fn(),
 }));
@@ -38,6 +39,7 @@ vi.mock('../../../lib/api', () => ({
   useUpdateTicket: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useMembers: () => ({ data: members }),
   useComments: () => ({ data: state.comments, refetch: state.refetchComments }),
+  useHistory: () => ({ data: state.history, isLoading: false, error: null }),
   useCreateComment: () => ({ mutateAsync: state.createComment, isPending: false }),
   useMe: () => ({ data: { id: 'u-agent', org_id: 'org-1', display_name: 'Ada Agent' } }),
   useSpace: () => ({ data: { key: 'SD' } }),
@@ -117,6 +119,7 @@ function renderDetail() {
 beforeEach(() => {
   state.ticket = internalTicket;
   state.comments = [];
+  state.history = [];
   state.createComment = vi.fn().mockResolvedValue({});
   state.refetchComments = vi.fn();
 });
@@ -374,5 +377,52 @@ describe('portal ticket identity field', () => {
     expect(field).toHaveTextContent('Ingrid Internal');
     expect(screen.getByText('Reporter')).toBeInTheDocument();
     expect(screen.queryByTestId('ticket-requester')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Activity / History are sibling feeds, toggled, never interleaved (D5).
+// ---------------------------------------------------------------------------
+
+describe('history tab', () => {
+  it('reveals the close and the reopen, each with old -> new, only after toggling', () => {
+    // Server order is newest-first.
+    state.history = [
+      { id: 'h2', actor_id: 'u-agent', actor_name: 'Ada Agent', action: 'ticket.status_changed', payload: { from: 'closed', to: 'open' }, created_at: '2026-07-03T00:00:00Z' },
+      { id: 'h1', actor_id: 'u-agent', actor_name: 'Ada Agent', action: 'ticket.status_changed', payload: { from: 'in_progress', to: 'closed' }, created_at: '2026-07-02T12:00:00Z' },
+    ];
+    renderDetail();
+
+    // Activity is the default: the comment composer is present, history is not.
+    expect(screen.getByTestId('comment-composer')).toBeInTheDocument();
+    expect(screen.queryByTestId('history-row')).toBeNull();
+
+    // Toggle to History.
+    fireEvent.click(
+      within(screen.getByTestId('activity-history-toggle')).getByRole('radio', { name: 'History' }),
+    );
+
+    // Both actions show, with their old -> new, and the composer is gone — the
+    // two feeds do not interleave.
+    const rows = screen.getAllByTestId('history-row');
+    expect(rows).toHaveLength(2);
+    expect(screen.queryByTestId('comment-composer')).toBeNull();
+
+    const transitions = screen.getAllByTestId('history-status-transition');
+    expect(transitions).toHaveLength(2);
+    // The close: in_progress -> closed.
+    expect(within(rows[1]).getByText('In progress')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('Closed')).toBeInTheDocument();
+    // The reopen: closed -> open.
+    expect(within(rows[0]).getByText('Open')).toBeInTheDocument();
+  });
+
+  it('renders an honest empty state when there is no history', () => {
+    state.history = [];
+    renderDetail();
+    fireEvent.click(
+      within(screen.getByTestId('activity-history-toggle')).getByRole('radio', { name: 'History' }),
+    );
+    expect(screen.getByTestId('history-empty')).toHaveTextContent(/no history yet/i);
   });
 });

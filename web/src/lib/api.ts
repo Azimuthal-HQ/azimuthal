@@ -647,6 +647,24 @@ export interface Comment {
   updated_at: string;
 }
 
+/**
+ * One entry of a ticket's or item's History (D5): the filtered audit trail a
+ * space reader may see — status changes, assignment, field edits, creation. A
+ * SIBLING of the comment thread, never interleaved with it (the JSM model).
+ *
+ * `payload` is the event's flat metadata; a status change carries `from`/`to`,
+ * so the UI renders old -> new without a per-event-type shape. `actor_name` is
+ * resolved server-side and is `''` for an actor with no `users` row.
+ */
+export interface HistoryEvent {
+  id: string;
+  actor_id?: string | null;
+  actor_name: string;
+  action: string;
+  payload: Record<string, string>;
+  created_at: string;
+}
+
 export interface Member {
   user_id: string;
   org_id: string;
@@ -2336,6 +2354,12 @@ async function fetchComments(orgId: string, spaceId: string, entityType: string,
   return Array.isArray(data) ? data : [data];
 }
 
+async function fetchHistory(orgId: string, spaceId: string, entityType: string, entityId: string): Promise<HistoryEvent[]> {
+  const path = entityTypeToPath(entityType);
+  const data = await apiFetch<HistoryEvent[] | HistoryEvent>(`/orgs/${orgId}/spaces/${spaceId}/${path}/${entityId}/history`);
+  return Array.isArray(data) ? data : [data];
+}
+
 interface CreateCommentRequest {
   content: string;
   /**
@@ -2683,6 +2707,7 @@ export const queryKeys = {
     ['entityFields', spaceId, kind, entityId] as const,
   members: (orgId: string, spaceId: string) => ['members', orgId, spaceId] as const,
   comments: (spaceId: string, entityType: string, entityId: string) => ['comments', spaceId, entityType, entityId] as const,
+  history: (spaceId: string, entityType: string, entityId: string) => ['history', spaceId, entityType, entityId] as const,
   notifications: () => ['notifications'] as const,
   wikiTree: (spaceId: string) => ['wikiTree', spaceId] as const,
   wikiSearch: (spaceId: string, q: string) => ['wikiSearch', spaceId, q] as const,
@@ -3140,6 +3165,23 @@ export function useComments(orgId: string, spaceId: string, entityType: string, 
   return useQuery<Comment[], APIError>({
     queryKey: queryKeys.comments(spaceId, entityType, entityId),
     queryFn: () => fetchComments(orgId, spaceId, entityType, entityId),
+    enabled: !!orgId && !!spaceId && !!entityType && !!entityId,
+    retry: (failureCount, error) => {
+      if (error?.status === 404) return false;
+      return failureCount < 2;
+    },
+    ...opts,
+  });
+}
+
+/**
+ * The entity History feed (D5). A sibling of {@link useComments} — same shape,
+ * different satellite — for the ticket and item detail pages' History view.
+ */
+export function useHistory(orgId: string, spaceId: string, entityType: string, entityId: string, opts?: QueryOpts<HistoryEvent[]>) {
+  return useQuery<HistoryEvent[], APIError>({
+    queryKey: queryKeys.history(spaceId, entityType, entityId),
+    queryFn: () => fetchHistory(orgId, spaceId, entityType, entityId),
     enabled: !!orgId && !!spaceId && !!entityType && !!entityId,
     retry: (failureCount, error) => {
       if (error?.status === 404) return false;
