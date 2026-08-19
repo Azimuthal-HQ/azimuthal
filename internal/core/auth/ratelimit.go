@@ -98,7 +98,7 @@ func (l *TokenBucketLimiter) Allow(key string) (bool, time.Duration) {
 	}
 
 	if b.tokens >= 1 {
-		b.tokens -= 1
+		b.tokens--
 		return true, 0
 	}
 
