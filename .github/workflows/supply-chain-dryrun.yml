@@ -1,0 +1,97 @@
+name: Supply-chain dry-run (cosign)
+
+# Rehearses release.yml's keyless image signing WITHOUT cutting a tag and
+# WITHOUT touching the public GHCR package.
+#
+# §10 forbids creating or moving a tag, and release.yml's signing step only runs
+# on a tag — so the one part of that pipeline that cannot be unit-tested is the
+# signing itself. This job exercises exactly that path against a THROWAWAY local
+# registry on the runner: build a tiny image, push it, `cosign sign` it keyless,
+# and `cosign verify` it back. What it proves is the machinery that can actually
+# break in this repo's Actions environment — the `id-token: write` permission,
+# the OIDC token → Fulcio certificate exchange, Rekor upload, and a cosign
+# sign/verify round-trip — so the real step in release.yml is not first tried on
+# a live release. The image itself is disposable; only the signing path matters.
+#
+# Fires on workflow_dispatch (on demand, once this file is on the default
+# branch) and on a push that changes THIS file — the latter is what gives it a
+# proof run on the branch that introduces it, since a brand-new
+# workflow_dispatch-only workflow cannot be dispatched until it lands on the
+# default branch.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/supply-chain-dryrun.yml'
+
+permissions:
+  contents: read
+  # Keyless cosign: this OIDC token is exchanged with Fulcio for a short-lived
+  # signing certificate. It is the whole reason a dry-run is worth running —
+  # a missing or mis-scoped id-token is exactly the failure this catches early.
+  id-token: write
+
+concurrency:
+  group: supply-chain-dryrun-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sign-verify:
+    name: cosign sign + verify (local registry)
+    runs-on: ubuntu-latest
+    # A local, throwaway registry: nothing here reaches GHCR, so the dry-run
+    # publishes and signs bytes that never leave the runner.
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Build and push a throwaway image to the local registry
+        id: push
+        run: |
+          set -euo pipefail
+          IMAGE=localhost:5000/azimuthal-signing-dryrun
+          # FROM scratch so nothing is pulled from Docker Hub for the base — the
+          # image just needs to be a real, signable manifest.
+          mkdir -p ctx
+          printf 'FROM scratch\nCOPY marker /marker\n' > ctx/Dockerfile
+          echo "supply-chain signing dry run" > ctx/marker
+          docker build -t "$IMAGE:rehearsal" ctx
+          docker push "$IMAGE:rehearsal"
+          # Sign by DIGEST, exactly as release.yml does — a tag can move, a
+          # digest cannot.
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:rehearsal" | cut -d'@' -f2)
+          case "$DIGEST" in
+            sha256:*) echo "pushed $IMAGE@$DIGEST" ;;
+            *) echo "no digest from push: '$DIGEST'"; exit 1 ;;
+          esac
+          echo "ref=$IMAGE@$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the image (keyless) — the same command release.yml runs
+        env:
+          REF: ${{ steps.push.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # --allow-insecure-registry: the local registry is plain HTTP.
+          cosign sign --yes --allow-insecure-registry "$REF"
+          echo "signed $REF"
+
+      - name: Verify the signature — the same shape docs/self-hosting.md shows
+        env:
+          REF: ${{ steps.push.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # The certificate identity here is THIS workflow (supply-chain-dryrun.yml
+          # at the ref it ran on), because that is the OIDC identity that signed.
+          # release.yml's real signature carries the release.yml identity at the
+          # tag ref, which is what docs/self-hosting.md verifies against.
+          cosign verify --allow-insecure-registry \
+            --certificate-identity-regexp '^https://github.com/Azimuthal-HQ/azimuthal/\.github/workflows/supply-chain-dryrun\.yml@' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$REF"
+          echo "verified $REF — keyless sign + verify round-trip works"

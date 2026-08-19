@@ -45,6 +45,36 @@ Azimuthal is now running at http://localhost:8080.
 > [release you are installing](https://github.com/Azimuthal-HQ/azimuthal/releases) instead of from
 > here, and the three can never drift apart.
 
+## Verifying the image you pull
+
+The `ghcr.io/azimuthal-hq/azimuthal` image published for a release is signed with
+[cosign](https://docs.sigstore.dev/) using keyless (OIDC) signing: the release workflow signs it
+with a short-lived certificate from Sigstore's Fulcio CA and records the signature in the public
+Rekor transparency log. There is no public key for you to fetch or trust out of band — you verify
+against the identity of the workflow that signed it.
+
+Install `cosign` (see the [Sigstore install docs](https://docs.sigstore.dev/system_config/installation/)),
+then verify the tag before you run it:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/Azimuthal-HQ/azimuthal/\.github/workflows/release\.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/azimuthal-hq/azimuthal:v0.4.4
+```
+
+Replace the tag with the version you are pulling. Only releases published after image signing was
+added carry a signature; an older tag has none and will not verify.
+
+**What the signature proves, and what it does not.** A valid signature proves this image was built
+and signed by *this repository's* release workflow, at the tag named in the certificate — its
+origin and provenance. It does **not** attest that the image is free of vulnerabilities, that its
+dependencies are current, or that it is fit for any particular purpose. Verify the signature to
+know the image is the genuine published build; then use the release's SBOM
+(`azimuthal-sbom.spdx.json`, attached to each
+[GitHub Release](https://github.com/Azimuthal-HQ/azimuthal/releases)) and your own scanning to
+judge what is inside it.
+
 ## Running from a source checkout (before a release)
 
 The Quick Start above pulls the published `ghcr.io/azimuthal-hq/azimuthal`
