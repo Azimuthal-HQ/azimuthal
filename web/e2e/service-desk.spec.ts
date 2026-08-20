@@ -177,6 +177,37 @@ test.describe('Service Desk', () => {
     await expect(page.locator('text=Unknown')).not.toBeVisible()
   })
 
+  test('kanban renders a column for a custom workflow state — regression: custom-state work invisible', async ({ page }) => {
+    // D7 item 4: the board derived columns from a hardcoded {open, in_progress,
+    // resolved, closed} set, so any state an administrator added appeared as no
+    // column at all and every ticket in it was invisible. Columns now come from
+    // the space workflow's states, so a custom state is a real column.
+    await createUserAndLogin(page)
+    const spaceId = await createSpace(page, 'Custom State Desk', 'beacon')
+    const token = await getAuthToken(page)
+    const { orgId } = await getCurrentUser(page)
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+    // The workflow the space was auto-assigned at creation.
+    const wfRes = await page.request.get(`/api/v1/orgs/${orgId}/spaces/${spaceId}/workflow`, { headers })
+    expect(wfRes.status()).toBe(200)
+    const wf = await wfRes.json() as { id: string }
+
+    // Add a custom state to it.
+    const stateRes = await page.request.post(`/api/v1/orgs/${orgId}/workflows/${wf.id}/states`, {
+      headers,
+      data: { name: 'Awaiting legal', category: 'in_progress', color: '#ff8800', position: 9, is_initial: false },
+    })
+    expect(stateRes.status()).toBe(201)
+
+    // The board renders the custom state as its own column, colour and all.
+    await page.goto(`/beacon/${spaceId}/board`)
+    const column = page.locator('[data-column-id="Awaiting legal"]')
+    await expect(column).toBeVisible({ timeout: 10000 })
+    await expect(column.getByText('Awaiting legal')).toBeVisible()
+    await assertNoErrors(page)
+  })
+
   test('Home product tab returns to the overview from a space', async ({ page }) => {
     // The old sidebar's "Back to Dashboard" link is gone (ADR-0005): the way
     // home is the Home tab in the top-bar product switcher.
