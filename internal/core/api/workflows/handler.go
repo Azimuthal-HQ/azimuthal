@@ -307,8 +307,27 @@ func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 
 // DeleteWorkflow removes a workflow.
 //
+// # In-use guard
+//
+// A workflow is an org object every space that assigns it (spaces.workflow_id,
+// migration 016) shares, and that foreign key is ON DELETE SET NULL — so a plain
+// delete of a workflow still assigned to spaces succeeds and silently unassigns
+// every one of them, leaving their tickets carrying workflow_state_id values
+// that point into states about to be cascade-deleted. So the delete is refused
+// while any live space uses it, with a 409 naming the count — the conventional
+// in-use refusal, and an actionable one: reassign those spaces first.
+//
+// The count cannot see one residual case: a workflow assigned to NO live space
+// whose states a ticket or project item still references (a space reassigned to
+// another workflow, or a soft-deleted space's items — nothing rewrites a stored
+// workflow_state_id when a space is reassigned). The workflow_state_id foreign
+// keys are ON DELETE NO ACTION, so the database refuses that delete too; the
+// adapter maps the refusal to ErrWorkflowInUse and it is answered as the same
+// 409 rather than a raw constraint 500. Between the count and that backstop, no
+// delete can strand a workflow_state_id.
+//
 // @Summary      Delete workflow
-// @Description  Deletes a workflow by ID.
+// @Description  Deletes a workflow by ID. Refused with 409 while any space is assigned the workflow, or while any item still occupies one of its states.
 // @Tags         workflows
 // @Security     BearerAuth
 // @Param        orgID       path  string  true  "Organization ID"
@@ -316,6 +335,7 @@ func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 // @Success      204  "Deleted"
 // @Failure      400  {object}  api.SwaggerErrorResponse  "Invalid ID"
 // @Failure      401  {object}  api.SwaggerErrorResponse  "Not authenticated"
+// @Failure      409  {object}  api.SwaggerErrorResponse  "Workflow still in use"
 // @Failure      500  {object}  api.SwaggerErrorResponse  "Internal error"
 // @Router       /orgs/{orgID}/workflows/{workflowID} [delete]
 func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -323,11 +343,37 @@ func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	assigned, err := h.q.CountSpacesUsingWorkflow(r.Context(), pgtype.UUID{Bytes: id, Valid: true})
+	if err != nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to delete workflow")
+		return
+	}
+	if assigned > 0 {
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict,
+			fmt.Sprintf("this workflow is assigned to %d %s; reassign %s before deleting it",
+				assigned, pluralize(assigned, "space", "spaces"), pluralize(assigned, "it", "them")))
+		return
+	}
+
 	if err := h.repo.DeleteWorkflow(r.Context(), id); err != nil {
+		if errors.Is(err, workflow.ErrWorkflowInUse) {
+			respond.Error(w, r, http.StatusConflict, respond.CodeConflict,
+				"this workflow still has items occupying its states; move those items to another workflow before deleting it")
+			return
+		}
 		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to delete workflow")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// pluralize picks the singular or plural word for n.
+func pluralize(n int64, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 // ListStates lists states for a workflow.
