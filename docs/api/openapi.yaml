@@ -962,6 +962,17 @@ components:
           type: string
         role:
           type: string
+        space_id:
+          description: |-
+            SpaceID optionally grants the new account access to a space in the same
+            flow, so they do not sign in to an empty product behind zero grants. Must be
+            a space of this org; another org's (or an unknown) id is 404, not an oracle.
+          type: string
+        space_role:
+          description: |-
+            SpaceRole is the role for that grant (viewer/contributor/agent/space_admin);
+            blank defaults to contributor. Ignored when space_id is absent.
+          type: string
       type: object
     credlinks.emailChangeRequest:
       properties:
@@ -2878,9 +2889,12 @@ paths:
       - admin
   /orgs/{orgID}/credential-links/users:
     post:
-      description: Creates an account with a default grant and no password, and returns
-        a one-time sign-in link the admin hands over. The user sets their own password
-        on redemption. Org admins only; non-admins receive 404.
+      description: Creates an account with no password and returns a one-time sign-in
+        link the admin hands over; the user sets their own password on redemption.
+        Optionally grants the new account a space (space_id, with space_role defaulting
+        to contributor) in the same flow, so they do not land in an empty product.
+        Org admins only; non-admins receive 404. A space_id that is not a space of
+        this org is also 404, indistinguishable from an unknown id.
       parameters:
       - description: Organization ID
         in: path
@@ -2895,9 +2909,9 @@ paths:
               oneOf:
               - type: object
               - $ref: '#/components/schemas/credlinks.createUserRequest'
-                description: Email, name, and optional org role
+                description: Email, name, optional org role, and optional space grant
                 summary: body
-        description: Email, name, and optional org role
+        description: Email, name, optional org role, and optional space grant
         required: true
       responses:
         "201":
@@ -2917,7 +2931,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/api.SwaggerErrorResponse'
-          description: Not an org admin
+          description: Not an org admin, or no such space
         "409":
           content:
             application/json:

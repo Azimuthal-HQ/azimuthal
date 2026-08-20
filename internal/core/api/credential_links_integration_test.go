@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/credlink"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/adapters"
@@ -807,4 +808,131 @@ func credAuditRows(t *testing.T, ts *testServer, action string) []credAuditRow {
 		out = append(out, credAuditRow{actor: actor, purpose: p.Purpose})
 	}
 	return out
+}
+
+// adminCreateUserLinkWithSpace posts create-user with an optional default-space
+// grant and returns the sign-in URL and new user id.
+func adminCreateUserLinkWithSpace(t *testing.T, ts *testServer, email, name, role, spaceID, spaceRole string) (url, userID string) {
+	t.Helper()
+	body := map[string]string{"email": email, "name": name, "role": role, "space_id": spaceID, "space_role": spaceRole}
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/credential-links/users", ts.OrgID), body, true)
+	require.Equal(t, http.StatusCreated, r.StatusCode, "create user with space: %s", r.Body)
+	var resp struct {
+		URL    string `json:"url"`
+		UserID string `json:"user_id"`
+	}
+	require.NoError(t, json.Unmarshal(r.Body, &resp))
+	return resp.URL, resp.UserID
+}
+
+// createUserWithSpaceStatus posts create-user with a space_id and returns the raw
+// result without asserting success — for the refusal cases.
+func createUserWithSpaceStatus(t *testing.T, ts *testServer, email, name, spaceID string) httpResult {
+	t.Helper()
+	return ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/credential-links/users", ts.OrgID),
+		map[string]string{"email": email, "name": name, "role": "member", "space_id": spaceID}, true)
+}
+
+// credErrorEnvelope extracts the {code, message} of an error response, dropping
+// the per-request request_id, so two error bodies can be compared for the parts
+// that would actually leak information.
+func credErrorEnvelope(t *testing.T, body []byte) struct{ Code, Message string } {
+	t.Helper()
+	var parsed struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(body, &parsed))
+	return struct{ Code, Message string }{parsed.Error.Code, parsed.Error.Message}
+}
+
+// TestCredentialLink_CreatedUserWithSpaceGrantIsReadable: a user provisioned with
+// a default-space grant lands able to READ exactly that space — proven by driving
+// the real access resolver, not by reading the grant row back. A sibling created
+// with no space grant cannot read the same hidden space, so it is the grant that
+// conferred the access and nothing wider.
+//
+// FAILS-BEFORE: drop the grantDefaultSpace call in CreateUserWithSignInLink and
+// the granted user's readable set is empty.
+func TestCredentialLink_CreatedUserWithSpaceGrantIsReadable(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+
+	// HIDDEN, so nothing but a grant can make it readable — no org visibility
+	// leaking in to pass the assertion for the wrong reason.
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "vector")
+	testutil.SetSpaceVisibility(t, ts.DB.Pool, space.ID, "hidden")
+
+	_, grantedStr := adminCreateUserLinkWithSpace(t, ts, "granted@example.com", "Granted", "member", space.ID.String(), "contributor")
+	grantedID := uuid.MustParse(grantedStr)
+
+	// The control: same flow, no space — must read nothing.
+	_, ungrantedStr := adminCreateUserLink(t, ts, "ungranted@example.com", "Ungranted", "member")
+	ungrantedID := uuid.MustParse(ungrantedStr)
+
+	resolver := access.NewResolver(adapters.NewAccessAdapter(ts.DB.Pool))
+
+	granted, err := resolver.Resolve(ctx, ts.OrgID, grantedID)
+	require.NoError(t, err)
+	require.True(t, granted.CanReadSpace(space.ID), "the granted user can read the space")
+	require.Equal(t, []uuid.UUID{space.ID}, granted.ReadableSpaceIDs(),
+		"and it is the ONLY space they can read — the grant, nothing wider")
+
+	ungranted, err := resolver.Resolve(ctx, ts.OrgID, ungrantedID)
+	require.NoError(t, err)
+	require.False(t, ungranted.CanReadSpace(space.ID),
+		"a user created without the grant cannot read the hidden space — the grant is what conferred it")
+	require.Empty(t, ungranted.ReadableSpaceIDs(), "omitted space still works as today: they read nothing")
+}
+
+// TestCredentialLink_CreateUserSpaceNotInOrgRefusedNoOracle: a space_id that is
+// not a live space of this org — another org's real space, or an unknown id — is
+// refused with the SAME 404, byte-identical, so create-user is not a cross-org
+// space-existence oracle. And because the space check runs inside the create
+// transaction, the refusal rolls the whole thing back: no user is left behind.
+//
+// FAILS-BEFORE: give the foreign-space case a distinct status or message (e.g. a
+// 403) and the two bodies diverge.
+func TestCredentialLink_CreateUserSpaceNotInOrgRefusedNoOracle(t *testing.T) {
+	ts := newTestServer(t)
+
+	// A real space that lives in a DIFFERENT org.
+	otherOrg := testutil.CreateTestOrg(t, ts.DB.Pool)
+	otherUser := testutil.CreateTestUserWithRole(t, ts.DB.Pool, otherOrg.ID, "owner")
+	foreign := testutil.CreateTestSpace(t, ts.DB.Pool, otherOrg.ID, otherUser.ID, "vector")
+
+	foreignResp := createUserWithSpaceStatus(t, ts, "foreign@example.com", "Foreign", foreign.ID.String())
+	unknownResp := createUserWithSpaceStatus(t, ts, "unknown@example.com", "Unknown", uuid.NewString())
+
+	require.Equal(t, http.StatusNotFound, foreignResp.StatusCode, "a foreign space is 404: %s", foreignResp.Body)
+	require.Equal(t, foreignResp.StatusCode, unknownResp.StatusCode)
+	// Compare the error code+message, not the raw body: every error carries a
+	// unique request_id, which is not an oracle. The code and message are what an
+	// attacker could read a difference from, and they must be identical.
+	require.Equal(t, credErrorEnvelope(t, foreignResp.Body), credErrorEnvelope(t, unknownResp.Body),
+		"another org's space and an unknown id must answer identically — no cross-org oracle")
+
+	// The failed create left nothing behind (the grant check is inside the tx).
+	var leftover int
+	require.NoError(t, ts.DB.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM users WHERE email IN ('foreign@example.com','unknown@example.com')`).Scan(&leftover))
+	require.Equal(t, 0, leftover, "a refused space grant rolls back the whole create")
+}
+
+// TestCredentialLink_CreateUserInvalidSpaceRoleRefused: a well-formed space with a
+// role outside the access vocabulary is a 400 before anything is written.
+func TestCredentialLink_CreateUserInvalidSpaceRoleRefused(t *testing.T) {
+	ts := newTestServer(t)
+	space := testutil.CreateTestSpace(t, ts.DB.Pool, ts.OrgID, ts.UserID, "vector")
+
+	r := ts.post(t, fmt.Sprintf("/api/v1/orgs/%s/credential-links/users", ts.OrgID),
+		map[string]string{"email": "badrole@example.com", "name": "Bad Role", "space_id": space.ID.String(), "space_role": "superuser"}, true)
+	require.Equal(t, http.StatusBadRequest, r.StatusCode, "an unknown space role is 400: %s", r.Body)
+
+	var leftover int
+	require.NoError(t, ts.DB.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM users WHERE email = 'badrole@example.com'`).Scan(&leftover))
+	require.Equal(t, 0, leftover, "nothing is created when the space role is rejected")
 }

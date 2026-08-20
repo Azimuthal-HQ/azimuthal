@@ -117,8 +117,11 @@ type Store interface {
 
 	// CreateUserWithSignInLink provisions a member in orgID — user row (no
 	// password), org membership, and default-team enrolment (ADR-0006: never
-	// teamless) — and mints its sign-in link, in one transaction. Returns
-	// ErrEmailTaken when the address is already a user in orgID.
+	// teamless) — and mints its sign-in link, in one transaction. When p.SpaceID is
+	// set it also creates the space grant in the same transaction, so the account
+	// and its first readable space commit together. Returns ErrEmailTaken when the
+	// address is already a user in orgID, or ErrSpaceNotFound when p.SpaceID is not
+	// a live space of orgID.
 	CreateUserWithSignInLink(ctx context.Context, p NewUser, tokenHash string, expiresAt time.Time) (uuid.UUID, error)
 
 	// FindUserInOrg resolves a user by email WITHIN orgID, returning found=false
@@ -143,6 +146,18 @@ type NewUser struct {
 	// break-glass CLI path, which has no acting user (created_by / invited_by are
 	// then stored NULL rather than a dangling zero UUID).
 	CreatedBy *uuid.UUID
+	// SpaceID, when non-nil, is a space to grant the new account access to in the
+	// SAME transaction that creates it, so a link-created user lands in a product
+	// they can actually read rather than an empty one behind zero grants. Optional:
+	// an admin provisioning an org-level user may legitimately grant no space. The
+	// space must belong to OrgID — one that does not (unknown, or another org's) is
+	// refused with the same not-found answer, never an existence oracle.
+	SpaceID *uuid.UUID
+	// SpaceRole is the wire role for that grant (viewer/contributor/agent/
+	// space_admin). Ignored when SpaceID is nil; defaulted to contributor when
+	// SpaceID is set but the role is blank — a provisioned user should be able to
+	// participate, not merely look. Validated at the service (access.ParseRole).
+	SpaceRole string
 }
 
 // Sender delivers a credential link out of band. Mirrors invites.Sender /
@@ -191,6 +206,14 @@ var (
 	ErrUserNotFound = errors.New("user not found")
 	// ErrInvalidRole is an org membership role outside owner/admin/member.
 	ErrInvalidRole = errors.New("invalid org role")
+	// ErrInvalidSpaceRole is a space grant role outside the access vocabulary
+	// (viewer/contributor/agent/space_admin).
+	ErrInvalidSpaceRole = errors.New("invalid space role")
+	// ErrSpaceNotFound is a requested default-space grant naming a space that is
+	// not a live space of the creating org — unknown, deleted, or another org's.
+	// The handler maps it to the same 404 an unknown space id gets, so it is not
+	// a cross-org space-existence oracle.
+	ErrSpaceNotFound = errors.New("space not found")
 	// MinPasswordLength is the shared floor.
 	// (Kept a var-adjacent const below for the length check.)
 )

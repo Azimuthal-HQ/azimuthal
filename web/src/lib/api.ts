@@ -4891,7 +4891,7 @@ async function requestEmailChange(body: { new_email: string; current_password: s
 
 async function adminCreateUserWithLink(
   orgId: string,
-  body: { email: string; name: string; role?: string },
+  body: { email: string; name: string; role?: string; space_id?: string; space_role?: string },
 ): Promise<CredentialLinkResult> {
   return apiFetch<CredentialLinkResult>(`/orgs/${orgId}/credential-links/users`, {
     method: 'POST',
@@ -4942,7 +4942,11 @@ export function useRequestEmailChange() {
 
 export function useAdminCreateUserWithLink(orgId: string) {
   const queryClient = useQueryClient();
-  return useMutation<CredentialLinkResult, APIError, { email: string; name: string; role?: string }>({
+  return useMutation<
+    CredentialLinkResult,
+    APIError,
+    { email: string; name: string; role?: string; space_id?: string; space_role?: string }
+  >({
     mutationFn: (body) => adminCreateUserWithLink(orgId, body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.orgPeople(orgId) }),
   });

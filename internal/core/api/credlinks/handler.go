@@ -116,6 +116,13 @@ type createUserRequest struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
 	Role  string `json:"role,omitempty"`
+	// SpaceID optionally grants the new account access to a space in the same
+	// flow, so they do not sign in to an empty product behind zero grants. Must be
+	// a space of this org; another org's (or an unknown) id is 404, not an oracle.
+	SpaceID string `json:"space_id,omitempty"`
+	// SpaceRole is the role for that grant (viewer/contributor/agent/space_admin);
+	// blank defaults to contributor. Ignored when space_id is absent.
+	SpaceRole string `json:"space_role,omitempty"`
 }
 
 type issueResetRequest struct {
@@ -359,16 +366,16 @@ func writeEmailChangeError(w http.ResponseWriter, r *http.Request, err error) {
 // CreateUser provisions a member and returns their one-time sign-in link.
 //
 // @Summary      Create a member with a sign-in link (admin)
-// @Description  Creates an account with a default grant and no password, and returns a one-time sign-in link the admin hands over. The user sets their own password on redemption. Org admins only; non-admins receive 404.
+// @Description  Creates an account with no password and returns a one-time sign-in link the admin hands over; the user sets their own password on redemption. Optionally grants the new account a space (space_id, with space_role defaulting to contributor) in the same flow, so they do not land in an empty product. Org admins only; non-admins receive 404. A space_id that is not a space of this org is also 404, indistinguishable from an unknown id.
 // @Tags         admin
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        orgID  path      string                       true  "Organization ID"
-// @Param        body   body      credlinks.createUserRequest  true  "Email, name, and optional org role"
+// @Param        body   body      credlinks.createUserRequest  true  "Email, name, optional org role, and optional space grant"
 // @Success      201    {object}  credlinks.linkResponse
 // @Failure      400    {object}  api.SwaggerErrorResponse  "Validation error"
-// @Failure      404    {object}  api.SwaggerErrorResponse  "Not an org admin"
+// @Failure      404    {object}  api.SwaggerErrorResponse  "Not an org admin, or no such space"
 // @Failure      409    {object}  api.SwaggerErrorResponse  "Email already a member"
 // @Router       /orgs/{orgID}/credential-links/users [post]
 func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
@@ -387,6 +394,11 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	spaceID, ok := optionalSpaceID(w, r, req.SpaceID)
+	if !ok {
+		return
+	}
+
 	actor := claims.UserID
 	issued, userID, err := h.svc.CreateUserWithSignInLink(r.Context(), credlink.NewUser{
 		OrgID:       orgID,
@@ -394,18 +406,11 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName: req.Name,
 		Role:        req.Role,
 		CreatedBy:   &actor,
+		SpaceID:     spaceID,
+		SpaceRole:   req.SpaceRole,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, credlink.ErrInvalidEmail):
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "a valid email address and name are required")
-		case errors.Is(err, credlink.ErrInvalidRole):
-			respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "role must be owner, admin, or member")
-		case errors.Is(err, credlink.ErrEmailTaken):
-			respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "that email address already belongs to a member")
-		default:
-			respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create the user")
-		}
+		writeCreateUserError(w, r, err)
 		return
 	}
 
@@ -510,6 +515,43 @@ func (h *Handler) logConsumed(r *http.Request, consumed credlink.Consumed, user 
 		ResourceID:   consumed.UserID.String(),
 		Metadata:     map[string]string{"purpose": string(consumed.Purpose)},
 	})
+}
+
+// optionalSpaceID parses an optional space_id body field. A blank value means
+// "no default-space grant" and returns (nil, true); a present-but-malformed value
+// is a 400 (ok=false, response already written). A well-formed id that is not a
+// space of this org is not caught here — that is the service/store's ErrSpaceNotFound,
+// so an unknown id and another org's id give the identical 404.
+func optionalSpaceID(w http.ResponseWriter, r *http.Request, raw string) (*uuid.UUID, bool) {
+	if raw == "" {
+		return nil, true
+	}
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid space_id")
+		return nil, false
+	}
+	return &parsed, true
+}
+
+// writeCreateUserError maps a CreateUserWithSignInLink failure to its response.
+// ErrSpaceNotFound is the same 404 an unknown space id gets, so a foreign space
+// is indistinguishable from a nonexistent one — never a cross-org oracle.
+func writeCreateUserError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, credlink.ErrInvalidEmail):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "a valid email address and name are required")
+	case errors.Is(err, credlink.ErrInvalidRole):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "role must be owner, admin, or member")
+	case errors.Is(err, credlink.ErrInvalidSpaceRole):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, "space role must be viewer, contributor, agent, or space_admin")
+	case errors.Is(err, credlink.ErrEmailTaken):
+		respond.Error(w, r, http.StatusConflict, respond.CodeConflict, "that email address already belongs to a member")
+	case errors.Is(err, credlink.ErrSpaceNotFound):
+		respond.Error(w, r, http.StatusNotFound, respond.CodeNotFound, "no such space")
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal, "failed to create the user")
+	}
 }
 
 // orgIDFromRequest parses the {orgID} URL parameter.

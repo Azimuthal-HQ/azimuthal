@@ -12,6 +12,7 @@ import {
   usePersonLifecycle,
   useRemovePerson,
   useResendInvite,
+  useSpaces,
   useUploadUserAvatar,
   useRevokeInvite,
   useTeams,
@@ -211,19 +212,32 @@ function CreateUserDialog({ orgId, open, onClose }: { orgId: string; open: boole
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState('member');
+  // Optional default-space grant so the new account lands in a product they can
+  // read, not an empty one. Blank spaceId means "grant nothing here" — an
+  // org-admin creating an org-level user may legitimately grant no space.
+  const [spaceId, setSpaceId] = useState('');
+  const [spaceRole, setSpaceRole] = useState('contributor');
+  const spaces = useSpaces(orgId, { enabled: open });
   const [result, setResult] = useState<CredentialLinkResult | null>(null);
 
   const reset = () => {
     setEmail('');
     setName('');
     setRole('member');
+    setSpaceId('');
+    setSpaceRole('contributor');
     setResult(null);
     create.reset();
   };
 
   const submit = () => {
     create.mutate(
-      { email: email.trim(), name: name.trim(), role },
+      {
+        email: email.trim(),
+        name: name.trim(),
+        role,
+        ...(spaceId ? { space_id: spaceId, space_role: spaceRole } : {}),
+      },
       { onSuccess: (res) => setResult(res) },
     );
   };
@@ -274,6 +288,42 @@ function CreateUserDialog({ orgId, open, onClose }: { orgId: string; open: boole
                 <option value="owner">Owner</option>
               </select>
             </label>
+            <label className="block text-[var(--text-sm)] text-[var(--color-text)]">
+              Space access <span className="text-[var(--color-text-muted)]">(optional)</span>
+              <select
+                value={spaceId}
+                onChange={(e) => setSpaceId(e.target.value)}
+                data-testid="create-user-space"
+                className={cn(
+                  'mt-1 h-9 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+                  'bg-[var(--color-input)] px-2 text-[var(--text-sm)] text-[var(--color-text)]',
+                )}
+              >
+                <option value="">No space — grant access later</option>
+                {(spaces.data ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </label>
+            {spaceId && (
+              <label className="block text-[var(--text-sm)] text-[var(--color-text)]">
+                Space role
+                <select
+                  value={spaceRole}
+                  onChange={(e) => setSpaceRole(e.target.value)}
+                  data-testid="create-user-space-role"
+                  className={cn(
+                    'mt-1 h-9 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]',
+                    'bg-[var(--color-input)] px-2 text-[var(--text-sm)] text-[var(--color-text)]',
+                  )}
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="contributor">Contributor</option>
+                  <option value="agent">Agent</option>
+                  <option value="space_admin">Space admin</option>
+                </select>
+              </label>
+            )}
             {create.error && (
               <p className="text-[var(--text-sm)] text-[var(--color-danger)]" data-testid="create-user-error">
                 {friendlyErrorMessage(create.error, 'The user could not be created.')}

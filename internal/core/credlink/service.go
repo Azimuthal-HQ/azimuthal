@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
 )
 
@@ -194,6 +195,10 @@ func (s *Service) CreateUserWithSignInLink(ctx context.Context, p NewUser) (Issu
 		return Issued{}, uuid.Nil, ErrInvalidRole
 	}
 
+	if err := defaultAndValidateSpaceRole(&p); err != nil {
+		return Issued{}, uuid.Nil, err
+	}
+
 	raw, hash, err := generateToken()
 	if err != nil {
 		return Issued{}, uuid.Nil, fmt.Errorf("generating token: %w", err)
@@ -204,6 +209,24 @@ func (s *Service) CreateUserWithSignInLink(ctx context.Context, p NewUser) (Issu
 		return Issued{}, uuid.Nil, fmt.Errorf("creating user with sign-in link: %w", err)
 	}
 	return Issued{RawToken: raw, URL: s.linkURL(raw), ExpiresAt: expiresAt}, userID, nil
+}
+
+// defaultAndValidateSpaceRole normalizes the optional default-space grant's role
+// in place: a no-op when no space is requested; otherwise a blank role defaults
+// to contributor — a provisioned user should be able to participate, not merely
+// look — and the role is validated against the access vocabulary. The space-in-org
+// check is the store's, run in the same transaction that inserts the grant.
+func defaultAndValidateSpaceRole(p *NewUser) error {
+	if p.SpaceID == nil {
+		return nil
+	}
+	if p.SpaceRole == "" {
+		p.SpaceRole = access.RoleContributor.String()
+	}
+	if _, err := access.ParseRole(p.SpaceRole); err != nil {
+		return ErrInvalidSpaceRole
+	}
+	return nil
 }
 
 // mint generates a token, supersedes outstanding links for (userID, purpose) and

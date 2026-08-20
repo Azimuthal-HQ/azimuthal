@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/access"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/credlink"
 	"github.com/Azimuthal-HQ/azimuthal/internal/db/generated"
 )
@@ -208,13 +209,8 @@ func (a *CredentialLinkAdapter) FindUserInOrg(ctx context.Context, orgID uuid.UU
 func (a *CredentialLinkAdapter) CreateUserWithSignInLink(ctx context.Context, p credlink.NewUser, tokenHash string, expiresAt time.Time) (uuid.UUID, error) {
 	userID := uuid.New()
 	err := a.inTx(ctx, func(q *generated.Queries) error {
-		// Refuse an address that is already a member of THIS org (per-org unique
-		// email); an address that exists only in another org is a stranger here
-		// and gets a fresh account, exactly like an invite.
-		if _, err := q.GetUserByEmailAndOrg(ctx, generated.GetUserByEmailAndOrgParams{OrgID: p.OrgID, Email: p.Email}); err == nil {
-			return credlink.ErrEmailTaken
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("credential link adapter: checking email: %w", err)
+		if err := ensureEmailFreeInOrg(ctx, q, p.OrgID, p.Email); err != nil {
+			return err
 		}
 
 		// No password: the account cannot be signed into until the user sets one
@@ -244,6 +240,13 @@ func (a *CredentialLinkAdapter) CreateUserWithSignInLink(ctx context.Context, p 
 		}
 
 		if err := enrolDefaultTeam(ctx, q, p.OrgID, userID); err != nil {
+			return err
+		}
+
+		// Optional default-space grant, in the same transaction: the account and
+		// its first readable space commit together, so a link-created user never
+		// lands in an empty product behind zero grants.
+		if err := maybeGrantDefaultSpace(ctx, q, p, userID); err != nil {
 			return err
 		}
 
@@ -288,6 +291,61 @@ func enrolDefaultTeam(ctx context.Context, q *generated.Queries, orgID, userID u
 		}
 	} else if err != nil {
 		return fmt.Errorf("credential link adapter: checking primary: %w", err)
+	}
+	return nil
+}
+
+// ensureEmailFreeInOrg refuses an address already a member of orgID (per-org
+// unique email). An address that exists only in ANOTHER org is a stranger here
+// and gets a fresh account, exactly like an invite — so this is org-scoped, not
+// the global lookup.
+func ensureEmailFreeInOrg(ctx context.Context, q *generated.Queries, orgID uuid.UUID, email string) error {
+	if _, err := q.GetUserByEmailAndOrg(ctx, generated.GetUserByEmailAndOrgParams{OrgID: orgID, Email: email}); err == nil {
+		return credlink.ErrEmailTaken
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("credential link adapter: checking email: %w", err)
+	}
+	return nil
+}
+
+// maybeGrantDefaultSpace grants the optional default space when one is requested,
+// and is a no-op otherwise — keeping the nil-check out of the provisioning
+// transaction body.
+func maybeGrantDefaultSpace(ctx context.Context, q *generated.Queries, p credlink.NewUser, userID uuid.UUID) error {
+	if p.SpaceID == nil {
+		return nil
+	}
+	return grantDefaultSpace(ctx, q, p.OrgID, *p.SpaceID, userID, p.SpaceRole, p.CreatedBy)
+}
+
+// grantDefaultSpace validates that spaceID is a live space of orgID and inserts a
+// user grant on it, inside the caller's transaction — the same CreateSpaceGrant
+// insert AccessAdapter.CreateGrant uses, so this reuses the grants machinery
+// rather than reimplementing it. A space that is unknown, soft-deleted, or
+// another org's is refused with credlink.ErrSpaceNotFound — the same answer an
+// unknown id gets, so an admin cannot probe another org's spaces through it.
+// role is already validated (access.ParseRole) and defaulted by the service.
+func grantDefaultSpace(ctx context.Context, q *generated.Queries, orgID, spaceID, userID uuid.UUID, role string, createdBy *uuid.UUID) error {
+	space, err := q.GetSpaceByID(ctx, spaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return credlink.ErrSpaceNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("credential link adapter: checking space: %w", err)
+	}
+	if space.OrgID != orgID {
+		return credlink.ErrSpaceNotFound
+	}
+	if _, err := q.CreateSpaceGrant(ctx, generated.CreateSpaceGrantParams{
+		ID:          uuid.New(),
+		OrgID:       orgID,
+		SpaceID:     spaceID,
+		SubjectType: string(access.SubjectUser),
+		SubjectID:   userID,
+		Role:        role,
+		CreatedBy:   pgUUID(createdBy),
+	}); err != nil {
+		return fmt.Errorf("credential link adapter: creating space grant: %w", err)
 	}
 	return nil
 }
