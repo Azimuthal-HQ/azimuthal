@@ -458,7 +458,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		// and fails if the call is replaced by an expression.
 		DiscloseLink: cfg.PortalLinkDisclosureAllowed(),
 		BaseURL:      cfg.AppBaseURL,
-	})
+	}).WithWorkflowPositioner(tierGate)
 	portalHandler := portalapi.NewHandler(portalSvc).
 		WithAuditLogger(auditLog).
 		WithSpaceTypes(func(ctx context.Context, spaceID uuid.UUID) (string, error) {

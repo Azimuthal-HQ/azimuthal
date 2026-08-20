@@ -263,15 +263,21 @@ const maxRequestNumberAttempts = 5
 
 // CreateRequest raises a portal-originated ticket, retrying the ticket-number
 // race described at maxRequestNumberAttempts.
-func (a *PortalAdapter) CreateRequest(ctx context.Context, portalID, spaceID, requesterID uuid.UUID, in portal.NewRequest) (portal.Request, error) {
+//
+// status and workflowStateID are the initial workflow placement the service
+// resolved (see portal.WorkflowPositioner), written so a portal ticket is born
+// in the same state an agent-created ticket in the space would be.
+func (a *PortalAdapter) CreateRequest(ctx context.Context, portalID, spaceID, requesterID uuid.UUID, in portal.NewRequest, status string, workflowStateID *uuid.UUID) (portal.Request, error) {
 	_ = portalID // the portal binds the session; the ticket belongs to the space
 	var lastErr error
 	for attempt := range maxRequestNumberAttempts {
 		row, err := a.q.CreatePortalRequest(ctx, generated.CreatePortalRequestParams{
-			SpaceID:     spaceID,
-			Title:       in.Summary,
-			Description: in.Description,
-			RequesterID: pgtype.UUID{Bytes: requesterID, Valid: true},
+			SpaceID:         spaceID,
+			Title:           in.Summary,
+			Description:     in.Description,
+			Status:          status,
+			RequesterID:     pgtype.UUID{Bytes: requesterID, Valid: true},
+			WorkflowStateID: pgUUID(workflowStateID),
 		})
 		if err == nil {
 			return portal.Request{

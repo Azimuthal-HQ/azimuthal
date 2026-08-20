@@ -900,6 +900,58 @@ func TestPortal_StatusIsTranslatedNotEchoed(t *testing.T) {
 	}
 }
 
+// TestPortal_RequestBornInWorkflowInitialState pins the "born indistinguishable"
+// property: a portal-raised ticket and an agent-raised ticket created into the
+// same workflow-governed space carry identical workflow columns.
+//
+// Before the fix the portal path hardcoded status 'open' and left
+// workflow_state_id NULL — the D72 shape, an entity outside its own state
+// machine — while the agent create path positioned both columns through
+// tiergate.Gate.InitialPosition. The comparison is on the two rows' status and
+// workflow_state_id, which is what "born indistinguishable in workflow terms"
+// means; workflow_state_id is the column the old portal path got wrong, so a
+// revert to the hardcoded insert fails the Valid + equality assertions below.
+func TestPortal_RequestBornInWorkflowInitialState(t *testing.T) {
+	f := newPortalFixture(t)
+	ctx := context.Background()
+
+	// Give the portal's space a workflow, so "the initial state" is a real place
+	// and not the no-workflow default both paths already agree on.
+	require.NoError(t, f.ts.WorkflowAdapter.SeedDefaultWorkflows(ctx, f.ts.OrgID))
+	require.NoError(t, f.ts.WorkflowAdapter.AssignDefaultWorkflowToSpace(ctx, f.ts.OrgID, "beacon", f.spaceID))
+
+	// A portal-raised ticket.
+	token := f.signIn(t, "customer@example.com")
+	portalRef := f.submit(t, token, "From the portal")
+
+	// An agent-raised ticket into the SAME space, through the internal create
+	// path that has always positioned into the workflow.
+	base := "/api/v1/orgs/" + f.ts.OrgID.String() + "/spaces/" + f.spaceID.String()
+	res := f.ts.post(t, base+"/tickets", map[string]any{"title": "From an agent", "priority": "medium"}, true)
+	require.Equal(t, http.StatusCreated, res.StatusCode, "%s", res.Body)
+	var agent struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body, &agent))
+
+	portalStatus, portalState := ticketWorkflowColumns(t, f.ts, uuid.MustParse(portalRef))
+	agentStatus, agentState := ticketWorkflowColumns(t, f.ts, uuid.MustParse(agent.ID))
+
+	require.True(t, portalState.Valid,
+		"a portal ticket must be positioned in its space workflow's initial state, not left NULL")
+	require.Equal(t, agentStatus, portalStatus, "portal and agent tickets must share a status")
+	require.Equal(t, agentState, portalState, "portal and agent tickets must share a workflow_state_id")
+}
+
+// ticketWorkflowColumns reads a ticket's workflow placement straight from the
+// row, so the assertion is about what was written, not about a response shape.
+func ticketWorkflowColumns(t *testing.T, ts *testServer, id uuid.UUID) (status string, stateID pgtype.UUID) {
+	t.Helper()
+	require.NoError(t, ts.DB.Pool.QueryRow(context.Background(),
+		`SELECT status, workflow_state_id FROM tickets WHERE id = $1`, id).Scan(&status, &stateID))
+	return status, stateID
+}
+
 // TestPortalConfig_ToggleKeepsTheKey covers the agent read/toggle pair.
 //
 // Re-enabling must not mint a new key: every URL already handed to a customer
