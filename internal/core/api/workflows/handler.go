@@ -42,6 +42,12 @@ type Handler struct {
 	// emitted at the tiergate chokepoint instead, because four routes can
 	// create an approval and only one can decide it.
 	notifs NotificationEnqueuer
+	// subjectChecker validates that a new approver's subject exists in the org,
+	// the check migration 047's header always claimed the API made and never
+	// did. It is the SAME access.SubjectChecker the grant surface uses, so an
+	// approver and a grant refuse an unknown subject identically. Nil-able, so
+	// covered by TestHarness_NoDarkDependencies.
+	subjectChecker access.SubjectChecker
 }
 
 // NotificationEnqueuer enqueues in-app notification jobs. Same subset the
@@ -72,6 +78,14 @@ func (h *Handler) WithWorkflowTiers(
 // approval decisions are recorded through it.
 func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 	h.auditLog = l
+	return h
+}
+
+// WithSubjectChecker attaches the org-scoped subject validator used when a new
+// approver is added. It is the same collaborator the grant surface holds
+// (access.AccessAdapter), so the two share one membership check.
+func (h *Handler) WithSubjectChecker(c access.SubjectChecker) *Handler {
+	h.subjectChecker = c
 	return h
 }
 

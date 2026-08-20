@@ -792,8 +792,12 @@ SELECT
     COALESCE(CASE WHEN a.subject_type = 'user' THEN u.display_name ELSE t.name END, '')::text AS subject_name,
     (CASE WHEN a.subject_type = 'user' THEN u.id IS NULL ELSE t.id IS NULL END)::boolean AS subject_missing
 FROM workflow_transition_approvers a
+JOIN workflow_transitions wt ON wt.id = a.transition_id
+JOIN workflows w ON w.id = wt.workflow_id
 LEFT JOIN users u ON a.subject_type = 'user' AND u.id = a.subject_id AND u.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id AND m.org_id = w.org_id)
 LEFT JOIN teams t ON a.subject_type = 'team' AND t.id = a.subject_id AND t.deleted_at IS NULL
+    AND t.org_id = w.org_id
 WHERE a.transition_id = $1
 ORDER BY a.subject_type, subject_name, a.id
 `
@@ -814,6 +818,15 @@ type ListTransitionApproversRow struct {
 // approver and a grant render a deleted subject identically. subject_id carries
 // no foreign key — it is polymorphic — so a missing subject is a real state and
 // subject_missing reports it rather than hiding it.
+//
+// The subject joins are ORG-SCOPED, against the org the approver's transition
+// belongs to (transition → workflow → org). Without that scope a subject_id
+// naming a real user or team in ANOTHER org resolved here — subject_missing came
+// back false and the foreign name rendered — even though such a subject can
+// never approve anything in this org. The scope mirrors the create-time check
+// exactly: a user must have a membership in the org (IsOrgMember), a team must
+// belong to it (TeamExistsInOrg), so what this read calls "present" is precisely
+// what CreateApprover will accept.
 func (q *Queries) ListTransitionApprovers(ctx context.Context, transitionID uuid.UUID) ([]ListTransitionApproversRow, error) {
 	rows, err := q.db.Query(ctx, listTransitionApprovers, transitionID)
 	if err != nil {
@@ -939,8 +952,11 @@ SELECT
     (CASE WHEN a.subject_type = 'user' THEN u.id IS NULL ELSE tm.id IS NULL END)::boolean AS subject_missing
 FROM workflow_transition_approvers a
 JOIN workflow_transitions t ON t.id = a.transition_id
+JOIN workflows w ON w.id = t.workflow_id
 LEFT JOIN users u  ON a.subject_type = 'user' AND u.id  = a.subject_id AND u.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id AND m.org_id = w.org_id)
 LEFT JOIN teams tm ON a.subject_type = 'team' AND tm.id = a.subject_id AND tm.deleted_at IS NULL
+    AND tm.org_id = w.org_id
 WHERE t.workflow_id = $1
 ORDER BY a.transition_id, a.subject_type, subject_name, a.id
 `
@@ -955,6 +971,9 @@ type ListWorkflowApproversRow struct {
 	SubjectMissing bool               `json:"subject_missing"`
 }
 
+// Org-scoped subject resolution, exactly as ListTransitionApprovers above: the
+// workflow names the org, and a subject outside it renders as missing rather
+// than resolving a foreign name.
 func (q *Queries) ListWorkflowApprovers(ctx context.Context, workflowID uuid.UUID) ([]ListWorkflowApproversRow, error) {
 	rows, err := q.db.Query(ctx, listWorkflowApprovers, workflowID)
 	if err != nil {

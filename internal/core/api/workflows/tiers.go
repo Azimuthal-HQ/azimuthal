@@ -467,6 +467,9 @@ func (h *Handler) CreateApprover(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
 		return
 	}
+	if !h.checkApproverSubjectInOrg(w, r, ap) {
+		return
+	}
 
 	created, err := h.tierStore.CreateApprover(r.Context(), ap)
 	if err != nil {
@@ -487,6 +490,44 @@ func (h *Handler) CreateApprover(w http.ResponseWriter, r *http.Request) {
 		"subject_id":    created.SubjectID.String(),
 	})
 	respond.JSON(w, http.StatusCreated, created)
+}
+
+// checkApproverSubjectInOrg enforces that a new approver's subject exists in the
+// org, answering the request itself on failure and reporting whether the caller
+// may continue.
+//
+// Migration 047's header claimed the API made this check ("the API validates the
+// subject exists in the org before insert, using the same … checks grants use")
+// and it never did: a foreign-org user or team, or a UUID naming nothing, could
+// be written as an approver, and the read layer then had to report it missing.
+// This reuses the grant path's exact IsOrgMember / TeamExistsInOrg through
+// access.ValidateSubjectInOrg, so an approver and a grant answer an unknown
+// subject byte-for-byte identically — and because both arms are org-scoped, a
+// real subject in another org is refused the same way as one that never existed,
+// which is no existence oracle over other orgs.
+func (h *Handler) checkApproverSubjectInOrg(w http.ResponseWriter, r *http.Request, ap workflow.Approver) bool {
+	orgID, err := orgIDFromURL(r)
+	if err != nil {
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeBadRequest, "invalid org ID")
+		return false
+	}
+	if h.subjectChecker == nil {
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"workflow approver validation is not configured on this server")
+		return false
+	}
+	err = access.ValidateSubjectInOrg(r.Context(), h.subjectChecker, orgID,
+		access.SubjectType(ap.SubjectType), ap.SubjectID)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, access.ErrSubjectNotOrgMember), errors.Is(err, access.ErrSubjectTeamNotFound):
+		respond.Error(w, r, http.StatusBadRequest, respond.CodeValidation, err.Error())
+	default:
+		respond.Error(w, r, http.StatusInternalServerError, respond.CodeInternal,
+			"failed to validate approver subject")
+	}
+	return false
 }
 
 // DeleteApprover removes a subject from a transition's approver set.
