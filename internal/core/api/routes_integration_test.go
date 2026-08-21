@@ -298,7 +298,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		}),
 		nil,
 		portal.Config{LinkTTL: time.Hour, DiscloseLink: true, BaseURL: "http://portal.test"},
-	)
+	).WithWorkflowPositioner(tierGate)
 	// Internal-user credential links (D1). A recording sender with
 	// DeliverByEmail on so a test can follow an emailed forgot-password or
 	// email-change link — the credential-link analogue of portal disclosure. The
@@ -352,7 +352,7 @@ func newTestServerOn(t *testing.T, db *testutil.TestDB, pool *pgxpool.Pool) *tes
 		CommentHandler:        commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
 		HistoryHandler:        historyapi.NewHandler(queries),
 		NotificationHandler:   notificationsapi.NewHandler(queries, accessResolver),
-		WorkflowHandler:       workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}),
+		WorkflowHandler:       workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(jobs.NoopNotificationEnqueuer{}).WithSubjectChecker(accessAdapter),
 		TeamHandler:           teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog),
 		GrantHandler:          grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog),
 		ShareHandler:          shareHandler,

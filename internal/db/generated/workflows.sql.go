@@ -87,6 +87,23 @@ func (q *Queries) BulkCreateWorkflowTransitions(ctx context.Context, arg BulkCre
 	return err
 }
 
+const countSpacesUsingWorkflow = `-- name: CountSpacesUsingWorkflow :one
+SELECT count(*)::bigint FROM spaces WHERE workflow_id = $1 AND deleted_at IS NULL
+`
+
+// How many LIVE spaces are assigned this workflow (spaces.workflow_id, migration
+// 016). The delete guard names this count. Soft-deleted spaces are excluded
+// because an admin cannot reassign them, so naming them would be an unactionable
+// number; the ON DELETE NO ACTION foreign keys on tickets/project_items.
+// workflow_state_id are the backstop that still refuses a delete their items
+// would strand.
+func (q *Queries) CountSpacesUsingWorkflow(ctx context.Context, workflowID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSpacesUsingWorkflow, workflowID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createWorkflow = `-- name: CreateWorkflow :one
 INSERT INTO workflows (org_id, name, description, is_default, applies_to)
 VALUES ($1, $2, $3, $4, $5)

@@ -100,8 +100,18 @@ func (a *WorkflowAdapter) UpdateWorkflow(ctx context.Context, w *workflow.Workfl
 }
 
 // DeleteWorkflow removes a workflow.
+//
+// A workflow_state_id foreign key (migration 016) is ON DELETE NO ACTION on both
+// tickets and project_items, so the cascade that removes the workflow's states
+// is refused by the database while any item still points into one of them. That
+// is a real, expected refusal — the historical-reference case the handler's
+// space-count guard cannot see — so it is mapped to ErrWorkflowInUse (409)
+// rather than surfacing as a raw constraint 500.
 func (a *WorkflowAdapter) DeleteWorkflow(ctx context.Context, id uuid.UUID) error {
 	if err := a.q.DeleteWorkflow(ctx, id); err != nil {
+		if isForeignKeyViolation(err) {
+			return workflow.ErrWorkflowInUse
+		}
 		return fmt.Errorf("workflow adapter delete: %w", err)
 	}
 	return nil

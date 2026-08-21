@@ -173,10 +173,17 @@ RETURNING requester_id, portal_id;
 -- entirely with a counter row (migration 031); tickets never got one, and
 -- fixing that properly is a change to the shared agent create path rather
 -- than to this feature.
+--
+-- status and workflow_state_id are resolved by the service through the same
+-- WorkflowPositioner (tiergate.Gate.InitialPosition) the agent create path uses,
+-- rather than hardcoded here, so a portal ticket is born in its space workflow's
+-- initial state. They were a literal 'open' and an unset workflow_state_id
+-- before — the D72 shape, an entity outside its own state machine.
 -- name: CreatePortalRequest :one
-INSERT INTO tickets (space_id, number, title, description, priority, status, requester_id)
-SELECT $1, COALESCE(MAX(t.number), 0) + 1, $2, $3, 'medium', 'open', $4
-FROM tickets t WHERE t.space_id = $1
+INSERT INTO tickets (space_id, number, title, description, priority, status, requester_id, workflow_state_id)
+SELECT sqlc.arg(space_id), COALESCE(MAX(t.number), 0) + 1, sqlc.arg(title), sqlc.arg(description),
+       'medium', sqlc.arg(status), sqlc.arg(requester_id), sqlc.narg(workflow_state_id)
+FROM tickets t WHERE t.space_id = sqlc.arg(space_id)
 RETURNING id, title, description, status, created_at, updated_at;
 
 -- ListPortalRequests returns ONLY this requester's own requests.

@@ -130,17 +130,20 @@ func (q *Queries) CreatePortal(ctx context.Context, arg CreatePortalParams) (Ser
 
 const createPortalRequest = `-- name: CreatePortalRequest :one
 
-INSERT INTO tickets (space_id, number, title, description, priority, status, requester_id)
-SELECT $1, COALESCE(MAX(t.number), 0) + 1, $2, $3, 'medium', 'open', $4
+INSERT INTO tickets (space_id, number, title, description, priority, status, requester_id, workflow_state_id)
+SELECT $1, COALESCE(MAX(t.number), 0) + 1, $2, $3,
+       'medium', $4, $5, $6
 FROM tickets t WHERE t.space_id = $1
 RETURNING id, title, description, status, created_at, updated_at
 `
 
 type CreatePortalRequestParams struct {
-	SpaceID     uuid.UUID   `json:"space_id"`
-	Title       string      `json:"title"`
-	Description string      `json:"description"`
-	RequesterID pgtype.UUID `json:"requester_id"`
+	SpaceID         uuid.UUID   `json:"space_id"`
+	Title           string      `json:"title"`
+	Description     string      `json:"description"`
+	Status          string      `json:"status"`
+	RequesterID     pgtype.UUID `json:"requester_id"`
+	WorkflowStateID pgtype.UUID `json:"workflow_state_id"`
 }
 
 type CreatePortalRequestRow struct {
@@ -168,12 +171,20 @@ type CreatePortalRequestRow struct {
 // entirely with a counter row (migration 031); tickets never got one, and
 // fixing that properly is a change to the shared agent create path rather
 // than to this feature.
+//
+// status and workflow_state_id are resolved by the service through the same
+// WorkflowPositioner (tiergate.Gate.InitialPosition) the agent create path uses,
+// rather than hardcoded here, so a portal ticket is born in its space workflow's
+// initial state. They were a literal 'open' and an unset workflow_state_id
+// before — the D72 shape, an entity outside its own state machine.
 func (q *Queries) CreatePortalRequest(ctx context.Context, arg CreatePortalRequestParams) (CreatePortalRequestRow, error) {
 	row := q.db.QueryRow(ctx, createPortalRequest,
 		arg.SpaceID,
 		arg.Title,
 		arg.Description,
+		arg.Status,
 		arg.RequesterID,
+		arg.WorkflowStateID,
 	)
 	var i CreatePortalRequestRow
 	err := row.Scan(

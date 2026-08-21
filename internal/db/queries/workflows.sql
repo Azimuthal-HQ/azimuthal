@@ -23,6 +23,15 @@ RETURNING *;
 -- name: DeleteWorkflow :exec
 DELETE FROM workflows WHERE id = $1;
 
+-- name: CountSpacesUsingWorkflow :one
+-- How many LIVE spaces are assigned this workflow (spaces.workflow_id, migration
+-- 016). The delete guard names this count. Soft-deleted spaces are excluded
+-- because an admin cannot reassign them, so naming them would be an unactionable
+-- number; the ON DELETE NO ACTION foreign keys on tickets/project_items.
+-- workflow_state_id are the backstop that still refuses a delete their items
+-- would strand.
+SELECT count(*)::bigint FROM spaces WHERE workflow_id = $1 AND deleted_at IS NULL;
+
 -- name: CreateWorkflowState :one
 INSERT INTO workflow_states (workflow_id, name, category, color, position, is_initial)
 VALUES ($1, $2, $3, $4, $5, $6)

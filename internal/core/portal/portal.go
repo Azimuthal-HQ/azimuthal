@@ -133,6 +133,19 @@ type NewRequest struct {
 	Description string
 }
 
+// WorkflowPositioner resolves where a NEW entity in a space starts — the same
+// seam the internal ticket and project-item create paths use
+// (tiergate.Gate.InitialPosition), so a portal-raised ticket is born in exactly
+// the state an agent-raised one would be. ok=false means the space has no
+// workflow (or a misconfigured one) and the caller keeps the literal default,
+// which is what the internal paths do too.
+//
+// It is an interface here, satisfied by *tiergate.Gate, rather than a direct
+// dependency, so the core portal package does not import the API layer.
+type WorkflowPositioner interface {
+	InitialPosition(ctx context.Context, spaceID uuid.UUID) (status string, stateID *uuid.UUID, ok bool)
+}
+
 // UpdatePortalParams is a partial update to a portal's configuration. A nil
 // field means "leave the stored value alone" — the API layer has already
 // resolved JSON presence, so by this point absent and explicit-null have been
@@ -190,8 +203,12 @@ type Store interface {
 	ConsumeMagicLink(ctx context.Context, tokenHash string) (MagicLinkRedemption, error)
 
 	// CreateRequest writes a portal-originated ticket with requester_id set
-	// and reporter_id null.
-	CreateRequest(ctx context.Context, portalID, spaceID, requesterID uuid.UUID, in NewRequest) (Request, error)
+	// and reporter_id null. status and workflowStateID are the workflow
+	// placement the service resolved for the space (see WorkflowPositioner), so
+	// a portal ticket is born in its space workflow's initial state exactly as
+	// an agent-created ticket is; a nil workflowStateID with status "open" is
+	// the no-workflow default both paths share.
+	CreateRequest(ctx context.Context, portalID, spaceID, requesterID uuid.UUID, in NewRequest, status string, workflowStateID *uuid.UUID) (Request, error)
 	// ListRequests returns this requester's own requests in this space.
 	ListRequests(ctx context.Context, spaceID, requesterID uuid.UUID) ([]Request, error)
 	// GetRequest returns one request, scoped to the requester who raised it.

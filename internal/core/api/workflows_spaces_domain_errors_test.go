@@ -310,18 +310,20 @@ func TestWfSpaceDomain_StateDelete_RefusedWhileATicketSitsInIt(t *testing.T) {
 		"the ticket must still be in the state that could not be deleted")
 }
 
-// TestWfSpaceDomain_WorkflowDelete_RefusedWhileATicketSitsInItsStates drives
-// DeleteWorkflow's error arm. workflow_states cascades from workflows, but
-// tickets.workflow_state_id does not cascade — so deleting the workflow tries
-// to cascade away a state a ticket references, and the FK refuses the whole
-// statement.
+// TestWfSpaceDomain_WorkflowDelete_RefusedWhileAssignedToASpace drives
+// DeleteWorkflow's in-use guard. The workflow is this space's assigned workflow
+// and a ticket sits in one of its states, so it is in use twice over. The guard
+// refuses with a 409 that names the count of assigned spaces before any delete
+// is attempted; the ticket's ON DELETE NO ACTION workflow_state_id foreign key
+// is the backstop behind it.
 //
-// Defect it catches: this is the state machine every ticket in the module
-// moves through. Delete the error arm and the endpoint answers 204 for a
-// workflow that is still assigned to the space, so the administration UI shows
-// it gone while every board in the organisation keeps rendering from it. The
-// read-back through GET is what catches that; the 204 alone reads as success.
-func TestWfSpaceDomain_WorkflowDelete_RefusedWhileATicketSitsInItsStates(t *testing.T) {
+// Defect it catches: this is the state machine every ticket in the module moves
+// through, and spaces.workflow_id is ON DELETE SET NULL. Delete the guard and the
+// endpoint answers 204 (or, before the guard, a raw constraint 500) for a
+// workflow still assigned to the space, silently unassigning it while every
+// board in the organisation keeps rendering from it. The read-back through GET is
+// what catches a silent success; the status alone does not.
+func TestWfSpaceDomain_WorkflowDelete_RefusedWhileAssignedToASpace(t *testing.T) {
 	ts := newTestServer(t)
 	spaceID := wsnegWorkflowSpace(t, ts, "beacon", "WF FK Desk", "wf-fk-desk")
 	spaceBase := fmt.Sprintf("/api/v1/orgs/%s/spaces/%s", ts.OrgID, spaceID)
@@ -337,7 +339,7 @@ func TestWfSpaceDomain_WorkflowDelete_RefusedWhileATicketSitsInItsStates(t *test
 	wfPath := fmt.Sprintf("%s/%s", wfsdWorkflowBase(ts), wf.ID)
 
 	wsnegRequireError(t, ts.delete(t, wfPath, true),
-		http.StatusInternalServerError, "INTERNAL_ERROR", "failed to delete workflow")
+		http.StatusConflict, "CONFLICT", "this workflow is assigned to 1 space; reassign it before deleting it")
 
 	r = ts.get(t, wfPath, true)
 	require.Equal(t, http.StatusOK, r.StatusCode,

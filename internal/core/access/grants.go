@@ -35,6 +35,51 @@ type Grant struct {
 	SubjectMissing bool
 }
 
+// SubjectChecker validates that a polymorphic (user|team) subject exists in an
+// org. It is the subset of GrantStore the subject-existence rule needs, exposed
+// on its own so a second caller — the workflow approver surface (migration 047)
+// — can SHARE this exact check rather than re-deriving membership. Two hand-copied
+// membership checks are how two callers come to disagree about who is a member,
+// and the direction they drift is "one of them permits more". AccessAdapter
+// satisfies it, and so does GrantStore.
+type SubjectChecker interface {
+	IsOrgMember(ctx context.Context, orgID, userID uuid.UUID) (bool, error)
+	TeamExistsInOrg(ctx context.Context, orgID, teamID uuid.UUID) (bool, error)
+}
+
+// ValidateSubjectInOrg checks that a polymorphic grant/approver subject exists
+// in the org: a user subject must be an org member (ErrSubjectNotOrgMember), a
+// team subject must be a live team in the org (ErrSubjectTeamNotFound).
+//
+// Both arms are org-scoped, so a real subject belonging to another org is
+// indistinguishable from one that never existed — neither IsOrgMember nor
+// TeamExistsInOrg is an existence oracle over other organisations. The grant
+// path and the approver path both call this, so they answer an unknown subject
+// identically.
+func ValidateSubjectInOrg(ctx context.Context, c SubjectChecker, orgID uuid.UUID, subjectType SubjectType, subjectID uuid.UUID) error {
+	switch subjectType {
+	case SubjectUser:
+		member, err := c.IsOrgMember(ctx, orgID, subjectID)
+		if err != nil {
+			return fmt.Errorf("checking subject membership: %w", err)
+		}
+		if !member {
+			return ErrSubjectNotOrgMember
+		}
+	case SubjectTeam:
+		exists, err := c.TeamExistsInOrg(ctx, orgID, subjectID)
+		if err != nil {
+			return fmt.Errorf("checking subject team: %w", err)
+		}
+		if !exists {
+			return ErrSubjectTeamNotFound
+		}
+	default:
+		return fmt.Errorf("unknown subject type %q", subjectType)
+	}
+	return nil
+}
+
 // GrantStore is the persistence contract for grants. subject integrity
 // checks live here because subject_id has no foreign key.
 type GrantStore interface {
@@ -61,25 +106,10 @@ func NewGrantService(store GrantStore) *GrantService {
 // an org member (ErrSubjectNotOrgMember → 400); a team subject must be a
 // live team in the org (ErrSubjectTeamNotFound → 400).
 func (s *GrantService) Create(ctx context.Context, orgID, spaceID uuid.UUID, subjectType SubjectType, subjectID uuid.UUID, role Role, createdBy uuid.UUID) (Grant, error) {
-	switch subjectType {
-	case SubjectUser:
-		member, err := s.store.IsOrgMember(ctx, orgID, subjectID)
-		if err != nil {
-			return Grant{}, fmt.Errorf("checking grant subject membership: %w", err)
-		}
-		if !member {
-			return Grant{}, ErrSubjectNotOrgMember
-		}
-	case SubjectTeam:
-		exists, err := s.store.TeamExistsInOrg(ctx, orgID, subjectID)
-		if err != nil {
-			return Grant{}, fmt.Errorf("checking grant subject team: %w", err)
-		}
-		if !exists {
-			return Grant{}, ErrSubjectTeamNotFound
-		}
-	default:
-		return Grant{}, fmt.Errorf("unknown grant subject type %q", subjectType)
+	// The subject-existence rule lives in ValidateSubjectInOrg so the workflow
+	// approver surface shares this exact check rather than copying it.
+	if err := ValidateSubjectInOrg(ctx, s.store, orgID, subjectType, subjectID); err != nil {
+		return Grant{}, err
 	}
 
 	grant, err := s.store.CreateGrant(ctx, Grant{

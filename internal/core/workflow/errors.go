@@ -12,6 +12,19 @@ var ErrInvalidTransition = errors.New("invalid workflow transition")
 // ErrNoWorkflow is returned when an entity has no workflow assigned.
 var ErrNoWorkflow = errors.New("no workflow assigned")
 
+// ErrWorkflowInUse is returned when a workflow cannot be deleted because
+// something still references it. The handler answers it as 409. The common
+// case — a live space assigned the workflow — is caught by a count before the
+// delete is attempted, so it can name the number of spaces; this sentinel
+// covers the residual case the count cannot see, where no live space is
+// assigned but a ticket or project item still carries a workflow_state_id
+// pointing into one of the workflow's states (a space reassigned to another
+// workflow, or a soft-deleted space's items). The workflow_state_id foreign
+// keys are ON DELETE NO ACTION, so the database refuses such a delete; mapping
+// that refusal here turns a raw constraint 500 into the same honest 409 rather
+// than letting the delete strand a state id.
+var ErrWorkflowInUse = errors.New("workflow is still in use")
+
 // ErrStateNotInWorkflow is returned when a transition names an endpoint state
 // that is not a state of the workflow the transition is being added to.
 //

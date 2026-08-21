@@ -22,6 +22,7 @@ import { cn } from '../../lib/utils';
 import {
   useTickets,
   useSpace,
+  useWorkflowStates,
   useTicketStatusTransition,
   useMe,
   useMembers,
@@ -30,30 +31,9 @@ import {
   type Ticket,
   type TicketStatus,
 } from '../../lib/api';
+import { buildKanbanColumns, type KanbanColumn } from './kanbanColumns';
 
 type MemberName = (id: string | null | undefined) => string | undefined;
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type ColumnId = 'open' | 'in_progress' | 'resolved' | 'closed';
-
-interface ColumnDef {
-  id: ColumnId;
-  label: string;
-}
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const COLUMNS: ColumnDef[] = [
-  { id: 'open', label: 'Open' },
-  { id: 'in_progress', label: 'In Progress' },
-  { id: 'resolved', label: 'Resolved' },
-  { id: 'closed', label: 'Closed' },
-];
 
 // ---------------------------------------------------------------------------
 // Sortable ticket card
@@ -137,7 +117,7 @@ function TicketCard({ ticket, overlay, spaceId, spaceKey, memberName }: Sortable
 // ---------------------------------------------------------------------------
 
 interface DroppableColumnProps {
-  column: ColumnDef;
+  column: KanbanColumn;
   tickets: Ticket[];
   spaceId?: string;
   spaceKey?: string;
@@ -164,6 +144,15 @@ function DroppableColumn({ column, tickets, spaceId, spaceKey, memberName }: Dro
       )}
     >
       <div className="flex items-center gap-2 px-1.5 pb-2 pt-1">
+        {column.color && (
+          // The state's configured colour, so a custom column is recognisable
+          // as its state rather than an anonymous lane.
+          <span
+            aria-hidden
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ backgroundColor: column.color }}
+          />
+        )}
         <h3 className="text-[var(--text-sm)] font-medium text-[var(--color-text-muted)]">
           {column.label}
         </h3>
@@ -199,6 +188,9 @@ export function KanbanPage() {
   const { spaceId = '' } = useParams<{ spaceId: string }>();
   const { data: space } = useSpace(spaceId);
   const { data: tickets, isLoading, error } = useTickets(spaceId);
+  // The board's columns come from the space workflow's states, not a hardcoded
+  // category set — that is what makes a ticket in a CUSTOM state visible.
+  const { data: workflowStates } = useWorkflowStates(spaceId);
 
   // Assignee avatars on the cards (dashboards prototype): resolve ids to
   // display names through the existing members list — rendering only.
@@ -212,22 +204,20 @@ export function KanbanPage() {
   const [transitionError, setTransitionError] = useState<string | null>(null);
   const transitionMutation = useTicketStatusTransition(spaceId);
 
-  const columns = useMemo(() => {
-    const map: Record<ColumnId, Ticket[]> = {
-      open: [],
-      in_progress: [],
-      resolved: [],
-      closed: [],
-    };
-    if (tickets) {
-      for (const t of tickets) {
-        if (map[t.status as ColumnId]) {
-          map[t.status as ColumnId].push(t);
-        }
-      }
-    }
+  const columns = useMemo(
+    () => buildKanbanColumns(workflowStates, tickets),
+    [workflowStates, tickets],
+  );
+
+  // Every column gets a bucket, and every ticket lands in the column matching
+  // its status. buildKanbanColumns guarantees a column exists for every ticket
+  // status, so nothing is dropped.
+  const ticketsByColumn = useMemo(() => {
+    const map = new Map<string, Ticket[]>();
+    for (const col of columns) map.set(col.id, []);
+    for (const t of tickets ?? []) map.get(t.status)?.push(t);
     return map;
-  }, [tickets]);
+  }, [columns, tickets]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -246,14 +236,14 @@ export function KanbanPage() {
   // Resolves a drop target to its column: either the column droppable itself
   // or the column of the card the pointer was over.
   const columnForDropTarget = useCallback(
-    (overId: string): ColumnId | null => {
-      if (COLUMNS.some((c) => c.id === overId)) return overId as ColumnId;
+    (overId: string): string | null => {
+      if (columns.some((c) => c.id === overId)) return overId;
       const overTicket = tickets?.find((t) => t.id === overId);
-      return overTicket && COLUMNS.some((c) => c.id === overTicket.status)
-        ? (overTicket.status as ColumnId)
+      return overTicket && columns.some((c) => c.id === overTicket.status)
+        ? overTicket.status
         : null;
     },
-    [tickets],
+    [columns, tickets],
   );
 
   const handleDragEnd = useCallback(
@@ -328,11 +318,11 @@ export function KanbanPage() {
         onDragEnd={handleDragEnd}
       >
         <div className="flex gap-4 overflow-x-auto pb-4">
-          {COLUMNS.map((col) => (
+          {columns.map((col) => (
             <DroppableColumn
               key={col.id}
               column={col}
-              tickets={columns[col.id]}
+              tickets={ticketsByColumn.get(col.id) ?? []}
               spaceId={spaceId}
               spaceKey={space?.key}
               memberName={memberName}

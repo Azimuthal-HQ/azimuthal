@@ -43,12 +43,19 @@ type Config struct {
 	BaseURL string
 }
 
+// defaultRequestStatus is the status a portal request is born with when its
+// space has no workflow to place it in. It matches the internal create paths'
+// literal default (projects.DefaultStatus / tickets StatusOpen), so a portal
+// ticket and an agent ticket in a workflow-less space are still identical.
+const defaultRequestStatus = "open"
+
 // Service implements the portal's flows over a Store.
 type Service struct {
-	store  Store
-	tokens *TokenService
-	sender Sender
-	cfg    Config
+	store      Store
+	tokens     *TokenService
+	sender     Sender
+	cfg        Config
+	positioner WorkflowPositioner
 }
 
 // NewService creates a portal Service. sender may be nil in link-delivery
@@ -58,6 +65,14 @@ func NewService(store Store, tokens *TokenService, sender Sender, cfg Config) *S
 		cfg.LinkTTL = time.Hour
 	}
 	return &Service{store: store, tokens: tokens, sender: sender, cfg: cfg}
+}
+
+// WithWorkflowPositioner wires the seam that places a new request in its space
+// workflow's initial state. Without it (nil), Submit keeps the literal default,
+// which is the correct behaviour for a space with no workflow anyway.
+func (s *Service) WithWorkflowPositioner(p WorkflowPositioner) *Service {
+	s.positioner = p
+	return s
 }
 
 // LookupPortal resolves a public portal key. Returns ErrPortalNotFound for
@@ -230,7 +245,22 @@ func (s *Service) Submit(ctx context.Context, sess Session, in NewRequest) (Requ
 	if in.Summary == "" {
 		return Request{}, ErrSummaryRequired
 	}
-	req, err := s.store.CreateRequest(ctx, sess.PortalID, sess.SpaceID, sess.RequesterID, in)
+
+	// Place the new request in its space workflow's initial state, through the
+	// same seam the agent create path uses (WorkflowPositioner →
+	// tiergate.Gate.InitialPosition). Before this, portal requests were born at
+	// the literal "open" with a null workflow_state_id — outside the state
+	// machine every agent-created ticket starts inside (D72). A space with no
+	// workflow (or no positioner wired) keeps the literal default, exactly as
+	// the agent path does, so the two remain identical in that case too.
+	status, stateID := defaultRequestStatus, (*uuid.UUID)(nil)
+	if s.positioner != nil {
+		if st, sid, ok := s.positioner.InitialPosition(ctx, sess.SpaceID); ok {
+			status, stateID = st, sid
+		}
+	}
+
+	req, err := s.store.CreateRequest(ctx, sess.PortalID, sess.SpaceID, sess.RequesterID, in, status, stateID)
 	if err != nil {
 		return Request{}, fmt.Errorf("submitting request: %w", err)
 	}

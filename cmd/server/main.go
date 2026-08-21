@@ -458,7 +458,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		// and fails if the call is replaced by an expression.
 		DiscloseLink: cfg.PortalLinkDisclosureAllowed(),
 		BaseURL:      cfg.AppBaseURL,
-	})
+	}).WithWorkflowPositioner(tierGate)
 	portalHandler := portalapi.NewHandler(portalSvc).
 		WithAuditLogger(auditLog).
 		WithSpaceTypes(func(ctx context.Context, spaceID uuid.UUID) (string, error) {
@@ -508,7 +508,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		CommentHandler:        commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		HistoryHandler:        historyapi.NewHandler(queries),
 		NotificationHandler:   notificationsapi.NewHandler(queries, accessResolver),
-		WorkflowHandler:       workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
+		WorkflowHandler:       workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSubjectChecker(accessAdapter),
 		TeamHandler:           teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		GrantHandler:          grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		ShareHandler:          shareHandler,

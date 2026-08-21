@@ -384,7 +384,7 @@ test('a condition hides the move from the picker, and the server refuses it dire
 // createSpace assigns the module's default workflow, so the space is stripped of
 // it here rather than built without one. That is a real production state: the
 // column is ON DELETE SET NULL, and the assignment at create time is best-effort.
-test('a space whose workflow was removed keeps the full status vocabulary', async ({ page }) => {
+test('a workflow assigned to a space cannot be deleted, and the space keeps its status vocabulary', async ({ page }) => {
   const { orgId } = await ownerOfFreshOrg(page, `WF Untouched ${RUN}`)
   const spaceId = await createSpace(page, `Untouched ${RUN}`, 'beacon')
 
@@ -392,25 +392,24 @@ test('a space whose workflow was removed keeps the full status vocabulary', asyn
   const wf = (await wfRes.json()).find(
     (w: { applies_to: string; is_default: boolean }) => w.applies_to === 'tickets' && w.is_default,
   )
-  // Deleting the workflow nulls spaces.workflow_id through the FK, which is the
-  // state under test.
+  // The space is assigned this workflow at creation, so deleting it is refused
+  // with 409 (D7 item 2). spaces.workflow_id is ON DELETE SET NULL, and the
+  // silent unassignment that used to follow is exactly the in-use hazard the
+  // guard closes — so the workflow, and the space's status legality, stay intact.
   const deleted = await api(page, 'delete', `/api/v1/orgs/${orgId}/workflows/${wf.id}`)
-  expect(deleted.status()).toBe(204)
+  expect(deleted.status()).toBe(409)
 
-  const ticketId = await createTicket(page, orgId, spaceId, `Ungoverned ${RUN}`)
-  await page.goto(`/beacon/${spaceId}/tickets/${ticketId}`)
-
-  const picker = page.getByLabel('Change status')
-  // All four, because the hardcoded map still decides here and knows all four.
-  for (const s of ['open', 'in_progress', 'resolved', 'closed']) {
-    await expect(picker.locator(`option[value="${s}"]`)).toHaveCount(1)
-  }
-
-  // And the hardcoded map's own refusal is unchanged: open -> resolved skips
-  // in_progress and is a 409, exactly as it always was.
+  // The workflow the delete could not remove still governs the space's tickets:
+  // open -> resolved skips in_progress, is no edge, and is refused 409; open ->
+  // in_progress IS an edge and commits.
+  const ticketId = await createTicket(page, orgId, spaceId, `Governed ${RUN}`)
   const skipped = await api(page, 'post',
     `/api/v1/orgs/${orgId}/spaces/${spaceId}/tickets/${ticketId}/status`, { status: 'resolved' })
   expect(skipped.status()).toBe(409)
+  const stepped = await api(page, 'post',
+    `/api/v1/orgs/${orgId}/spaces/${spaceId}/tickets/${ticketId}/status`, { status: 'in_progress' })
+  expect(stepped.status()).toBe(200)
 
+  await page.goto(`/beacon/${spaceId}/tickets/${ticketId}`)
   await assertNoErrors(page)
 })
