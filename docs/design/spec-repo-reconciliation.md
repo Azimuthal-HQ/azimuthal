@@ -2436,7 +2436,9 @@ Grouped by file. Each was verified against a code line and re-verified adversari
   email parser and `CreateFromEmail` exist and are tested but have **zero non-test callers** — no
   IMAP client, no POP client, no inbound webhook, no poller. Both moved to a clearly-labelled **"Not
   yet shipped"** section rather than deleted, so the intent survives and the claim does not.
-- **D120 — "Go 1.23+".** `go.mod` requires **1.26.0**; CI and the release image use 1.26.5.
+- **D120 — "Go 1.23+".** `go.mod`'s `go` directive requires **1.26.0** and its `toolchain` directive
+  pins **go1.26.6**; CI and the release image use 1.26.6 (bumped one patch to clear six standard-library
+  advisories — GO-2026-6218/6090/6089/6088/5972/5026 — that failed Dependency Scan and Container Scan).
 - **D122 — the README said Compose defaults `SMTP_PORT` to 25.** Compose forwards it **bare**, and
   its own comment records that `${SMTP_PORT:-25}` was *removed* precisely because it diverged from
   the binary's 1025 — it is the worked example for why every setting is now forwarded bare. The

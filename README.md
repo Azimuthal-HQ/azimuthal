@@ -76,7 +76,7 @@ See [docs/self-hosting.md](docs/self-hosting.md) for the full guide including en
 
 ### Prerequisites
 
-- Go 1.26+ (`go.mod` requires 1.26.0; CI and the release image build with 1.26.5)
+- Go 1.26+ (`go.mod`'s `go` directive requires 1.26.0 and its `toolchain go1.26.6` directive selects the build version; CI and the release image build with 1.26.6)
 - Node.js 20+ (for building the frontend)
 - PostgreSQL 15+
 - MinIO or S3-compatible storage (for file attachments)

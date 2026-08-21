@@ -8,8 +8,9 @@ This document lists all tools required for local Azimuthal development.
 
 ### Go
 **Purpose:** the toolchain everything else in this section installs through
-**Minimum version:** **1.26.0** (`go.mod`). CI builds with 1.26.5, and the release image uses
-`golang:1.26.5-alpine`.
+**Minimum version:** **1.26.0** (`go.mod`'s `go` directive), with a `toolchain go1.26.6` directive
+that selects the version builds actually use. CI builds with 1.26.6, and the release image uses
+`golang:1.26.6-alpine`.
 **Install:** https://go.dev/dl/
 **Verify:** `go version`
 **Missing impact:** nothing here works. Note the failure is *quiet* by default: `go.mod` carries no

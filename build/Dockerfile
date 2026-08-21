@@ -20,7 +20,7 @@ COPY web/ ./
 RUN npm run build
 
 # -- Stage 2: Build Go binary (native toolchain, cross-compiled) --------------
-FROM --platform=$BUILDPLATFORM golang:1.26.5-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine AS builder
 ARG VERSION=dev
 # TARGETOS/TARGETARCH are provided automatically by buildx per target platform.
 ARG TARGETOS
