@@ -493,6 +493,26 @@ jobs:
           which gcc && gcc --version || \
             (sudo apt-get update -qq && sudo apt-get install -y -q build-essential)
 
+      # cmd/server's backup/restore tests fork pg_dump and psql from the runner's
+      # PATH (requirePostgresClientTools in backup_restore_test.go). That gate is
+      # FATAL in CI on purpose — a runner without the client tools must fail this
+      # job, not silently skip the only unit coverage of the fail-loud restore
+      # behaviour (D105). ubuntu-latest happens to ship a client, but "happens to"
+      # is exactly the fragility those tests warn about, and a client OLDER than
+      # the postgres:16 service started above makes pg_dump refuse the dump. So
+      # install the matching major explicitly, and the five backup/restore tests
+      # RUN here deterministically rather than on the runner image's goodwill.
+      # Keep this major in step with the `postgres:16-alpine` service above.
+      - name: Install PostgreSQL client tools (pg_dump/psql for cmd/server backup tests)
+        run: |
+          if command -v pg_dump >/dev/null 2>&1; then
+            echo "pg_dump already on PATH: $(pg_dump --version)"
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -q postgresql-client-16
+          echo "pg_dump: $(pg_dump --version)"
+          echo "psql:    $(psql --version)"
+
       # -count=1 is load-bearing, and it is here because leaving it out produced
       # a hollow gate the first time this job had a warm build cache.
       #
@@ -1631,7 +1651,7 @@ jobs:
       # is exactly the assumption that was false in the shipped container. This
       # step proves it in the artifact, in the same one-off container the
       # documented restore now uses (the server stays stopped from the step above).
-      - name: A partially-failing restore is refused inside the image
+      - name: A tampered or partially-failing restore is refused inside the image
         run: |
           # Reuse the good archive from the previous step and append one
           # statement that cannot succeed. Members are named explicitly rather
@@ -1641,6 +1661,58 @@ jobs:
           mkdir -p bad-archive
           tar -xzf ./ci-backup.tar.gz -C bad-archive
           echo "INSERT INTO a_table_that_does_not_exist VALUES (1);" >> bad-archive/database.sql
+
+          # This step now proves TWO refusals in the shipped image, because the
+          # manifest carries a SHA-256 per member (per-file digests) and the two
+          # would otherwise mask each other. Both restores use the same one-off
+          # container the documented restore uses: the server was stopped above,
+          # so `docker exec` into it is unavailable and a live restore would hit
+          # the datastore-lock refusal ("the server is running") rather than the
+          # check under test.
+          #
+          # (1) INTEGRITY. Appending to database.sql changed its bytes, so its
+          # digest no longer matches the manifest. Repackaged WITHOUT touching
+          # the manifest, restore must refuse it UP FRONT — naming the member,
+          # before psql is ever forked. The Go guard is
+          # TestRestore_TamperedMemberIsRefused; this proves it in the artifact.
+          tar -czf ./ci-tampered-backup.tar.gz -C bad-archive database.sql manifest.json
+          chmod a+r ./ci-tampered-backup.tar.gz
+
+          set +e
+          OUT=$(timeout 120 docker run --rm --network host \
+            --entrypoint /azimuthal \
+            -e DATABASE_URL=postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable \
+            -e STORAGE_ENDPOINT= \
+            -v "$PWD/ci-tampered-backup.tar.gz:/tmp/ci-tampered-backup.tar.gz:ro" \
+            ${{ env.BINARY_NAME }}:boot-${{ github.sha }} \
+            restore --input /tmp/ci-tampered-backup.tar.gz 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUT"
+          echo "--- tampered exit code: $CODE ---"
+          if [ "$CODE" -eq 0 ]; then
+            echo "❌ a tampered archive restored (exit 0) — the per-file digest check did not fire"
+            exit 1
+          fi
+          if ! grep -q "integrity check" <<< "$OUT"; then
+            echo "❌ the tampered archive was refused, but not for the integrity reason"
+            exit 1
+          fi
+          if ! grep -q "database.sql" <<< "$OUT"; then
+            echo "❌ the integrity refusal did not name the member that failed"
+            exit 1
+          fi
+          echo "✅ tampered member refused up front by the per-file digest check"
+
+          # (2) D105. A dump that is INTERNALLY CONSISTENT — its digest matches —
+          # but whose SQL fails at restore must still fail, not report success.
+          # Recompute the digest so the archive passes the integrity check and the
+          # bad statement actually reaches psql; that is the D105 scenario the
+          # integrity check would otherwise hide. jq is present on ubuntu runners.
+          NEWSHA=$(sha256sum bad-archive/database.sql | awk '{print $1}')
+          jq --arg s "$NEWSHA" '.file_digests["database.sql"] = $s' \
+            bad-archive/manifest.json > bad-archive/manifest.json.tmp
+          mv bad-archive/manifest.json.tmp bad-archive/manifest.json
           tar -czf ./ci-bad-backup.tar.gz -C bad-archive database.sql manifest.json
           chmod a+r ./ci-bad-backup.tar.gz
 
@@ -1655,7 +1727,7 @@ jobs:
           CODE=$?
           set -e
           echo "$OUT"
-          echo "--- exit code: $CODE ---"
+          echo "--- D105 exit code: $CODE ---"
 
           # All three, because any one alone can pass for the wrong reason: a
           # non-zero exit could come from an unrelated failure, and the success
@@ -1686,7 +1758,7 @@ jobs:
           docker stop azimuthal-boot || true
           docker rm azimuthal-boot || true
           docker rmi ${{ env.BINARY_NAME }}:boot-${{ github.sha }} || true
-          rm -rf ./ci-backup.tar.gz ./ci-bad-backup.tar.gz ./bad-archive || true
+          rm -rf ./ci-backup.tar.gz ./ci-bad-backup.tar.gz ./ci-tampered-backup.tar.gz ./bad-archive || true
 
 
   # ─────────────────────────────────────────────────────────────

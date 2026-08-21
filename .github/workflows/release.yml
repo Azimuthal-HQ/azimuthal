@@ -61,9 +61,14 @@ name: Release
 # 3. THE BYTES TESTED ARE NOT THE BYTES SHIPPED. CI builds one linux/amd64
 #    binary; this workflow builds five platform binaries and a multi-arch
 #    image. The gate proves the SOURCE TREE at the tagged commit is good, not
-#    that these artifacts are the artifacts that were tested. Closing that is
-#    provenance — cosign/SBOM/attestation — and is deliberately not in this
-#    change.
+#    that these artifacts are the artifacts that were tested. Closing that
+#    FULLY is build provenance — a signed attestation binding this CI run to
+#    the artifact. This workflow now signs the pushed image with cosign
+#    (keyless OIDC — see docker-release) and attaches an SBOM to the GitHub
+#    Release (see create-release): those prove WHO built the image and WHAT is
+#    in it, which is most of the supply-chain gap. They do NOT yet prove the
+#    tested source equals the shipped bytes — SLSA-style provenance attestation
+#    would — so this item stays on the list, narrowed rather than closed.
 # ═════════════════════════════════════════════════════════════════════════════
 
 on:
@@ -236,6 +241,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Keyless cosign: the job exchanges this OIDC token with Fulcio for a
+      # short-lived signing certificate, so there is no private key to store,
+      # rotate, or leak. Nothing else in this job needs it.
+      id-token: write
     outputs:
       # The digest of the manifest list just pushed. docker-floating-tags
       # retags THIS, not a tag name, so the floating tags cannot end up
@@ -392,6 +401,54 @@ jobs:
             *) echo "❌ build-push-action published no usable digest: '$DIGEST'"; exit 1 ;;
           esac
 
+      # ── Sign the pushed image (keyless cosign) ────────────────────────────
+      #
+      # Signed by DIGEST, never by a tag: a tag can be moved onto other bytes, a
+      # digest cannot, so the signature binds to exactly the manifest this job
+      # pushed. Keyless — the OIDC token granted above is exchanged with Fulcio
+      # for a short-lived certificate and the signature is recorded in the Rekor
+      # transparency log, so no key material exists anywhere in this pipeline to
+      # store or leak. docs/self-hosting.md publishes the matching
+      # `cosign verify` command, and supply-chain-dryrun.yml rehearses this exact
+      # sign+verify loop on demand without needing a tag.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the image with cosign (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+          echo "✅ signed ${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      # ── SBOM of the image that just shipped ───────────────────────────────
+      #
+      # syft (via anchore/sbom-action), not the buildx-native SBOM, and the
+      # reason is the destination. `sbom: true` on build-push-action produces an
+      # attestation that lands in the REGISTRY beside the image, not a
+      # downloadable asset; this item wants an SBOM attached to the GitHub
+      # RELEASE. A syft SPDX file is exactly that — generated here, where the
+      # image and its digest are already in hand and the registry login is live,
+      # uploaded as a run artifact, and attached to the release object by
+      # create-release. Scanned by digest (the linux/amd64 manifest, on this
+      # amd64 runner).
+      - name: Generate SBOM (syft) for the released image
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: ${{ env.BINARY_NAME }}-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: ${{ env.BINARY_NAME }}-sbom.spdx.json
+          retention-days: 1
+
   create-release:
     name: Create GitHub Release
     needs: [build-release, docker-release]
@@ -411,6 +468,15 @@ jobs:
         with:
           pattern: binary-*
           merge-multiple: true
+
+      # The SBOM generated alongside the image in docker-release. It is named
+      # `${{ env.BINARY_NAME }}-sbom.spdx.json`, so it rides the same
+      # `${{ env.BINARY_NAME }}-*` glob as the binaries and their checksums into
+      # the release's `files:` below and is attached as a downloadable asset.
+      - name: Download the image SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
 
       # NOTE ON THE INSTALL INSTRUCTIONS BELOW. Every URL in this body is
       # pinned to the tag being released — including the two infra files. They
@@ -644,6 +710,27 @@ jobs:
 
             Each binary in this release ships with its matching `.sha256` file —
             verify before running on production hosts.
+
+            ### Verify the container image
+
+            The `ghcr.io/azimuthal-hq/azimuthal` image for this release is signed
+            with [cosign](https://docs.sigstore.dev/) using keyless (OIDC)
+            signing — there is no public key to distribute. Verify it before you
+            run it:
+
+            ```bash
+            cosign verify \
+              --certificate-identity-regexp '^https://github.com/Azimuthal-HQ/azimuthal/\.github/workflows/release\.yml@refs/tags/' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              ghcr.io/azimuthal-hq/azimuthal:${{ env.VERSION }}
+            ```
+
+            A valid signature proves this image was built and signed by this
+            repository's release workflow at tag `${{ env.VERSION }}` — it attests
+            *who built it and from where*, not that the image is free of defects
+            or vulnerabilities. This release also attaches a software bill of
+            materials (`azimuthal-sbom.spdx.json`, SPDX JSON) listing the
+            packages in the image.
 
 
   # ─────────────────────────────────────────────────────────────

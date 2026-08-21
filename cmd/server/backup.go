@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,11 +72,41 @@ var openBackupOutput = func(path string) (io.WriteCloser, error) {
 }
 
 // backupManifest describes the contents of a backup archive.
+//
+// FileDigests carries a hex SHA-256 per archived member, keyed by the same name
+// that appears in Files. It is what lets restore prove a member was neither
+// truncated nor altered between backup and recovery — the manifest lists what
+// the archive should contain, and the digest says the bytes are still those.
+//
+// It is a SEPARATE, `omitempty` map rather than a change to Files' element type
+// on purpose: an archive taken before this field existed marshals `"files"` as
+// a plain string array, and widening Files to a struct would refuse to
+// unmarshal every such archive. The maintainer keeps his own; "no users" is not
+// "no old archives". So new archives populate both, old archives carry only
+// Files, and restore reads the presence of FileDigests to decide whether it can
+// verify — see validateManifest.
 type backupManifest struct {
-	AzimuthalVersion string    `json:"azimuthal_version"`
-	BackupTimestamp  time.Time `json:"backup_timestamp"`
-	PostgresVersion  string    `json:"postgres_version,omitempty"`
-	Files            []string  `json:"files"`
+	AzimuthalVersion string            `json:"azimuthal_version"`
+	BackupTimestamp  time.Time         `json:"backup_timestamp"`
+	PostgresVersion  string            `json:"postgres_version,omitempty"`
+	Files            []string          `json:"files"`
+	FileDigests      map[string]string `json:"file_digests,omitempty"`
+}
+
+// recordFile registers one archived member in the manifest: it appends the name
+// to Files and stores the member's SHA-256 in FileDigests under the same key.
+//
+// Callers invoke it only AFTER addToTar has succeeded, so a member that failed
+// to write is never announced in the manifest as present. manifest.json is
+// itself never recorded here — it cannot carry its own digest, and it is the
+// document restore validates the others against, not one of them.
+func (m *backupManifest) recordFile(name string, data []byte) {
+	m.Files = append(m.Files, name)
+	if m.FileDigests == nil {
+		m.FileDigests = make(map[string]string)
+	}
+	sum := sha256.Sum256(data)
+	m.FileDigests[name] = hex.EncodeToString(sum[:])
 }
 
 // runBackup creates a full backup archive at the path specified by --output.
@@ -123,7 +155,7 @@ func runBackup(cmd *cobra.Command, _ []string) error {
 	if err := addToTar(tw, "database.sql", pgDump); err != nil {
 		return fmt.Errorf("writing database dump to archive: %w", err)
 	}
-	manifest.Files = append(manifest.Files, "database.sql")
+	manifest.recordFile("database.sql", pgDump)
 	fmt.Println("  Database dump complete.")
 
 	// Step 2: Object storage files
@@ -277,7 +309,7 @@ func backupObjectStorage(tw *tar.Writer, cfg *config.Config, manifest *backupMan
 			return count, fmt.Errorf("writing object %s to archive: %w", obj.Key, err)
 		}
 
-		manifest.Files = append(manifest.Files, archivePath)
+		manifest.recordFile(archivePath, data)
 		count++
 	}
 
