@@ -72,10 +72,20 @@ func (a *InviteAdapter) Create(ctx context.Context, inv invites.Invite, tokenHas
 	return dbInviteToDomain(row), nil
 }
 
-// checkInviteCreatable rejects invites for existing members (the invited
-// email may already hold an account — login-path semantics: the account
-// GetUserByEmail resolves) and invites naming a team that is not a live
-// team of the org.
+// checkInviteCreatable rejects invites for existing members and invites naming
+// a team that is not a live team of the org.
+//
+// The account lookup is DELIBERATELY GLOBAL, then re-scoped by the membership
+// check. The invite model is one account per email that can be a member of many
+// orgs (an account is created in one org and joins others by accepting invites —
+// TestInvites_AcceptExistingAccount_AddsMembershipOnly attaches a membership to
+// an account that lives in a DIFFERENT org). So "already a member here" is
+// GetMembership(inv.OrgID, that account), which correctly detects a cross-org
+// member; an org-scoped user lookup would miss them and wrongly allow a
+// duplicate invite. (D1 note: the design asked to org-scope this call site, but
+// doing so would change that cross-org account model — a decided, tested
+// behaviour — so it is left global and flagged; the email-change org-scoping the
+// same finding wanted lives in the new credlink surface instead.)
 func (a *InviteAdapter) checkInviteCreatable(ctx context.Context, inv invites.Invite) error {
 	if u, err := a.q.GetUserByEmail(ctx, inv.Email); err == nil {
 		if _, mErr := a.q.GetMembership(ctx, generated.GetMembershipParams{OrgID: inv.OrgID, UserID: u.ID}); mErr == nil {
@@ -187,6 +197,9 @@ func (a *InviteAdapter) InspectByTokenHash(ctx context.Context, tokenHash string
 		return invites.Inspection{}, fmt.Errorf("invite adapter inspect: loading org: %w", err)
 	}
 	existing := false
+	// Global by design — see checkInviteCreatable: an account in ANY org makes
+	// this an existing-account acceptance, so the page confirms joining rather
+	// than registering, and resolveAcceptUser reuses that account.
 	if _, err := a.q.GetUserByEmail(ctx, row.Email); err == nil {
 		existing = true
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -281,6 +294,9 @@ func loadAcceptableInvite(ctx context.Context, q *generated.Queries, tokenHash s
 // existing account holding the invited email (existing=true), or a fresh
 // user created inside the transaction.
 func resolveAcceptUser(ctx context.Context, q *generated.Queries, row generated.Invite, newUser *invites.NewUser) (generated.User, bool, error) {
+	// Global by design — the invite model reuses an account that exists in any
+	// org and adds a membership here (never a second user). See
+	// checkInviteCreatable's D1 note.
 	existingUser, err := q.GetUserByEmail(ctx, row.Email)
 	switch {
 	case err == nil:

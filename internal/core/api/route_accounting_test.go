@@ -41,7 +41,7 @@ import (
 //	                with you", so it leaks neither existence nor shared-ness.
 //
 // A route added without a row here fails this test — that is the point.
-var routeAccounting = map[string]string{
+var routeAccounting = map[string]string{ //nolint:gosec // G101 — route path→description map; the "token"/"link"/"credential" words are prose, not secrets (low-confidence false positive the high-confidence scanner, which also skips tests, ignores)
 	// Public surface. /health and /ready expose liveness only; the docs
 	// routes serve the committed OpenAPI spec; the auth endpoints are the
 	// front door.
@@ -59,6 +59,13 @@ var routeAccounting = map[string]string{
 	// credential, exactly like a password-reset link.
 	"GET /api/v1/invites/{token}": "public: invite inspection, token-authenticated",
 	"POST /api/v1/invites/accept": "public: invite acceptance, token-authenticated",
+
+	// Internal-user credential links (D1). Possession of the raw crypto/rand
+	// token is the credential; forgot-password is reached signed out. All three
+	// are unauthenticated by design and mounted outside the RequireAuth group.
+	"POST /api/v1/credential-links/forgot-password": "public: issues a password-reset link; answers 202 identically for known and unknown addresses so it is not an account-existence oracle",
+	"POST /api/v1/credential-links/inspect":         "public: non-consuming validity check for a credential link, token-authenticated",
+	"POST /api/v1/credential-links/consume":         "public: redeems a credential link (set password / bind email), token-authenticated",
 
 	// Customer-portal configuration, AGENT side. Ordinary space-scoped routes
 	// with the capability enforced in the handler — the opposite of the
@@ -103,6 +110,7 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/auth/logout-all":                     "user-scoped: revokes every session and bumps the caller's token generation (all devices)",
 	"GET /api/v1/auth/me":                              "user-scoped",
 	"PATCH /api/v1/auth/me":                            "user-scoped",
+	"POST /api/v1/auth/me/email-change":                "user-scoped",
 	"PUT /api/v1/auth/me/avatar":                       "user-scoped: self avatar upload",
 	"GET /api/v1/notifications/":                       "user-scoped",
 	"POST /api/v1/notifications/read-all":              "user-scoped",
@@ -140,6 +148,8 @@ var routeAccounting = map[string]string{
 	"POST /api/v1/orgs/{orgID}/invites/":                    "org-admin-404: raw token returned once, hashed at rest",
 	"DELETE /api/v1/orgs/{orgID}/invites/{inviteID}":        "org-admin-404: revoke",
 	"POST /api/v1/orgs/{orgID}/invites/{inviteID}/resend":   "org-admin-404: rotates the token",
+	"POST /api/v1/orgs/{orgID}/credential-links/users":      "org-admin-404: creates a member behind a one-time sign-in link, raw token returned once",
+	"POST /api/v1/orgs/{orgID}/credential-links/reset":      "org-admin-404: mints a password-reset link for a member; a non-member (incl. another org's) is 404, as never-existed",
 	"GET /api/v1/orgs/{orgID}/access-matrix":                "org-admin-404: teams × spaces grant matrix",
 	"POST /api/v1/orgs/{orgID}/grants/bulk-preview":         "org-admin-404: diff only, writes nothing",
 	"POST /api/v1/orgs/{orgID}/grants/bulk-apply":           "org-admin-404: one transaction, one batch_id, one audit batch",

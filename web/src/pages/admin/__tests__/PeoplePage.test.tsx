@@ -48,6 +48,11 @@ vi.mock('../../../lib/api', () => ({
   useUploadUserAvatar: () => ({ mutate: uploadAvatarMutate, isPending: false }),
   useRevokeInvite: () => ({ mutate: vi.fn(), isPending: false }),
   useResendInvite: () => ({ mutate: resendMutate, isPending: false }),
+  // D1: create-user-with-link and generate-reset-link affordances.
+  useAdminCreateUserWithLink: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  useAdminIssueResetLink: () => ({ mutate: vi.fn(), isPending: false }),
+  // D1: the create-user dialog's optional default-space picker.
+  useSpaces: () => ({ data: [], isLoading: false, error: null }),
   // A3: the invite and confirm dialogs now carry a TicketRefField.
   useTicketRefSuggestions: () => ({ data: [], isLoading: false, error: null }),
   useTicketRefRequired: () => deployment.ticketRefRequired,

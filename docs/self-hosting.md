@@ -150,6 +150,7 @@ All of these are forwarded by `build/docker-compose.yml` — set any of them in 
 | `AZIMUTHAL_PORTAL_DISCLOSE_LINK` | `false` | Return the portal sign-in URL in the body of the unauthenticated request-link response. Inert on this deployment for two independent reasons: `build/docker-compose.yml` sets `APP_ENV: production`, and disclosure requires this flag **and** a development `APP_ENV` — a **safelist** of `development` and `test` only, so `production`, `staging`, or any unrecognised name refuses it. Setting it here is harmless and does nothing; the server logs a startup warning naming both variables rather than failing, so a working configuration is never locked out over a combination that is already safe. Leave it off in any case: `POST /portal/{key}/auth/request-link` is unauthenticated by design and accepts any address, so a disclosed URL signs the caller in as anyone they can name. |
 | `AZIMUTHAL_PORTAL_LINK_TTL` | `1h` | How long a portal sign-in link stays redeemable. Must be positive. |
 | `AZIMUTHAL_PORTAL_SESSION_TTL` | `72h` | Lifetime of the session a redeemed portal link produces. Must be positive. |
+| `AZIMUTHAL_CREDENTIAL_LINK_TTL` | `60m` | How long an internal-user credential link stays redeemable — the one window for all three purposes: an admin-issued sign-in link, a password reset (self-service or admin-issued), and an email-change confirmation. A credential sitting in an inbox, so the default is short. Must be positive. Whether these links are *emailed* is not a mode here — it follows whether a relay is configured (`SMTP_HOST` set explicitly): with one, forgot-password and email-change email the link; without one, forgot-password delivers nothing (issue an admin link instead) and email-change returns the link to the reauthenticated requester. |
 | `SMTP_FROM` | `azimuthal@localhost` | Envelope sender for outbound mail. Required when `AZIMUTHAL_INVITE_DELIVERY=email`. |
 | `STORAGE_USE_SSL` | `false` | Reach the object-storage endpoint over TLS. An `https://` prefix on `STORAGE_ENDPOINT` forces this to `true` regardless of what you set. The bundled Compose file sets `http://storage:9000`, so MinIO is reached over the internal network on plain HTTP. |
 
@@ -265,7 +266,28 @@ file**; a backup schedule nobody has ever seen produce output is not a backup sc
 
 ## User Administration
 
-### Create a User
+There are two ways to give someone an account, and they differ in who chooses
+the password. The recommended way is a **sign-in link**: you create the account
+and hand over a one-time link, and the person sets their own password when they
+open it — you never see or set it. The other is **break-glass**: you set a
+password directly. Both exist on the CLI, and the sign-in-link flow also has an
+admin UI (Administration → People → **Create user**).
+
+### Create a user with a sign-in link (recommended)
+
+```bash
+docker compose exec app /azimuthal admin create-user \
+  --email user@example.com \
+  --name "Jane Doe" \
+  --link
+```
+
+This creates the account with a default grant and **no password**, and prints a
+one-time sign-in link. Hand it over out of band. It works once and expires
+(`AZIMUTHAL_CREDENTIAL_LINK_TTL`, default 60 minutes); the person sets their own
+password when they open it. Until then, the account cannot be signed into.
+
+### Create a user with a password (break-glass)
 
 ```bash
 docker compose exec app /azimuthal admin create-user \
@@ -274,13 +296,48 @@ docker compose exec app /azimuthal admin create-user \
   --password secure-password
 ```
 
-### Reset a Password
+`--password` and `--link` are mutually exclusive; exactly one is required. Use
+`--password` only when you genuinely need to set the password yourself — the
+sign-in-link flow is preferable because the password is never known to anyone but
+the account holder.
+
+### Password resets
+
+There is **no SSO or LDAP integration** — a self-hosted Azimuthal owns its own
+passwords — so it ships its own reset mechanism. There are three ways in:
+
+- **Self-service** (`/forgot-password`, or the “Forgot password?” link on the
+  sign-in page). The person enters their address. The response is the same
+  whether or not the address is known — it is deliberately not an
+  account-existence oracle — and the link is **never shown in the browser**. With
+  a mail relay configured it is emailed; **without a relay it delivers nothing**,
+  and the admin-issued link below is the answer.
+- **Admin-issued** (Administration → People → a member’s **Generate reset link**,
+  or the CLI). This returns a one-time reset link you hand over — the no-relay
+  answer, and the way to reset an account when the person cannot reach their
+  inbox.
+- **Break-glass CLI**, which sets the password directly:
 
 ```bash
 docker compose exec app /azimuthal admin reset-password \
   --email user@example.com \
   --password new-secure-password
 ```
+
+Redeeming a reset link (self-service or admin-issued) **signs the account out of
+every device** — a reset is a break-glass event by design. The CLI does the same.
+
+### Changing an email address
+
+A signed-in user changes their own email from **Settings → Profile → Change email
+address**. It asks for the current password (reauthentication) and then confirms
+through a link, and confirming **signs the account out everywhere**. With a mail
+relay the confirmation link goes to the **new** address, which proves the person
+controls it. **Without a relay** the link is returned to the requester in the app
+instead — this is weaker (it does not prove control of the new address), but the
+reauthentication is the security that matters, so the trade is acceptable for a
+deployment with no mail. This is the only way to change an email: it does not
+travel through the plain profile save.
 
 ## Upgrading
 

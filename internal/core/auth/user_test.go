@@ -35,7 +35,7 @@ func (r *stubUserRepo) GetByID(_ context.Context, id uuid.UUID) (*User, error) {
 	return nil, ErrNotFound
 }
 
-func (r *stubUserRepo) GetByEmail(_ context.Context, email string) (*User, error) {
+func (r *stubUserRepo) GetByEmailAcrossOrgs(_ context.Context, email string) (*User, error) {
 	u, ok := r.users[email]
 	if !ok {
 		return nil, ErrNotFound

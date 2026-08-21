@@ -80,6 +80,19 @@ type Comment struct {
 	AuthorRequesterID pgtype.UUID        `json:"author_requester_id"`
 }
 
+type CredentialLink struct {
+	ID            uuid.UUID          `json:"id"`
+	UserID        uuid.UUID          `json:"user_id"`
+	Purpose       string             `json:"purpose"`
+	TokenHash     string             `json:"token_hash"`
+	NewEmail      *string            `json:"new_email"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt    pgtype.Timestamptz `json:"consumed_at"`
+	InvalidatedAt pgtype.Timestamptz `json:"invalidated_at"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type CustomFieldDef struct {
 	ID         uuid.UUID          `json:"id"`
 	OrgID      uuid.UUID          `json:"org_id"`

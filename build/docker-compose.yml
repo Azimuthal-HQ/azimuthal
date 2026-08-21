@@ -59,6 +59,7 @@ services:
       AZIMUTHAL_PORTAL_LINK_DELIVERY: ${AZIMUTHAL_PORTAL_LINK_DELIVERY}
       AZIMUTHAL_PORTAL_LINK_TTL: ${AZIMUTHAL_PORTAL_LINK_TTL}
       AZIMUTHAL_PORTAL_SESSION_TTL: ${AZIMUTHAL_PORTAL_SESSION_TTL}
+      AZIMUTHAL_CREDENTIAL_LINK_TTL: ${AZIMUTHAL_CREDENTIAL_LINK_TTL}
       # Forwarded because every setting internal/config reads must be reachable
       # from an operator's .env, and inert in this stack for two independent
       # reasons: APP_ENV is production above, and disclosure is refused in

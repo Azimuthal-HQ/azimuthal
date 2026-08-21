@@ -66,6 +66,7 @@ import (
 	authapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/auth"
 	avatarapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/avatar"
 	commentsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/comments"
+	credlinksapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/credlinks"
 	dashboardsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/dashboards"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
@@ -86,6 +87,7 @@ import (
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/attachments"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/audit"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/auth"
+	"github.com/Azimuthal-HQ/azimuthal/internal/core/credlink"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/customfields"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/dashboards"
 	"github.com/Azimuthal-HQ/azimuthal/internal/core/email"
@@ -437,6 +439,24 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 			}
 		})
 
+	// Internal-user credential links (D1). Delivery keys off whether a real mail
+	// relay is configured (SMTPConfigured — the raw SMTP_HOST test, not the
+	// localhost-defaulted field): with one, forgot-password and email-change
+	// email the link; without one, forgot-password delivers nothing (the admin
+	// path is the answer) and email-change returns the URL to the reauthenticated
+	// requester. The service shares userSvc for the one sanctioned global lookup
+	// (forgot-password), exactly as login uses it.
+	var credlinkSender credlink.Sender
+	if cfg.SMTPConfigured() {
+		credlinkSender = adapters.NewCredentialLinkSender(sender)
+	}
+	credlinkSvc := credlink.NewService(adapters.NewCredentialLinkAdapter(pool), userSvc, credlinkSender, credlink.Config{
+		TTL:            cfg.CredentialLinkTTL,
+		BaseURL:        cfg.AppBaseURL,
+		DeliverByEmail: cfg.SMTPConfigured(),
+	})
+	credlinkHandler := credlinksapi.NewHandler(credlinkSvc, userSvc, jwtSvc, sessionSvc).WithAuditLogger(auditLog)
+
 	bulkSvc := access.NewBulkService(adapters.NewBulkGrantAdapter(pool))
 	auditReader := audit.NewReader(adapters.NewAuditReaderAdapter(queries))
 
@@ -445,31 +465,32 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		AuthHandler: authapi.NewHandler(userSvc, jwtSvc, sessionSvc, membershipResolver, orgProvisioner, userAdapter).
 			WithAuditLogger(auditLog).
 			WithRegistrationPolicy(cfg.AllowRegistration),
-		TicketHandler:       ticketsapi.NewHandler(ticketSvc, tagSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc).WithWorkflowTiers(tierGate, transitionTx).WithRequesterLookup(portalAdapter).WithCustomFields(customFieldSvc),
-		WikiHandler:         wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter).WithPageSuggestions(wiki.NewPageSuggestionService(queries)),
-		ProjectHandler:      projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), tagSvc).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
-		RelationHandler:     relationsapi.NewHandler(projects.NewRelationService(adapters.NewRelationAdapter(queries))),
-		SpaceHandler:        spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
-		CommentHandler:      commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
-		NotificationHandler: notificationsapi.NewHandler(queries, accessResolver),
-		WorkflowHandler:     workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
-		TeamHandler:         teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
-		GrantHandler:        grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
-		ShareHandler:        shareHandler,
-		AttachmentHandler:   attachmentHandler,
-		AdminHandler:        adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
-		InviteHandler:       invitesapi.NewHandler(inviteSvc, jwtSvc, sessionSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
-		AvatarHandler:       avatarHandler,
-		ViewHandler:         viewHandler,
-		PortalHandler:       portalHandler,
-		PortalService:       portalSvc,
-		DashboardHandler:    dashboardHandler,
-		SearchHandler:       searchHandler,
-		SPAHandler:          spaHandler,
-		AllowedOrigins:      cfg.AllowedOrigins,
-		QueueStatus:         queueStatus,
-		SpaceOrgResolver:    spaceOrgResolver(queries),
-		AccessResolver:      accessResolver,
+		TicketHandler:         ticketsapi.NewHandler(ticketSvc, tagSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer).WithSuggestions(ticketSuggestSvc).WithWorkflowTiers(tierGate, transitionTx).WithRequesterLookup(portalAdapter).WithCustomFields(customFieldSvc),
+		WikiHandler:           wikiapi.NewHandler(wikiSvc, wikiDocs, tagSvc).WithAuditLogger(auditLog).WithShareQueries(shareAdapter).WithPageSuggestions(wiki.NewPageSuggestionService(queries)),
+		ProjectHandler:        projectsapi.NewHandler(itemSvc, sprintSvc, projects.NewBacklogService(itemAdapter, sprintAdapter), projects.NewRoadmapService(itemAdapter, sprintAdapter), tagSvc).WithAuditLogger(auditLog).WithItemTypes(itemTypeSvc).WithCustomFields(customFieldSvc).WithBoardConfig(boardConfigSvc).WithWorkflowTiers(tierGate, transitionTx),
+		RelationHandler:       relationsapi.NewHandler(projects.NewRelationService(adapters.NewRelationAdapter(queries))),
+		SpaceHandler:          spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
+		CommentHandler:        commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
+		NotificationHandler:   notificationsapi.NewHandler(queries, accessResolver),
+		WorkflowHandler:       workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
+		TeamHandler:           teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
+		GrantHandler:          grantsapi.NewHandler(grantSvc, explainer).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
+		ShareHandler:          shareHandler,
+		AttachmentHandler:     attachmentHandler,
+		AdminHandler:          adminapi.NewHandler(peopleSvc, bulkSvc, auditReader).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
+		InviteHandler:         invitesapi.NewHandler(inviteSvc, jwtSvc, sessionSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
+		CredentialLinkHandler: credlinkHandler,
+		AvatarHandler:         avatarHandler,
+		ViewHandler:           viewHandler,
+		PortalHandler:         portalHandler,
+		PortalService:         portalSvc,
+		DashboardHandler:      dashboardHandler,
+		SearchHandler:         searchHandler,
+		SPAHandler:            spaHandler,
+		AllowedOrigins:        cfg.AllowedOrigins,
+		QueueStatus:           queueStatus,
+		SpaceOrgResolver:      spaceOrgResolver(queries),
+		AccessResolver:        accessResolver,
 	}), nil
 }
 

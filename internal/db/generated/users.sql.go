@@ -900,6 +900,44 @@ func (q *Queries) UpdateUserDisplayName(ctx context.Context, arg UpdateUserDispl
 	return err
 }
 
+const updateUserEmail = `-- name: UpdateUserEmail :one
+UPDATE users SET email = $2, token_generation = token_generation + 1
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, org_id, email, display_name, avatar_url, password_hash, role, is_active, created_at, updated_at, deleted_at, last_login_at, token_generation
+`
+
+type UpdateUserEmailParams struct {
+	ID    uuid.UUID `json:"id"`
+	Email string    `json:"email"`
+}
+
+// Email change applied on credential-link consume (security finding C.2-c). The
+// token_generation bump rides in the same statement, exactly as
+// UpdateUserPasswordHash does for passwords, so no email-change path can rebind
+// the address without instantly invalidating every token the account holds.
+// (UpdateUserProfile above deliberately does NOT bump — it is the display-name
+// update; email now travels only through the reauthenticated, confirmed flow.)
+func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserEmail, arg.ID, arg.Email)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Email,
+		&i.DisplayName,
+		&i.AvatarUrl,
+		&i.PasswordHash,
+		&i.Role,
+		&i.IsActive,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.LastLoginAt,
+		&i.TokenGeneration,
+	)
+	return i, err
+}
+
 const updateUserLastLogin = `-- name: UpdateUserLastLogin :exec
 UPDATE users SET last_login_at = now() WHERE id = $1
 `

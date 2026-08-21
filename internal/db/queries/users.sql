@@ -35,6 +35,17 @@ SET display_name = $2, email = $3
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
+-- name: UpdateUserEmail :one
+-- Email change applied on credential-link consume (security finding C.2-c). The
+-- token_generation bump rides in the same statement, exactly as
+-- UpdateUserPasswordHash does for passwords, so no email-change path can rebind
+-- the address without instantly invalidating every token the account holds.
+-- (UpdateUserProfile above deliberately does NOT bump — it is the display-name
+-- update; email now travels only through the reauthenticated, confirmed flow.)
+UPDATE users SET email = $2, token_generation = token_generation + 1
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
 -- name: UpdateUserDisplayName :exec
 UPDATE users
 SET display_name = $2, updated_at = now()

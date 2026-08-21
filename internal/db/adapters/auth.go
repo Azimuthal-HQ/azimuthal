@@ -53,9 +53,12 @@ func (a *UserAdapter) GetByID(ctx context.Context, id uuid.UUID) (*auth.User, er
 	return dbUserToDomain(row), nil
 }
 
-// GetByEmail retrieves a user by email address globally (across all orgs).
-// Returns auth.ErrNotFound if absent.
-func (a *UserAdapter) GetByEmail(ctx context.Context, email string) (*auth.User, error) {
+// GetByEmailAcrossOrgs retrieves a user by email address GLOBALLY (across all
+// orgs). Returns auth.ErrNotFound if absent. See the UserRepository contract:
+// this is the deliberately-global lookup, reserved for the org-less auth entry
+// points (login and forgot-password). Any caller holding an org uses the
+// org-scoped GetUserByEmailAndOrg query instead.
+func (a *UserAdapter) GetByEmailAcrossOrgs(ctx context.Context, email string) (*auth.User, error) {
 	row, err := a.q.GetUserByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, auth.ErrNotFound

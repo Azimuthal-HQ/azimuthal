@@ -18,9 +18,9 @@ func TestUserService_GetUserByEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	found, err := svc.GetUserByEmail(ctx, "find@example.com")
+	found, err := svc.GetUserByEmailAcrossOrgs(ctx, "find@example.com")
 	if err != nil {
-		t.Fatalf("GetUserByEmail: %v", err)
+		t.Fatalf("GetUserByEmailAcrossOrgs: %v", err)
 	}
 	if found.ID != created.ID {
 		t.Errorf("ID mismatch: got %v, want %v", found.ID, created.ID)
@@ -31,7 +31,7 @@ func TestUserService_GetUserByEmail_NotFound(t *testing.T) {
 	svc := NewUserService(newStubUserRepo())
 	ctx := context.Background()
 
-	_, err := svc.GetUserByEmail(ctx, "nobody@example.com")
+	_, err := svc.GetUserByEmailAcrossOrgs(ctx, "nobody@example.com")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
