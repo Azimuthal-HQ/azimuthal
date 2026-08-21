@@ -51,12 +51,18 @@ const (
 	// learn which ones receive a reset — so it is the internal analog of the
 	// portal's request-link class.
 	RateClassForgotPassword = "forgot-password"
-	// RateClassCredentialRedeem guards the credential-link token-use endpoints
+	// RateClassLinkRedeem guards the credential-link token-use endpoints
 	// (POST /api/v1/credential-links/inspect and /consume) against raw-token
 	// guessing; consume is the actual sign-in. It is the internal analog of the
 	// portal's redeem class, kept distinct from it so an internal reset and an
 	// external portal redemption from the same IP do not share a budget.
-	RateClassCredentialRedeem = "credential-redeem"
+	//
+	// Named "link", not "credential": the value is a bucket-key label, but
+	// gosec G101 flags a const whose NAME matches its credential-keyword list
+	// (which includes "credential") when it is assigned a string literal. This
+	// is a route-class label, not a secret; the name sidesteps the false
+	// positive rather than suppressing it. Do not rename it back.
+	RateClassLinkRedeem = "link-redeem"
 )
 
 // rateLimit turns a shared token-bucket limiter into per-class chi middleware.

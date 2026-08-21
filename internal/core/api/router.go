@@ -462,7 +462,7 @@ func mountPublicCredentialLinks(r chi.Router, cfg RouterConfig, rl *rateLimit) {
 	}
 	r.Route("/api/v1/credential-links", func(r chi.Router) {
 		r.Mount("/", cfg.CredentialLinkHandler.PublicRoutes(
-			rl.For(RateClassForgotPassword), rl.For(RateClassCredentialRedeem)))
+			rl.For(RateClassForgotPassword), rl.For(RateClassLinkRedeem)))
 	})
 }
 
