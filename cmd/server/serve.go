@@ -76,6 +76,25 @@ func warnIfDisclosureFlagIgnored(logger *slog.Logger, cfg *config.Config) {
 		"(APP_ENV=development or test) and is never disclosed otherwise", cfg.AppEnv))
 }
 
+// warnIfSMTPAuthWithoutTLS tells an operator that their SMTP credentials will
+// travel in the clear.
+//
+// SMTP_USERNAME/SMTP_PASSWORD set with SMTP_TLS=none is a WARN, not a boot
+// refusal — an operator's lab against a local relay is a legitimate use, and a
+// hard refusal shipped in a security patch could lock out a working setup over a
+// combination that is disclosed rather than dangerous (the same
+// WARN-not-refuse call the portal disclosure flag makes above). But it is never
+// SILENT: an operator who configured auth expecting it to be protected must be
+// told it is not. See config.Config.SMTPAuthWithoutTLS.
+func warnIfSMTPAuthWithoutTLS(logger *slog.Logger, cfg *config.Config) {
+	if !cfg.SMTPAuthWithoutTLS() {
+		return
+	}
+	logger.Warn("SMTP_USERNAME/SMTP_PASSWORD are set but SMTP_TLS=none: the credentials will be " +
+		"sent over an unencrypted connection and can be read on the wire. Set SMTP_TLS=starttls or " +
+		"SMTP_TLS=implicit for anything but a trusted local relay.")
+}
+
 // runServe loads config, connects to the DB, runs migrations, and starts the
 // HTTP server with graceful shutdown.
 func runServe(cmd *cobra.Command, _ []string) error {
@@ -97,6 +116,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	// inert — which is the exact bug being fixed.
 	slog.Info("configuration loaded", "env", cfg.AppEnv, "port", cfg.AppPort, "log_level", cfg.LogLevel)
 	warnIfDisclosureFlagIgnored(logger, cfg)
+	warnIfSMTPAuthWithoutTLS(logger, cfg)
 
 	srv, deps, cleanup, err := newServer(cfg)
 	if err != nil {

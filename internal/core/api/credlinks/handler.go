@@ -43,12 +43,20 @@ func (h *Handler) WithAuditLogger(l audit.Logger) *Handler {
 
 // PublicRoutes returns the token-authenticated routes, mounted at
 // /api/v1/credential-links with no auth middleware — possession of the raw token
-// is the credential, exactly like the invite and portal public routes.
-func (h *Handler) PublicRoutes() chi.Router {
+// is the credential, exactly like the invite and portal public routes. Because
+// there is no auth middleware in front of them, these are exactly the surface
+// the auth-rate limiter guards, split the same way the portal's public routes
+// are: requestLimit throttles forgot-password (the email-send/enumeration
+// vector — a caller naming addresses to see which get mail), redeemLimit
+// throttles inspect and consume (raw-token guessing, consume being the actual
+// sign-in). Two classes so the reset-request budget and the token-redemption
+// budget do not drain each other. A nil middleware is a pass-through, so the
+// limiter being disabled leaves these routes exactly as they were.
+func (h *Handler) PublicRoutes(requestLimit, redeemLimit func(http.Handler) http.Handler) chi.Router {
 	r := chi.NewRouter()
-	r.Post("/forgot-password", h.ForgotPassword)
-	r.Post("/inspect", h.Inspect)
-	r.Post("/consume", h.Consume)
+	r.With(requestLimit).Post("/forgot-password", h.ForgotPassword)
+	r.With(redeemLimit).Post("/inspect", h.Inspect)
+	r.With(redeemLimit).Post("/consume", h.Consume)
 	return r
 }
 

@@ -319,6 +319,9 @@ func TestConfig_InviteDeliveryEmail_RequiresExplicitSMTP(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
 	t.Setenv("AZIMUTHAL_INVITE_DELIVERY", "email")
 	t.Setenv("SMTP_HOST", "")
+	// SMTP_FROM explicitly set throughout so this test isolates the SMTP_HOST
+	// requirement; the SMTP_FROM requirement has its own test below (D140).
+	t.Setenv("SMTP_FROM", "noreply@example.com")
 
 	// Email delivery without explicitly configured SMTP must fail loudly at
 	// startup — not silently drop invites at send time.
@@ -333,6 +336,32 @@ func TestConfig_InviteDeliveryEmail_RequiresExplicitSMTP(t *testing.T) {
 	}
 	if cfg.InviteDelivery != config.InviteDeliveryEmail {
 		t.Errorf("expected email delivery, got %q", cfg.InviteDelivery)
+	}
+}
+
+// TestConfig_InviteDeliveryEmail_RequiresExplicitSMTPFrom is D140's fails-before
+// regression test.
+//
+// The SMTP_FROM check in validateDeliveryMode was DEAD: it read c.SMTPFrom,
+// which carries the viper default "azimuthal@localhost", so the field was never
+// empty and the branch was unreachable — email delivery was accepted with no
+// operator From, and invites would go out as azimuthal@localhost. Reverting the
+// check to `smtpFrom == ""` (reading the defaulted field) makes this test fail:
+// with SMTP_HOST set and SMTP_FROM unset, Load would then succeed and the
+// t.Fatal below fires. The live check reads os.Getenv("SMTP_FROM") and refuses.
+func TestConfig_InviteDeliveryEmail_RequiresExplicitSMTPFrom(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("AZIMUTHAL_INVITE_DELIVERY", "email")
+	t.Setenv("SMTP_HOST", "smtp.example.com")
+	t.Setenv("SMTP_FROM", "") // unset — must not be satisfied by the default
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected email delivery with an unset SMTP_FROM to be refused; " +
+			"the default azimuthal@localhost must not satisfy the check")
+	}
+	if !strings.Contains(err.Error(), "SMTP_FROM") {
+		t.Errorf("the error must name SMTP_FROM, got: %s", err.Error())
 	}
 }
 
@@ -448,6 +477,7 @@ func TestConfig_PortalLinkDeliveryEmail_RequiresExplicitSMTP(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
 	t.Setenv("AZIMUTHAL_PORTAL_LINK_DELIVERY", "email")
 	t.Setenv("SMTP_HOST", "")
+	t.Setenv("SMTP_FROM", "noreply@example.com")
 
 	// Same rule as invite email delivery: a delivery mode that cannot deliver
 	// fails at startup rather than dropping sign-in links at send time.
@@ -588,6 +618,164 @@ func TestLoad_BcryptCost_DefaultAndAboveFloor(t *testing.T) {
 			t.Errorf("error should quote the offending value, got: %s", err.Error())
 		}
 	})
+}
+
+// --- SMTP transport security (D3) ---
+//
+// The TLS/auth matrix as a truth table: which combinations boot, which are
+// refused at Load, and which boot with a warning. The warning case
+// (auth-without-TLS) is the subtle one — it must NOT refuse.
+
+func TestConfig_SMTPTLS_DefaultsToNone(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("SMTP_TLS", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SMTPTLS != config.SMTPTLSNone {
+		t.Errorf("expected default SMTP_TLS %q, got %q", config.SMTPTLSNone, cfg.SMTPTLS)
+	}
+	if cfg.SMTPUsesTLS() {
+		t.Error("the default (none) must not report TLS in use")
+	}
+}
+
+func TestConfig_SMTPSecurityMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		tls           string
+		user, pass    string
+		wantErr       bool
+		errSubstr     string
+		wantAuth      bool // SMTPAuthConfigured() on success
+		wantUsesTLS   bool // SMTPUsesTLS() on success
+		wantWarnPlain bool // SMTPAuthWithoutTLS() on success — the warn case
+	}{
+		{name: "plaintext, no auth (local relay)", tls: "none", wantUsesTLS: false},
+		{name: "starttls, no auth", tls: "starttls", wantUsesTLS: true},
+		{name: "implicit, no auth", tls: "implicit", wantUsesTLS: true},
+		{name: "starttls with auth (production)", tls: "starttls", user: "mailer", pass: "s3cret",
+			wantAuth: true, wantUsesTLS: true},
+		{name: "implicit with auth", tls: "implicit", user: "mailer", pass: "s3cret",
+			wantAuth: true, wantUsesTLS: true},
+		// The WARN case: credentials over a plaintext connection. Boots, but
+		// SMTPAuthWithoutTLS() is true so serve.go can warn.
+		{name: "auth without TLS warns, does not refuse", tls: "none", user: "mailer", pass: "s3cret",
+			wantAuth: true, wantUsesTLS: false, wantWarnPlain: true},
+		// Contradictory / incomplete: exactly one credential half.
+		{name: "username without password refused", tls: "starttls", user: "mailer",
+			wantErr: true, errSubstr: "SMTP_USERNAME"},
+		{name: "password without username refused", tls: "starttls", pass: "s3cret",
+			wantErr: true, errSubstr: "SMTP_PASSWORD"},
+		// Unrecognised mode.
+		{name: "unknown TLS mode refused", tls: "ssl", wantErr: true, errSubstr: "SMTP_TLS"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+			t.Setenv("SMTP_TLS", tc.tls)
+			t.Setenv("SMTP_USERNAME", tc.user)
+			t.Setenv("SMTP_PASSWORD", tc.pass)
+
+			cfg, err := config.Load()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected a configuration error, got none")
+				}
+				if !strings.Contains(err.Error(), tc.errSubstr) {
+					t.Errorf("error must mention %q, got: %s", tc.errSubstr, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected this combination to boot, got: %v", err)
+			}
+			if got := cfg.SMTPAuthConfigured(); got != tc.wantAuth {
+				t.Errorf("SMTPAuthConfigured() = %v, want %v", got, tc.wantAuth)
+			}
+			if got := cfg.SMTPUsesTLS(); got != tc.wantUsesTLS {
+				t.Errorf("SMTPUsesTLS() = %v, want %v", got, tc.wantUsesTLS)
+			}
+			if got := cfg.SMTPAuthWithoutTLS(); got != tc.wantWarnPlain {
+				t.Errorf("SMTPAuthWithoutTLS() = %v, want %v (the warn case)", got, tc.wantWarnPlain)
+			}
+		})
+	}
+}
+
+// --- Auth-surface rate limiting (D3) ---
+
+func TestConfig_AuthRateLimit_Defaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	// Unset the knobs so the defaults are what is under test. The test suite
+	// runs with .env.test exported (which disables the limiter so the E2E
+	// harness's single-IP traffic is not throttled), and viper treats a
+	// present-but-empty variable as unset, exactly as TestLoad_Defaults does for
+	// APP_ENV.
+	t.Setenv("AZIMUTHAL_AUTH_RATE_LIMIT_ENABLED", "")
+	t.Setenv("AZIMUTHAL_AUTH_RATE_LIMIT_PER_MINUTE", "")
+	t.Setenv("AZIMUTHAL_AUTH_RATE_LIMIT_BURST", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.AuthRateLimitEnabled {
+		t.Error("auth rate limiting must default to enabled")
+	}
+	if cfg.AuthRateLimitPerMinute != 30 {
+		t.Errorf("expected default per-minute 30, got %d", cfg.AuthRateLimitPerMinute)
+	}
+	if cfg.AuthRateLimitBurst != 10 {
+		t.Errorf("expected default burst 10, got %d", cfg.AuthRateLimitBurst)
+	}
+}
+
+// TestConfig_AuthRateLimit_Validation pins the "enabled but admits nothing"
+// refusal, and that a DISABLED limiter with zero knobs is inert rather than
+// refused. Delete the enabled-guard in validateAuthRateLimit and the disabled
+// case fails; delete the positivity checks and the enabled cases fail.
+func TestConfig_AuthRateLimit_Validation(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		enabled   string
+		perMinute string
+		burst     string
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "enabled with sane knobs", enabled: "true", perMinute: "60", burst: "20"},
+		{name: "enabled, zero per-minute refused", enabled: "true", perMinute: "0", burst: "20",
+			wantErr: true, errSubstr: "PER_MINUTE"},
+		{name: "enabled, negative per-minute refused", enabled: "true", perMinute: "-5", burst: "20",
+			wantErr: true, errSubstr: "PER_MINUTE"},
+		{name: "enabled, zero burst refused", enabled: "true", perMinute: "60", burst: "0",
+			wantErr: true, errSubstr: "BURST"},
+		// Disabled: the knobs are inert, so even zeros must boot.
+		{name: "disabled with zero knobs boots", enabled: "false", perMinute: "0", burst: "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+			t.Setenv("AZIMUTHAL_AUTH_RATE_LIMIT_ENABLED", tc.enabled)
+			t.Setenv("AZIMUTHAL_AUTH_RATE_LIMIT_PER_MINUTE", tc.perMinute)
+			t.Setenv("AZIMUTHAL_AUTH_RATE_LIMIT_BURST", tc.burst)
+
+			_, err := config.Load()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected a configuration error, got none")
+				}
+				if !strings.Contains(err.Error(), tc.errSubstr) {
+					t.Errorf("error must mention %q, got: %s", tc.errSubstr, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected this configuration to boot, got: %v", err)
+			}
+		})
+	}
 }
 
 // TestBcryptFloorMatchesAuthPackage is what makes duplicating the constants

@@ -193,9 +193,11 @@ func TestPortalLinkDisclosureAllowed_IsIndependentOfDeliveryMode(t *testing.T) {
 			t.Setenv("APP_ENV", "development")
 			t.Setenv("AZIMUTHAL_PORTAL_LINK_DELIVERY", tc.delivery)
 			t.Setenv("AZIMUTHAL_PORTAL_DISCLOSE_LINK", tc.flag)
-			// Email delivery refuses to boot without an explicit relay, which
-			// is a different rule and not the one under test here.
+			// Email delivery refuses to boot without an explicit relay AND an
+			// explicit from-address (D140), which is a different rule and not the
+			// one under test here.
 			t.Setenv("SMTP_HOST", "smtp.example.com")
+			t.Setenv("SMTP_FROM", "noreply@example.com")
 
 			cfg, err := config.Load()
 			if err != nil {

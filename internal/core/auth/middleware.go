@@ -221,11 +221,3 @@ func bearerToken(r *http.Request) string {
 	}
 	return strings.TrimSpace(parts[1])
 }
-
-// RateLimiter is a stub interface for request-rate limiting.
-// The concrete implementation will be added in Phase 2.
-type RateLimiter interface {
-	// Allow reports whether the request from the given key (IP or user ID)
-	// should be allowed to proceed.
-	Allow(key string) bool
-}

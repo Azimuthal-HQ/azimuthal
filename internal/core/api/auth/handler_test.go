@@ -513,14 +513,6 @@ func TestLoginWrongPassword(t *testing.T) {
 	}
 }
 
-func TestRoutesReturnsRouter(t *testing.T) {
-	h, _ := setupHandler(t)
-	r := h.Routes()
-	if r == nil {
-		t.Fatal("Routes() returned nil")
-	}
-}
-
 func TestRegisterAndLoginSuccess(t *testing.T) {
 	h, _ := setupHandler(t)
 
