@@ -880,6 +880,12 @@ func setupRouter(t *testing.T) (http.Handler, *auth.JWTService) {
 		ProjectHandler:  projectHandler,
 		SpaceHandler:    spaceHandler,
 		RelationHandler: relationsapi.NewHandler(relationSvc),
+		// This harness has no database, so /ready gets a healthy stub pinger —
+		// the DB-less stand-in for the real pool, the same way the access
+		// resolution below stands in for ResolveAccess. Without it /ready would
+		// answer 503 (nil pinger), which is correct behaviour but not what these
+		// routing tests are exercising.
+		ReadyPinger: pingerFunc(func(context.Context) error { return nil }),
 	})
 
 	// This harness runs without an AccessResolver (no DB), so the in-handler
@@ -954,8 +960,17 @@ func TestReadyEndpoint(t *testing.T) {
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
+	// The router wires a healthy pinger (see setupRouter), so /ready reports 200
+	// ready. Readiness now depends on that ping: with an unreachable store the
+	// same route answers 503 (covered by TestHandleReady_* and the real-pool
+	// TestReady_RealPool_HealthyThenClosed).
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	var body map[string]string
+	decodeBody(t, rr.Body, &body)
+	if body["status"] != "ready" {
+		t.Errorf("status = %q, want %q", body["status"], "ready")
 	}
 }
 

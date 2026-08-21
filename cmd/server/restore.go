@@ -79,6 +79,27 @@ func runRestore(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Refuse to restore while a server is live. A restore replays a
+	// --clean --if-exists dump — it DROPs and recreates every table — and then
+	// overwrites object storage, so running it against a database a serve
+	// process is actively writing (the River queue, request handlers) corrupts
+	// both. The advisory lock is the enforcement of the "stop the app first"
+	// step docs/self-hosting.md and docs/upgrade.md now spell out; until it
+	// existed the invariant was documentation only, and our own docs violated it
+	// by telling operators to run this inside the live app container.
+	//
+	// Taken here — after the archive has been read and validated (both touch
+	// only the archive file, never the database) and immediately before the
+	// first step that MUTATES the datastore — so a held lock leaves the database
+	// and object storage untouched, and an invalid archive is still reported
+	// without needing a database at all. Held through restoreStorage too, via
+	// defer. See cmd/server/dblock.go.
+	lock, err := restoreTryStoreLock(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		return err // errServerRunning carries the operator instruction verbatim
+	}
+	defer lock.Release()
+
 	if err := restoreDatabase(cfg, entries); err != nil {
 		return err
 	}

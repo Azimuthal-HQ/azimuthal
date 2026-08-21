@@ -5,6 +5,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,6 +34,16 @@ func (NoopNotificationEnqueuer) EnqueueNotification(_ context.Context, _ Notific
 // Queue wraps a River client and exposes helpers for enqueueing jobs.
 type Queue struct {
 	client *river.Client[pgx.Tx]
+
+	// stoppedMu guards stopped: the client's stop-signal channel, captured once
+	// Start has returned. Status reads it from HTTP-handler goroutines, so it
+	// cannot read river.Client.Stopped() directly — River sets that channel
+	// inside Start under its own lock, and a concurrent read during boot is a
+	// data race (proven with -race). Capturing it here, in the goroutine that
+	// called Start and only after Start returned, and serving Status from this
+	// guarded copy, keeps the read race-free while still reflecting a live stop.
+	stoppedMu sync.Mutex
+	stopped   <-chan struct{}
 }
 
 // NewQueue creates a River client wired to the given pgxpool and registers
@@ -59,10 +70,23 @@ func NewQueue(ctx context.Context, pool *pgxpool.Pool, sender email.Sender, quer
 	return &Queue{client: client}, nil
 }
 
-// Start begins processing background jobs. It blocks until ctx is cancelled.
+// Start begins processing background jobs. River's client runs in its own
+// background goroutines; Start returns once they are up (or once startup fails).
 func (q *Queue) Start(ctx context.Context) error {
-	if err := q.client.Start(ctx); err != nil {
-		return fmt.Errorf("starting job queue: %w", err)
+	startErr := q.client.Start(ctx)
+
+	// Capture the client's stop-signal channel now — in this goroutine, after
+	// Start has returned, so River's internal write to it has already happened
+	// and this read cannot race it. On a start failure River has already closed
+	// the channel (it fires its stopped signal on the error path), so Status
+	// then reports "error". Held under stoppedMu because Status reads it from
+	// other goroutines.
+	q.stoppedMu.Lock()
+	q.stopped = q.client.Stopped()
+	q.stoppedMu.Unlock()
+
+	if startErr != nil {
+		return fmt.Errorf("starting job queue: %w", startErr)
 	}
 	return nil
 }
@@ -73,6 +97,47 @@ func (q *Queue) Stop(ctx context.Context) error {
 		return fmt.Errorf("stopping job queue: %w", err)
 	}
 	return nil
+}
+
+// Status reports the queue's LIVE state, read at the moment it is called rather
+// than captured at boot. It is what /health now reports for the queue, so a
+// queue that stops after startup is visible instead of frozen at its boot-time
+// value.
+//
+//   - "error" the River client has stopped — its Stopped() channel is closed.
+//   - "ok"    the client has NOT stopped: it is running, or (a negligible boot
+//     window) has been created and is about to be started.
+//
+// The read mirrors what the old boot-time snapshot stood in for — that snapshot
+// was set to "ok" right after Start was invoked and never revisited — but asks
+// the client whether it is still up rather than trusting a frozen value. River's
+// client closes a stop-signal channel once it has stopped; Start captures that
+// channel (see the stopped field), and a non-blocking receive here distinguishes
+// not-stopped (would block → default → "ok") from stopped (ready → closed →
+// "error"). The distinction the old snapshot could not make is precisely the one
+// that matters: a client that stops AFTER boot now reports "error", not a stale
+// "ok".
+//
+// "disabled" is deliberately not a value here: a disabled queue has no *Queue
+// to call this on. cmd/server/main.go maps the absent queue to "disabled" by
+// leaving the /health status function nil.
+func (q *Queue) Status() string {
+	q.stoppedMu.Lock()
+	stopped := q.stopped
+	q.stoppedMu.Unlock()
+
+	if stopped == nil {
+		// Start has not published the stop channel yet: the queue is enabled and
+		// coming up. Report "ok" — the window is a negligible sliver of boot, and
+		// in the real wiring /health is not serving during it.
+		return "ok"
+	}
+	select {
+	case <-stopped:
+		return "error"
+	default:
+		return "ok"
+	}
 }
 
 // EnqueueEmail inserts an email delivery job into the queue.

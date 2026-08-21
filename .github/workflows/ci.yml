@@ -1535,7 +1535,7 @@ jobs:
       # `timeout` guards the job: neither command should block, but this job has
       # no timeout-minutes of its own, so a hang would burn the whole runner
       # allowance rather than failing.
-      - name: The documented backup and restore commands work inside the image
+      - name: The documented backup command works inside the live image
         run: |
           timeout 120 docker exec -e STORAGE_ENDPOINT= azimuthal-boot \
             /azimuthal backup --output /tmp/ci-backup.tar.gz
@@ -1568,12 +1568,50 @@ jobs:
           fi
           echo "✅ archive contains a database dump and a manifest"
 
-          # Restore the archive back over the live database. With
-          # -v ON_ERROR_STOP=1 this exits non-zero if any statement fails, so a
-          # partial restore fails the job instead of reporting success (D105).
-          timeout 120 docker exec -e STORAGE_ENDPOINT= azimuthal-boot \
-            /azimuthal restore --input /tmp/ci-backup.tar.gz
-          echo "✅ restore exited 0"
+      # The datastore lock, proven in the shipped image. `serve` holds a shared
+      # advisory lock for its whole lifetime and `restore` takes the same key
+      # exclusively, so a restore run against the LIVE server must refuse rather
+      # than drop and recreate its tables underneath it. This is the invariant
+      # docs/self-hosting.md and docs/upgrade.md now spell out ("stop the app
+      # first"); asserting it here is what stops a regression from silently
+      # un-enforcing it in the artifact operators actually run.
+      - name: Restore refuses while the server is live
+        run: |
+          set +e
+          OUT=$(timeout 120 docker exec -e STORAGE_ENDPOINT= azimuthal-boot \
+            /azimuthal restore --input /tmp/ci-backup.tar.gz 2>&1)
+          CODE=$?
+          set -e
+          echo "$OUT"
+          if [ "$CODE" -eq 0 ]; then
+            echo "❌ restore succeeded against a live server — the datastore lock did not hold"
+            exit 1
+          fi
+          if ! grep -q "the server is running" <<< "$OUT"; then
+            echo "❌ restore failed against a live server, but not with the stop-the-server refusal"
+            exit 1
+          fi
+          echo "✅ restore refused while the server is live"
+
+      # With the server stopped the lock is free, so the documented recipe — a
+      # one-off container, NOT `exec` into the (now stopped) live one — restores
+      # cleanly, including with -v ON_ERROR_STOP=1 so a partial restore would
+      # fail rather than report success. `docker stop -t 30` gives serve's
+      # graceful shutdown time to run, which releases the advisory lock on its
+      # way down. The image runs as nonroot, so the mounted archive is made
+      # world-readable first; --entrypoint overrides the image's `serve` default.
+      - name: The documented restore works with the server stopped
+        run: |
+          docker stop -t 30 azimuthal-boot
+          chmod a+r ./ci-backup.tar.gz
+          timeout 120 docker run --rm --network host \
+            --entrypoint /azimuthal \
+            -e DATABASE_URL=postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable \
+            -e STORAGE_ENDPOINT= \
+            -v "$PWD/ci-backup.tar.gz:/tmp/ci-backup.tar.gz:ro" \
+            ${{ env.BINARY_NAME }}:boot-${{ github.sha }} \
+            restore --input /tmp/ci-backup.tar.gz
+          echo "✅ restore exited 0 with the server stopped"
 
       # A restore that half-applies must FAIL, in the shipped image.
       #
@@ -1585,7 +1623,8 @@ jobs:
       # The Go-level guard (TestRestorePostgres_PartialRestoreIsAFailure) covers
       # the same property, but only where pg_dump and psql are on PATH — which
       # is exactly the assumption that was false in the shipped container. This
-      # step proves it in the artifact.
+      # step proves it in the artifact, in the same one-off container the
+      # documented restore now uses (the server stays stopped from the step above).
       - name: A partially-failing restore is refused inside the image
         run: |
           # Reuse the good archive from the previous step and append one
@@ -1597,12 +1636,16 @@ jobs:
           tar -xzf ./ci-backup.tar.gz -C bad-archive
           echo "INSERT INTO a_table_that_does_not_exist VALUES (1);" >> bad-archive/database.sql
           tar -czf ./ci-bad-backup.tar.gz -C bad-archive database.sql manifest.json
-
-          docker cp ./ci-bad-backup.tar.gz azimuthal-boot:/tmp/ci-bad-backup.tar.gz
+          chmod a+r ./ci-bad-backup.tar.gz
 
           set +e
-          OUT=$(timeout 120 docker exec -e STORAGE_ENDPOINT= azimuthal-boot \
-            /azimuthal restore --input /tmp/ci-bad-backup.tar.gz 2>&1)
+          OUT=$(timeout 120 docker run --rm --network host \
+            --entrypoint /azimuthal \
+            -e DATABASE_URL=postgres://azimuthal_test:testpassword@localhost:5433/azimuthal_test?sslmode=disable \
+            -e STORAGE_ENDPOINT= \
+            -v "$PWD/ci-bad-backup.tar.gz:/tmp/ci-bad-backup.tar.gz:ro" \
+            ${{ env.BINARY_NAME }}:boot-${{ github.sha }} \
+            restore --input /tmp/ci-bad-backup.tar.gz 2>&1)
           CODE=$?
           set -e
           echo "$OUT"
