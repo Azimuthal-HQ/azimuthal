@@ -117,6 +117,10 @@ func (a *TicketAdapter) UpdateStatus(ctx context.Context, id uuid.UUID, status t
 	row, err := a.q.UpdateTicketStatus(ctx, generated.UpdateTicketStatusParams{
 		ID:     id,
 		Status: string(status),
+		// No-workflow path: resolved_at tracks the terminal statuses, since there
+		// is no workflow_states.category to read here. See UpdateTicketStatus in
+		// tickets.sql and tickets.Status.IsDone.
+		IsDone: status.IsDone(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ticket adapter update status: %w", err)

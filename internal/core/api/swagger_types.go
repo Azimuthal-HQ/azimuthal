@@ -385,6 +385,18 @@ type SwaggerCommentResponse struct {
 	UpdatedAt  string    `json:"updated_at" example:"2026-01-15T10:30:00Z"`
 }
 
+// SwaggerHistoryResponse is one entry of a ticket's or item's audit History
+// (D5): who acted, what the action was, the flat metadata payload (a status
+// change carries from/to), and when.
+type SwaggerHistoryResponse struct {
+	ID        uuid.UUID         `json:"id" example:"c3d4e5f6-a7b8-9012-cdef-123456789012"`
+	ActorID   string            `json:"actor_id,omitempty" example:"874d6314-6353-45e9-ab2a-5fe930ea4dbc"`
+	ActorName string            `json:"actor_name" example:"Admin User"`
+	Action    string            `json:"action" example:"ticket.status_changed"`
+	Payload   map[string]string `json:"payload"`
+	CreatedAt string            `json:"created_at" example:"2026-01-15T10:30:00Z"`
+}
+
 // SwaggerMessageResponse is a generic message response used by several endpoints.
 type SwaggerMessageResponse struct {
 	Message string `json:"message" example:"operation completed"`

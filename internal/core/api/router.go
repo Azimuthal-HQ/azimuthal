@@ -14,6 +14,7 @@ import (
 	credlinksapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/credlinks"
 	dashboardsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/dashboards"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
+	historyapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/history"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
@@ -40,6 +41,11 @@ type RouterConfig struct {
 	ProjectHandler *projectsapi.Handler
 	SpaceHandler   *spacesapi.Handler
 	CommentHandler *commentsapi.Handler
+	// HistoryHandler serves the per-entity audit History surface (D5): the
+	// space-read GET routes on tickets and project items. One core, mounted per
+	// entity subtree the way comments are — the entity kind comes from which
+	// route was hit. nil leaves the history routes unmounted.
+	HistoryHandler *historyapi.Handler
 	// RelationHandler serves the entity-generic relation satellite: one core,
 	// mounted per entity subtree (projects items, tickets, wiki pages) the way
 	// comments are — the from side of a relation comes from which route was
@@ -731,6 +737,7 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/{ticketID}/comments", cfg.CommentHandler.ListTicketComments)
 			r.Post("/{ticketID}/comments", cfg.CommentHandler.CreateTicketComment)
 		}
+		mountHistoryRoute(r, cfg.HistoryHandler, "/{ticketID}", (*historyapi.Handler).ListTicketHistory)
 		mountRelationRoutes(r, cfg.RelationHandler, "/{ticketID}",
 			(*relationsapi.Handler).ListTicketRelations, (*relationsapi.Handler).CreateTicketRelation, false)
 	})
@@ -762,6 +769,7 @@ func mountSpaceResources(r chi.Router, cfg RouterConfig, spaceGuard, readableGua
 			r.Get("/items/{itemID}/comments", cfg.CommentHandler.ListItemComments)
 			r.Post("/items/{itemID}/comments", cfg.CommentHandler.CreateItemComment)
 		}
+		mountHistoryRoute(r, cfg.HistoryHandler, "/items/{itemID}", (*historyapi.Handler).ListItemHistory)
 		// The item URLs predate the entity-generic mount and did not move;
 		// only their registration did, out of ProjectHandler.Routes() and
 		// into the same per-subtree convention comments use.
@@ -816,4 +824,23 @@ func mountRelationRoutes(
 	if withDelete {
 		r.Delete("/relations/{relationID}", h.DeleteRelation)
 	}
+}
+
+// mountHistoryRoute registers one entity subtree's History read (D5): the
+// satellite is ONE handler mounted per subtree, so each call fixes only the id
+// pattern and the read wrapper. A method expression rather than a bound value,
+// because h may legitimately be nil — a nil handler leaves the route unmounted,
+// exactly like a nil CommentHandler, and the harness's dark-dependency walk is
+// what keeps that state out of the test server. Living here rather than inline
+// keeps mountSpaceResources' two entity subtrees free of the nil branch.
+func mountHistoryRoute(
+	r chi.Router,
+	h *historyapi.Handler,
+	idPattern string,
+	list func(*historyapi.Handler, http.ResponseWriter, *http.Request),
+) {
+	if h == nil {
+		return
+	}
+	r.Get(idPattern+"/history", func(w http.ResponseWriter, req *http.Request) { list(h, w, req) })
 }

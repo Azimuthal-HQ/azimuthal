@@ -538,18 +538,28 @@ func (q *Queries) UpdateTicket(ctx context.Context, arg UpdateTicketParams) (Tic
 
 const updateTicketStatus = `-- name: UpdateTicketStatus :one
 UPDATE tickets
-SET status = $2, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = $1,
+    resolved_at = CASE WHEN $2::boolean THEN COALESCE(resolved_at, now()) ELSE NULL END,
+    updated_at = now()
+WHERE id = $3 AND deleted_at IS NULL
 RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
 type UpdateTicketStatusParams struct {
-	ID     uuid.UUID `json:"id"`
 	Status string    `json:"status"`
+	IsDone bool      `json:"is_done"`
+	ID     uuid.UUID `json:"id"`
 }
 
+// The no-workflow status path: a space with no workflow assigned falls back to
+// the hardcoded state machine (tickets.ValidateTransition), which has no
+// workflow_states row and so no category to read. There the "done" set is the
+// terminal status names themselves (resolved, closed) — see tickets.Status.IsDone,
+// which the adapter evaluates and passes as @is_done. resolved_at then follows
+// the same rule as the workflow twin above: set on entering done (COALESCE keeps
+// the first-reached moment across a done -> done move), cleared on leaving it.
 func (q *Queries) UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatusParams) (Ticket, error) {
-	row := q.db.QueryRow(ctx, updateTicketStatus, arg.ID, arg.Status)
+	row := q.db.QueryRow(ctx, updateTicketStatus, arg.Status, arg.IsDone, arg.ID)
 	var i Ticket
 	err := row.Scan(
 		&i.ID,
@@ -576,9 +586,15 @@ func (q *Queries) UpdateTicketStatus(ctx context.Context, arg UpdateTicketStatus
 
 const updateTicketWorkflowState = `-- name: UpdateTicketWorkflowState :one
 UPDATE tickets
-SET status = $1, workflow_state_id = $2, updated_at = now()
-WHERE id = $3 AND space_id = $4 AND deleted_at IS NULL
-  AND status = $5
+SET status = $1, workflow_state_id = $2,
+    resolved_at = CASE
+        WHEN (SELECT ws.category FROM workflow_states ws WHERE ws.id = $2) = 'done'
+            THEN COALESCE(tickets.resolved_at, now())
+        ELSE NULL
+    END,
+    updated_at = now()
+WHERE tickets.id = $3 AND tickets.space_id = $4 AND tickets.deleted_at IS NULL
+  AND tickets.status = $5
 RETURNING id, space_id, number, title, description, status, priority, reporter_id, assignee_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, requester_id, search_vector
 `
 
@@ -610,6 +626,25 @@ type UpdateTicketWorkflowStateParams struct {
 // Zero rows is the lost race, and it is not a failure the caller may treat as
 // "not found": the row is there, and what expired is the caller's assumption
 // about it. The adapter maps it to a conflict.
+//
+// resolved_at is maintained HERE, on the workflow-governed transition — the one
+// path where the discriminator is authoritative. workflow_states.category is
+// that discriminator: the target state's category, looked up by the id this
+// statement is writing, decides. Category 'done' sets resolved_at; any other
+// category clears it, which is what makes a reopen (done -> todo/in_progress)
+// clear it. COALESCE keeps the moment the ticket FIRST reached done across a
+// done -> done move (resolved -> closed keeps the resolve time rather than
+// restamping to the close time), because the column answers "when did this
+// reach done", not "when was its status last touched". A reopen is the ELSE
+// branch and clears it, so the next entry into done stamps afresh.
+//
+// The column is "when did this reach done, if it's currently done." SLA
+// tooling, when it exists, reads the HISTORY (every close and reopen is an
+// audit event with a timestamp), not this column. There is deliberately NO
+// backfill: historical resolution moments aren't recorded anywhere
+// recoverable, and inventing them would poison future metrics — so a ticket
+// that was already done before this wiring shipped stays NULL until its next
+// transition, which is the honest consequence rather than a bug.
 func (q *Queries) UpdateTicketWorkflowState(ctx context.Context, arg UpdateTicketWorkflowStateParams) (Ticket, error) {
 	row := q.db.QueryRow(ctx, updateTicketWorkflowState,
 		arg.Status,

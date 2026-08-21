@@ -715,18 +715,27 @@ func (q *Queries) UpdateProjectItemRank(ctx context.Context, arg UpdateProjectIt
 
 const updateProjectItemStatus = `-- name: UpdateProjectItemStatus :one
 UPDATE project_items
-SET status = $2, updated_at = now()
-WHERE id = $1 AND deleted_at IS NULL
+SET status = $1,
+    resolved_at = CASE WHEN $2::boolean THEN COALESCE(resolved_at, now()) ELSE NULL END,
+    updated_at = now()
+WHERE id = $3 AND deleted_at IS NULL
 RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector
 `
 
 type UpdateProjectItemStatusParams struct {
-	ID     uuid.UUID `json:"id"`
 	Status string    `json:"status"`
+	IsDone bool      `json:"is_done"`
+	ID     uuid.UUID `json:"id"`
 }
 
+// The no-workflow status path (item twin of UpdateTicketStatus). A space with no
+// workflow has no workflow_states row to read a category from, so the "done" set
+// is the terminal status names — projects.IsDoneStatus ({done, closed, resolved}),
+// which the adapter evaluates and passes as @is_done. resolved_at then follows
+// the same set-on-done / clear-on-leave / COALESCE-preserve rule as the workflow
+// twin above.
 func (q *Queries) UpdateProjectItemStatus(ctx context.Context, arg UpdateProjectItemStatusParams) (ProjectItem, error) {
-	row := q.db.QueryRow(ctx, updateProjectItemStatus, arg.ID, arg.Status)
+	row := q.db.QueryRow(ctx, updateProjectItemStatus, arg.Status, arg.IsDone, arg.ID)
 	var i ProjectItem
 	err := row.Scan(
 		&i.ID,
@@ -757,9 +766,15 @@ func (q *Queries) UpdateProjectItemStatus(ctx context.Context, arg UpdateProject
 
 const updateProjectItemWorkflowState = `-- name: UpdateProjectItemWorkflowState :one
 UPDATE project_items
-SET status = $1, workflow_state_id = $2, updated_at = now()
-WHERE id = $3 AND space_id = $4 AND deleted_at IS NULL
-  AND status = $5
+SET status = $1, workflow_state_id = $2,
+    resolved_at = CASE
+        WHEN (SELECT ws.category FROM workflow_states ws WHERE ws.id = $2) = 'done'
+            THEN COALESCE(project_items.resolved_at, now())
+        ELSE NULL
+    END,
+    updated_at = now()
+WHERE project_items.id = $3 AND project_items.space_id = $4 AND project_items.deleted_at IS NULL
+  AND project_items.status = $5
 RETURNING id, space_id, parent_id, number, kind, title, description, status, priority, reporter_id, assignee_id, sprint_id, due_at, resolved_at, rank, created_at, updated_at, deleted_at, workflow_state_id, org_id, item_key, search_vector
 `
 
@@ -782,6 +797,12 @@ type UpdateProjectItemWorkflowStateParams struct {
 // `status = @expect_status` is the compare-and-swap; see the ticket twin in
 // tickets.sql for what it protects (D91) and why zero rows is a conflict rather
 // than a miss.
+//
+// resolved_at follows the target state's workflow_states.category exactly as the
+// ticket twin does — 'done' sets it, any other category clears it, COALESCE
+// keeps the first-reached moment across a done -> done move. See the long note
+// on UpdateTicketWorkflowState in tickets.sql for the "when did this reach done"
+// semantics and the deliberate no-backfill.
 func (q *Queries) UpdateProjectItemWorkflowState(ctx context.Context, arg UpdateProjectItemWorkflowStateParams) (ProjectItem, error) {
 	row := q.db.QueryRow(ctx, updateProjectItemWorkflowState,
 		arg.Status,

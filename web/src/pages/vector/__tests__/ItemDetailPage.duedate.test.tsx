@@ -43,6 +43,7 @@ vi.mock('../../../lib/api', () => ({
   useTransitionProjectItemStatus: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useMembers: () => ({ data: [] }),
   useComments: () => ({ data: [], refetch: vi.fn() }),
+  useHistory: () => ({ data: [], isLoading: false, error: null }),
   useCreateComment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useMe: () => ({ data: { id: 'u-1', org_id: 'org-1', display_name: 'Ada' } }),
   useRelations: () => ({ data: [], refetch: vi.fn() }),

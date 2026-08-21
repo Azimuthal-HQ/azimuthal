@@ -69,6 +69,7 @@ import (
 	credlinksapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/credlinks"
 	dashboardsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/dashboards"
 	grantsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/grants"
+	historyapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/history"
 	invitesapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/invites"
 	notificationsapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/notifications"
 	portalapi "github.com/Azimuthal-HQ/azimuthal/internal/core/api/portal"
@@ -505,6 +506,7 @@ func buildRouter(cfg *config.Config, pool *pgxpool.Pool, queries *generated.Quer
 		RelationHandler:       relationsapi.NewHandler(projects.NewRelationService(adapters.NewRelationAdapter(queries))),
 		SpaceHandler:          spacesapi.NewHandler(queries).WithWorkflowAssigner(workflowAdapter).WithTeamService(teamSvc).WithGrantService(grantSvc).WithSpaceCreateTx(spaceCreateAdapter).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),
 		CommentHandler:        commentsapi.NewHandler(queries).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
+		HistoryHandler:        historyapi.NewHandler(queries),
 		NotificationHandler:   notificationsapi.NewHandler(queries, accessResolver),
 		WorkflowHandler:       workflowsapi.NewHandler(queries, workflowAdapter).WithWorkflowTiers(tierGate, transitionTx, tierStore, tierSvc).WithAuditLogger(auditLog).WithNotificationEnqueuer(notifEnqueuer),
 		TeamHandler:           teamsapi.NewHandler(teamSvc).WithAuditLogger(auditLog).WithTicketRefPolicy(ticketRefPolicy),

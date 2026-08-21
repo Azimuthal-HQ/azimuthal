@@ -138,6 +138,10 @@ func (a *ItemAdapter) UpdateStatus(ctx context.Context, id uuid.UUID, status str
 	row, err := a.q.UpdateProjectItemStatus(ctx, generated.UpdateProjectItemStatusParams{
 		ID:     id,
 		Status: status,
+		// No-workflow path: resolved_at tracks the terminal statuses, since there
+		// is no workflow_states.category to read here. See UpdateProjectItemStatus
+		// in project_items.sql and projects.IsDoneStatus.
+		IsDone: projects.IsDoneStatus(status),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, projects.ErrNotFound
