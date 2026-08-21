@@ -48,7 +48,7 @@ concurrency:
 
 
 env:
-  GO_VERSION: '1.26.5'
+  GO_VERSION: '1.26.6'
   NODE_VERSION: '20'
   POSTGRES_VERSION: '16'
   BINARY_NAME: azimuthal
